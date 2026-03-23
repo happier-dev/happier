@@ -1,55 +1,47 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  flashListChatListHarnessState,
+  renderFlashListChatList,
+  resetFlashListChatListHarness,
+  standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let capturedFlashListProps: any = null;
 const scrollToOffsetSpy = vi.fn();
 
-let sessionMessagesState: { messages: any[]; isLoaded: boolean } = { messages: [], isLoaded: true };
-let sessionPendingState: { messages: any[] } = { messages: [] };
-let sessionActionDraftsState: any[] = [];
-let sessionState: any = null;
-
-const settingValues: Record<string, any> = {};
-
 beforeEach(() => {
-  capturedFlashListProps = null;
   scrollToOffsetSpy.mockClear();
-  sessionMessagesState = {
+  resetFlashListChatListHarness({
+    flashListRefHandle: { scrollToOffset: scrollToOffsetSpy, scrollToIndex: vi.fn() },
+    platformOs: 'ios',
+  });
+  flashListChatListHarnessState.sessionMessagesState = {
     messages: [{ kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'hi' }],
     isLoaded: true,
   };
-  sessionPendingState = { messages: [] };
-  sessionActionDraftsState = [];
+  flashListChatListHarnessState.sessionPendingState = { messages: [], discarded: [], isLoaded: true };
+  flashListChatListHarnessState.sessionActionDraftsState = [];
   // Use sessionSeq=0 to avoid triggering the initial-fill effect (which pins once unconditionally).
-  sessionState = { id: 'session-1', seq: 0, metadata: null, accessLevel: null, canApprovePermissions: true };
-  Object.keys(settingValues).forEach((k) => delete settingValues[k]);
-});
-
-vi.mock('@shopify/flash-list', () => ({
-  FlashList: React.forwardRef((props: any, ref: any) => {
-    capturedFlashListProps = props;
-    const handle = { scrollToOffset: scrollToOffsetSpy, scrollToIndex: vi.fn() };
-    if (typeof ref === 'function') ref(handle);
-    else if (ref && typeof ref === 'object') ref.current = handle;
-    return React.createElement('FlashList');
-  }),
-}));
-
-vi.mock('react-native', async () => {
-  const stub = await import('@/dev/reactNativeStub');
-  const ReactMod = await import('react');
-  return {
-    ...stub,
-    Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default },
-    View: (props: any) => ReactMod.createElement('View', props, props.children),
-    Pressable: ({ children, ...props }: any) => ReactMod.createElement('Pressable', props, children),
-    ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
-    FlatList: () => ReactMod.createElement('FlatList'),
+  flashListChatListHarnessState.sessionState = {
+    ...flashListChatListHarnessState.sessionState,
+    id: 'session-1',
+    seq: 0,
+    metadata: null,
+    accessLevel: null,
+    canApprovePermissions: true,
   };
 });
+
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () =>
+  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListModuleMock()
+);
+
+vi.mock('react-native', async () => (
+    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListReactNativeMock({ platformOs: 'ios' })
+));
 
 vi.mock('@/utils/platform/responsive', async (importOriginal) => {
   const actual = await importOriginal<any>();
@@ -63,46 +55,18 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSession: () => sessionState,
-  useSessionTranscriptIds: () => ({
-    ids: (sessionMessagesState.messages ?? []).map((m: any) => m.id),
-    isLoaded: sessionMessagesState.isLoaded,
-  }),
-  useSessionMessagesById: () => Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
-  useForkedTranscriptSnapshot: () => null,
-  useSessionPendingMessages: () => sessionPendingState,
-  useSessionActionDrafts: () => sessionActionDraftsState,
-  useSessionLatestThinkingMessageId: () => null,
-  useSessionLatestThinkingMessageActivityAtMs: () => null,
-  useMessage: () => null,
-  useSetting: (key: string) => settingValues[key],
-  getStorage: () => ({
-    getState: () => ({
-      sessionMessages: {
-        [sessionState?.id ?? 'session-1']: {
-          messagesById: Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
-          messagesMap: Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
-        },
-      },
-    }),
-  }),
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListStorageMock(importOriginal)
+);
 
-vi.mock('@/components/sessions/chatListItems', () => ({
-  buildChatListItems: ({ messageIdsOldestFirst, messagesById }: any) =>
+vi.mock('@/components/sessions/chatListItems', async () =>
+  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock(({ messageIdsOldestFirst, messagesById }: any) =>
     (messageIdsOldestFirst ?? []).map((id: string) => {
-      const m = messagesById?.[id];
-      return { kind: 'message', id: `msg:${id}`, messageId: id, createdAt: m?.createdAt ?? 0, seq: null };
+      const message = messagesById?.[id];
+      return { kind: 'message', id: `msg:${id}`, messageId: id, createdAt: message?.createdAt ?? 0, seq: null };
     }),
-  buildChatListItemsCached: (opts: any) => ({
-    cache: null,
-    items: (opts?.messageIdsOldestFirst ?? []).map((id: string) => {
-      const m = opts?.messagesById?.[id];
-      return { kind: 'message', id: `msg:${id}`, messageId: id, createdAt: m?.createdAt ?? 0, seq: null };
-    }),
-  }),
-}));
+  )
+);
 
 vi.mock('./ChatFooter', () => ({
   ChatFooter: () => React.createElement('ChatFooter'),
@@ -157,22 +121,18 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (p: any) => p,
 }));
 
-vi.mock('@/sync/sync', () => ({
-  sync: {
+vi.mock('@/sync/sync', async () =>
+  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListSyncModuleMock({
     loadOlderMessages: vi.fn(),
     loadNewerMessages: vi.fn(),
-    hasDeferredNewerMessages: () => false,
-    getSyncTuning: () => ({
-      transcriptForwardPrefetchThresholdPx: 0,
-      transcriptBackwardPrefetchThresholdPx: 0,
-      transcriptFlashListEstimatedItemSize: 120,
-      transcriptWebInitialPinStabilizeMs: 3000,
-      transcriptWebInitialPinRetryIntervalMs: 250,
-    }),
-  },
-}));
+  })
+);
 
 describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
+  afterEach(() => {
+    standardCleanup();
+  });
+
   it('pins to bottom when content size grows while pinned', async () => {
     const raf = (cb: any) => {
       cb(0);
@@ -183,26 +143,22 @@ describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
 
     const { ChatList } = await import('./ChatList');
 
-    let tree: renderer.ReactTestRenderer | undefined;
-    await act(async () => {
-      tree = renderer.create(<ChatList session={sessionState} />);
-    });
+    const screen = await renderFlashListChatList(
+      <ChatList session={flashListChatListHarnessState.sessionState} />
+    );
 
-    expect(capturedFlashListProps).toBeTruthy();
+    expect(screen.getCapturedFlashListProps()).toBeTruthy();
 
     // Clear mount-time pin attempts; we want to assert pinning is driven by content-size growth.
     scrollToOffsetSpy.mockClear();
 
-    await act(async () => {
-      capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 500 } } });
-      capturedFlashListProps.onContentSizeChange?.(0, 1000);
+    await screen.triggerInitialFill({
+      layoutHeight: 500,
+      contentHeight: 1000,
+      contentWidth: 0,
     });
 
     expect(scrollToOffsetSpy).toHaveBeenCalled();
     expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 500, animated: false });
-
-    act(() => {
-      tree?.unmount();
-    });
   });
 });

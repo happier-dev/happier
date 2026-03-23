@@ -150,7 +150,7 @@ async function tailFiles({ paths }) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const { flags, kv } = parseArgs(argv);
+  const { flags, kv: argKv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
 
   const helpText = [
@@ -187,18 +187,18 @@ async function main() {
     flags.has('--follow') ||
     flags.has('-f') ||
     wantsTailPositional ||
-    (kv.get('--follow') ?? '').toString().trim() === '1';
+    (argKv.get('--follow') ?? '').toString().trim() === '1';
   const noFollow = flags.has('--no-follow');
   const effectiveFollow = noFollow ? false : Boolean(follow);
 
   const componentRaw =
-    kv.get('--component') ??
-    kv.get('--source') ??
-    kv.get('--stream') ??
-    kv.get('--kind') ??
+    argKv.get('--component') ??
+    argKv.get('--source') ??
+    argKv.get('--stream') ??
+    argKv.get('--kind') ??
     '';
   const component = coerceComponent(componentRaw);
-  const lines = coerceInt(kv.get('--lines') ?? process.env.HAPPIER_STACK_LOG_LINES ?? '', 120);
+  const lines = coerceInt(argKv.get('--lines') ?? process.env.HAPPIER_STACK_LOG_LINES ?? '', 120);
 
   const env = process.env;
   const stackName = getStackName(env);
@@ -283,4 +283,3 @@ main().catch((err) => {
   console.error('[logs] failed:', err);
   process.exit(1);
 });
-

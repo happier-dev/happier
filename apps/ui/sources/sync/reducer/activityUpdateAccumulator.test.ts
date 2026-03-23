@@ -1,19 +1,62 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiEphemeralActivityUpdate } from '../api/types/apiTypes';
 import { ActivityUpdateAccumulator } from './activityUpdateAccumulator';
+
+type CapturedTimeout = {
+    handle: number;
+    delay: number;
+    callback: () => void;
+    cleared: boolean;
+};
+
+function captureTimeoutCallbacks() {
+    const callbacks: CapturedTimeout[] = [];
+    let nextHandle = 1;
+
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: TimerHandler, delay?: number) => {
+        const handle = nextHandle++;
+        const entry: CapturedTimeout = {
+            handle,
+            delay: typeof delay === 'number' ? delay : 0,
+            callback: () => {
+                if (entry.cleared) {
+                    return;
+                }
+
+                if (typeof callback === 'function') {
+                    callback();
+                }
+            },
+            cleared: false,
+        };
+
+        callbacks.push(entry);
+        return handle as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+
+    vi.spyOn(globalThis, 'clearTimeout').mockImplementation(((handle: number) => {
+        const entry = callbacks.find((candidate) => candidate.handle === handle);
+        if (entry) {
+            entry.cleared = true;
+        }
+    }) as typeof clearTimeout);
+
+    return callbacks;
+}
 
 describe('ActivityUpdateAccumulator Smart Debounce', () => {
     let mockFlushHandler: ReturnType<typeof vi.fn>;
     let accumulator: ActivityUpdateAccumulator;
+    let timeoutCallbacks: CapturedTimeout[];
 
     beforeEach(() => {
-        vi.useFakeTimers();
+        timeoutCallbacks = captureTimeoutCallbacks();
         mockFlushHandler = vi.fn();
         accumulator = new ActivityUpdateAccumulator(mockFlushHandler, 500);
     });
 
     afterEach(() => {
-        vi.useRealTimers();
+        vi.restoreAllMocks();
     });
 
     describe('immediate emission for significant state changes', () => {
@@ -152,8 +195,8 @@ describe('ActivityUpdateAccumulator Smart Debounce', () => {
             accumulator.addUpdate(update3);
             expect(mockFlushHandler).toHaveBeenCalledTimes(1);
 
-            // Fast forward time to trigger debounce
-            vi.advanceTimersByTime(500);
+            expect(timeoutCallbacks).toHaveLength(1);
+            timeoutCallbacks[0]?.callback();
             expect(mockFlushHandler).toHaveBeenCalledTimes(2);
             expect(mockFlushHandler).toHaveBeenNthCalledWith(2, 
                 new Map([['session1', update3]]) // Should have the latest update
@@ -203,8 +246,8 @@ describe('ActivityUpdateAccumulator Smart Debounce', () => {
             accumulator.addUpdate(session2Update2);
             expect(mockFlushHandler).toHaveBeenCalledTimes(2);
 
-            // Fast forward time to trigger debounce
-            vi.advanceTimersByTime(500);
+            expect(timeoutCallbacks).toHaveLength(1);
+            timeoutCallbacks[0]?.callback();
             expect(mockFlushHandler).toHaveBeenCalledTimes(3);
             
             // Should batch both sessions in one call
@@ -252,8 +295,8 @@ describe('ActivityUpdateAccumulator Smart Debounce', () => {
             accumulator.addUpdate(update3);
             expect(mockFlushHandler).toHaveBeenCalledTimes(1); // Still 1, pending
 
-            // Fast forward 500ms - should flush the latest update
-            vi.advanceTimersByTime(500);
+            expect(timeoutCallbacks).toHaveLength(1);
+            timeoutCallbacks[0]?.callback();
             expect(mockFlushHandler).toHaveBeenCalledTimes(2);
             expect(mockFlushHandler).toHaveBeenNthCalledWith(2, 
                 new Map([['session1', update3]]) // Should have the latest update
@@ -416,8 +459,9 @@ describe('ActivityUpdateAccumulator Smart Debounce', () => {
 
             accumulator.cancel();
 
-            // Advance time - should not trigger flush
-            vi.advanceTimersByTime(500);
+            expect(timeoutCallbacks).toHaveLength(1);
+            expect(timeoutCallbacks[0]?.cleared).toBe(true);
+            timeoutCallbacks[0]?.callback();
             expect(mockFlushHandler).toHaveBeenCalledTimes(1);
         });
 
@@ -450,6 +494,10 @@ describe('ActivityUpdateAccumulator Smart Debounce', () => {
             expect(mockFlushHandler).toHaveBeenNthCalledWith(2, 
                 new Map([['session1', update2]])
             );
+            expect(timeoutCallbacks).toHaveLength(1);
+            expect(timeoutCallbacks[0]?.cleared).toBe(true);
+            timeoutCallbacks[0]?.callback();
+            expect(mockFlushHandler).toHaveBeenCalledTimes(2);
         });
 
         it('should reset all state', () => {
@@ -473,6 +521,8 @@ describe('ActivityUpdateAccumulator Smart Debounce', () => {
             accumulator.addUpdate(update2);
             
             accumulator.reset();
+            expect(timeoutCallbacks).toHaveLength(1);
+            expect(timeoutCallbacks[0]?.cleared).toBe(true);
 
             // After reset, next update should be treated as new session (immediate)
             const update3: ApiEphemeralActivityUpdate = {

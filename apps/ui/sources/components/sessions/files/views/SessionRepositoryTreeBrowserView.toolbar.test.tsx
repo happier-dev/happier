@@ -1,75 +1,84 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const clearCacheSpy = vi.fn();
+const clearRepositoryDirectoryCacheSpy = vi.fn();
+let latestTransferOptions: any = null;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-    View: 'View',
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-    TextInput: (props: any) => React.createElement('TextInput', props),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-    AppState: {
-        addEventListener: () => ({ remove: () => {} }),
-        currentState: 'active',
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
+                                            }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#eee',
-                        text: '#000',
-                        textSecondary: '#666',
-                    },
-                })
-                : value,
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => {
+        const trigger = typeof props.trigger === 'function'
+            ? props.trigger({ toggle: vi.fn(), openMenu: vi.fn(), closeMenu: vi.fn(), open: Boolean(props.open), selectedItem: null })
+            : props.trigger;
+        return React.createElement('DropdownMenu', props, trigger);
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/components/ui/lists/ItemRowActions', () => ({
+    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) },
-    useSession: () => ({ active: true, metadata: { machineId: 'm1' } }),
-    useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }),
-    useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }],
-    useMachine: () => ({ id: 'm1' }),
-    useSessionRepositoryTreeExpandedPaths: () => [],
-    useSessionProjectScmSnapshot: () => null,
+vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
+    useWorkspaceFileTransfers: (input: any) => {
+        latestTransferOptions = input;
+        return {
+        uploadState: { status: 'idle' },
+        downloadState: { status: 'idle' },
+        startUploads: vi.fn(async () => ({ ok: true })),
+        cancelUploads: vi.fn(),
+        startDownload: vi.fn(async () => ({ ok: true })),
+        cancelDownload: vi.fn(),
+        };
+    },
 }));
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
+        useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
+        useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }) as any,
+        useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }] as any,
+        useMachine: () => ({ id: 'm1' }) as any,
+        useSessionRepositoryTreeExpandedPaths: () => [],
+        useSessionProjectScmSnapshot: () => null,
+    });
+});
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
@@ -83,6 +92,14 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
 }));
 
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+    useSessionMachineReachability: () => ({
+        machineReachable: true,
+        machineOnline: true,
+        machineRpcTargetAvailable: true,
+    }),
+}));
+
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: { invalidateFromUser: () => {} },
 }));
@@ -90,6 +107,10 @@ vi.mock('@/scm/scmStatusSync', () => ({
 vi.mock('@/sync/domains/input/suggestionFile', () => ({
     fileSearchCache: { clearCache: (sessionId: string) => clearCacheSpy(sessionId) },
     searchFiles: vi.fn(async () => []),
+}));
+
+vi.mock('@/sync/domains/input/repositoryDirectory', () => ({
+    clearCachedRepositoryDirectoryEntries: (input: { sessionId: string }) => clearRepositoryDirectoryCacheSpy(input),
 }));
 
 const mountCount = { current: 0 };
@@ -102,7 +123,7 @@ vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
         React.useEffect(() => {
             reloadCount.current += 1;
         }, [props?.reloadToken]);
-        return React.createElement('RepositoryTreeList');
+        return React.createElement('View', { testID: 'repository-tree-list' });
     },
 }));
 
@@ -110,16 +131,18 @@ vi.mock('@/components/sessions/files/content/ChangedFilesTreeList', () => ({
     ChangedFilesTreeList: () => React.createElement('ChangedFilesTreeList'),
 }));
 
+vi.mock('@/components/sessions/files/views/repositoryTreeBrowser/RepositoryTreeChangedFilesPane', () => ({
+    RepositoryTreeChangedFilesPane: () => React.createElement('RepositoryTreeChangedFilesPane'),
+}));
+
 vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
     SearchResultsList: () => React.createElement('SearchResultsList'),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: vi.fn(async () => null),
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: vi.fn(async () => ({ success: true })),
@@ -135,42 +158,91 @@ vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForRevea
 }));
 
 describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
-    it('shows clear button when search is non-empty and refresh clears search cache + remounts tree', async () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    async function renderRepositoryTreeBrowserView() {
         const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
+        return renderScreen(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
+    }
+
+    it('moves lower-priority toolbar actions into overflow when the toolbar is narrow', async () => {
+        const screen = await renderRepositoryTreeBrowserView();
+
+        const toolbar = screen.findByTestId('repository-tree-toolbar');
+        expect(toolbar).toBeTruthy();
+        await act(async () => {
+            toolbar?.props.onLayout?.({ nativeEvent: { layout: { width: 320, height: 42, x: 0, y: 0 } } });
+        });
+
+        expect(screen.findAllByTestId('repository-tree-filter-changed')).toHaveLength(1);
+        expect(screen.findAllByTestId('repository-tree-refresh')).toHaveLength(1);
+        expect(screen.findAllByTestId('repository-tree-create-file')).toHaveLength(0);
+        const overflowMenu = screen.findByType('ItemRowActions' as any);
+        expect(overflowMenu.props.overflowTriggerTestID).toBe('repository-tree-toolbar-overflow');
+        expect(overflowMenu.props.actions.map((item: any) => item.id)).toEqual(
+            expect.arrayContaining([
+                'repository-tree-create-file',
+                'repository-tree-create-folder',
+                'repository-tree-collapse-all',
+            ]),
+        );
+    });
+
+    it('shows clear button when search is non-empty and refresh clears search cache + remounts tree', async () => {
         clearCacheSpy.mockClear();
         mountCount.current = 0;
         reloadCount.current = 0;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
-        });
+        const screen = await renderRepositoryTreeBrowserView();
 
         expect(mountCount.current).toBe(1);
 
-        const input = tree!.root.findByType('TextInput');
+        const input = screen.findByTestId('repository-tree-search');
+        expect(input).toBeTruthy();
         await act(async () => {
-            input.props.onChangeText('src');
+            input?.props.onChangeText('src');
         });
 
-        const clear = tree!.root.findAll((node: any) => node.props?.testID === 'repository-tree-clear-search');
+        const clear = screen.findAllByTestId('repository-tree-clear-search');
         expect(clear.length).toBeGreaterThanOrEqual(1);
 
         await act(async () => {
-            clear[0]!.props.onPress();
+            screen.pressByTestId('repository-tree-clear-search');
         });
 
-        expect(tree!.root.findByType('TextInput').props.value).toBe('');
+        expect(screen.findByTestId('repository-tree-search')?.props.value).toBe('');
 
-        const refresh = tree!.root.findAll((node: any) => node.props?.testID === 'repository-tree-refresh');
-        expect(refresh.length).toBeGreaterThanOrEqual(1);
+        expect(screen.findAllByTestId('repository-tree-refresh').length).toBeGreaterThanOrEqual(1);
 
         await act(async () => {
-            refresh[0]!.props.onPress();
+            screen.pressByTestId('repository-tree-refresh');
         });
 
         expect(clearCacheSpy).toHaveBeenCalledWith('s1');
+        expect(clearRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ sessionId: 's1' });
         expect(mountCount.current).toBe(2);
         expect(reloadCount.current).toBe(3);
+    });
+
+    it('refreshes the repository tree when uploads succeed', async () => {
+        clearCacheSpy.mockClear();
+        clearRepositoryDirectoryCacheSpy.mockClear();
+        latestTransferOptions = null;
+        reloadCount.current = 0;
+
+        const screen = await renderRepositoryTreeBrowserView();
+
+        expect(typeof latestTransferOptions?.onAfterUploadSuccess).toBe('function');
+
+        await act(async () => {
+            latestTransferOptions.onAfterUploadSuccess();
+        });
+
+        expect(clearCacheSpy).toHaveBeenCalledWith('s1');
+        expect(clearRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ sessionId: 's1' });
+        expect(screen.findAllByTestId('repository-tree-list')).toHaveLength(1);
+        expect(reloadCount.current).toBe(2);
     });
 });

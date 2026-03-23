@@ -26,6 +26,22 @@ npm install -g @google/gemini-cli
 gemini --version
 ```
 
+## Local authentication in Happier
+
+Gemini supports machine-local auth management in:
+
+- **Settings → AI provider settings → Gemini**
+
+From there you can:
+
+- check Gemini’s local auth state on the selected machine
+- open Gemini’s native CLI auth flow directly inside Happier
+- refresh the auth state with **Check now**
+
+Happier can detect Gemini auth from environment variables, local Gemini auth/config files, and supported Google ADC files.
+
+For the shared user guide, see [Provider authentication](/docs/features/provider-authentication).
+
 ## Start Gemini with Happier
 
 ```bash
@@ -40,6 +56,13 @@ Gemini auth is managed through Happier connected services (`gemini`):
 - Or CLI: `happier connect gemini`
 
 For paste/redirect flows, Happier exchanges the OAuth code on the server and returns an encrypted bundle to the client (no Gemini OAuth secrets are bundled into the app UI).
+
+Supported UI methods:
+
+- paste redirect URL
+- in-app browser on native
+
+On web, Happier uses the paste flow.
 
 If you are self-hosting and need to override OAuth client settings, see:
 

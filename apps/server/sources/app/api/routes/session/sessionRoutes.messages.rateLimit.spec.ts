@@ -1,15 +1,11 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { preloadSessionRoutes, registerSessionRoutesAndGetHandler } from "./sessionRoutes.testkit";
+import { createSessionRouteTestBuilder } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v1 messages rate limit", () => {
-    beforeAll(async () => {
-        await preloadSessionRoutes();
-    }, 120_000);
-
     it("registers GET /v1/sessions/:sessionId/messages with an explicit rate limit", async () => {
-        const { app } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
-        const route = app.routes.get("GET /v1/sessions/:sessionId/messages");
+        const builder = await createSessionRouteTestBuilder("GET", "/v1/sessions/:sessionId/messages");
+        const route = builder.app.routes.get("GET /v1/sessions/:sessionId/messages");
         const rateLimit = (route?.opts as any)?.config?.rateLimit ?? null;
         expect(rateLimit).toEqual(
             expect.objectContaining({

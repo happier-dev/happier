@@ -4,7 +4,9 @@ type PullArgsResult =
     | { ok: true; args: string[] }
     | { ok: false; error: string };
 
-function resolvePullDestination(request: Pick<ScmRemoteRequest, 'remote' | 'branch'>): string | null {
+type RemoteRequestInput = Readonly<Pick<ScmRemoteRequest, 'remote'> & Partial<Pick<ScmRemoteRequest, 'branch'>>>;
+
+function resolvePullDestination(request: RemoteRequestInput): string | null {
     const branch = request.branch?.trim();
     if (!branch) return null;
     if (branch.includes('/')) return branch;
@@ -15,7 +17,7 @@ function resolvePullDestination(request: Pick<ScmRemoteRequest, 'remote' | 'bran
 }
 
 export function buildPullArgs(
-    request: Pick<ScmRemoteRequest, 'remote' | 'branch'>,
+    request: RemoteRequestInput,
     update: boolean
 ): PullArgsResult {
     const args = ['pull'];
@@ -38,7 +40,7 @@ export function buildPullArgs(
     };
 }
 
-export function buildPushArgs(request: Pick<ScmRemoteRequest, 'remote' | 'branch'>): string[] {
+export function buildPushArgs(request: RemoteRequestInput): string[] {
     const args = ['push'];
     if (request.branch) {
         args.push('--to', request.branch);

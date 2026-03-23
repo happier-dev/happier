@@ -7,6 +7,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { SavedServersSection } from '@/components/settings/server/sections/SavedServersSection';
 import { AddTargetsSection } from '@/components/settings/server/sections/AddTargetsSection';
 import { ServerGroupsSection } from '@/components/settings/server/sections/ServerGroupsSection';
+import { ServerRetentionSection } from '@/components/settings/server/sections/ServerRetentionSection';
 import { useServerSettingsScreenController } from '@/components/settings/server/hooks/useServerSettingsScreenController';
 
 const stylesheet = StyleSheet.create((_theme) => ({
@@ -45,6 +46,8 @@ export function ServerSettingsScreen() {
                         onRename={controller.onRenameServer}
                         onRemove={controller.onRemoveServer}
                     />
+
+                    <ServerRetentionSection serverId={controller.activeServerId || null} />
 
                     <AddTargetsSection
                         autoMode={controller.autoMode}

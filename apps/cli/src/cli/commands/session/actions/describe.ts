@@ -1,9 +1,8 @@
 import chalk from 'chalk';
 
-import { getActionSpec } from '@happier-dev/protocol';
+import { getActionSpec, serializeActionSpec } from '@happier-dev/protocol';
 
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { serializeActionSpec } from './serializeActionSpec';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 
 export async function cmdSessionActionsDescribe(argv: string[]): Promise<void> {
   const json = wantsJson(argv);
@@ -23,4 +22,3 @@ export async function cmdSessionActionsDescribe(argv: string[]): Promise<void> {
   console.log(chalk.green('✓'), 'action described');
   console.log(JSON.stringify(serialized, null, 2));
 }
-

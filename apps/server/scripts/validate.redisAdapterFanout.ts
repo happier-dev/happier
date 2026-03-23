@@ -5,7 +5,7 @@ import { io as ioClient } from 'socket.io-client';
 import { createAdapter } from '@socket.io/redis-streams-adapter';
 import { Redis } from 'ioredis';
 
-const ENV_REDIS_URL = process.env.REDIS_URL?.trim() ?? '';
+import { resolveRedisAdapterValidationRedisUrl } from './resolveRedisAdapterValidationRedisUrl';
 
 const ROOM = 'user:test-user';
 
@@ -25,16 +25,9 @@ async function closeServer(server: http.Server): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  let redisMemory: { stop: () => Promise<boolean>; getIp: () => Promise<string>; getPort: () => Promise<number> } | null = null;
-  const redisUrl =
-    ENV_REDIS_URL ||
-    (await (async () => {
-      const { RedisMemoryServer } = await import('redis-memory-server');
-      redisMemory = await RedisMemoryServer.create();
-      const ip = await redisMemory.getIp();
-      const port = await redisMemory.getPort();
-      return `redis://${ip}:${port}`;
-    })());
+  const { redisUrl, redisMemory } = await resolveRedisAdapterValidationRedisUrl({
+    env: process.env,
+  });
 
   const redisA = new Redis(redisUrl);
   const redisB = new Redis(redisUrl);

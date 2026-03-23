@@ -1,9 +1,10 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readDisplayMachineIdForSession, readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
 
 export function getRecentPathsForMachine(params: {
     machineId: string;
-    recentMachinePaths: Array<{ machineId: string; path: string }>;
-    sessions: Array<Session | string> | null | undefined;
+    recentMachinePaths: ReadonlyArray<Readonly<{ machineId: string; path: string }>>;
+    sessions: ReadonlyArray<Session | string> | null | undefined;
 }): string[] {
     const paths: string[] = [];
     const pathSet = new Set<string>();
@@ -23,8 +24,15 @@ export function getRecentPathsForMachine(params: {
         params.sessions.forEach((item) => {
             if (typeof item === 'string') return;
             const session = item;
-            if (session.metadata?.machineId === params.machineId && session.metadata?.path) {
-                const path = session.metadata.path;
+            const sessionMachineId = readDisplayMachineIdForSession({
+                sessionId: session.id,
+                metadata: session.metadata ?? null,
+            });
+            const path = readDisplayPathForSession({
+                sessionId: session.id,
+                metadata: session.metadata ?? null,
+            });
+            if (sessionMachineId === params.machineId && path) {
                 if (!pathSet.has(path)) {
                     pathSet.add(path);
                     pathsWithTimestamps.push({
@@ -42,4 +50,3 @@ export function getRecentPathsForMachine(params: {
 
     return paths;
 }
-

@@ -2,8 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { systemPrompt } from '@/agents/prompt/systemPrompt';
-
 import { updatePendingMessageV2 } from './pendingQueueV2';
 import {
     buildSession,
@@ -70,7 +68,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             content: { type: 'text', text: 'new text' },
         });
 
-        expect(decrypted?.meta?.appendSystemPrompt).toBe(systemPrompt);
+        expect(Object.prototype.hasOwnProperty.call(decrypted?.meta ?? {}, 'appendSystemPrompt')).toBe(false);
         expect(typeof decrypted?.meta?.source).toBe('string');
         expect(typeof decrypted?.meta?.sentFrom).toBe('string');
         expect(typeof decrypted?.meta?.permissionMode).toBe('string');
@@ -127,7 +125,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         expect(capturedContent?.v?.content?.text).toBe('new text');
     });
 
-    it('injects execution-run guidance into appendSystemPrompt when enabled in settings', async () => {
+    it('does not inject appendSystemPrompt even when execution-run guidance is enabled in settings', async () => {
         const sessionId = 's_test_guidance';
         const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 6 });
 
@@ -187,12 +185,10 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
 
         const sessionEncryption = getSessionEncryptionOrThrow({ encryption, sessionId });
         const decrypted = await sessionEncryption.decryptRaw(capturedCiphertext!);
-        expect(typeof decrypted?.meta?.appendSystemPrompt).toBe('string');
-        expect(String(decrypted?.meta?.appendSystemPrompt)).toContain(systemPrompt);
-        expect(String(decrypted?.meta?.appendSystemPrompt)).toContain('Always use execution runs for code reviews.');
+        expect(Object.prototype.hasOwnProperty.call(decrypted?.meta ?? {}, 'appendSystemPrompt')).toBe(false);
     });
 
-    it('does not inject execution-run guidance when execution runs feature is disabled', async () => {
+    it('still omits appendSystemPrompt when execution runs feature is disabled', async () => {
         const sessionId = 's_test_guidance_disabled';
         const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 9 });
 
@@ -252,8 +248,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
 
         const sessionEncryption = getSessionEncryptionOrThrow({ encryption, sessionId });
         const decrypted = await sessionEncryption.decryptRaw(capturedCiphertext!);
-        expect(decrypted?.meta?.appendSystemPrompt).toBe(systemPrompt);
-        expect(String(decrypted?.meta?.appendSystemPrompt)).not.toContain('Always use execution runs for code reviews.');
+        expect(Object.prototype.hasOwnProperty.call(decrypted?.meta ?? {}, 'appendSystemPrompt')).toBe(false);
     });
 
     it('throws when pending message does not exist', async () => {

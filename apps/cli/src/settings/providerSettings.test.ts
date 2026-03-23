@@ -1,19 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyProviderSpawnExtrasToProcessEnv, resolveProviderOutgoingMessageMetaExtras } from './providerSettings';
+import {
+  resolveProviderOutgoingMessageMetaExtras,
+  resolveProviderSpawnExtras,
+  resolveProviderSpawnExtrasForRuntime,
+} from './providerSettings';
 
 describe('providerSettings', () => {
-  it('sets Codex ACP env when account settings request ACP and env is unset', () => {
+  it('resolves Codex ACP spawn extras from account settings without mutating process env', () => {
     const prevAcp = process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
+    process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = '0';
+
     try {
-      delete process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
-
-      applyProviderSpawnExtrasToProcessEnv({
-        agentId: 'codex',
-        settings: { codexBackendMode: 'acp' },
-      });
-
-      expect(process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP).toBe('1');
+      expect(
+        resolveProviderSpawnExtras({
+          agentId: 'codex',
+          settings: { codexBackendMode: 'acp' },
+        }),
+      ).toEqual({ codexBackendMode: 'acp', experimentalCodexAcp: true });
+      expect(process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP).toBe('0');
     } finally {
       if (prevAcp === undefined) {
         delete process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
@@ -23,20 +28,62 @@ describe('providerSettings', () => {
     }
   });
 
-  it('does not override existing env overrides', () => {
-    const prevAcp = process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
-    try {
-      process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = '1';
-
-      applyProviderSpawnExtrasToProcessEnv({
+  it('resolves Codex MCP spawn extras when account settings disable ACP', () => {
+    expect(
+      resolveProviderSpawnExtras({
         agentId: 'codex',
         settings: { codexBackendMode: 'mcp' },
-      });
+      }),
+    ).toEqual({ codexBackendMode: 'mcp' });
+  });
 
-      expect(process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP).toBe('1');
-    } finally {
-      process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = prevAcp;
-    }
+  it('does not enable ACP spawn extras when Codex backend mode is appServer', () => {
+    expect(
+      resolveProviderSpawnExtras({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'appServer' },
+      }),
+    ).toEqual({ codexBackendMode: 'appServer' });
+  });
+
+  it('keeps Codex runtime spawn extras on the canonical backend mode path for ACP settings', () => {
+    expect(
+      resolveProviderSpawnExtrasForRuntime({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'acp' },
+        processEnv: {},
+      }),
+    ).toEqual({ codexBackendMode: 'acp' });
+  });
+
+  it('lets an explicit Codex ACP env override win over account settings at runtime', () => {
+    expect(
+      resolveProviderSpawnExtrasForRuntime({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'acp' },
+        processEnv: { HAPPIER_EXPERIMENTAL_CODEX_ACP: '0' },
+      }),
+    ).toEqual({});
+  });
+
+  it('lets an explicit Codex backend mode env override win over account settings at runtime', () => {
+    expect(
+      resolveProviderSpawnExtrasForRuntime({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'acp' },
+        processEnv: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' },
+      }),
+    ).toEqual({ codexBackendMode: 'appServer' });
+  });
+
+  it('keeps Codex runtime extras pinned to MCP when fallback publishes mcp into env', () => {
+    expect(
+      resolveProviderSpawnExtrasForRuntime({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'acp' },
+        processEnv: { HAPPIER_CODEX_BACKEND_MODE: 'mcp' },
+      }),
+    ).toEqual({ codexBackendMode: 'mcp' });
   });
 
   it('builds Claude outgoing meta defaults from account settings', () => {

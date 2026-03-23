@@ -1,60 +1,493 @@
 ---
-title: Git & File Browser
-description: Review repository changes in-session and use experimental Git write operations safely.
+title: Git & Files
+description: Browse files, review diffs, edit workspace content, and manage source control directly from Happier.
 ---
 
-Happier includes Git-aware review directly in session screens.
+Happier includes a repository-aware workspace surface inside sessions.
+
+On larger layouts, this appears as:
+
+- a **right sidebar** with **Source control** and **Files** tabs
+- a **details pane** for file previews, editors, review tabs, commit history details, and stash details
+
+On phone-sized or narrow layouts, the same workflows are shown as full-screen screens instead of trying to keep several docked panels visible at once.
+
+This page covers the full user-facing workflow for:
+
+- browsing and searching files
+- creating, uploading, downloading, renaming, and deleting files/folders
+- previewing and editing files
+- reviewing uncommitted changes
+- staging, unstaging, committing, fetching, pulling, pushing, and reverting
+- browsing commit history and opening historical diffs
+- linking project files into the session composer
 
 ## Availability
 
-- **File browser is stable**: repository status, changed files, and diffs are part of the normal product surface.
-- **Git write operations are experimental**: stage, unstage, commit, pull, push, and revert are behind **Settings → Features → Git operations**.
+- **Files** browsing is part of the normal session UI.
+- **Source control write actions** remain behind **Settings → Features → Git operations**.
+- Some actions require the current machine/daemon to be reachable.
+- If the session is inactive but the machine is still online, Happier can still load repository/file data that comes from the machine-level workspace APIs.
 
-## What you can do
+## Desktop layout: sidebar + details pane
 
-### Read-only review (stable)
+The workspace UI is designed around two complementary surfaces:
 
-- Browse repository changed files from a session.
-- Open a file and inspect staged/unstaged diffs.
-- Switch between session-attributed and repository-wide changed file views.
-- Search and open files in the current project.
-- See branch tracking context (upstream and ahead/behind counters) in the files header.
-- See consistent Git delta counts across files view and session/status badges (all derived from the same Git snapshot model).
+- **Right sidebar**: quick navigation, tree/status browsing, branch summary, changed-files list, history list
+- **Details pane**: deep work on the currently opened item
 
-### Write operations (experimental)
+Typical flow:
 
-- Stage/unstage full files.
-- Stage/unstage selected lines (text diffs only).
-- Create commits from staged changes.
-- View recent commit history and open commit diffs.
-- Revert a commit (creates a revert commit).
-- Fetch, pull, and push.
-- See which session currently owns the Git write lock when another operation is running.
-- Filter the in-app Git operation log by `All sessions` or `This session`.
+1. Open **Files** or **Source control** in the right sidebar.
+2. Click an item to open it in the details pane.
+3. Keep that item as a temporary preview tab, or pin it so it stays open while you inspect other files.
+
+### Details tabs
+
+The details pane supports multiple tabs for:
+
+- file previews
+- editable files
+- review tabs
+- historical commit diffs
+- stash details
+
+Important behaviors:
+
+- Tabs keep their local state while you switch between them.
+- Scroll position is preserved when you return to a tab.
+- If you start editing a file, Happier keeps that editor state instead of reloading it on every tab switch.
+- Pinned tabs stay open until you explicitly close them.
+- On smaller layouts, the details surface can switch into an overlay/focused mode instead of permanently shrinking the main session area.
+
+### Focus / fullscreen mode
+
+The details pane includes a focus mode so you can temporarily hide the left session area and give more room to the current review/editor context.
+
+This is useful when:
+
+- reviewing a large diff
+- editing a file side-by-side with the source-control sidebar
+- working on a smaller laptop or browser window
+
+## Files
+
+The **Files** tab is the in-session file manager for the current workspace.
+
+### What you can do
+
+- Browse the repository tree.
+- Search for files in the current workspace.
+- Create files and folders.
+- Upload files into the workspace.
+- Choose an explicit upload destination when you do not want the project root.
+- Rename and delete files or folders.
+- Download a single file.
+- Download a folder as a `.zip`.
+- Download a single file as a `.zip` when you want archive-style handoff symmetry with folder downloads.
+- Open a file in preview or edit mode.
+- Filter the file tree down to modified files only.
+- Watch transfer progress and cancel an upload or download that is still running.
+
+### Tree rows and status badges
+
+The file tree is repository-aware.
+
+When source-control data is available, Happier can show:
+
+- modified / added / removed badges
+- line-count summaries (for example additions/removals)
+- folder-level summaries aggregated from descendants
+
+This gives you a lightweight “what changed here?” signal without leaving the Files tab.
+
+### Search and modified-only filtering
+
+Use the Files search field when you already know roughly what you want.
+
+Use the modified-only filter when you want the tree to behave more like a focused “changed files” explorer.
+
+Typical use cases:
+
+- narrow a large repo to the files touched by the current task
+- find a config file by name, then jump straight into the editor
+- browse only modified files while still keeping folder context
+
+### Create files and folders
+
+The Files toolbar includes actions to create:
+
+- a new file
+- a new folder
+
+These actions are meant for lightweight workspace edits without leaving the session.
+
+### Uploads
+
+Happier supports several upload flows:
+
+- **Upload files** from the Files toolbar
+- **Upload folder** on web
+- **Drag and drop** files or folders on web
+- **Drop onto a directory** to upload directly into that directory
+- **Preserve relative folder structure** when you upload a folder or nested tree
+
+Platform notes:
+
+- **Web**: supports drag/drop, multi-file upload, and folder upload
+- **iOS / Android**: supports file picking; folder upload is web-only
+
+If your goal is to send a file with your next message instead of placing it into the workspace, use the session **Attachments** flow instead.
+
+See: [Attachments & image previews](/docs/features/attachments)
+
+### Upload destination selection
+
+The toolbar upload menu includes an upload destination selector.
+
+- If you leave it empty, Happier uploads into the **project root**.
+- If you set a workspace-relative path, Happier uploads into that destination and creates missing parent directories as needed.
+- Drag/drop over a specific folder row overrides the root/default destination and uploads into that folder.
+
+Typical use cases:
+
+- send generated assets into `docs/assets`
+- upload logs into `.project/logs/...`
+- drop a folder directly into `src/components`
+
+### Upload conflict handling
+
+When uploaded files already exist at the destination, Happier asks how to resolve the conflict batch:
+
+- **Skip**
+- **Replace**
+- **Keep both**
+
+`Keep both` is the default. Happier automatically creates a suffixed name such as `file (1).txt`.
+
+### Transfer progress and cancel
+
+Uploads and downloads run as managed transfers instead of fire-and-forget actions.
+
+- Happier shows transfer progress while the upload or download is still active.
+- You can cancel a transfer before it finishes.
+- Folder `.zip` downloads are built first, then streamed back in chunks.
+
+Platform notes:
+
+- **Web**: downloads use the browser download flow.
+- **iOS / Android**: downloads are written to a temporary local file and then passed to the system share/open flow.
+
+### Rename, delete, and download
+
+Each tree row exposes an actions menu.
+
+For files, available actions include:
+
+- Rename
+- Delete
+- Download
+- Download as `.zip`
+- Copy path
+
+For directories, available actions include:
+
+- Rename
+- Delete
+- Download as `.zip`
+- Copy path
+
+Directory deletion is confirmed explicitly and applies recursively.
+
+## File preview and editing
+
+Opening a file from the Files tab or from Review opens it in the details pane.
+
+Depending on the file type, Happier can show:
+
+- a text preview
+- a live editor
+- an image preview
+- a binary-file placeholder when inline rendering is not appropriate
+
+### Image and binary handling
+
+Happier now treats image previews as a first-class workflow:
+
+- common raster images can be previewed inline
+- SVG files can also be previewed instead of being treated as opaque binaries
+- true binary files stay safe and do not try to render through the text diff pipeline
+
+If a file has no textual diff (for example an image or binary blob), Happier avoids crashing the diff renderer and falls back to the correct preview/placeholder path instead.
+
+### Editing behavior
+
+The editor is meant to feel like a real editor, not a disposable preview:
+
+- switching tabs does not discard in-progress edits
+- opening another file does not replace a pinned editor tab
+- reopening the same tab restores the state you left it in
+
+This matters when you:
+
+- compare two files while editing one of them
+- jump between Review and an editor tab
+- switch sessions and come back later
+
+## Link project files from the session composer
+
+The session composer includes a **Link file** chip.
+
+Use it when you want to attach workspace context to your next message without manually typing paths.
+
+### What it does
+
+- Opens a popover anchored to the composer
+- Reuses the same repository/file browsing model as the file sidebar
+- Lets you search and pick project files directly from the current workspace
+
+This is useful for prompts like:
+
+- “Explain why this file changed”
+- “Refactor the files I linked”
+- “Compare these two files”
+
+You can also use `@`-style file search in the composer where supported. The goal is the same: quickly attach relevant workspace context.
+
+## Source control
+
+The **Source control** tab is the repository status surface for the current session.
+
+### What you can do
+
+- Review changed files and diffs
+- Stage and unstage changes
+- Select whole files or selected lines/hunks where supported
+- Commit staged work
+- Fetch, pull, and push when Git write operations are enabled
+- Switch branches
+- Create branches
+- Publish a branch that does not yet have an upstream
+- Inspect and manage Happier-created stashes
+- Browse commit history and open historical commit diffs
+
+## Changed files list
+
+The changed-files list is the fast control surface for current repository state.
+
+You can use it to:
+
+- see the file status (`A`, `M`, `D`, etc.)
+- see additions/removals per file
+- stage or unstage files
+- open a file diff
+- open file actions such as revert/discard when supported
+
+The list is optimized for fast scanning:
+
+- branch summary stays at the top
+- “Review” is available directly from the changed-files header
+- commit controls stay grouped at the bottom
+
+## Review
+
+**Review** is the “scroll through the actual work” surface for current uncommitted changes.
+
+Instead of opening one file at a time, Review lets you inspect the diff set as a continuous working review.
+
+### What Review is for
+
+Use Review when you want to:
+
+- scroll through many changed files in one pass
+- collapse files you are done with
+- open a specific file in edit mode without losing your place
+- go back to the review tab and continue where you stopped
+
+### Review behavior
+
+- Diffs load progressively as needed instead of trying to mount everything at once.
+- Nearby diffs are prefetched so scrolling feels continuous.
+- If you manually collapse a diff, Happier remembers that and does not auto-expand it again just because you scroll away and back.
+- Switching away from Review and coming back restores your previous position.
+
+### Editing from Review
+
+Review is not a dead-end viewer.
+
+From Review you can open a changed file into its own details tab, edit it, then return to Review without losing the review context.
+
+## Commit history
+
+The **History** sub-tab shows past commits for the current repository.
+
+Opening a commit creates a details tab that uses the same general diff-viewing model as Review:
+
+- progressively rendered diffs
+- collapsible file sections
+- stateful tab behavior in the details pane
+
+This is intended to make “current changes” and “historical commit inspection” feel like the same mental model, not two unrelated tools.
+
+Typical use cases:
+
+- inspect what changed in a previous commit
+- compare current work against a known good commit
+- open a past commit, then jump back to current Review
+
+## Committing staged work
+
+The commit composer sits at the bottom of Source control.
+
+### Commit message generator
+
+Happier includes a **Generate commit message** action in the commit composer.
+
+- It is **enabled by default**.
+- It uses a one-shot execution-run task to propose a commit message.
+- You can choose the backend and add custom instructions in **Settings → Source Control**.
+
+Good use cases:
+
+- you want a fast Conventional Commit suggestion
+- you staged only part of the repo and want a message scoped to that selection
+- you want a draft message, then refine it manually before committing
+
+The generator suggests text. It does not auto-commit.
+
+### Selection-aware commits
+
+Depending on the SCM backend and capabilities, Happier can support:
+
+- file-scoped selection
+- line/hunk-level selection
+- whole working-tree commits
+
+This lets you create more intentional commits without dropping into the terminal for routine staging flows.
+
+## Branch management
+
+The branch summary at the top of Source control shows the current branch and branch state.
+
+From the branch menu you can:
+
+- see the current branch
+- switch to another branch
+- create a new branch
+- publish the current branch when it has no upstream yet
+
+### Publish branch
+
+When the current branch has no upstream tracking branch, Happier shows **Publish** instead of a normal push action.
+
+Publishing sets the upstream and pushes the branch in one step, similar to desktop Git clients.
+
+You can trigger this from the branch menu and, when relevant, from the remote-actions area that would otherwise offer push/pull.
+
+### Branch switching with uncommitted changes
+
+When you switch branches with local changes, Happier can handle that in two ways:
+
+- **Leave my changes on the current branch**
+- **Bring my changes to the target branch**
+
+The default behavior is to ask, unless you changed the branch-switch preference in Settings.
+
+#### Leave my changes on the current branch
+
+Happier creates or updates a Happier-managed stash for the current branch, then checks out the target branch.
+
+Use this when:
+
+- your current edits belong to the current branch
+- you want a clean checkout on the destination branch
+
+#### Bring my changes to the target branch
+
+Happier tries to carry your uncommitted changes across the branch switch.
+
+If Git would block the checkout because local changes would be overwritten, Happier falls back to a transient stash/apply flow so the changes can still move with you.
+
+Use this when:
+
+- you started working on the wrong branch
+- your uncommitted edits should follow you to the new branch
+
+## Managed stashes
+
+Happier creates and tracks its own stash entries for branch-switch workflows.
+
+These stashes appear in Source control as **Managed stashes**.
+
+From the stash surface you can:
+
+- see all Happier-managed stash entries
+- open a stash details view
+- inspect the stash diff
+- restore a stash
+- discard a stash
+
+### When stashes are created
+
+Common cases:
+
+- you choose **Leave my changes on the current branch** during a branch switch
+- Happier needs a transient stash to complete a **Bring my changes** workflow safely
+
+Transient stashes are internal safety rails for branch switching. If the carry-over apply succeeds they disappear automatically; if Git reports conflicts, Happier keeps the stash so you can inspect or restore it manually.
+
+### Restore vs discard
+
+- **Restore** applies the stash back into the working tree and removes it if the operation succeeds
+- **Discard** removes the stash without applying it
+
+If Git reports a conflict while restoring, Happier keeps the stash instead of silently dropping it.
 
 ## Session view vs repository view
 
 Changed-files view supports two modes:
 
-- **Repository changes**: full source of truth from current Git status.
-- **Session-attributed changes**: best-effort attribution for a specific session.
+- **Repository changes**: full source of truth from current SCM status
+- **Session-attributed changes**: best-effort attribution for a specific session
 
-Attribution uses direct operation signals first (for example stage/unstage actions). When multiple sessions are active on the same repository, attribution reliability is reduced and Happier favors direct attribution signals over inferred ones.
-When reliability is limited and no direct-attribution signals are available, Happier keeps the repository view as the only changed-files mode to avoid misleading session attribution.
+Attribution uses direct operation signals first, for example stage/unstage actions. When multiple sessions are active on the same repository, attribution reliability is lower, so Happier favors repository truth over weak inference.
+
+## Mobile and small-screen behavior
+
+On smaller screens, Happier does not try to force the full desktop multi-pane layout into too little space.
+
+Instead:
+
+- Files and Source control open as focused screens
+- opening a file/review/commit details surface replaces the list with a dedicated details screen
+- closing the details screen takes you back to the list you came from
+
+The goal is to preserve the same workflows as desktop while matching the ergonomics of a phone/tablet screen.
 
 ## Safety rules
 
-Git operations are intentionally conservative:
+SCM operations are intentionally conservative:
 
-- Pull uses **fast-forward only**.
-- Pull and revert require a clean worktree.
-- Push/pull/revert are blocked when `HEAD` is detached.
-- Push is blocked when local branch is behind upstream.
-- Push/pull/revert are blocked while conflicts are present.
-- Destructive history editing actions (reset/rebase/cherry-pick/drop) are not exposed in app UI.
+- publish/push/pull are blocked when the repository state says the operation is unsafe
+- pull uses **fast-forward only**
+- pull and revert require a clean worktree
+- push/pull/revert are blocked when `HEAD` is detached
+- push is blocked when the local branch is behind upstream
+- push/pull/revert are blocked while conflicts are present
+- destructive history-editing actions (reset/rebase/cherry-pick/drop) are not exposed in the app UI
+
+For file operations:
+
+- missing parent directories are created automatically where supported by the operation
+- file preview is size-bounded
+- folder zip/download flows are size-limited and safety-checked by the daemon
 
 ## Current limitations
 
+- Folder upload is web-only.
+- Some Source control actions still depend on Git write operations being enabled.
+- Branch and stash management are implemented for Git repositories; unsupported SCM backends expose read-only behavior.
 - Line-level staging is for text diffs. Binary/conflict cases fall back to file-level actions.
 - Session attribution is best-effort and not a replacement for repository truth.
+- The commit-message generator requires daemon support for execution runs.
 - Git write operations remain experimental while we continue hardening.

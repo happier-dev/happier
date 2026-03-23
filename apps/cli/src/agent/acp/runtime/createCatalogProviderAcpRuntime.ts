@@ -31,6 +31,7 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   onSessionIdChange?: (nextSessionId: string | null) => void;
   inFlightSteer?: Parameters<typeof createAcpRuntime>[0]['inFlightSteer'];
   hooks?: Parameters<typeof createAcpRuntime>[0]['hooks'];
+  memoryRecallGuidance?: Parameters<typeof createAcpRuntime>[0]['memoryRecallGuidance'];
 };
 
 export function createCatalogProviderAcpRuntime<TBackendOptions extends object = Record<string, never>>(
@@ -71,6 +72,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
   return createAcpRuntime({
     provider: params.provider,
     directory: params.directory,
+    happierSessionId: params.session.sessionId,
     session: params.session,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
@@ -78,6 +80,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
     onThinkingChange: params.onThinkingChange,
     hooks,
     inFlightSteer: params.inFlightSteer,
+    memoryRecallGuidance: params.memoryRecallGuidance,
     pendingQueue: {
       waitForMetadataUpdate: (signal) => params.session.waitForMetadataUpdate(signal),
       popPendingMessage: () => params.session.popPendingMessage(),

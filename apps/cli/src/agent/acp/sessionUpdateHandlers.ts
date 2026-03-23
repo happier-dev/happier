@@ -30,6 +30,8 @@ export {
 export {
   formatDuration,
   formatDurationMinutes,
+  markToolCallRunningAfterPermission,
+  markToolCallWaitingForPermission,
   startToolCall,
   completeToolCall,
   failToolCall,

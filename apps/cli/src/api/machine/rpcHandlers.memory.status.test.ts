@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MemoryStatusV1Schema } from '@happier-dev/protocol';
 
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 
@@ -27,7 +28,20 @@ describe('rpcHandlers.memory (status)', () => {
         stop: () => {},
         reloadSettings: async () => {},
         ensureUpToDate: async () => {},
-        getSettings: () => ({ v: 1, enabled: true, indexMode: 'deep' as const }),
+        getEmbeddingsDiagnostics: () => ({
+          mode: 'preset',
+          presetId: 'balanced',
+          providerKind: 'local_transformers',
+          modelId: 'Xenova/all-MiniLM-L6-v2',
+          runtimeState: 'ready',
+          usingFallback: false,
+        }),
+        getSettings: () => ({
+          v: 1,
+          enabled: true,
+          indexMode: 'deep' as const,
+          embeddings: { mode: 'preset', presetId: 'balanced', custom: null, blend: { ftsWeight: 0.7, embeddingWeight: 0.3 } },
+        }),
         getTier1DbPath: () => tier1Path,
         getDeepDbPath: () => deepPath,
       };
@@ -39,10 +53,20 @@ describe('rpcHandlers.memory (status)', () => {
 
       const handler = handlers.get(RPC_METHODS.DAEMON_MEMORY_STATUS);
       expect(handler).toBeTruthy();
-      const out = (await handler!(null)) as any;
+      const out = MemoryStatusV1Schema.parse(await handler!(null));
 
       expect(out.enabled).toBe(true);
       expect(out.indexMode).toBe('deep');
+      expect(out.hintsIndexReady).toBe(true);
+      expect(out.deepIndexReady).toBe(true);
+      expect(out.activeIndexReady).toBe(true);
+      expect(out.embeddingsEnabled).toBe(true);
+      expect(out.embeddingsMode).toBe('preset');
+      expect(out.embeddingsPresetId).toBe('balanced');
+      expect(out.embeddingsProviderKind).toBe('local_transformers');
+      expect(out.embeddingsModelId).toBe('Xenova/all-MiniLM-L6-v2');
+      expect(out.embeddingsRuntimeState).toBe('ready');
+      expect(out.embeddingsUsingFallback).toBe(false);
       expect(out.tier1DbPath).toBe(tier1Path);
       expect(out.deepDbPath).toBe(deepPath);
       expect(out.tier1DbBytes).toBeGreaterThan(0);
@@ -52,4 +76,3 @@ describe('rpcHandlers.memory (status)', () => {
     }
   });
 });
-

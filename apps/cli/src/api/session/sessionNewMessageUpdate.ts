@@ -12,7 +12,9 @@ export function handleSessionNewMessageUpdate(params: {
     encryptionVariant: 'legacy' | 'dataKey';
     receivedMessageIds: Set<string>;
     lastObservedMessageSeq: number;
-    hasMaterializedLocalId: (localId: string) => boolean;
+    lastObservedUserMessageSeq: number;
+    hasSelfEchoSuppressedLocalId: (localId: string) => boolean;
+    hasPendingQueueMaterializedLocalId: (localId: string) => boolean;
     deleteMaterializedLocalId: (localId: string) => void;
     pendingMessageCallback: ((message: UserMessage) => void) | null;
     pendingMessages: UserMessage[];
@@ -23,36 +25,56 @@ export function handleSessionNewMessageUpdate(params: {
 }): {
     handled: boolean;
     lastObservedMessageSeq: number;
+    lastObservedUserMessageSeq: number;
 } {
     if (params.update.body?.t !== 'new-message') {
-        return { handled: false, lastObservedMessageSeq: params.lastObservedMessageSeq };
+        return {
+            handled: false,
+            lastObservedMessageSeq: params.lastObservedMessageSeq,
+            lastObservedUserMessageSeq: params.lastObservedUserMessageSeq,
+        };
     }
     if (params.update.body.sid !== params.sessionId) {
-        return { handled: true, lastObservedMessageSeq: params.lastObservedMessageSeq };
+        return {
+            handled: true,
+            lastObservedMessageSeq: params.lastObservedMessageSeq,
+            lastObservedUserMessageSeq: params.lastObservedUserMessageSeq,
+        };
     }
 
     const parsedContent = SessionMessageContentSchema.safeParse((params.update.body as any).message?.content);
     if (!parsedContent.success) {
         params.debug('[SOCKET] [UPDATE] Ignoring new-message with invalid encrypted content envelope');
-        return { handled: true, lastObservedMessageSeq: params.lastObservedMessageSeq };
+        return {
+            handled: true,
+            lastObservedMessageSeq: params.lastObservedMessageSeq,
+            lastObservedUserMessageSeq: params.lastObservedUserMessageSeq,
+        };
     }
 
     const messageId = params.update.body.message.id;
     if (typeof messageId === 'string' && messageId.length > 0) {
         if (params.receivedMessageIds.has(messageId)) {
-            return { handled: true, lastObservedMessageSeq: params.lastObservedMessageSeq };
+            return {
+                handled: true,
+                lastObservedMessageSeq: params.lastObservedMessageSeq,
+                lastObservedUserMessageSeq: params.lastObservedUserMessageSeq,
+            };
         }
         params.receivedMessageIds.add(messageId);
     }
 
     let nextLastObservedMessageSeq = params.lastObservedMessageSeq;
+    let nextLastObservedUserMessageSeq = params.lastObservedUserMessageSeq;
     const msgSeq = params.update.body.message.seq;
     if (typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
         nextLastObservedMessageSeq = Math.max(nextLastObservedMessageSeq, msgSeq);
     }
 
     const localId = params.update.body.message.localId ?? null;
-    if (localId && params.hasMaterializedLocalId(localId)) {
+    const isSelfEchoSuppressedLocalId = Boolean(localId && params.hasSelfEchoSuppressedLocalId(localId));
+    const isPendingQueueMaterializedLocalId = Boolean(localId && params.hasPendingQueueMaterializedLocalId(localId));
+    if (localId && (isSelfEchoSuppressedLocalId || isPendingQueueMaterializedLocalId)) {
         // We observed the broadcast for a message we materialized; cancel any recovery path.
         params.deleteMaterializedLocalId(localId);
     }
@@ -70,7 +92,11 @@ export function handleSessionNewMessageUpdate(params: {
                 localId,
                 msgSeq: typeof msgSeq === 'number' && Number.isFinite(msgSeq) ? msgSeq : null,
             });
-            return { handled: true, lastObservedMessageSeq: nextLastObservedMessageSeq };
+            return {
+                handled: true,
+                lastObservedMessageSeq: nextLastObservedMessageSeq,
+                lastObservedUserMessageSeq: nextLastObservedUserMessageSeq,
+            };
         }
     }
     const bodyWithLocalId =
@@ -93,9 +119,8 @@ export function handleSessionNewMessageUpdate(params: {
     if (userResult.success) {
         const sentFrom = userResult.data.meta?.sentFrom;
         const source = userResult.data.meta?.source;
-        const shouldDeliverToAgent = source !== 'cli' && sentFrom !== 'cli';
         const shouldDeliverToAgentQueue =
-            shouldDeliverToAgent && (params.shouldDeliverUserMessageToAgentQueue?.(userResult.data, params.update) ?? true);
+            !isSelfEchoSuppressedLocalId && (params.shouldDeliverUserMessageToAgentQueue?.(userResult.data, params.update) ?? true);
         if (shouldDeliverToAgentQueue) {
             if (params.pendingMessageCallback) {
                 params.pendingMessageCallback(userResult.data);
@@ -103,11 +128,16 @@ export function handleSessionNewMessageUpdate(params: {
                 params.pendingMessages.push(userResult.data);
             }
         } else {
-            params.debug('[SOCKET] [UPDATE] Skipped user-message delivery to agent queue (self echo suppression)', {
+            params.debug('[SOCKET] [UPDATE] Skipped user-message delivery to agent queue', {
                 source: source ?? null,
                 sentFrom: sentFrom ?? null,
                 localId,
+                isSelfEchoSuppressedLocalId,
+                isPendingQueueMaterializedLocalId,
             });
+        }
+        if (typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
+            nextLastObservedUserMessageSeq = Math.max(nextLastObservedUserMessageSeq, msgSeq);
         }
         params.emit('user-message', userResult.data);
     } else {
@@ -116,5 +146,9 @@ export function handleSessionNewMessageUpdate(params: {
         params.emit('message', body);
     }
 
-    return { handled: true, lastObservedMessageSeq: nextLastObservedMessageSeq };
+    return {
+        handled: true,
+        lastObservedMessageSeq: nextLastObservedMessageSeq,
+        lastObservedUserMessageSeq: nextLastObservedUserMessageSeq,
+    };
 }

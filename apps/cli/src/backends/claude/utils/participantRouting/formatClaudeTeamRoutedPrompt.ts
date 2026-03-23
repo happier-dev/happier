@@ -1,13 +1,10 @@
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
-
-function clampUtf16(value: string, maxChars: number): string {
-    if (value.length <= maxChars) return value;
-    return `${value.slice(0, maxChars)}…`;
-}
-
-function coerceNonEmpty(value: unknown): string {
-    return typeof value === 'string' ? value.trim() : '';
-}
+import {
+    clampUtf16,
+    coerceNonEmpty,
+    sanitizeClaudeTeamConfigPathSegment,
+    sanitizePromptField,
+} from '@/backends/claude/utils/structuredMessages/promptFieldSanitization';
 
 export function formatClaudeTeamRoutedPrompt(params: Readonly<{
     originalText: string;
@@ -21,9 +18,9 @@ export function formatClaudeTeamRoutedPrompt(params: Readonly<{
 
     const r = params.recipient;
     if (r.kind === 'agent_team_member') {
-        const teamId = clampUtf16(coerceNonEmpty(r.teamId), maxIdChars);
-        const memberId = clampUtf16(coerceNonEmpty(r.memberId), maxIdChars);
-        const memberLabel = clampUtf16(coerceNonEmpty(r.memberLabel), maxIdChars);
+        const teamId = clampUtf16(sanitizePromptField(coerceNonEmpty(r.teamId)), maxIdChars);
+        const memberId = clampUtf16(sanitizePromptField(coerceNonEmpty(r.memberId)), maxIdChars);
+        const memberLabel = clampUtf16(sanitizePromptField(coerceNonEmpty(r.memberLabel)), maxIdChars);
         const teammateDescriptor = memberLabel ? `${memberLabel} (${memberId})` : memberId;
 
         return [
@@ -43,8 +40,9 @@ export function formatClaudeTeamRoutedPrompt(params: Readonly<{
     }
 
     if (r.kind === 'agent_team_broadcast') {
-        const teamId = clampUtf16(coerceNonEmpty(r.teamId), maxIdChars);
-        const teamConfigPath = `~/.claude/teams/${teamId}/config.json`;
+        const teamId = clampUtf16(sanitizePromptField(coerceNonEmpty(r.teamId)), maxIdChars);
+        const safeTeamConfigSegment = sanitizeClaudeTeamConfigPathSegment(teamId);
+        const teamConfigPath = `~/.claude/teams/${safeTeamConfigSegment}/config.json`;
         return [
             'You are the lead agent coordinating an Agent Team.',
             '',

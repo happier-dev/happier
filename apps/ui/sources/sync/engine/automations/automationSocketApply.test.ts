@@ -11,18 +11,23 @@ describe('automationSocketApply', () => {
         expect(isAutomationSocketUpdateType('new-session')).toBe(false);
     });
 
-    it('invalidates automations for automation update types only', () => {
+    it('prefers coalesced invalidation for automation update types only', () => {
         const invalidateAutomations = vi.fn();
+        const invalidateAutomationsCoalesced = vi.fn();
         expect(applyAutomationSocketUpdate({
             updateType: 'automation-upsert',
             invalidateAutomations,
+            invalidateAutomationsCoalesced,
         })).toBe(true);
-        expect(invalidateAutomations).toHaveBeenCalledTimes(1);
+        expect(invalidateAutomationsCoalesced).toHaveBeenCalledTimes(1);
+        expect(invalidateAutomations).not.toHaveBeenCalled();
 
         expect(applyAutomationSocketUpdate({
             updateType: 'update-session',
             invalidateAutomations,
+            invalidateAutomationsCoalesced,
         })).toBe(false);
-        expect(invalidateAutomations).toHaveBeenCalledTimes(1);
+        expect(invalidateAutomationsCoalesced).toHaveBeenCalledTimes(1);
+        expect(invalidateAutomations).not.toHaveBeenCalled();
     });
 });

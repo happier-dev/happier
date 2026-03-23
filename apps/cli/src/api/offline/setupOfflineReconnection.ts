@@ -12,7 +12,7 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { AgentState, Metadata, Session } from '@/api/types';
 import { configuration } from '@/configuration';
 import { createOfflineSessionStub } from '@/api/offline/offlineSessionStub';
-import { startOfflineReconnection } from '@/api/offline/serverConnectionErrors';
+import { connectionState, startOfflineReconnection } from '@/api/offline/serverConnectionErrors';
 
 /**
  * Options for setting up offline reconnection.
@@ -37,7 +37,7 @@ export interface SetupOfflineReconnectionOptions {
      * Callback invoked when session is swapped after reconnection.
      * Use this to update the session reference in the calling code.
      */
-    onSessionSwap: (newSession: ApiSessionClient) => void;
+    onSessionSwap: (newSession: ApiSessionClient) => void | Promise<void>;
 }
 
 /**
@@ -99,8 +99,13 @@ export function setupOfflineReconnection(opts: SetupOfflineReconnectionOptions):
                 const resp = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
                 if (!resp) throw new Error('Server unavailable');
                 const realSession = api.sessionSyncClient(resp);
+                connectionState.recover();
                 // Notify caller to swap the session reference
-                onSessionSwap(realSession);
+                try {
+                    void Promise.resolve(onSessionSwap(realSession)).catch(() => {});
+                } catch {
+                    // Swallow hook failures; reconnection should continue.
+                }
                 return realSession;
             },
             onNotify,

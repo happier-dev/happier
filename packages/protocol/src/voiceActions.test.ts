@@ -133,4 +133,113 @@ describe('extractVoiceActionsFromAssistantText', () => {
       { t: 'resetGlobalVoiceAgent', args: {} },
     ]);
   });
+
+  it('coerces numeric and boolean string args for voice actions', () => {
+    const input = [
+      'Let me check.',
+      '',
+      '<voice_actions>',
+      JSON.stringify({
+        actions: [
+          {
+            t: 'listSessions',
+            args: { limit: '10', includeLastMessagePreview: 'true' },
+          },
+        ],
+      }),
+      '</voice_actions>',
+    ].join('\n');
+
+    const result = extractVoiceActionsFromAssistantText(input);
+    expect(result.assistantText).toBe('Let me check.');
+    expect(result.actions).toEqual([
+      {
+        t: 'listSessions',
+        args: { limit: 10, includeLastMessagePreview: true },
+      },
+    ]);
+  });
+
+  it('coerces comma-separated string lists for text-list voice action args', () => {
+    const input = [
+      'Tracking them now.',
+      '',
+      '<voice_actions>',
+      JSON.stringify({
+        actions: [
+          {
+            t: 'setTrackedSessions',
+            args: { sessionIds: 's1, s2' },
+          },
+        ],
+      }),
+      '</voice_actions>',
+    ].join('\n');
+
+    const result = extractVoiceActionsFromAssistantText(input);
+    expect(result.assistantText).toBe('Tracking them now.');
+    expect(result.actions).toEqual([
+      {
+        t: 'setTrackedSessions',
+        args: { sessionIds: ['s1', 's2'] },
+      },
+    ]);
+  });
+
+  it('normalizes canonical action ids onto voice tool names', () => {
+    const input = [
+      'Starting the voice agent.',
+      '',
+      '<voice_actions>',
+      JSON.stringify({
+        actions: [
+          {
+            t: 'voice_agent.start',
+            args: {
+              sessionId: 's1',
+              backendTargetKeys: ['agent:claude'],
+              instructions: 'Start the voice assistant.',
+            },
+          },
+        ],
+      }),
+      '</voice_actions>',
+    ].join('\n');
+
+    const result = extractVoiceActionsFromAssistantText(input);
+    expect(result.assistantText).toBe('Starting the voice agent.');
+    expect(result.actions).toEqual([
+      {
+        t: 'startVoiceAgentRun',
+        args: {
+          sessionId: 's1',
+          backendTargetKeys: ['agent:claude'],
+          instructions: 'Start the voice assistant.',
+          permissionMode: 'read_only',
+          retentionPolicy: 'ephemeral',
+          runClass: 'long_lived',
+          ioMode: 'streaming',
+        },
+      },
+    ]);
+  });
+
+  it('keeps valid actions when one action has invalid args', () => {
+    const input = [
+      'Ok.',
+      '',
+      '<voice_actions>',
+      JSON.stringify({
+        actions: [
+          { t: 'sendSessionMessage', args: { message: 'Please continue.' } },
+          { t: 'listSessions', args: { limit: 'not-a-number' } },
+        ],
+      }),
+      '</voice_actions>',
+    ].join('\n');
+
+    const result = extractVoiceActionsFromAssistantText(input);
+    expect(result.assistantText).toBe('Ok.');
+    expect(result.actions).toEqual([{ t: 'sendSessionMessage', args: { message: 'Please continue.' } }]);
+  });
 });

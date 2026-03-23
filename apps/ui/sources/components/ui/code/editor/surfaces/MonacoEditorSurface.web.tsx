@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import type { CodeEditorProps } from '../codeEditorTypes';
 import { resolveMonacoLanguageId } from '../codeEditorTypes';
+import type { CodeEditorHandle } from '../codeEditorTypes';
 import { TextInput } from '@/components/ui/text/Text';
 import { useLocalSetting } from '@/sync/store/hooks';
 import { resolveCodeEditorFontMetrics } from '../codeEditorFontMetrics';
@@ -118,7 +119,10 @@ async function ensureMonaco(): Promise<MonacoType> {
     return window.monaco;
 }
 
-export function MonacoEditorSurface(props: CodeEditorProps) {
+export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditorProps>(function MonacoEditorSurface(
+    props,
+    ref,
+) {
     const { theme } = useUnistyles();
     const uiFontScale = useLocalSetting('uiFontScale');
     const fontMetrics = React.useMemo(
@@ -128,13 +132,99 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
     const containerRef = React.useRef<any>(null);
     const editorRef = React.useRef<any>(null);
     const modelRef = React.useRef<any>(null);
+    const changeDebounceMsRef = React.useRef<number>(typeof props.changeDebounceMs === 'number' ? props.changeDebounceMs : 250);
+    const onChangeRef = React.useRef(props.onChange);
     const ignoreChangeRef = React.useRef(false);
+    const latestValueRef = React.useRef(props.value);
+    const latestLanguageRef = React.useRef(resolveMonacoLanguageId(props.language));
+    const latestReadOnlyRef = React.useRef(props.readOnly ?? false);
+    const latestWrapLinesRef = React.useRef(props.wrapLines ?? true);
+    const latestShowLineNumbersRef = React.useRef(props.showLineNumbers ?? true);
+    const latestFontMetricsRef = React.useRef(resolveCodeEditorFontMetrics({ uiFontScale }));
+    const pendingChangeRef = React.useRef<string | null>(null);
+    const changeTimerRef = React.useRef<number | null>(null);
+    const disposablesRef = React.useRef<Array<{ dispose?: () => void }> | null>(null);
+
+    React.useEffect(() => {
+        changeDebounceMsRef.current = typeof props.changeDebounceMs === 'number' ? props.changeDebounceMs : 250;
+    }, [props.changeDebounceMs]);
+
+    React.useEffect(() => {
+        onChangeRef.current = props.onChange;
+    }, [props.onChange]);
+
+    React.useEffect(() => {
+        latestValueRef.current = props.value;
+    }, [props.value]);
 
     const [ready, setReady] = React.useState(false);
     const language = resolveMonacoLanguageId(props.language);
     const wrapLines = props.wrapLines ?? true;
     const showLineNumbers = props.showLineNumbers ?? true;
     const readOnly = props.readOnly ?? false;
+
+    React.useEffect(() => {
+        latestLanguageRef.current = language;
+    }, [language]);
+
+    React.useEffect(() => {
+        latestReadOnlyRef.current = readOnly;
+    }, [readOnly]);
+
+    React.useEffect(() => {
+        latestWrapLinesRef.current = wrapLines;
+    }, [wrapLines]);
+
+    React.useEffect(() => {
+        latestShowLineNumbersRef.current = showLineNumbers;
+    }, [showLineNumbers]);
+
+    React.useEffect(() => {
+        latestFontMetricsRef.current = fontMetrics;
+    }, [fontMetrics]);
+
+    const flushPendingChange = React.useCallback(() => {
+        if (changeTimerRef.current != null) {
+            clearTimeout(changeTimerRef.current);
+            changeTimerRef.current = null;
+        }
+        if (pendingChangeRef.current == null) return;
+        const next = pendingChangeRef.current;
+        pendingChangeRef.current = null;
+        onChangeRef.current(next);
+    }, []);
+
+    const scheduleChange = React.useCallback((next: string) => {
+        pendingChangeRef.current = next;
+        const debounceMs = changeDebounceMsRef.current;
+        if (debounceMs <= 0) {
+            flushPendingChange();
+            return;
+        }
+        if (changeTimerRef.current != null) {
+            clearTimeout(changeTimerRef.current);
+        }
+        changeTimerRef.current = setTimeout(() => {
+            flushPendingChange();
+        }, debounceMs);
+    }, [flushPendingChange]);
+
+    React.useImperativeHandle(
+        ref,
+        () => ({
+            getValue: () => {
+                try {
+                    return modelRef.current?.getValue?.() ?? latestValueRef.current;
+                } catch {
+                    return latestValueRef.current;
+                }
+            },
+            flushPendingChange: async () => {
+                flushPendingChange();
+            },
+        }),
+        [flushPendingChange],
+    );
 
     React.useEffect(() => {
         let cancelled = false;
@@ -146,18 +236,24 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
                 const node = containerRef.current as HTMLElement | null;
                 if (!node) return;
 
-                const model = monaco.editor.createModel(props.value, language);
+                const initialFontMetrics = latestFontMetricsRef.current;
+                const initialWrapLines = latestWrapLinesRef.current;
+                const initialShowLineNumbers = latestShowLineNumbersRef.current;
+                const initialReadOnly = latestReadOnlyRef.current;
+                const initialLanguage = latestLanguageRef.current;
+
+                const model = monaco.editor.createModel(latestValueRef.current, initialLanguage);
                 modelRef.current = model;
 
                 const editor = monaco.editor.create(node, {
                     model,
-                    readOnly,
+                    readOnly: initialReadOnly,
                     minimap: { enabled: false },
                     scrollBeyondLastLine: false,
-                    wordWrap: wrapLines ? 'on' : 'off',
-                    lineNumbers: showLineNumbers ? 'on' : 'off',
-                    fontSize: fontMetrics.fontSize,
-                    lineHeight: fontMetrics.lineHeight,
+                    wordWrap: initialWrapLines ? 'on' : 'off',
+                    lineNumbers: initialShowLineNumbers ? 'on' : 'off',
+                    fontSize: initialFontMetrics.fontSize,
+                    lineHeight: initialFontMetrics.lineHeight,
                     fontFamily:
                         'Menlo, ui-monospace, SFMono-Regular, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                     tabSize: 2,
@@ -167,11 +263,16 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
                 });
                 editorRef.current = editor;
 
-                editor.onDidChangeModelContent(() => {
+                disposablesRef.current = [
+                    editor.onDidChangeModelContent(() => {
                     if (ignoreChangeRef.current) return;
                     const next = model.getValue();
-                    props.onChange(next);
-                });
+                    scheduleChange(next);
+                    }),
+                    editor.onDidBlurEditorText(() => {
+                        flushPendingChange();
+                    }),
+                ];
 
                 setReady(true);
             } catch {
@@ -185,11 +286,24 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
         return () => {
             cancelled = true;
             try {
+                flushPendingChange();
+            } catch {}
+            try {
+                disposablesRef.current?.forEach((item) => item?.dispose?.());
+            } catch {}
+            try {
                 editorRef.current?.dispose?.();
             } catch {}
             try {
                 modelRef.current?.dispose?.();
             } catch {}
+            try {
+                if (changeTimerRef.current != null) {
+                    clearTimeout(changeTimerRef.current);
+                    changeTimerRef.current = null;
+                }
+            } catch {}
+            disposablesRef.current = null;
             editorRef.current = null;
             modelRef.current = null;
         };
@@ -203,11 +317,25 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
             editor.updateOptions({
                 fontSize: fontMetrics.fontSize,
                 lineHeight: fontMetrics.lineHeight,
+                readOnly,
+                wordWrap: wrapLines ? 'on' : 'off',
+                lineNumbers: showLineNumbers ? 'on' : 'off',
             });
         } catch {
             // ignore
         }
-    }, [fontMetrics.fontSize, fontMetrics.lineHeight]);
+    }, [fontMetrics.fontSize, fontMetrics.lineHeight, readOnly, showLineNumbers, wrapLines]);
+
+    React.useEffect(() => {
+        const model = modelRef.current;
+        const monaco = window.monaco;
+        if (!model || !monaco?.editor?.setModelLanguage) return;
+        try {
+            monaco.editor.setModelLanguage(model, language);
+        } catch {
+            // ignore
+        }
+    }, [language]);
 
     // Keep the Monaco model in sync when props.value changes externally.
     React.useEffect(() => {
@@ -231,34 +359,33 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
         overflow: 'hidden' as const,
     };
 
-    if (!ready) {
-        return (
-            <View style={borderStyle}>
-                <TextInput
-                    value={props.value}
-                    onChangeText={props.onChange}
-                    editable={!readOnly}
-                    multiline
-                    disableUiFontScaling
-                    style={{
-                        flex: 1,
-                        padding: 10,
-                        color: theme.colors.text,
-                        backgroundColor: theme.colors.surfaceHighest,
-                        fontFamily:
-                            'Menlo, ui-monospace, SFMono-Regular, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                        fontSize: fontMetrics.fontSize,
-                        lineHeight: fontMetrics.lineHeight,
-                    }}
-                />
-            </View>
-        );
-    }
-
-    // Monaco mounts into a DOM node; RN web renders View to a div.
+    // Monaco mounts into a DOM node; RN web renders View to a div. The container must be rendered
+    // even while Monaco is loading, otherwise `containerRef.current` never materializes and Monaco
+    // cannot boot (leaving the editor stuck on the fallback textarea).
     return (
         <View style={borderStyle}>
-            <View ref={containerRef} style={{ flex: 1 }} />
+            <View testID={props.testID} ref={containerRef} style={{ flex: 1 }} />
+            {ready ? null : (
+                <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
+                    <TextInput
+                        value={props.value}
+                        onChangeText={props.onChange}
+                        editable={!readOnly}
+                        multiline
+                        disableUiFontScaling
+                        style={{
+                            flex: 1,
+                            padding: 10,
+                            color: theme.colors.text,
+                            backgroundColor: theme.colors.surfaceHighest,
+                            fontFamily:
+                                'Menlo, ui-monospace, SFMono-Regular, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                            fontSize: fontMetrics.fontSize,
+                            lineHeight: fontMetrics.lineHeight,
+                        }}
+                    />
+                </View>
+            )}
         </View>
     );
-}
+});

@@ -6,7 +6,7 @@ describe('CLAUDE_CORE install banner', () => {
     it('does not suggest npm installation (deprecated upstream)', () => {
         expect(CLAUDE_CORE.cli.installBanner.installKind).toBe('ifAvailable');
         expect(CLAUDE_CORE.cli.installBanner.installCommand).toBeUndefined();
-        expect(CLAUDE_CORE.cli.installBanner.guideUrl).toMatch(/docs\.anthropic\.com\/en\/docs\/claude-code\/getting-started/);
+        expect(CLAUDE_CORE.cli.installBanner.guideUrl).toBe('https://code.claude.com/docs/en/setup');
     });
 
     it('keeps core identity and resume contracts stable', () => {

@@ -11,7 +11,7 @@ import { openBrowser } from '@/ui/openBrowser';
 import type { CloudConnectAuthenticateOptions } from '@/cloud/connectTypes';
 import { startOauthPkceWithPasteFallback } from '@/cloud/oauthPkceWithPasteFallback';
 import { promptInput } from '@/terminal/prompts/promptInput';
-import { resolveGeminiOauthClientId, resolveGeminiOauthClientSecret, resolveGeminiOauthTokenUrl } from '@/backends/connectedServices/oauthConfig';
+import { resolveGeminiOauthClientId, resolveGeminiOauthClientSecret, resolveGeminiOauthTokenUrl } from '@/daemon/connectedServices/shared/oauthConfig';
 
 export interface GeminiAuthTokens {
     access_token: string;

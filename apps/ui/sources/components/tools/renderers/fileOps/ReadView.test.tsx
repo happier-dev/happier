@@ -1,9 +1,12 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
 import { makeCompletedTool, normalizedHostText } from '../core/truncationView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeWithProps } from '@/dev/testkit/render/renderScreen';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,14 +22,10 @@ describe('ReadView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { ReadView } = await import('./ReadView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     ReadView,
                     makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ),
-            );
-        });
+                ))).tree;
         return tree;
     }
 
@@ -36,11 +35,12 @@ describe('ReadView', () => {
             makeCompletedTool('Read', { file_path: '/tmp/a.txt' }, { content }),
         );
 
-        const codeNodes = tree.root.findAllByType('CodeView' as any);
-        expect(codeNodes).toHaveLength(1);
-        expect(codeNodes[0].props.code).toContain('line-0');
-        expect(codeNodes[0].props.code).toContain('line-19');
-        expect(codeNodes[0].props.code).not.toContain('line-20');
+        const codeNode = findTestInstanceByTypeWithProps(tree, 'CodeView' as any, {});
+        expect(codeNode).toBeTruthy();
+        if (!codeNode) throw new Error('CodeView not found');
+        expect(codeNode.props.code).toContain('line-0');
+        expect(codeNode.props.code).toContain('line-19');
+        expect(codeNode.props.code).not.toContain('line-20');
 
         // Ellipsis marker should be shown when truncated.
         expect(normalizedHostText(tree)).toContain('…');
@@ -53,11 +53,12 @@ describe('ReadView', () => {
             'full',
         );
 
-        const codeNodes = tree.root.findAllByType('CodeView' as any);
-        expect(codeNodes).toHaveLength(1);
-        expect(codeNodes[0].props.code).toContain('line-0');
-        expect(codeNodes[0].props.code).toContain('line-99');
-        expect(codeNodes[0].props.code).not.toContain('…');
+        const codeNode = findTestInstanceByTypeWithProps(tree, 'CodeView' as any, {});
+        expect(codeNode).toBeTruthy();
+        if (!codeNode) throw new Error('CodeView not found');
+        expect(codeNode.props.code).toContain('line-0');
+        expect(codeNode.props.code).toContain('line-99');
+        expect(codeNode.props.code).not.toContain('…');
 
         expect(normalizedHostText(tree)).not.toContain('…');
     });
@@ -66,12 +67,14 @@ describe('ReadView', () => {
         const stringTree = await renderView(
             makeCompletedTool('Read', { file_path: '/tmp/a.txt' }, 'direct string result'),
         );
-        expect(stringTree.root.findAllByType('CodeView' as any)).toHaveLength(1);
-        expect(stringTree.root.findAllByType('CodeView' as any)[0].props.code).toContain('direct string result');
+        const stringCodeNode = findTestInstanceByTypeWithProps(stringTree, 'CodeView' as any, {});
+        expect(stringCodeNode).toBeTruthy();
+        if (!stringCodeNode) throw new Error('CodeView not found');
+        expect(stringCodeNode.props.code).toContain('direct string result');
 
         const malformedTree = await renderView(
             makeCompletedTool('Read', { file_path: '/tmp/a.txt' }, { content: 123 }),
         );
-        expect(malformedTree.root.findAllByType('CodeView' as any)).toHaveLength(0);
+        expect(findTestInstanceByTypeWithProps(malformedTree, 'CodeView' as any, {})).toBeUndefined();
     });
 });

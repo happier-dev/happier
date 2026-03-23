@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createDbMocks, installDbModuleMock } from "../testkit/dbMocks";
 import { createInTxHarness } from "../testkit/txHarness";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
@@ -35,25 +36,16 @@ vi.mock("@/app/presence/sessionCache", () => ({
     },
 }));
 
-vi.mock("@/storage/db", () => ({ db: {} }));
-
 let machineRevokedAt: Date | null = null;
-const txMachineUpdateMany = vi.fn(async () => ({ count: 1 }));
+const txDbMocks = createDbMocks({
+    machine: ["findFirst", "updateMany"],
+} as const);
+
+installDbModuleMock(() => ({ db: txDbMocks.db }));
 
 vi.mock("@/storage/inTx", () => {
     const { inTx, afterTx } = createInTxHarness(() => ({
-            machine: {
-                findFirst: async (args: any) => {
-                    if (args?.select?.metadataVersion) {
-                        return { metadataVersion: 1, metadata: "old-meta", revokedAt: machineRevokedAt };
-                    }
-                    if (args?.select?.daemonStateVersion) {
-                        return { daemonStateVersion: 2, daemonState: "old-state", revokedAt: machineRevokedAt };
-                    }
-                    return null;
-                },
-                updateMany: txMachineUpdateMany,
-            },
+            machine: txDbMocks.db.machine,
     }));
 
     return { afterTx, inTx };
@@ -63,6 +55,17 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         machineRevokedAt = null;
+        txDbMocks.reset();
+        txDbMocks.db.machine.findFirst.mockImplementation(async (args: any) => {
+            if (args?.select?.metadataVersion) {
+                return { metadataVersion: 1, metadata: "old-meta", revokedAt: machineRevokedAt };
+            }
+            if (args?.select?.daemonStateVersion) {
+                return { daemonStateVersion: 2, daemonState: "old-state", revokedAt: machineRevokedAt };
+            }
+            return null;
+        });
+        txDbMocks.db.machine.updateMany.mockResolvedValue({ count: 1 });
     });
 
     it("marks machine metadata changes and emits updates using the returned cursor", async () => {
@@ -131,7 +134,7 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         const callback = vi.fn();
         await handler({ machineId: "m1", metadata: "new-meta", expectedVersion: 1 }, callback);
 
-        expect(txMachineUpdateMany).not.toHaveBeenCalled();
+        expect(txDbMocks.db.machine.updateMany).not.toHaveBeenCalled();
         expect(markAccountChanged).not.toHaveBeenCalled();
         expect(emitUpdate).not.toHaveBeenCalled();
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: "error" }));

@@ -1,0 +1,296 @@
+---
+title: Synced and direct sessions
+description: Browse provider sessions, open them directly in Happier, and decide when to keep them direct or sync them into Happier.
+---
+
+Happier supports two user-facing session modes:
+
+- **Synced**: the session is managed by Happier and available across your devices
+- **Direct**: the session stays linked to the provider on a specific machine
+
+This page explains how to choose between them, how provider-session browsing works, and when to use **Take over** vs **Take over + Sync**.
+
+## The difference in one sentence
+
+- **Synced** sessions use Happier as the source of truth.
+- **Direct** sessions use the provider on your machine as the source of truth.
+
+That distinction matters more than “is this session saved somewhere?” because both modes can have durable history.
+
+## Synced sessions
+
+Use **Synced** when you want Happier to own the session experience.
+
+Synced sessions are best when you want:
+
+- the same session visible across devices
+- Happier-native resume and sharing workflows
+- a session that keeps working even after it stops being a provider-only session
+- Happier-managed metadata, controls, and long-term continuity
+
+In practice:
+
+- new messages are committed into Happier
+- Happier becomes the canonical transcript for the session
+- the session behaves like the rest of your normal Happier session list
+
+## Direct sessions
+
+Use **Direct** when you want to work with an existing provider session without importing it into Happier first.
+
+Direct sessions are best when you want:
+
+- to browse sessions that already exist in Codex, Claude, or OpenCode
+- to follow a running provider session from Happier
+- to open a provider session without duplicating its transcript into Happier
+- to keep the provider’s own logs or server state as the canonical source of truth
+
+In practice:
+
+- Happier links to the provider session
+- the transcript is read from the provider on the target machine
+- the session is **machine-bound**
+- if that machine goes offline, the direct session is unavailable until it comes back
+
+## How to browse provider sessions
+
+When the **Direct sessions** experimental feature is enabled:
+
+1. Open the **Direct** tab in the session list
+2. Choose **Browse provider sessions**
+3. Select:
+   - a machine
+   - a provider
+   - a source (for example your user home or a connected-service-backed source)
+4. Search or scan the available provider sessions
+5. Open the session you want
+
+The browse modal shows:
+
+- provider session title when Happier can extract one
+- relative activity time
+- full path/context when available
+- activity state such as **Running**, **Recent**, or **Idle**
+
+## What “listing provider sessions” actually means
+
+Happier does not invent those sessions.
+
+Instead, it reads the provider’s own session store on the selected machine:
+
+- **Codex**: provider homes and rollout/session files
+- **Claude**: provider project/session logs
+- **OpenCode**: the OpenCode server’s own session APIs and events
+
+That is why direct sessions are useful for:
+
+- sessions started outside Happier
+- sessions started locally in a terminal
+- provider histories you want to inspect before deciding whether to sync them
+
+## Starting a new session: Synced or Direct
+
+The new-session screen now lets you choose the storage mode for supported providers.
+
+- Choose **Synced** when you want a normal Happier-native session from the start
+- Choose **Direct** when you want the provider session to stay provider-backed from the start
+
+The chip is available only when:
+
+- the provider supports direct sessions in Happier
+- the `sessions.direct` feature is enabled
+
+Direct support currently focuses on providers where Happier can reliably browse and follow provider-native sessions.
+
+## Take over vs Take over + Sync
+
+When you open a direct session, Happier can offer two control paths:
+
+### Take over
+
+Choose **Take over** when you want to control the session from Happier but keep it **Direct**.
+
+This means:
+
+- Happier takes control of the provider session
+- the provider transcript remains the source of truth
+- the session stays machine-bound
+
+### Take over + Sync
+
+Choose **Take over + Sync** when you want to convert the workflow into a Happier-managed session.
+
+This means:
+
+- Happier imports the transcript from the provider
+- the session switches into the **Synced** mode
+- Happier becomes the canonical transcript going forward
+
+Use this when you want long-term Happier continuity instead of a provider-linked session.
+
+## Common workflows
+
+### I started a Codex or Claude session outside Happier and want to monitor it
+
+Use **Browse provider sessions** → open it as **Direct**.
+
+This is the lowest-friction path because Happier does not need to import the transcript first.
+
+### I want to continue working from my phone or another device
+
+If the session should remain provider-backed and the machine stays online, keep it **Direct**.
+
+If you want Happier to own the session moving forward, use **Take over + Sync**.
+
+### I only want to inspect the transcript
+
+Open it as **Direct**.
+
+This is useful when you want visibility without changing the session’s ownership model.
+
+### I want a session that feels fully native to Happier
+
+Start it as **Synced**, or open it direct first and then use **Take over + Sync**.
+
+## Handing off direct sessions between machines
+
+Direct sessions can also participate in **session handoff** when the provider supports it.
+
+When you hand off a direct session, Happier lets you choose one of two target modes:
+
+- **Keep direct**
+- **Convert to synced**
+
+### Keep direct
+
+Choose **Keep direct** when you want the target machine to keep following the provider-backed session.
+
+This is the right choice when:
+
+- you still want the provider to remain the source of truth
+- the provider supports direct handoff for that session
+- you mainly want to move ownership to a different machine
+
+### Convert to synced
+
+Choose **Convert to synced** when you want to stop treating the provider session as the canonical source of truth.
+
+This is the right choice when:
+
+- you started from a provider-native session
+- you now want Happier to own the session moving forward
+- you want future continuity to behave like a normal synced Happier session
+
+For the full cross-machine workflow, see [Session handoff](./session-handoff).
+
+## What happens when the machine is offline
+
+For **Direct** sessions:
+
+- the transcript cannot be refreshed
+- live follow/tail stops
+- takeover is unavailable until the machine reconnects
+
+For **Synced** sessions:
+
+- Happier still has the synced transcript
+- the session remains visible in Happier as a normal synced session
+
+## Subagents in direct sessions
+
+Direct sessions support two different agent states in the UI:
+
+- **observe-only** direct sessions
+- **locally controlled** direct sessions
+
+This matters for the Agents surface.
+
+### Observe-only direct sessions
+
+When Happier is only following the provider session and the local runner is not active yet:
+
+- the session can still show agent transcripts and agent history
+- provider-backed side work can still be visible
+- Subagent launch/send/stop controls stay unavailable
+
+This avoids showing controls that cannot actually be honored from Happier yet.
+
+### Locally controlled direct sessions
+
+Once the direct session is locally controlled again, the full Happier control surface can come back:
+
+- Subagent launch
+- steering/send
+- stop/cancel actions
+
+### Inactive but resumable synced sessions
+
+This is different from a linked direct session.
+
+For an inactive synced session that is still resumable and whose machine is reachable, Happier can resume the session first and then start a Subagent from the Agents surface.
+
+## Titles, activity states, and provider-specific detail
+
+Happier tries to show provider sessions with a useful title instead of a raw provider id.
+
+Depending on the provider and session contents, Happier may show:
+
+- an extracted session title
+- the first meaningful prompt/content line
+- path/context information
+- a fallback id when no better title exists
+
+Activity state is provider-dependent:
+
+- **Running** means Happier has a strong signal that the provider session is active
+- **Recent** usually means recent provider activity was detected
+- **Idle** means the session exists but does not appear active now
+
+The quality of that signal depends on what the provider exposes.
+
+## Provider notes
+
+### Codex
+
+- Direct browsing can include your normal Codex home plus supported connected-service-backed homes
+- Happier can follow provider-backed Codex transcripts directly
+- direct sessions are useful for sessions created outside Happier
+
+See also: [Codex](/docs/providers/codex)
+
+### Claude
+
+- Happier can browse and open Claude provider sessions directly from the machine that owns them
+- titles and transcript continuity depend on what the Claude session logs expose
+
+See also: [Claude](/docs/providers/claude)
+
+### OpenCode
+
+- Happier can browse server-backed OpenCode sessions directly
+- direct control is especially natural when the OpenCode server is already the source of truth
+
+See also: [OpenCode](/docs/providers/opencode)
+
+## Privacy and storage model
+
+The important mental model is:
+
+- **Synced** = transcript managed by Happier
+- **Direct** = transcript managed by the provider on the machine
+
+Direct sessions are not the same as “unsaved”.
+They simply are not synced into Happier until you explicitly choose **Take over + Sync**.
+
+## Related guides
+
+- [Session handoff](./session-handoff)
+- [Resume inactive sessions](./session-resume)
+- [Browse and import provider sessions](./browse-and-import-sessions)
+- [Connected services](./connected-services)
+- [Profiles](./profiles)
+- [Permissions](./permissions)
+- [Feature matrix](./feature-matrix)
+- [Codex](../providers/codex)
+- [Claude](../providers/claude)
+- [OpenCode](../providers/opencode)

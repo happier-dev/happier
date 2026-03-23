@@ -10,11 +10,13 @@ import { maybeUpdateAuggieSessionIdMetadata } from '@/backends/auggie/utils/augg
 
 export function createAuggieAcpRuntime(params: {
   directory: string;
+  machineId: string;
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  memoryRecallGuidanceEnabled?: boolean;
   allowIndexing: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
@@ -29,6 +31,10 @@ export function createAuggieAcpRuntime(params: {
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    memoryRecallGuidance: {
+      enabled: params.memoryRecallGuidanceEnabled === true,
+      machineId: params.machineId,
+    },
     getPermissionMode: params.getPermissionMode,
     backendOptions: {
       allowIndexing: params.allowIndexing,

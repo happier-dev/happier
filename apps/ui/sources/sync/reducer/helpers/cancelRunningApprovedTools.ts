@@ -45,7 +45,7 @@ export function cancelRunningApprovedTools(params: Readonly<{
     if (preferredToolId) {
         const preferredMessageId = state.toolIdToMessageId.get(preferredToolId);
         if (
-            preferredMessageId &&
+            preferredMessageId != null &&
             cancelRunningApprovedTool(state, changed, preferredMessageId, completedAt, reason)
         ) {
             return 1;
@@ -73,7 +73,7 @@ export function cancelRunningTools(params: Readonly<{
     if (preferredToolId) {
         const preferredMessageId = state.toolIdToMessageId.get(preferredToolId);
         if (
-            preferredMessageId &&
+            preferredMessageId != null &&
             cancelRunningApprovedTool(state, changed, preferredMessageId, completedAt, reason, { requireApprovedPermission: false })
         ) {
             return 1;

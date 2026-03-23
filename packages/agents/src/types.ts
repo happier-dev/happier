@@ -1,7 +1,8 @@
 export type { ConnectedServiceId } from '@happier-dev/protocol';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { AnyAgentRuntimeKindsManifest } from './runtimeKinds.js';
 
-export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'pi', 'copilot'] as const;
+export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'customAcp', 'pi', 'copilot'] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 
 export const PERMISSION_MODES = [
@@ -34,7 +35,26 @@ export const PERMISSION_INTENTS = [
 export type PermissionIntent = (typeof PERMISSION_INTENTS)[number];
 
 export type VendorResumeSupportLevel = 'supported' | 'unsupported' | 'experimental';
-export type ResumeRuntimeGate = 'acpLoadSession' | null;
+export type VendorHandoffSupportLevel = 'supported' | 'unsupported' | 'experimental';
+export type AgentToolsDelivery = 'native_mcp' | 'shell_bridge' | 'unsupported';
+export type AgentToolsSupportLevel = 'supported' | 'experimental' | 'unsupported';
+export type AgentLocalControlTopology = 'exclusive' | 'shared';
+export type AgentLocalControlAttachStrategy = 'tmux' | 'provider_attach' | 'unsupported';
+export type AgentSessionStorage = Readonly<{
+    direct: boolean;
+    persisted: boolean;
+}>;
+export type AgentSessionCapabilitySupportLevel = 'supported' | 'unsupported' | 'experimental';
+export type AgentSessionCapabilities = Readonly<{
+    sessionListing: AgentSessionCapabilitySupportLevel;
+    sessionFork: Readonly<{
+        conversation: AgentSessionCapabilitySupportLevel;
+        fromMessage: AgentSessionCapabilitySupportLevel;
+    }>;
+    sessionRollback: Readonly<{
+        conversation: AgentSessionCapabilitySupportLevel;
+    }>;
+}>;
 
 export type VendorResumeIdField =
     | 'claudeSessionId'
@@ -45,6 +65,7 @@ export type VendorResumeIdField =
     | 'qwenSessionId'
     | 'kimiSessionId'
     | 'kiloSessionId'
+    | 'kiroSessionId'
     | 'piSessionId'
     | 'copilotSessionId';
 
@@ -52,6 +73,36 @@ export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';
 
 export type ConnectedServiceKind = 'oauth' | 'token';
+
+export type AgentResumeConfig = Readonly<{
+    vendorResume: VendorResumeSupportLevel;
+    vendorResumeIdField?: VendorResumeIdField | null;
+}>;
+
+export type AgentHandoffConfig = Readonly<{
+    vendorStateTransfer: VendorHandoffSupportLevel;
+    requiresExplicitSessionId?: boolean;
+}>;
+
+export type AgentLocalControlConfig = Readonly<{
+    supported: boolean;
+    topology?: AgentLocalControlTopology;
+    attachStrategy?: AgentLocalControlAttachStrategy;
+}>;
+
+export type AgentToolsConfig = Readonly<{
+    delivery: AgentToolsDelivery;
+    support: AgentToolsSupportLevel;
+}>;
+
+export type AgentCoreRuntimeControlSurface = Readonly<{
+    resume: AgentResumeConfig;
+    sessionStorage: AgentSessionStorage;
+    sessionCapabilities: AgentSessionCapabilities;
+    handoff: AgentHandoffConfig;
+    localControl?: AgentLocalControlConfig | null;
+    tools: AgentToolsConfig;
+}>;
 
 export type AgentCore = Readonly<{
     id: AgentId;
@@ -64,7 +115,7 @@ export type AgentCore = Readonly<{
      * CLI binary name used for local detection (e.g. `command -v <detectKey>`).
      * For now this matches the canonical id.
      */
-    detectKey: AgentId;
+    detectKey: string;
     /**
      * Optional alternative flavors that should resolve to this agent id.
      *
@@ -93,25 +144,5 @@ export type AgentCore = Readonly<{
        */
       supportedKindsByServiceId?: Readonly<Partial<Record<ConnectedServiceId, ReadonlyArray<ConnectedServiceKind>>>>;
     }> | null;
-    resume: Readonly<{
-        /**
-         * Whether vendor-resume is supported in principle.
-         *
-         * - supported: generally supported and expected to work
-         * - experimental: supported but intentionally gated/opt-in
-         * - unsupported: not available at all
-         */
-        vendorResume: VendorResumeSupportLevel;
-        /**
-         * Optional metadata field name used to persist the vendor resume id.
-         *
-         * This lets UI + CLI agree on which metadata key to read/write without
-         * duplicating strings.
-         */
-        vendorResumeIdField?: VendorResumeIdField | null;
-        /**
-         * Optional runtime gate used by apps to enable resume dynamically per machine.
-         */
-        runtimeGate: ResumeRuntimeGate;
-    }>;
-}>;
+    runtimeKinds?: AnyAgentRuntimeKindsManifest | null;
+}> & AgentCoreRuntimeControlSurface;

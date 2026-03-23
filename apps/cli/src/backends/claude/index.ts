@@ -9,8 +9,10 @@ export const agent = {
   getCliCommandHandler: async () => (await import('@/backends/claude/cli/command')).handleClaudeCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/claude/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/claude/cli/detect')).cliDetect,
+  getCliAuthSpec: async () => (await import('@/backends/claude/cli/auth/claudeCliAuthSpec')).claudeCliAuthSpec,
   getCloudConnectTarget: async () => (await import('@/backends/claude/cloud/connect')).claudeCloudConnect,
   getDaemonSpawnHooks: async () => claudeDaemonSpawnHooks,
+  getDirectSessionProviderOps: async () => (await import('@/backends/claude/directSessions/providerOps')).claudeDirectSessionProviderOps,
   vendorResumeSupport: AGENTS_CORE.claude.resume.vendorResume,
   getHeadlessTmuxArgvTransform: async () => (await import('@/terminal/tmux/headlessTmuxArgs')).ensureRemoteStartingModeArgs,
 } satisfies AgentCatalogEntry;

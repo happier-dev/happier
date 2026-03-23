@@ -1,5 +1,12 @@
 import { z } from 'zod';
 import { VoiceAssistantActionSchema } from './voiceActions.js';
+import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
+import {
+  ExecutionRunListRequestSchema as ExecutionRunListRequestSchemaBase,
+  ExecutionRunStatusSchema as ExecutionRunStatusSchemaBase,
+} from './executionRunListRequest.js';
+import { HappierReplayStrategySchema } from './sessionContinueWithReplay.js';
+import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
 
 /**
  * Public contract for execution runs (sub-agents / reviews / planning / delegation / voice agent).
@@ -33,15 +40,10 @@ export const ExecutionRunTransportErrorCodeSchema = z.enum([
   'permission_denied',
 ]);
 export type ExecutionRunTransportErrorCode = z.infer<typeof ExecutionRunTransportErrorCodeSchema>;
-
-export const ExecutionRunStatusSchema = z.enum([
-  'running',
-  'succeeded',
-  'failed',
-  'cancelled',
-  'timeout',
-]);
+export const ExecutionRunStatusSchema = ExecutionRunStatusSchemaBase;
 export type ExecutionRunStatus = z.infer<typeof ExecutionRunStatusSchema>;
+export const ExecutionRunListRequestSchema = ExecutionRunListRequestSchemaBase;
+export type ExecutionRunListRequest = z.infer<typeof ExecutionRunListRequestSchema>;
 
 export const ExecutionRunErrorSchema = z.object({
   code: z.string().min(1),
@@ -58,26 +60,65 @@ export type ExecutionRunClass = z.infer<typeof ExecutionRunClassSchema>;
 export const ExecutionRunIoModeSchema = z.enum(['request_response', 'streaming']);
 export type ExecutionRunIoMode = z.infer<typeof ExecutionRunIoModeSchema>;
 
-export const ExecutionRunResumeHandleVendorSessionV1Schema = z.object({
+export function normalizeLegacyExecutionRunBackendTargetInput(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.backendTarget !== undefined) {
+    return value;
+  }
+  const legacyBackendId = typeof record.backendId === 'string' ? record.backendId.trim() : '';
+  if (!legacyBackendId) {
+    return value;
+  }
+  return {
+    ...record,
+    backendTarget: {
+      kind: 'builtInAgent',
+      agentId: legacyBackendId,
+    },
+  };
+}
+
+const ExecutionRunResumeHandleVendorSessionV1SchemaCore = z.object({
   kind: z.literal('vendor_session.v1'),
-  backendId: z.string().min(1),
+  backendTarget: BackendTargetRefSchema,
   vendorSessionId: z.string().min(1),
 }).passthrough();
+export const ExecutionRunResumeHandleVendorSessionV1Schema = z.preprocess(
+  normalizeLegacyExecutionRunBackendTargetInput,
+  ExecutionRunResumeHandleVendorSessionV1SchemaCore,
+);
 export type ExecutionRunResumeHandleVendorSessionV1 = z.infer<typeof ExecutionRunResumeHandleVendorSessionV1Schema>;
 
-export const ExecutionRunResumeHandleVoiceAgentSessionsV1Schema = z.object({
+const ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore = z.object({
   kind: z.literal('voice_agent_sessions.v1'),
-  backendId: z.string().min(1),
+  backendTarget: BackendTargetRefSchema,
   chatVendorSessionId: z.string().min(1),
   commitVendorSessionId: z.string().min(1),
 }).passthrough();
+export const ExecutionRunResumeHandleVoiceAgentSessionsV1Schema = z.preprocess(
+  normalizeLegacyExecutionRunBackendTargetInput,
+  ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore,
+);
 export type ExecutionRunResumeHandleVoiceAgentSessionsV1 = z.infer<typeof ExecutionRunResumeHandleVoiceAgentSessionsV1Schema>;
 
-export const ExecutionRunResumeHandleSchema = z.discriminatedUnion('kind', [
-  ExecutionRunResumeHandleVendorSessionV1Schema,
-  ExecutionRunResumeHandleVoiceAgentSessionsV1Schema,
+const ExecutionRunResumeHandleSchemaCore = z.discriminatedUnion('kind', [
+  ExecutionRunResumeHandleVendorSessionV1SchemaCore,
+  ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore,
 ]);
+export const ExecutionRunResumeHandleSchema = z.preprocess(
+  normalizeLegacyExecutionRunBackendTargetInput,
+  ExecutionRunResumeHandleSchemaCore,
+);
 export type ExecutionRunResumeHandle = z.infer<typeof ExecutionRunResumeHandleSchema>;
+
+export const ExecutionRunTranscriptSchema = z.object({
+  persistenceMode: z.enum(['ephemeral', 'persistent']),
+  epoch: z.number().int().min(0),
+}).passthrough();
+export type ExecutionRunTranscript = z.infer<typeof ExecutionRunTranscriptSchema>;
 
 export const ExecutionRunDisplaySchema = z.object({
   /**
@@ -100,7 +141,7 @@ export const ExecutionRunPublicStateSchema = z.object({
   callId: z.string().min(1),
   sidechainId: z.string().min(1),
   intent: ExecutionRunIntentSchema,
-  backendId: z.string().min(1),
+  backendTarget: BackendTargetRefSchema,
   display: ExecutionRunDisplaySchema.optional(),
   // Policy/class fields are required for client surfaces (e.g. to decide if send/resume controls apply).
   permissionMode: z.string().min(1),
@@ -108,23 +149,41 @@ export const ExecutionRunPublicStateSchema = z.object({
   runClass: ExecutionRunClassSchema,
   ioMode: ExecutionRunIoModeSchema,
   status: ExecutionRunStatusSchema,
+  turnInFlight: z.boolean().optional(),
+  availableActionIds: z.array(z.string().min(1)).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.optional(),
+  transcript: ExecutionRunTranscriptSchema.optional(),
   startedAtMs: z.number().int().nonnegative(),
   finishedAtMs: z.number().int().nonnegative().optional(),
   error: ExecutionRunErrorSchema.optional(),
 }).passthrough();
 export type ExecutionRunPublicState = z.infer<typeof ExecutionRunPublicStateSchema>;
 
+export const ExecutionRunReplaySeedRequestSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('voice_session.v1'),
+    previousSessionId: z.string().min(1),
+    transcriptEpoch: z.number().int().min(0),
+    strategy: HappierReplayStrategySchema.optional(),
+    recentMessagesCount: z.number().int().min(1).max(500).optional(),
+    maxSeedChars: z.number().int().min(200).max(200_000).optional(),
+    summaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
+  }).strict(),
+]);
+export type ExecutionRunReplaySeedRequest = z.infer<typeof ExecutionRunReplaySeedRequestSchema>;
+
 export const ExecutionRunStartRequestSchema = z.object({
   intent: ExecutionRunIntentSchema,
-  backendId: z.string().min(1),
+  backendTarget: BackendTargetRefSchema,
   instructions: z.string().optional(),
   display: ExecutionRunDisplaySchema.optional(),
   permissionMode: z.string().min(1),
   retentionPolicy: ExecutionRunRetentionPolicySchema,
   runClass: ExecutionRunClassSchema,
   ioMode: ExecutionRunIoModeSchema,
+  initialContextMode: z.enum(['bootstrap', 'first_turn']).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
+  replay: ExecutionRunReplaySeedRequestSchema.optional(),
 }).passthrough();
 export type ExecutionRunStartRequest = z.infer<typeof ExecutionRunStartRequestSchema>;
 
@@ -134,9 +193,6 @@ export const ExecutionRunStartResponseSchema = z.object({
   sidechainId: z.string().min(1),
 }).passthrough();
 export type ExecutionRunStartResponse = z.infer<typeof ExecutionRunStartResponseSchema>;
-
-export const ExecutionRunListRequestSchema = z.object({}).passthrough();
-export type ExecutionRunListRequest = z.infer<typeof ExecutionRunListRequestSchema>;
 
 export const ExecutionRunListResponseSchema = z.object({
   runs: z.array(ExecutionRunPublicStateSchema),
@@ -223,6 +279,7 @@ export type ExecutionRunActionResponse = z.infer<typeof ExecutionRunActionRespon
 export const ExecutionRunTurnStreamStartRequestSchema = z.object({
   runId: z.string().min(1),
   message: z.string().min(1),
+  displayMessage: z.string().min(1).optional(),
   resume: z.boolean().optional(),
 }).passthrough();
 export type ExecutionRunTurnStreamStartRequest = z.infer<typeof ExecutionRunTurnStreamStartRequestSchema>;

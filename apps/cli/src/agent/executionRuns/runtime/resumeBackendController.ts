@@ -1,8 +1,14 @@
-import type { AgentBackend, AgentMessageHandler } from '@/agent/core/AgentBackend';
+import type { AgentBackend } from '@/agent/core/AgentBackend';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
 import type { ExecutionRunBackendController, ExecutionRunController } from '@/agent/executionRuns/controllers/types';
+import { areExecutionRunBackendTargetsEqual } from '@/agent/executionRuns/runtime/backendTargets';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import { createBackendControllerMessageHandler } from '@/agent/executionRuns/runtime/createBackendControllerMessageHandler';
+import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
+import { createStreamedTranscriptWriter, type StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 
 export async function resumeBackendControllerForResumableRun(args: Readonly<{
   runId: string;
@@ -10,7 +16,13 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
-  createBackend: (opts: { runId?: string; backendId: string; permissionMode: string }) => AgentBackend;
+  createBackend: (opts: { runId?: string; backendId: string; backendTarget?: BackendTargetRefV1; permissionMode: string }) => AgentBackend;
+  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  parentProvider: ACPProvider;
+  streamedTranscriptSession: StreamedTranscriptWriterSession | null;
+  writeActivityMarker: (runId: string, nowMs: number, opts?: Readonly<{ force?: boolean }>) => Promise<void>;
+  getNowMs: () => number;
+  onPublicStateUpdated?: (runId: string) => void;
   onModelOutput?: () => void;
   requireReplayCapture?: boolean;
 }>): Promise<
@@ -26,7 +38,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   }
 
   const vendorSessionId =
-    args.run.resumeHandle?.kind === 'vendor_session.v1' && args.run.resumeHandle.backendId === args.run.backendId
+    args.run.resumeHandle?.kind === 'vendor_session.v1' && areExecutionRunBackendTargetsEqual(args.run.resumeHandle.backendTarget, args.run.backendTarget)
       ? args.run.resumeHandle.vendorSessionId
       : null;
   if (!vendorSessionId) {
@@ -34,7 +46,12 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Missing resume handle' };
   }
 
-  const backend = args.createBackend({ runId: args.runId, backendId: args.run.backendId, permissionMode: args.run.permissionMode });
+  const backend = args.createBackend({
+    runId: args.runId,
+    backendId: args.run.backendId,
+    backendTarget: args.run.backendTarget,
+    permissionMode: args.run.permissionMode,
+  });
   const wantsReplayCapture = args.requireReplayCapture === true;
   const canResume = wantsReplayCapture
     ? Boolean(backend.loadSessionWithReplayCapture)
@@ -57,12 +74,25 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   const resumeCtrl: ExecutionRunBackendController = {
     kind: 'backend',
     backend,
+    backendSupportsResume: true,
     childSessionId: null,
     buffer: '',
     sidechainStreamBuffer: '',
     sidechainStreamKey: '',
+    streamWriter: (() => {
+      const profile = resolveExecutionRunIntentProfile(args.run.intent);
+      const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
+      return shouldMaterializeInTranscript && args.streamedTranscriptSession && args.run.ioMode === 'streaming'
+        ? createStreamedTranscriptWriter({
+            provider: args.parentProvider,
+            session: args.streamedTranscriptSession,
+          })
+        : null;
+    })(),
     cancelled: false,
-    turnCount: 0,
+    turnCount: typeof args.run.turnCount === 'number' && Number.isFinite(args.run.turnCount) && args.run.turnCount >= 0
+      ? Math.floor(args.run.turnCount)
+      : 0,
     turnEpoch: 0,
     turnInFlight: false,
     turnCancelReason: null,
@@ -74,15 +104,25 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     resolveTerminal,
   };
 
-  const onMessage: AgentMessageHandler = (msg) => {
-    if (msg.type !== 'model-output') return;
-    if (typeof (msg as any).fullText === 'string') {
-      resumeCtrl.buffer = String((msg as any).fullText);
-    } else if (typeof (msg as any).textDelta === 'string') {
-      resumeCtrl.buffer += String((msg as any).textDelta);
-    }
-    args.onModelOutput?.();
-  };
+  const profile = resolveExecutionRunIntentProfile(args.run.intent);
+  const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
+  const sendAcp = shouldMaterializeInTranscript ? args.sendAcp : (() => {});
+
+  const onMessage = createBackendControllerMessageHandler({
+    ctrl: resumeCtrl,
+    runId: args.runId,
+    sidechainId: args.run.sidechainId,
+    intent: args.run.intent,
+    ioMode: args.run.ioMode,
+    sendAcp,
+    parentProvider: args.parentProvider,
+    runs: args.runs,
+    backendSupportsResume: true,
+    writeActivityMarker: args.writeActivityMarker,
+    getNowMs: args.getNowMs,
+    onPublicStateUpdated: args.onPublicStateUpdated,
+    onModelOutput: args.onModelOutput,
+  });
   backend.onMessage(onMessage);
 
   try {
@@ -96,8 +136,9 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
       status: 'running',
       finishedAtMs: undefined,
       error: undefined,
-      resumeHandle: { kind: 'vendor_session.v1', backendId: args.run.backendId, vendorSessionId: loaded.sessionId },
+      resumeHandle: { kind: 'vendor_session.v1', backendTarget: args.run.backendTarget, vendorSessionId: loaded.sessionId },
     });
+    args.onPublicStateUpdated?.(args.runId);
     return { ok: true };
   } catch (e: any) {
     await backend.dispose().catch(() => {});

@@ -2,13 +2,13 @@
 
 ## Development Workflow: Build Variants
 
-The Happier app supports three build variants across **iOS, Android, and macOS desktop**, each with separate bundle IDs so all three can be installed simultaneously:
+The Happier app supports three build variants across **iOS, Android, and macOS desktop**, each with separate native identifiers so all three can be installed simultaneously:
 
-| Variant | Bundle ID | App Name | Use Case |
-|---------|-----------|----------|----------|
-| **Development** | `dev.happier.app.dev` | Happier (dev) | Local development with hot reload |
-| **Preview** | `dev.happier.app.preview` | Happier (preview) | Beta testing & OTA updates before production |
-| **Production** | `dev.happier.app` | Happier | Public App Store release |
+| Variant | iOS Bundle ID | Android Package | App Name | Use Case |
+|---------|---------------|-----------------|----------|----------|
+| **Development** | `dev.happier.app.development` | `dev.happier.app.dev` | Happier (dev) | Local development with hot reload |
+| **Preview** | `dev.happier.app.preview` | `dev.happier.app.preview` | Happier (preview) | Beta testing & OTA updates before production |
+| **Production** | `dev.happier.app` | `dev.happier.app` | Happier | Public App Store release |
 
 **Why Preview?**
 - **Development**: Fast iteration, dev server, instant reload
@@ -323,7 +323,13 @@ The `app.config.js` file reads the `APP_ENV` environment variable:
 
 ```javascript
 const variant = process.env.APP_ENV || 'development';
-const bundleId = {
+const iosBundleId = {
+  development: "dev.happier.app.development",
+  preview: "dev.happier.app.preview",
+  production: "dev.happier.app"
+}[variant];
+
+const androidPackage = {
   development: "dev.happier.app.dev",
   preview: "dev.happier.app.preview",
   production: "dev.happier.app"

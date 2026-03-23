@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 declare global {
     // eslint-disable-next-line no-var
@@ -20,9 +22,7 @@ describe('MarkdownView (tables)', () => {
         ].join('\n');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MarkdownView markdown={markdown} />);
-        });
+        tree = (await renderScreen(<MarkdownView markdown={markdown} />)).tree;
 
         const scrollViews = tree!.root.findAllByType('GestureHandlerScrollView' as any);
         expect(scrollViews).toHaveLength(1);
@@ -41,9 +41,7 @@ describe('MarkdownView (tables)', () => {
         ].join('\n');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MarkdownView markdown={markdown} />);
-        });
+        tree = (await renderScreen(<MarkdownView markdown={markdown} />)).tree;
 
         const findTextNode = (text: string) =>
             tree!.root.findAll((n) => typeof n.props?.children === 'string' && n.props.children === text)[0]!;

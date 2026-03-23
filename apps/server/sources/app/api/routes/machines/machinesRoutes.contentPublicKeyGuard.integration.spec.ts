@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
-import { createInTxHarness } from "../../testkit/txHarness";
 import tweetnacl from "tweetnacl";
+
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createEnvReset } from "../../testkit/env";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+import { createInTxHarness } from "../../testkit/txHarness";
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 123) }));
@@ -31,44 +34,23 @@ const existingMachine = {
     updatedAt: new Date(1),
 };
 
-const dbMachineFindFirst = vi.fn(async () => existingMachine);
-const dbAccountFindUnique = vi.fn(async (): Promise<{ contentPublicKey: Uint8Array | null; publicKey?: string } | null> => ({
-    contentPublicKey: new Uint8Array(32).fill(7),
-}));
-const dbAccountUpdateMany = vi.fn(async () => ({ count: 0 }));
+const dbMocks = createDbMocks({
+    machine: ["findFirst", "findUnique"],
+    account: ["findUnique", "updateMany"],
+} as const);
+const txDbMocks = createDbMocks({
+    accessKey: ["deleteMany"],
+    machine: ["create", "findFirst", "update"],
+} as const);
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        machine: {
-            findFirst: dbMachineFindFirst,
-            findUnique: vi.fn(async () => null),
-        },
-        account: {
-            findUnique: dbAccountFindUnique,
-            updateMany: dbAccountUpdateMany,
-        },
-    },
+installDbModuleMock(() => ({
+    db: dbMocks.db,
     isPrismaErrorCode: () => false,
 }));
 
-const txMachineUpdate = vi.fn(async (args: any) => ({
-    ...existingMachine,
-    ...args.data,
-    lastActiveAt: new Date(),
-    updatedAt: new Date(),
-}));
-
 const harness = createInTxHarness(() => ({
-    accessKey: {
-        deleteMany: vi.fn(async () => ({ count: 0 })),
-    },
-    machine: {
-        create: vi.fn(async () => {
-            throw new Error("unexpected create");
-        }),
-        findFirst: vi.fn(async () => existingMachine),
-        update: txMachineUpdate,
-    },
+    accessKey: txDbMocks.db.accessKey,
+    machine: txDbMocks.db.machine,
 }));
 
 vi.mock("@/storage/inTx", () => ({
@@ -76,38 +58,56 @@ vi.mock("@/storage/inTx", () => ({
     inTx: harness.inTx,
 }));
 
+async function createMachinesRoute() {
+    const { machinesRoutes } = await import("./machinesRoutes");
+    return createRouteTestBuilder({
+        method: "POST",
+        path: "/v1/machines",
+        registerRoutes(app) {
+            machinesRoutes(app as any);
+        },
+    });
+}
+
 describe("machinesRoutes (contentPublicKey guard)", () => {
+    const resetContentPublicKeyGuardEnv = createEnvReset();
+
     beforeEach(() => {
-        txMachineUpdate.mockClear();
-        dbAccountFindUnique.mockClear();
-        dbAccountUpdateMany.mockClear();
+        vi.clearAllMocks();
+        dbMocks.reset();
+        txDbMocks.reset();
+        resetContentPublicKeyGuardEnv();
+        dbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
+        dbMocks.db.machine.findUnique.mockResolvedValue(null);
+        dbMocks.db.account.findUnique.mockResolvedValue({ contentPublicKey: new Uint8Array(32).fill(7) });
+        dbMocks.db.account.updateMany.mockResolvedValue({ count: 0 });
+        txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
+        txDbMocks.db.machine.create.mockImplementation(async () => {
+            throw new Error("unexpected create");
+        });
+        txDbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
+        txDbMocks.db.machine.update.mockImplementation(async (args: any) => ({
+            ...existingMachine,
+            ...args.data,
+            lastActiveAt: new Date(),
+            updatedAt: new Date(),
+        }));
     });
 
     it("allows machine writes when dataEncryptionKey is provided but contentPublicKey is missing (backward compatible)", async () => {
-        const { machinesRoutes } = await import("./machinesRoutes");
-
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines");
-        expect(typeof handler).toBe("function");
-
-        const reply = createReplyStub();
-        const response = await handler(
-            {
-                userId: "u1",
-                body: {
-                    id: "m1",
-                    metadata: "meta-old",
-                    daemonState: undefined,
-                    dataEncryptionKey: "AAECAw==",
-                },
+        const route = await createMachinesRoute();
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            body: {
+                id: "m1",
+                metadata: "meta-old",
+                daemonState: undefined,
+                dataEncryptionKey: "AAECAw==",
             },
-            reply,
-        );
+        });
 
         expect(reply.code).not.toHaveBeenCalledWith(400);
-        expect(txMachineUpdate).toHaveBeenCalled();
+        expect(txDbMocks.db.machine.update).toHaveBeenCalled();
         expect(response).toEqual(
             expect.objectContaining({
                 machine: expect.objectContaining({
@@ -119,101 +119,61 @@ describe("machinesRoutes (contentPublicKey guard)", () => {
     });
 
     it("returns 400 when contentPublicKey does not match the account contentPublicKey", async () => {
-        const { machinesRoutes } = await import("./machinesRoutes");
-
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines");
-        expect(typeof handler).toBe("function");
-
-        const reply = createReplyStub();
+        const route = await createMachinesRoute();
         const mismatchKey = Buffer.from(new Uint8Array(32).fill(8)).toString("base64");
-        const response = await handler(
-            {
-                userId: "u1",
-                body: {
-                    id: "m1",
-                    metadata: "meta-old",
-                    daemonState: undefined,
-                    dataEncryptionKey: "AAECAw==",
-                    contentPublicKey: mismatchKey,
-                },
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            body: {
+                id: "m1",
+                metadata: "meta-old",
+                daemonState: undefined,
+                dataEncryptionKey: "AAECAw==",
+                contentPublicKey: mismatchKey,
             },
-            reply,
-        );
+        });
 
         expect(reply.code).toHaveBeenCalledWith(400);
         expect(response).toEqual({ error: "invalid-params", reason: "content_public_key_mismatch" });
-        expect(txMachineUpdate).not.toHaveBeenCalled();
+        expect(txDbMocks.db.machine.update).not.toHaveBeenCalled();
     });
 
     it("returns 400 when strict mode is enabled and contentPublicKey is missing", async () => {
-        const prev = process.env.HAPPIER_MACHINES_REQUIRE_CONTENT_PUBLIC_KEY_FOR_DEK;
-        process.env.HAPPIER_MACHINES_REQUIRE_CONTENT_PUBLIC_KEY_FOR_DEK = "1";
+        resetContentPublicKeyGuardEnv({ HAPPIER_MACHINES_REQUIRE_CONTENT_PUBLIC_KEY_FOR_DEK: "1" });
 
-        try {
-            const { machinesRoutes } = await import("./machinesRoutes");
+        const route = await createMachinesRoute();
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            body: {
+                id: "m1",
+                metadata: "meta-old",
+                daemonState: undefined,
+                dataEncryptionKey: "AAECAw==",
+            },
+        });
 
-            const app = createFakeRouteApp();
-            machinesRoutes(app as any);
-
-            const handler = getRouteHandler(app, "POST", "/v1/machines");
-            expect(typeof handler).toBe("function");
-
-            const reply = createReplyStub();
-            const response = await handler(
-                {
-                    userId: "u1",
-                    body: {
-                        id: "m1",
-                        metadata: "meta-old",
-                        daemonState: undefined,
-                        dataEncryptionKey: "AAECAw==",
-                    },
-                },
-                reply,
-            );
-
-            expect(reply.code).toHaveBeenCalledWith(400);
-            expect(response).toEqual({ error: "invalid-params", reason: "content_public_key_required" });
-            expect(txMachineUpdate).not.toHaveBeenCalled();
-        } finally {
-            if (prev === undefined) delete process.env.HAPPIER_MACHINES_REQUIRE_CONTENT_PUBLIC_KEY_FOR_DEK;
-            else process.env.HAPPIER_MACHINES_REQUIRE_CONTENT_PUBLIC_KEY_FOR_DEK = prev;
-        }
+        expect(reply.code).toHaveBeenCalledWith(400);
+        expect(response).toEqual({ error: "invalid-params", reason: "content_public_key_required" });
+        expect(txDbMocks.db.machine.update).not.toHaveBeenCalled();
     });
 
     it("does not set account contentPublicKey when missing and no signature is provided (compat)", async () => {
-        const { machinesRoutes } = await import("./machinesRoutes");
-
-        dbAccountFindUnique.mockResolvedValueOnce({ contentPublicKey: null });
-
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines");
-        expect(typeof handler).toBe("function");
-
-        const reply = createReplyStub();
+        dbMocks.db.account.findUnique.mockResolvedValueOnce({ contentPublicKey: null });
+        const route = await createMachinesRoute();
         const contentPublicKey = Buffer.from(new Uint8Array(32).fill(7)).toString("base64");
-        const response = await handler(
-            {
-                userId: "u1",
-                body: {
-                    id: "m1",
-                    metadata: "meta-old",
-                    daemonState: undefined,
-                    dataEncryptionKey: "AAECAw==",
-                    contentPublicKey,
-                },
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            body: {
+                id: "m1",
+                metadata: "meta-old",
+                daemonState: undefined,
+                dataEncryptionKey: "AAECAw==",
+                contentPublicKey,
             },
-            reply,
-        );
+        });
 
         expect(reply.code).not.toHaveBeenCalledWith(400);
-        expect(dbAccountUpdateMany).not.toHaveBeenCalled();
-        expect(txMachineUpdate).toHaveBeenCalledTimes(1);
+        expect(dbMocks.db.account.updateMany).not.toHaveBeenCalled();
+        expect(txDbMocks.db.machine.update).toHaveBeenCalledTimes(1);
         expect(response).toEqual(
             expect.objectContaining({
                 machine: expect.objectContaining({ id: "m1" }),
@@ -222,8 +182,6 @@ describe("machinesRoutes (contentPublicKey guard)", () => {
     });
 
     it("sets account contentPublicKey when missing and a valid signature is provided", async () => {
-        const { machinesRoutes } = await import("./machinesRoutes");
-
         const signing = tweetnacl.sign.keyPair();
         const contentKey = tweetnacl.box.keyPair();
         const contentPublicKey = Buffer.from(contentKey.publicKey).toString("base64");
@@ -234,37 +192,28 @@ describe("machinesRoutes (contentPublicKey guard)", () => {
         const sig = tweetnacl.sign.detached(binding, signing.secretKey);
         const contentPublicKeySig = Buffer.from(sig).toString("base64");
 
-        dbAccountFindUnique.mockResolvedValueOnce({
+        dbMocks.db.account.findUnique.mockResolvedValueOnce({
             contentPublicKey: null,
             publicKey: Buffer.from(signing.publicKey).toString("hex"),
         });
-        dbAccountUpdateMany.mockResolvedValueOnce({ count: 1 });
+        dbMocks.db.account.updateMany.mockResolvedValueOnce({ count: 1 });
 
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines");
-        expect(typeof handler).toBe("function");
-
-        const reply = createReplyStub();
-        const response = await handler(
-            {
-                userId: "u1",
-                body: {
-                    id: "m1",
-                    metadata: "meta-old",
-                    daemonState: undefined,
-                    dataEncryptionKey: "AAECAw==",
-                    contentPublicKey,
-                    contentPublicKeySig,
-                },
+        const route = await createMachinesRoute();
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            body: {
+                id: "m1",
+                metadata: "meta-old",
+                daemonState: undefined,
+                dataEncryptionKey: "AAECAw==",
+                contentPublicKey,
+                contentPublicKeySig,
             },
-            reply,
-        );
+        });
 
         expect(reply.code).not.toHaveBeenCalledWith(400);
-        expect(dbAccountUpdateMany).toHaveBeenCalledTimes(1);
-        expect(txMachineUpdate).toHaveBeenCalledTimes(1);
+        expect(dbMocks.db.account.updateMany).toHaveBeenCalledTimes(1);
+        expect(txDbMocks.db.machine.update).toHaveBeenCalledTimes(1);
         expect(response).toEqual(
             expect.objectContaining({
                 machine: expect.objectContaining({ id: "m1" }),

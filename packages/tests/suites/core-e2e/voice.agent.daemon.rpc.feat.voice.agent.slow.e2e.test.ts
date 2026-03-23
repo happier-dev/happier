@@ -18,49 +18,17 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
-import { encryptLegacyBase64, decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { fetchAllMessages } from '../../src/testkit/sessions';
 import { waitFor } from '../../src/testkit/timing';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { callLegacyEncryptedSessionRpc } from '../../src/testkit/sessionRpc';
+import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 
 const run = createRunDirs({ runLabel: 'core' });
-
-type RpcAck = { ok: boolean; result?: string; error?: string; errorCode?: string };
-type SafeParseResult<T> = { success: true; data: T } | { success: false };
-type ParseSchema<T> = { safeParse: (input: unknown) => SafeParseResult<T> };
-
-async function callSessionRpc<TReq, TRes>(params: {
-  ui: ReturnType<typeof createUserScopedSocketCollector>;
-  sessionId: string;
-  method: string;
-  req: TReq;
-  secret: Uint8Array;
-  schema: ParseSchema<TRes>;
-  timeoutMs?: number;
-}): Promise<TRes> {
-  let out: TRes | null = null;
-
-  const encryptedParams = encryptLegacyBase64(params.req, params.secret);
-
-  await waitFor(
-    async () => {
-      const res = await params.ui.rpcCall<RpcAck>(`${params.sessionId}:${params.method}`, encryptedParams);
-      if (!res || res.ok !== true || typeof res.result !== 'string') return false;
-      const decrypted = decryptLegacyBase64(res.result, params.secret);
-      const parsed = params.schema.safeParse(decrypted);
-      if (!parsed.success) return false;
-      out = parsed.data;
-      return true;
-    },
-    { timeoutMs: params.timeoutMs ?? 25_000 },
-  );
-
-  if (!out) throw new Error(`RPC call did not return a valid response: ${params.method}`);
-  return out;
-}
 
 describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
   let server: StartedServer | null = null;
@@ -87,20 +55,24 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
+    const daemonEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      CI: '1',
+      HAPPIER_VARIANT: 'dev',
+      HAPPIER_DISABLE_CAFFEINATE: '1',
+      HAPPIER_HOME_DIR: daemonHomeDir,
+      HAPPIER_SERVER_URL: serverBaseUrl,
+      HAPPIER_WEBAPP_URL: serverBaseUrl,
+      HAPPIER_CLAUDE_PATH: fakeClaudePath,
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+    };
+
+    await ensureCliSharedDepsBuilt({ testDir, env: daemonEnv }, { skipSourceFreshnessCheck: true });
 
     daemon = await startTestDaemon({
       testDir,
       happyHomeDir: daemonHomeDir,
-      env: {
-        ...process.env,
-        CI: '1',
-        HAPPIER_VARIANT: 'dev',
-        HAPPIER_DISABLE_CAFFEINATE: '1',
-        HAPPIER_HOME_DIR: daemonHomeDir,
-        HAPPIER_SERVER_URL: serverBaseUrl,
-        HAPPIER_WEBAPP_URL: serverBaseUrl,
-        HAPPIER_CLAUDE_PATH: fakeClaudePath,
-      },
+      env: daemonEnv,
     });
     const controlToken = (daemon.state as any)?.controlToken as string | undefined;
 
@@ -135,7 +107,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
 
     const baselineMessages = await fetchAllMessages(serverBaseUrl, auth.token, sessionId);
 
-    const start = await callSessionRpc({
+    const start = await callLegacyEncryptedSessionRpc({
       ui,
       sessionId,
       method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
@@ -144,7 +116,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
         resume: true,
         start: {
           intent: 'voice_agent',
-          backendId: 'claude',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
           permissionMode: 'read_only',
           retentionPolicy: 'resumable',
           runClass: 'long_lived',
@@ -165,7 +137,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
     expect(start.created).toBe(true);
 
     const sendTurn = async (userText: string, opts?: Readonly<{ resume?: boolean }>): Promise<string> => {
-      const streamStart = await callSessionRpc({
+      const streamStart = await callLegacyEncryptedSessionRpc({
         ui,
         sessionId,
         method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
@@ -179,7 +151,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
       let streamDone = false;
       let streamedAssistantText = '';
       for (let i = 0; i < 16 && !streamDone; i += 1) {
-        const streamRead = await callSessionRpc({
+        const streamRead = await callLegacyEncryptedSessionRpc({
           ui,
           sessionId,
           method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ,
@@ -206,7 +178,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
     expect(await sendTurn('turn-2')).toContain('FAKE_CLAUDE_OK_2');
     expect(await sendTurn('turn-stream-1')).toContain('FAKE_CLAUDE_OK_3');
 
-    const streamCancelStart = await callSessionRpc({
+    const streamCancelStart = await callLegacyEncryptedSessionRpc({
       ui,
       sessionId,
       method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
@@ -215,7 +187,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
       schema: ExecutionRunTurnStreamStartResponseSchema,
       timeoutMs: 45_000,
     });
-    const streamCancelled = await callSessionRpc({
+    const streamCancelled = await callLegacyEncryptedSessionRpc({
       ui,
       sessionId,
       method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL,
@@ -226,7 +198,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
     });
     expect(streamCancelled.ok).toBe(true);
 
-    const commit = await callSessionRpc({
+    const commit = await callLegacyEncryptedSessionRpc({
       ui,
       sessionId,
       method: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
@@ -237,7 +209,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
     });
     expect(String((commit as any).result?.commitText ?? '')).toContain('FAKE_CLAUDE_OK_1');
 
-    const stop = await callSessionRpc({
+    const stop = await callLegacyEncryptedSessionRpc({
       ui,
       sessionId,
       method: SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
@@ -254,7 +226,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
 
     expect(await sendTurn('turn-after-resume', { resume: true })).toContain('FAKE_CLAUDE_OK_');
 
-    const stop2 = await callSessionRpc({
+    const stop2 = await callLegacyEncryptedSessionRpc({
       ui,
       sessionId,
       method: SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
@@ -265,7 +237,7 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
     });
     expect(stop2.ok).toBe(true);
 
-    const ensured = await callSessionRpc({
+    const ensured = await callLegacyEncryptedSessionRpc({
       ui,
       sessionId,
       method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,

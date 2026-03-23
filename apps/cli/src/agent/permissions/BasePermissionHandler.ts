@@ -86,6 +86,7 @@ export abstract class BasePermissionHandler {
     private allowedToolIdentifiers = new Set<string>();
     private readonly pushSender: PermissionRequestPushSender | null;
     private readonly getAccountSettings: () => AccountSettings | null;
+    private readonly getAccountSettingsSecretsReadKeys: () => ReadonlyArray<Uint8Array | null | undefined>;
     private permissionRequestPushNotifier: PermissionRequestPushNotifier | null = null;
     private readonly onAbortRequested: (() => void | Promise<void>) | null;
     private readonly toolTrace: { protocol: ToolTraceProtocol; provider: string } | null;
@@ -105,6 +106,7 @@ export abstract class BasePermissionHandler {
         opts?: {
             pushSender?: PermissionRequestPushSender | null;
             getAccountSettings?: (() => AccountSettings | null) | null;
+            getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
             onAbortRequested?: (() => void | Promise<void>) | null;
             toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
             triggerAbortCallbackOnAbortDecision?: boolean;
@@ -113,6 +115,10 @@ export abstract class BasePermissionHandler {
         this.session = session;
         this.pushSender = opts?.pushSender ?? null;
         this.getAccountSettings = typeof opts?.getAccountSettings === 'function' ? opts.getAccountSettings : (() => null);
+        this.getAccountSettingsSecretsReadKeys =
+            typeof opts?.getAccountSettingsSecretsReadKeys === 'function'
+                ? opts.getAccountSettingsSecretsReadKeys
+                : (() => []);
         this.onAbortRequested = typeof opts?.onAbortRequested === 'function' ? opts.onAbortRequested : null;
         this.triggerAbortCallbackOnAbortDecision = opts?.triggerAbortCallbackOnAbortDecision ?? true;
         this.toolTrace =
@@ -176,6 +182,7 @@ export abstract class BasePermissionHandler {
         this.permissionRequestPushNotifier = new PermissionRequestPushNotifier({
             pushSender: this.pushSender,
             getSettings: () => this.getAccountSettings(),
+            getSettingsSecretsReadKeys: () => this.getAccountSettingsSecretsReadKeys(),
             sessionId: this.session.sessionId,
             logPrefix: this.getLogPrefix(),
             onNotifiedAt: (permissionId, notifiedAtMs) => {

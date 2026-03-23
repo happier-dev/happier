@@ -3,10 +3,15 @@ import { buildElevenLabsVoiceAgentPrompt } from '@happier-dev/agents';
 import { DEFAULT_ELEVENLABS_VOICE_ID } from './defaults';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveElevenLabsRequiredClientTools } from './requiredClientTools';
-import { listVoiceToolActionSpecs } from '@happier-dev/protocol';
-import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
+import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
+import { listElevenLabsVoices } from './elevenLabsVoices';
+import { selectPreferredElevenLabsVoiceId } from './selectPreferredElevenLabsVoiceId';
+import { resolveUiVoicePromptStackBlocks } from '@/voice/agent/resolveUiVoicePromptStackBlocks';
 
 const HAPPIER_ELEVENLABS_AGENT_NAME = 'Happier Voice';
+const DEFAULT_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS = 60;
+const MAX_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS = 120;
+const USER_INTERACTIVE_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS = 120;
 
 type ElevenLabsTool = {
   id: string;
@@ -38,28 +43,6 @@ type ElevenLabsTtsConfigInput = Readonly<{
 function sanitizeElevenLabsAgentPrompt(prompt: string): string {
   // Keep the agent template backend-agnostic (avoid naming other products).
   return String(prompt).replace(/Claude Code/gi, 'the coding assistant');
-}
-
-function deriveDisabledVoiceToolActionIds(state: any): readonly string[] {
-  const out: string[] = [];
-  const shareDeviceInventory = (state as any)?.settings?.voice?.privacy?.shareDeviceInventory !== false;
-  const inventoryActionIds = new Set<string>([
-    'workspaces.list_recent',
-    'paths.list_recent',
-    'machines.list',
-    'servers.list',
-  ]);
-  for (const spec of listVoiceToolActionSpecs()) {
-    if (!shareDeviceInventory && inventoryActionIds.has(spec.id)) {
-      out.push(spec.id);
-      continue;
-    }
-    if (!isActionEnabledInState(state as any, spec.id as any, { surface: 'voice_tool' })) {
-      out.push(spec.id);
-    }
-  }
-  out.sort((a, b) => a.localeCompare(b));
-  return out;
 }
 
 function normalizeStringOrNull(value: unknown): string | null {
@@ -94,6 +77,24 @@ function buildTtsConfig(input?: ElevenLabsTtsConfigInput | null): Record<string,
     voice_id: voiceId,
     ...(modelId ? { model_id: modelId } : null),
     ...(Object.keys(voiceSettings).length > 0 ? { voice_settings: voiceSettings } : null),
+  };
+}
+
+async function resolveTtsConfig(apiKey: string, input?: ElevenLabsTtsConfigInput | null): Promise<Record<string, unknown>> {
+  const base = buildTtsConfig(input);
+  const requestedVoiceId = normalizeStringOrNull((base as any).voice_id);
+  if (!requestedVoiceId) return base;
+
+  const availableVoices = await listElevenLabsVoices(apiKey).catch(() => []);
+  const resolvedVoiceId = selectPreferredElevenLabsVoiceId({
+    requestedVoiceId,
+    availableVoices,
+  });
+  if (!resolvedVoiceId || resolvedVoiceId === requestedVoiceId) return base;
+
+  return {
+    ...base,
+    voice_id: resolvedVoiceId,
   };
 }
 
@@ -153,8 +154,8 @@ function normalizeToolParametersSchema(schema: unknown): Record<string, unknown>
 function buildClientToolConfig(spec: { name: string; description: string; parameters: unknown }): Record<string, unknown> {
   const resolveTimeoutSecs = (toolName: string): number => {
     // User-in-the-loop tools can take longer than typical tool calls.
-    if (toolName === 'spawnSessionPicker') return 300;
-    return 60;
+    if (toolName === 'spawnSessionPicker') return USER_INTERACTIVE_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS;
+    return DEFAULT_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS;
   };
 
   return {
@@ -164,7 +165,7 @@ function buildClientToolConfig(spec: { name: string; description: string; parame
     parameters: normalizeToolParametersSchema(spec.parameters),
     expects_response: true,
     execution_mode: 'immediate',
-    response_timeout_secs: resolveTimeoutSecs(spec.name),
+    response_timeout_secs: Math.min(resolveTimeoutSecs(spec.name), MAX_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS),
     disable_interruptions: false,
     force_pre_tool_speech: false,
     tool_call_sound_behavior: 'auto',
@@ -218,8 +219,8 @@ function needsToolConfigPatch(existing: ElevenLabsTool, desired: { name: string;
   // but still patch user-in-the-loop tools that need a longer timeout.
   const existingTimeout = typeof cfg.response_timeout_secs === 'number' && Number.isFinite(cfg.response_timeout_secs)
     ? Number(cfg.response_timeout_secs)
-    : 60;
-  const desiredTimeout = Number((buildClientToolConfig(desired) as any)?.response_timeout_secs ?? 60);
+    : DEFAULT_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS;
+  const desiredTimeout = Number((buildClientToolConfig(desired) as any)?.response_timeout_secs ?? DEFAULT_CLIENT_TOOL_RESPONSE_TIMEOUT_SECS);
   if (existingTimeout !== desiredTimeout) return true;
   if (!cfg.parameters || typeof cfg.parameters !== 'object') return true;
 
@@ -304,8 +305,10 @@ export async function createHappierElevenLabsAgent(params: { apiKey: string; tts
   const state = storage.getState() as any;
   const required = resolveElevenLabsRequiredClientTools(state);
   const toolIds = await ensureClientToolIds(apiKey, required);
-  const disabledActionIds = deriveDisabledVoiceToolActionIds(state);
-  const prompt = sanitizeElevenLabsAgentPrompt(buildElevenLabsVoiceAgentPrompt({ disabledActionIds }));
+  const disabledActionIds = resolveDisabledVoiceActionIdsFromState(state);
+  const systemAppendBlocks = await resolveUiVoicePromptStackBlocks();
+  const prompt = sanitizeElevenLabsAgentPrompt(buildElevenLabsVoiceAgentPrompt({ disabledActionIds, extraSystemAppendBlocks: systemAppendBlocks }));
+  const tts = await resolveTtsConfig(apiKey, params.tts);
 
   const json = await elevenLabsFetchJson({
     apiKey,
@@ -315,7 +318,8 @@ export async function createHappierElevenLabsAgent(params: { apiKey: string; tts
       body: JSON.stringify({
         name: HAPPIER_ELEVENLABS_AGENT_NAME,
         conversation_config: {
-          tts: buildTtsConfig(params.tts),
+          turn: { turn_timeout: -1 },
+          tts,
           agent: {
             prompt: {
               prompt,
@@ -346,8 +350,10 @@ export async function updateHappierElevenLabsAgent({
   const state = storage.getState() as any;
   const required = resolveElevenLabsRequiredClientTools(state);
   const toolIds = await ensureClientToolIds(apiKey, required);
-  const disabledActionIds = deriveDisabledVoiceToolActionIds(state);
-  const prompt = sanitizeElevenLabsAgentPrompt(buildElevenLabsVoiceAgentPrompt({ disabledActionIds }));
+  const disabledActionIds = resolveDisabledVoiceActionIdsFromState(state);
+  const systemAppendBlocks = await resolveUiVoicePromptStackBlocks();
+  const prompt = sanitizeElevenLabsAgentPrompt(buildElevenLabsVoiceAgentPrompt({ disabledActionIds, extraSystemAppendBlocks: systemAppendBlocks }));
+  const ttsConfig = await resolveTtsConfig(apiKey, tts);
 
   await elevenLabsFetchJson({
     apiKey,
@@ -356,7 +362,7 @@ export async function updateHappierElevenLabsAgent({
       method: 'PATCH',
       body: JSON.stringify({
         conversation_config: {
-          tts: buildTtsConfig(tts),
+          tts: ttsConfig,
           agent: {
             prompt: {
               prompt,

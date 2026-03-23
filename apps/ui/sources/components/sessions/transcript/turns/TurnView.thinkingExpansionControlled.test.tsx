@@ -1,20 +1,23 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let renderedMessageViewProps: any[] = [];
 let messageById: Record<string, any> = {};
 let renderedToolCallsGroupRowProps: any[] = [];
+let renderedRollbackButtonProps: any[] = [];
 
-vi.mock('react-native', async (importOriginal) => {
-  const ReactMod = await import('react');
-  const actual = await importOriginal<any>();
-  return {
-    ...actual,
-    View: (props: any) => ReactMod.createElement('View', props, props.children),
-  };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: (props: any) => React.createElement('View', props, props.children),
+                        }
+    );
 });
 
 vi.mock('@/components/sessions/transcript/MessageView', () => ({
@@ -39,17 +42,28 @@ vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
   },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useMessage: (_sessionId: string, messageId: string) => messageById[messageId] ?? null,
-  useMessagesByIds: (_sessionId: string, messageIds: readonly string[]) =>
-    messageIds.map((id) => messageById[id]).filter(Boolean),
+vi.mock('@/components/sessions/transcript/TranscriptRollbackActionButton', () => ({
+  TranscriptRollbackActionButton: (props: any) => {
+    renderedRollbackButtonProps.push(props);
+    return React.createElement('TranscriptRollbackActionButton', props);
+  },
 }));
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useMessage: (_sessionId: string, messageId: string) => messageById[messageId] ?? null,
+    useMessagesByIds: (_sessionId: string, messageIds: readonly string[]) =>
+    messageIds.map((id) => messageById[id]).filter(Boolean),
+});
+});
 
 describe('TurnView (thinking expansion controlled)', () => {
   beforeEach(() => {
     renderedMessageViewProps = [];
     messageById = {};
     renderedToolCallsGroupRowProps = [];
+    renderedRollbackButtonProps = [];
   });
 
   it('forwards list-owned thinking expansion state to MessageView for thinking messages', async () => {
@@ -69,9 +83,7 @@ describe('TurnView (thinking expansion controlled)', () => {
     const setThinkingExpanded = vi.fn();
 
     const { TurnView } = await import('./TurnView');
-    await act(async () => {
-      renderer.create(
-        React.createElement(TurnView as any, {
+    await renderScreen(React.createElement(TurnView as any, {
           turn,
           metadata: null,
           sessionId: 's1',
@@ -81,9 +93,7 @@ describe('TurnView (thinking expansion controlled)', () => {
           interaction: { canSendMessages: true, canApprovePermissions: true },
           resolveThinkingExpanded,
           setThinkingExpanded,
-        }),
-      );
-    });
+        }));
 
     const thinkingProps = renderedMessageViewProps.find((p) => p?.message?.id === 't1');
     const normalProps = renderedMessageViewProps.find((p) => p?.message?.id === 'a1');
@@ -114,9 +124,7 @@ describe('TurnView (thinking expansion controlled)', () => {
     };
 
     const { TurnView } = await import('./TurnView');
-    await act(async () => {
-      renderer.create(
-        React.createElement(TurnView as any, {
+    await renderScreen(React.createElement(TurnView as any, {
           turn,
           metadata: null,
           sessionId: 's1',
@@ -126,11 +134,127 @@ describe('TurnView (thinking expansion controlled)', () => {
           expandedToolCallsAnchorMessageIds: new Set(['tool-2']),
           setToolCallsGroupExpanded: () => {},
           interaction: { canSendMessages: true, canApprovePermissions: true },
-        }),
-      );
-    });
+        }));
 
     expect(renderedToolCallsGroupRowProps).toHaveLength(1);
     expect(renderedToolCallsGroupRowProps[0]?.expanded).toBe(true);
+  });
+
+  it('forwards forced transcript permission prompts to nested message and tool-call rows', async () => {
+    messageById = {
+      'agent-1': { kind: 'agent-text', id: 'agent-1', localId: null, createdAt: 1, text: 'reply', isThinking: false },
+      'tool-1': { kind: 'tool-call', id: 'tool-1', localId: null, createdAt: 2, tool: { name: 'Bash', state: 'running' }, children: [] },
+    };
+
+    const turn: any = {
+      id: 'turn-1',
+      userMessageId: null,
+      content: [
+        { kind: 'message', messageId: 'agent-1' },
+        { kind: 'tool_calls', id: 'tool-group-1', toolMessageIds: ['tool-1'] },
+      ],
+    };
+
+    const { TurnView } = await import('./TurnView');
+    await renderScreen(React.createElement(TurnView as any, {
+          turn,
+          metadata: null,
+          sessionId: 's1',
+          activeThinkingMessageId: null,
+          expandedToolCallsAnchorMessageIds: new Set(),
+          setToolCallsGroupExpanded: () => {},
+          interaction: { canSendMessages: true, canApprovePermissions: true },
+          forcePermissionPromptsInTranscript: true,
+        }));
+
+    expect(renderedMessageViewProps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.objectContaining({ id: 'agent-1' }),
+          forcePermissionPromptsInTranscript: true,
+        }),
+      ]),
+    );
+    expect(renderedToolCallsGroupRowProps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolMessageIds: ['tool-1'],
+          forcePermissionPromptsInTranscript: true,
+        }),
+      ]),
+    );
+  });
+
+  it('renders turn messages from the provided lookup when they are not yet in the global store', async () => {
+    messageById = {};
+
+    const agentMessage = { kind: 'agent-text', id: 'agent-sidechain-1', localId: null, createdAt: 1, text: 'sidechain reply', isThinking: false };
+    const turn: any = {
+      id: 'turn-1',
+      userMessageId: null,
+      content: [
+        { kind: 'message', messageId: 'agent-sidechain-1' },
+      ],
+    };
+
+    const { TurnView } = await import('./TurnView');
+    await renderScreen(React.createElement(TurnView as any, {
+          turn,
+          metadata: null,
+          sessionId: 's1',
+          activeThinkingMessageId: null,
+          expandedToolCallsAnchorMessageIds: new Set(),
+          setToolCallsGroupExpanded: () => {},
+          interaction: { canSendMessages: true, canApprovePermissions: true },
+          getMessageById: (messageId: string) => (messageId === 'agent-sidechain-1' ? agentMessage : null),
+        }));
+
+    expect(renderedMessageViewProps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.objectContaining({ id: 'agent-sidechain-1', text: 'sidechain reply' }),
+        }),
+      ]),
+    );
+  });
+
+  it('passes rollback actions through to the user message row instead of rendering a turn-level button', async () => {
+    messageById = {
+      'user-1': { kind: 'user-text', id: 'user-1', localId: null, createdAt: 1, text: 'prompt', seq: 1 },
+      'agent-1': { kind: 'agent-text', id: 'agent-1', localId: null, createdAt: 2, text: 'reply', seq: 2, isThinking: false },
+    };
+
+    const turn: any = {
+      id: 'turn-1',
+      userMessageId: 'user-1',
+      content: [
+        { kind: 'message', messageId: 'agent-1' },
+      ],
+    };
+
+    const { TurnView } = await import('./TurnView');
+    await renderScreen(React.createElement(TurnView as any, {
+          turn,
+          metadata: null,
+          sessionId: 's1',
+          activeThinkingMessageId: null,
+          expandedToolCallsAnchorMessageIds: new Set(),
+          setToolCallsGroupExpanded: () => {},
+          interaction: { canSendMessages: true, canApprovePermissions: true },
+          resolveRollbackAction: (messageId: string) =>
+            messageId === 'user-1'
+              ? { target: { type: 'before_user_message', userMessageSeq: 1 }, restoredDraftText: 'prompt' }
+              : null,
+        }));
+
+    expect(renderedRollbackButtonProps).toHaveLength(0);
+    expect(renderedMessageViewProps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.objectContaining({ id: 'user-1' }),
+          rollbackAction: { target: { type: 'before_user_message', userMessageSeq: 1 }, restoredDraftText: 'prompt' },
+        }),
+      ]),
+    );
   });
 });

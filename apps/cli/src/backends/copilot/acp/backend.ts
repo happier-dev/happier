@@ -6,11 +6,11 @@
  */
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import { copilotTransport } from '@/backends/copilot/acp/transport';
 import type { PermissionMode } from '@/api/types';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
 export interface CopilotBackendOptions extends AgentFactoryOptions {
   mcpServers?: Record<string, McpServerConfig>;
@@ -33,11 +33,14 @@ function buildCopilotPermissionArgs(permissionMode: PermissionMode | null | unde
 }
 
 export function buildCopilotAcpBackendOptions(options: CopilotBackendOptions): AcpBackendOptions {
+  const processEnv = { ...process.env, ...options.env };
+  const launch = requireProviderCliLaunchSpec('copilot', { processEnv });
+
   return {
     agentName: 'copilot',
     cwd: options.cwd,
-    command: resolveCliPathOverride({ agentId: 'copilot' }) ?? 'copilot',
-    args: ['--acp', ...buildCopilotPermissionArgs(options.permissionMode)],
+    command: launch.command,
+    args: [...launch.args, '--acp', ...buildCopilotPermissionArgs(options.permissionMode)],
     env: {
       // Suppress Copilot CLI debug noise by default; callers may override via options.env.
       NODE_ENV: 'production',

@@ -4,7 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { AIBackendProfile, SavedSecret } from '@/sync/domains/settings/settings';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';

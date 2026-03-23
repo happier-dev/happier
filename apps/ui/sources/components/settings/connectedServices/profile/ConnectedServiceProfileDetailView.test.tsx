@@ -1,28 +1,51 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import renderer from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { t } from '@/text';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const backSpy = vi.fn();
+const applySettingsSpy = vi.fn(async () => {});
+const routeParams = { serviceId: 'openai-codex', profileId: 'work' };
+const profileState = {
+  connectedServicesV2: [
+    {
+      serviceId: 'openai-codex',
+      profiles: [{ profileId: 'work', status: 'connected', providerEmail: 'me@example.com', providerAccountId: 'acct-1' }],
+    },
+  ],
+};
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: backSpy, push: vi.fn() }),
-  useLocalSearchParams: () => ({ serviceId: 'openai-codex', profileId: 'work' }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: backSpy, push: vi.fn() },
+    });
+    return {
+        ...routerMock.module,
+        useLocalSearchParams: () => routeParams,
+        useGlobalSearchParams: () => routeParams,
+    };
+});
 
 const stableCredentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } as const;
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: stableCredentials }),
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: vi.fn(async () => null),
-    alert: vi.fn(async () => {}),
-    confirm: vi.fn(async () => false),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: vi.fn(async () => null),
+            alert: vi.fn(async () => {}),
+            confirm: vi.fn(async () => false),
+        },
+    }).module;
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => featureId === 'connectedServices.quotas' || featureId === 'connectedServices',
@@ -32,14 +55,7 @@ vi.mock('@/sync/store/hooks', async () => {
   const actual = await vi.importActual<typeof import('@/sync/store/hooks')>('@/sync/store/hooks');
   return {
     ...actual,
-    useProfile: () => ({
-      connectedServicesV2: [
-        {
-          serviceId: 'openai-codex',
-          profiles: [{ profileId: 'work', status: 'connected', providerEmail: 'me@example.com', providerAccountId: 'acct-1' }],
-        },
-      ],
-    }),
+    useProfile: () => profileState,
     useSettings: () => ({
       connectedServicesDefaultProfileByServiceId: { 'openai-codex': 'work' },
       connectedServicesProfileLabelByKey: {},
@@ -51,6 +67,10 @@ vi.mock('@/sync/store/hooks', async () => {
 
 vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: vi.fn(async () => {}), applySettings: vi.fn(async () => {}) },
+}));
+
+vi.mock('@/sync/store/settingsWriters', () => ({
+  useApplySettings: () => applySettingsSpy,
 }));
 
 vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({
@@ -80,15 +100,31 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => {
 });
 
 describe('ConnectedServiceProfileDetailView', () => {
+  beforeEach(() => {
+    routeParams.serviceId = 'openai-codex';
+    routeParams.profileId = 'work';
+    applySettingsSpy.mockClear();
+  });
+
   it('renders profile details and quota card when quotas are enabled', async () => {
     const { ConnectedServiceProfileDetailView } = await import('./ConnectedServiceProfileDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceProfileDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceProfileDetailView />)).tree;
 
-    expect(tree.root.findAll((n) => n.props?.children === 'me@example.com').length).toBeGreaterThan(0);
-    expect(tree.root.findAll((n) => n.props?.title === 'Refresh')).toHaveLength(1);
+    expect(tree.findAll((n) => n.props?.children === 'me@example.com').length).toBeGreaterThan(0);
+    expect(tree.findAll((n) => n.props?.title === 'Refresh')).toHaveLength(1);
+  });
+
+  it('renders an unknown-profile guard state for nonexistent profile ids', async () => {
+    routeParams.profileId = 'missing';
+    const { ConnectedServiceProfileDetailView } = await import('./ConnectedServiceProfileDetailView');
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<ConnectedServiceProfileDetailView />)).tree;
+
+    expect(tree.findAll((n) => n.props?.title === t('connectedServices.detail.alerts.unknownProfileTitle'))).toHaveLength(1);
+    expect(tree.findAll((n) => n.props?.title === t('connectedServices.detail.actionsGroupTitle'))).toHaveLength(0);
+    expect(applySettingsSpy).not.toHaveBeenCalled();
   });
 });

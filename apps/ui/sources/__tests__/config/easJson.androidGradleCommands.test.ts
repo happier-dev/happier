@@ -28,7 +28,7 @@ describe('eas.json', () => {
         const eas = readEasJson();
         const build = eas?.build ?? {};
 
-        const releaseApkProfiles = ['preview-apk', 'production-apk'] as const;
+        const releaseApkProfiles = ['canary-apk', 'preview-apk', 'production-apk'] as const;
         for (const profile of releaseApkProfiles) {
             const cmd = build?.[profile]?.android?.gradleCommand;
             expect(typeof cmd).toBe('string');

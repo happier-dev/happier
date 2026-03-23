@@ -2,6 +2,8 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,16 +17,20 @@ const withSessionProjectScmOperationLock = vi.hoisted(() => vi.fn(async (input: 
   return { started: true, message: '' };
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: modalAlert,
-    confirm: modalConfirm,
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlert,
+            confirm: modalConfirm,
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/sync/ops', () => ({
   sessionScmRemoteFetch,
@@ -146,8 +152,7 @@ describe('useFilesScmOperations (daemon unavailable)', () => {
 
     let current: ReturnType<typeof useFilesScmOperations> | null = null;
     let tree: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(React.createElement(() => {
+    tree = (await renderScreen(React.createElement(() => {
         current = useFilesScmOperations({
           sessionId: 's1',
           sessionPath: '/tmp',
@@ -160,8 +165,7 @@ describe('useFilesScmOperations (daemon unavailable)', () => {
           loadCommitHistory,
         });
         return React.createElement('View');
-      }));
-    });
+      }))).tree;
 
     await act(async () => {
       await current!.runRemoteOperation('push');

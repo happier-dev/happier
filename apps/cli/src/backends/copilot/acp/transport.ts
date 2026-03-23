@@ -22,6 +22,7 @@ import type { AgentMessage } from '@/agent/core';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
 import { filterJsonObjectOrArrayLine } from '@/agent/transport/utils/jsonStdoutFilter';
+import { extractHappierToolsShellBridgeToolNameHint } from '@/agent/transport/utils/happierToolsShellBridgeToolNameHint';
 import {
   findToolNameFromId,
   findToolNameFromInputFields,
@@ -84,7 +85,7 @@ export class CopilotTransport implements TransportHandler {
       const errorMessage: AgentMessage = {
         type: 'status',
         status: 'error',
-        detail: 'Authentication error. Run `copilot auth login` to authenticate with GitHub.',
+        detail: 'Authentication error. Run `copilot login` to authenticate with GitHub.',
       };
       return { message: errorMessage };
     }
@@ -123,6 +124,9 @@ export class CopilotTransport implements TransportHandler {
     input: Record<string, unknown>,
     _context: ToolNameContext,
   ): string {
+    const shellBridgeToolName = extractHappierToolsShellBridgeToolNameHint(input);
+    if (shellBridgeToolName) return shellBridgeToolName;
+
     const directToolName = findToolNameFromId(toolName, COPILOT_TOOL_PATTERNS, { preferLongestMatch: true });
     if (directToolName) return directToolName;
 

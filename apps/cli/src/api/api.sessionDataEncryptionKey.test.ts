@@ -94,9 +94,12 @@ describe('ApiClient.getOrCreateSession (dataEncryptionKey)', () => {
     });
 
     expect(session).not.toBeNull();
-    expect(session!.encryptionVariant).toBe('dataKey');
-    expect(Array.from(session!.encryptionKey)).toEqual(Array.from(sessionDataKey));
-    expect(session!.metadata).toEqual(metadata);
+    if (!session || session.encryptionMode !== 'e2ee') {
+      throw new Error('Expected an encrypted session response');
+    }
+    expect(session.encryptionVariant).toBe('dataKey');
+    expect(Array.from(session.encryptionKey)).toEqual(Array.from(sessionDataKey));
+    expect(session.metadata).toEqual(metadata);
   });
 
   it('throws when server provides session.dataEncryptionKey but the client cannot open it', async () => {

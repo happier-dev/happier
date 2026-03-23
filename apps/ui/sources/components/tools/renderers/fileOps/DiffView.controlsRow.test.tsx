@@ -1,11 +1,15 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { makeToolCall, makeToolViewProps, findPressableByText } from '../../shell/views/ToolView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'showLineNumbersInToolViews') return false;
         if (key === 'wrapLinesInDiffs') return true;
@@ -13,11 +17,13 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
     useSessionReviewCommentsDrafts: () => [],
     storage: { getState: () => ({ upsertSessionReviewCommentDraft: () => {}, deleteSessionReviewCommentDraft: () => {} }) },
-}));
+});
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
@@ -43,9 +49,7 @@ describe('DiffView (controls row)', () => {
         });
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(DiffView, makeToolViewProps(tool)));
-        });
+        tree = (await renderScreen(React.createElement(DiffView, makeToolViewProps(tool)))).tree;
 
         expect(findPressableByText(tree, 'machineLauncher.showAll')).toBeUndefined();
     });

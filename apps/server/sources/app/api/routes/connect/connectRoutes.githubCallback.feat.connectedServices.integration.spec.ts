@@ -1,35 +1,16 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
+import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
 import { auth } from "@/app/auth/auth";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -48,45 +29,32 @@ function createTestApp() {
     return trackApp(typed);
 }
 
+function applyGithubConnectCallbackEnv(
+    harness: LightSqliteHarness,
+    overrides: Record<string, string | undefined> = {},
+): void {
+    harness.resetEnv({
+        GITHUB_CLIENT_ID: "gh_client",
+        GITHUB_CLIENT_SECRET: "gh_secret",
+        GITHUB_REDIRECT_URL: "https://api.example.test/v1/oauth/github/callback",
+        HAPPIER_WEBAPP_URL: "https://app.example.test",
+        ...overrides,
+    });
+}
+
 describe("connectRoutes (GitHub callback)", () => {
-    const envBackup = { ...process.env };
     const originalFetch = globalThis.fetch;
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-connect-gh-callback-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = { ...process.env };
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await auth.init();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-connect-gh-callback-",
+            initAuth: true,
+        });
     }, 120_000);
-
-    const restoreEnv = (base: NodeJS.ProcessEnv) => {
-        for (const key of Object.keys(process.env)) {
-            if (!(key in base)) delete (process.env as any)[key];
-        }
-        for (const [key, value] of Object.entries(base)) {
-            if (typeof value === "string") process.env[key] = value;
-        }
-    };
-
     afterEach(async () => {
         await closeTrackedApps();
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
         vi.unstubAllGlobals();
         globalThis.fetch = originalFetch;
         await db.repeatKey.deleteMany();
@@ -95,17 +63,12 @@ describe("connectRoutes (GitHub callback)", () => {
     });
 
     afterAll(async () => {
-        await db.$disconnect();
-        process.env = envBackup;
+        await harness.close();
         globalThis.fetch = originalFetch;
-        await rm(baseDir, { recursive: true, force: true });
     });
 
     it("redirects with invalid_profile when the provider /user response is missing required fields", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+        applyGithubConnectCallbackEnv(harness);
 
         const u1 = await db.account.create({
             data: { publicKey: "pk-u1", username: "user1" },
@@ -149,10 +112,10 @@ describe("connectRoutes (GitHub callback)", () => {
     });
 
     it("returns 404 not_found for /v1/connect/external/:provider/params when connected services are disabled", async () => {
-        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED = "0";
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
+        applyGithubConnectCallbackEnv(harness, {
+            HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: "0",
+            HAPPIER_WEBAPP_URL: undefined,
+        });
 
         const u1 = await db.account.create({
             data: { publicKey: "pk-u1-disabled", username: "user_disabled" },
@@ -175,10 +138,7 @@ describe("connectRoutes (GitHub callback)", () => {
     });
 
     it("rejects connect-flow callbacks when connected services are disabled (in-flight flow)", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+        applyGithubConnectCallbackEnv(harness);
 
         const u1 = await db.account.create({
             data: { publicKey: "pk-u1-connect-disabled", username: "user_connect_disabled" },
@@ -199,7 +159,7 @@ describe("connectRoutes (GitHub callback)", () => {
         const state = paramsUrl.searchParams.get("state");
         expect(state).toBeTruthy();
 
-        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED = "0";
+        applyGithubConnectCallbackEnv(harness, { HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: "0" });
 
         const fetchMock = vi.fn(async (url: any) => {
             if (typeof url === "string" && url.includes("https://github.com/login/oauth/access_token")) {
@@ -232,10 +192,10 @@ describe("connectRoutes (GitHub callback)", () => {
     });
 
     it("uses HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE when redirecting back to the client", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE = "https://app.example.test/custom-oauth";
+        applyGithubConnectCallbackEnv(harness, {
+            HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE: "https://app.example.test/custom-oauth",
+            HAPPIER_WEBAPP_URL: undefined,
+        });
 
         const u1 = await db.account.create({
             data: { publicKey: "pk-u1", username: "user1" },
@@ -279,8 +239,11 @@ describe("connectRoutes (GitHub callback)", () => {
     });
 
     it("GET /v1/connect/external/:provider/params returns an OAuth URL with least-privilege scope", async () => {
-        process.env.GITHUB_CLIENT_ID = "client-id";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
+        applyGithubConnectCallbackEnv(harness, {
+            GITHUB_CLIENT_ID: "client-id",
+            GITHUB_CLIENT_SECRET: undefined,
+            HAPPIER_WEBAPP_URL: undefined,
+        });
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -321,9 +284,12 @@ describe("connectRoutes (GitHub callback)", () => {
     });
 
     it("GET /v1/connect/external/:provider/params returns 400 when OAuth env is missing", async () => {
-        delete process.env.GITHUB_CLIENT_ID;
-        delete process.env.GITHUB_REDIRECT_URL;
-        delete process.env.GITHUB_REDIRECT_URI;
+        applyGithubConnectCallbackEnv(harness, {
+            GITHUB_CLIENT_ID: undefined,
+            GITHUB_CLIENT_SECRET: undefined,
+            GITHUB_REDIRECT_URL: undefined,
+            GITHUB_REDIRECT_URI: undefined,
+        });
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -347,9 +313,11 @@ describe("connectRoutes (GitHub callback)", () => {
     });
 
     it("GET /v1/oauth/:provider/callback redirects with error=missing_access_token when code exchange returns no token", async () => {
-        process.env.GITHUB_CLIENT_ID = "client-id";
-        process.env.GITHUB_CLIENT_SECRET = "client-secret";
-        process.env.HAPPIER_WEBAPP_URL = "https://webapp.example.test";
+        applyGithubConnectCallbackEnv(harness, {
+            GITHUB_CLIENT_ID: "client-id",
+            GITHUB_CLIENT_SECRET: "client-secret",
+            HAPPIER_WEBAPP_URL: "https://webapp.example.test",
+        });
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -360,7 +328,6 @@ describe("connectRoutes (GitHub callback)", () => {
             select: { id: true },
         });
 
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
         const paramsRes = await app.inject({
             method: "GET",
             url: "/v1/connect/external/github/params",

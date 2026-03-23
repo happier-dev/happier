@@ -1,10 +1,8 @@
-import { buildAcpLoadSessionPrefetchRequest, readAcpLoadSessionSupport, shouldPrefetchAcpCapabilities } from '@/agents/runtime/acpRuntimeResume';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
-import { getCodexAcpDepData } from '@/capabilities/codexAcpDep';
-import { getCodexMcpResumeDepData } from '@/capabilities/codexMcpResume';
-import { resumeChecklistId } from '@happier-dev/protocol/checklists';
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
-import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { resolveCodexSpawnExtrasFromSettings, resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
+import { resolveCodexBrowseSourceOptions } from '@/agents/providers/codex/directSessions/resolveCodexBrowseSourceOptions';
+import { resolveCodexLinkEnsureRequestExtras } from '@/agents/providers/codex/directSessions/resolveCodexLinkEnsureRequestExtras';
 
 import type {
     AgentResumeExperiments,
@@ -12,10 +10,8 @@ import type {
     NewSessionPreflightContext,
     NewSessionPreflightIssue,
     NewSessionRelevantInstallableDepsContext,
-    ResumePreflightContext,
 } from '@/agents/registry/registryUiBehavior';
 
-const CODEX_SWITCH_RESUME_MCP = 'resumeMcp';
 const CODEX_SWITCH_RESUME_ACP = 'resumeAcp';
 
 function getSwitch(experiments: AgentResumeExperiments, id: string): boolean {
@@ -23,67 +19,51 @@ function getSwitch(experiments: AgentResumeExperiments, id: string): boolean {
 }
 
 export type CodexSpawnSessionExtras = Readonly<{
-    experimentalCodexResume: boolean;
-    experimentalCodexAcp: boolean;
+    codexBackendMode: 'mcp' | 'acp' | 'appServer';
 }>;
 
 export type CodexResumeSessionExtras = Readonly<{
-    experimentalCodexResume: boolean;
-    experimentalCodexAcp: boolean;
+    codexBackendMode: 'mcp' | 'acp' | 'appServer';
 }>;
+
+function resolveCodexResumeExtras(opts: {
+    settings: Record<string, unknown>;
+    session?: { metadata?: Record<string, unknown> | null } | null;
+}): CodexResumeSessionExtras | null {
+    const persistedMode = resolvePersistedCodexRuntimeIdentity(opts.session?.metadata ?? null)?.backendMode ?? null;
+    const extras = resolveCodexSpawnExtrasFromSettings(
+        persistedMode ? { ...opts.settings, codexBackendMode: persistedMode } : opts.settings,
+    );
+    return extras.codexBackendMode ? {
+        codexBackendMode: extras.codexBackendMode,
+    } : null;
+}
 
 export function computeCodexSpawnSessionExtras(opts: {
     agentId: string;
-    experiments: AgentResumeExperiments;
-    resumeSessionId: string;
+    settings: Record<string, unknown>;
 }): CodexSpawnSessionExtras | null {
     if (opts.agentId !== 'codex') return null;
-    if (opts.experiments.enabled !== true) return null;
-    return {
-        experimentalCodexResume: getSwitch(opts.experiments, CODEX_SWITCH_RESUME_MCP) === true && opts.resumeSessionId.trim().length > 0,
-        experimentalCodexAcp: getSwitch(opts.experiments, CODEX_SWITCH_RESUME_ACP) === true,
-    };
+    const extras = resolveCodexSpawnExtrasFromSettings(opts.settings);
+    return extras.codexBackendMode ? {
+        codexBackendMode: extras.codexBackendMode,
+    } : null;
 }
 
 export function computeCodexResumeSessionExtras(opts: {
     agentId: string;
-    experiments: AgentResumeExperiments;
+    settings: Record<string, unknown>;
+    session?: { metadata?: Record<string, unknown> | null } | null;
 }): CodexResumeSessionExtras | null {
     if (opts.agentId !== 'codex') return null;
-    if (opts.experiments.enabled !== true) return null;
-    return {
-        experimentalCodexResume: getSwitch(opts.experiments, CODEX_SWITCH_RESUME_MCP) === true,
-        experimentalCodexAcp: getSwitch(opts.experiments, CODEX_SWITCH_RESUME_ACP) === true,
-    };
+    return resolveCodexResumeExtras({ settings: opts.settings, session: opts.session });
 }
 
 export function getCodexNewSessionPreflightIssues(ctx: NewSessionPreflightContext): readonly NewSessionPreflightIssue[] {
     if (ctx.agentId !== 'codex') return [];
-    const extras = computeCodexSpawnSessionExtras({
-        agentId: 'codex',
-        experiments: ctx.experiments,
-        resumeSessionId: ctx.resumeSessionId,
-    });
-
-    const codexAcpDep = getCodexAcpDepData(ctx.results);
-    const codexMcpResumeDep = getCodexMcpResumeDepData(ctx.results);
-    const deps = {
-        codexAcpInstalled: typeof codexAcpDep?.installed === 'boolean' ? codexAcpDep.installed : null,
-        codexMcpResumeInstalled: typeof codexMcpResumeDep?.installed === 'boolean' ? codexMcpResumeDep.installed : null,
-    };
-
-    const issues: NewSessionPreflightIssue[] = [];
-    // Codex ACP can run via npx fallback; do not block new sessions when the optional dep isn't installed.
-    if (extras?.experimentalCodexResume === true && deps.codexMcpResumeInstalled === false) {
-        issues.push({
-            id: 'codex-mcp-resume-not-installed',
-            titleKey: 'errors.codexResumeNotInstalledTitle',
-            messageKey: 'errors.codexResumeNotInstalledMessage',
-            confirmTextKey: 'connect.openMachine',
-            action: 'openMachine',
-        });
-    }
-    return issues;
+    // New Codex sessions can background-install Codex ACP and daemon-side fresh-session spawns can
+    // still fall back to MCP, so missing ACP should not hard-block the wizard here.
+    return [];
 }
 
 export function getCodexNewSessionRelevantInstallableDepKeys(ctx: NewSessionRelevantInstallableDepsContext): readonly string[] {
@@ -92,102 +72,69 @@ export function getCodexNewSessionRelevantInstallableDepKeys(ctx: NewSessionRele
 
     const extras = computeCodexSpawnSessionExtras({
         agentId: 'codex',
-        experiments: ctx.experiments,
-        resumeSessionId: ctx.resumeSessionId,
+        settings: ctx.settings,
     });
 
     const keys: string[] = [];
-    if (extras?.experimentalCodexResume === true) keys.push(INSTALLABLE_KEYS.CODEX_MCP_RESUME);
-    if (extras?.experimentalCodexAcp === true) keys.push(INSTALLABLE_KEYS.CODEX_ACP);
+    if (extras?.codexBackendMode === 'acp') keys.push(INSTALLABLE_KEYS.CODEX_ACP);
     return keys;
 }
 
-export function getCodexResumePreflightIssues(ctx: ResumePreflightContext): readonly NewSessionPreflightIssue[] {
-    const extras = computeCodexResumeSessionExtras({
-        agentId: 'codex',
-        experiments: ctx.experiments,
-    });
-    if (!extras) return [];
-
-    const codexAcpDep = getCodexAcpDepData(ctx.results);
-    const codexMcpResumeDep = getCodexMcpResumeDepData(ctx.results);
-    const deps = {
-        codexAcpInstalled: typeof codexAcpDep?.installed === 'boolean' ? codexAcpDep.installed : null,
-        codexMcpResumeInstalled: typeof codexMcpResumeDep?.installed === 'boolean' ? codexMcpResumeDep.installed : null,
-    };
-
-    const issues: NewSessionPreflightIssue[] = [];
-    // Codex ACP can run via npx fallback; do not block resume when the optional dep isn't installed.
-    if (extras.experimentalCodexResume === true && deps.codexMcpResumeInstalled === false) {
-        issues.push({
-            id: 'codex-mcp-resume-not-installed',
-            titleKey: 'errors.codexResumeNotInstalledTitle',
-            messageKey: 'errors.codexResumeNotInstalledMessage',
-            confirmTextKey: 'connect.openMachine',
-            action: 'openMachine',
-        });
-    }
-    return issues;
-}
-
 export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
+    guidance: {
+        includeInSessionGettingStartedCliExamples: true,
+    },
+    mcpServers: {
+        supportsDetectedConfigScan: true,
+    },
+    permissions: {
+        footer: {
+            usePermissionUpdates: false,
+            forceReadOnlyAfterStop: false,
+            supportsExecPolicyAmendment: true,
+            stopHandling: 'denyOnly',
+        },
+    },
     resume: {
         experimentSwitches: [
-            { id: CODEX_SWITCH_RESUME_MCP, getValue: (settings) => settings.codexBackendMode === 'mcp_resume' },
             { id: CODEX_SWITCH_RESUME_ACP, getValue: (settings) => settings.codexBackendMode === 'acp' },
         ],
-        getAllowExperimentalVendorResume: ({ experiments }) => {
-            return experiments.enabled === true && (getSwitch(experiments, CODEX_SWITCH_RESUME_MCP) || getSwitch(experiments, CODEX_SWITCH_RESUME_ACP));
-        },
-        getExperimentalVendorResumeRequiresRuntime: ({ experiments }) => {
-            if (experiments.enabled !== true) return false;
-            // ACP-only mode must fail closed until ACP loadSession support is confirmed.
-            return getSwitch(experiments, CODEX_SWITCH_RESUME_ACP) === true && getSwitch(experiments, CODEX_SWITCH_RESUME_MCP) !== true;
-        },
-        // Codex ACP mode can support vendor-resume via ACP `loadSession`.
-        // We probe this dynamically (same as Gemini/OpenCode) and only enforce it when Codex mode is ACP.
-        getAllowRuntimeResume: ({ experiments, results }) => {
-            if (experiments.enabled !== true) return false;
-            if (getSwitch(experiments, CODEX_SWITCH_RESUME_ACP) !== true) return false;
-            return readAcpLoadSessionSupport('codex', results);
-        },
-        getRuntimeResumePrefetchPlan: ({ experiments, results }) => {
-            if (experiments.enabled !== true) return null;
-            if (getSwitch(experiments, CODEX_SWITCH_RESUME_ACP) !== true) return null;
-            if (!shouldPrefetchAcpCapabilities('codex', results)) return null;
-            return { request: buildAcpLoadSessionPrefetchRequest('codex'), timeoutMs: 20_000 };
-        },
-        getPreflightPrefetchPlan: ({ experiments }) => {
-            if (experiments.enabled !== true) return null;
-            if (!(getSwitch(experiments, CODEX_SWITCH_RESUME_MCP) || getSwitch(experiments, CODEX_SWITCH_RESUME_ACP))) return null;
-            const request: CapabilitiesDetectRequest = { checklistId: resumeChecklistId('codex') };
-            return { request, timeoutMs: 12_000 };
-        },
-        getPreflightIssues: getCodexResumePreflightIssues,
     },
     newSession: {
         getPreflightIssues: getCodexNewSessionPreflightIssues,
         getRelevantInstallableDepKeys: getCodexNewSessionRelevantInstallableDepKeys,
     },
+    directSessions: {
+        browse: {
+            order: 10,
+            getSourceOptions: ({ profile, settings }) => resolveCodexBrowseSourceOptions({ profile, settings }),
+            buildLinkEnsureRequestExtras: ({ candidate, source }) => (
+                source.kind === 'codexHome'
+                    ? resolveCodexLinkEnsureRequestExtras({ candidate, source })
+                    : {}
+            ),
+        },
+    },
     payload: {
-        buildSpawnSessionExtras: ({ agentId, experiments, resumeSessionId }) => {
+        buildSpawnSessionExtras: ({ agentId, settings }) => {
             const extras = computeCodexSpawnSessionExtras({
                 agentId,
-                experiments,
-                resumeSessionId,
+                settings,
             });
             return extras ?? {};
         },
-        buildResumeSessionExtras: ({ agentId, experiments }) => {
+        buildResumeSessionExtras: ({ agentId, settings, session }) => {
             const extras = computeCodexResumeSessionExtras({
                 agentId,
-                experiments,
+                settings,
+                session,
             });
             return extras ?? {};
         },
-        buildWakeResumeExtras: ({ resumeCapabilityOptions }: { resumeCapabilityOptions: ResumeCapabilityOptions }) => {
-            const allowCodexResume = resumeCapabilityOptions.allowExperimentalResumeByAgentId?.codex === true;
-            return allowCodexResume ? { experimentalCodexResume: true } : {};
+        buildWakeResumeExtras: ({ resumeCapabilityOptions, session }: { resumeCapabilityOptions: ResumeCapabilityOptions; session?: { metadata?: Record<string, unknown> | null } | null }) => {
+            const settings = resumeCapabilityOptions.accountSettings ?? {};
+            const extras = resolveCodexResumeExtras({ settings, session });
+            return extras ?? {};
         },
     },
 };

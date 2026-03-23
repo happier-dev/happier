@@ -1,0 +1,249 @@
+---
+title: Happier tools & actions
+description: Use one unified tools surface across providers, with built-in Happier actions, custom MCP tools, and on-demand action discovery.
+---
+
+Happier exposes one unified **Happier tools** surface.
+
+That surface includes:
+
+- **Built-in Happier actions** such as review, plan, delegate, session mode changes, session targeting, and request responses
+- **Custom tools** from your configured MCP servers
+
+You do not need to think about those as two different systems. Happier delivers them through the best transport the current provider supports.
+
+## What “Happier tools” means
+
+Happier tools are the actions and external tools that an agent can use through Happier itself.
+
+Examples:
+
+- start a review run
+- start a plan or delegate subagent
+- switch a session into a provider-supported mode like `plan`
+- answer an `AskUserQuestion` or `Exit Plan Mode` request
+- call a custom MCP tool such as Playwright, GitHub, or Context7
+
+From the user point of view, this is one product surface:
+
+- configure tools in **Settings → MCP servers**
+- preview what a session will get
+- see the resulting tool activity in the normal session transcript
+
+## Native MCP vs shell bridge
+
+Different providers accept tools in different ways.
+
+Happier supports two delivery modes:
+
+### Native MCP
+
+For providers that can consume MCP directly, Happier injects tools as native MCP tools.
+
+Current native-MCP providers include:
+
+- Claude
+- Codex
+- OpenCode
+- Kiro
+- Custom ACP providers that expose native MCP support
+
+### Shell bridge
+
+For providers that can execute shell commands but do not use native MCP directly, Happier exposes the same tool surface through the `happier tools` CLI bridge.
+
+Current shell-bridge providers include:
+
+- Gemini
+- Auggie
+- Qwen
+- Kimi
+- Kilo
+- Pi
+- Copilot
+
+The important user-facing result is the same:
+
+- the provider can still use Happier-managed tools
+- the transcript still shows normal Happier tool activity
+- MCP server configuration still happens in one place
+
+## Built-in actions vs custom MCP tools
+
+Happier tools intentionally mix:
+
+- **built-in actions** backed by Happier `ActionSpec`
+- **custom MCP tools** from configured MCP servers
+
+### Built-in actions
+
+Built-in actions are the safest way to expose structured Happier workflows to agents.
+
+Examples include:
+
+- `review.start`
+- `subagents.plan.start`
+- `subagents.delegate.start`
+- `session.mode.set`
+- `session.permission.respond`
+- `session.user_action.answer`
+- `session.target.primary.set`
+- `session.target.tracked.set`
+
+These actions have canonical:
+
+- ids
+- input hints
+- examples
+- option sources
+
+That means Happier can reuse the same source of truth across:
+
+- app launchers and forms
+- voice tools
+- MCP delivery
+- CLI bridge delivery
+
+### Custom MCP tools
+
+Custom MCP tools are still configured the same way as before:
+
+- add them in **Settings → MCP servers**
+- scope them by machine and workspace
+- preview what a session will see
+
+Once configured, they join the same Happier tools surface as built-in actions.
+
+## Discovery-first behavior
+
+Happier no longer needs to stuff a huge fixed action catalog into every prompt.
+
+Instead, agents can discover actions on demand.
+
+The built-in discovery flow is:
+
+1. **Search action specs** when the agent knows the goal but not the exact action id
+2. **Get action spec** when it needs the exact fields, examples, and hints
+3. **Resolve action options** when it needs valid dynamic values such as backends or session modes
+4. **Execute** the action with validated input
+
+This reduces prompt overload and keeps the available tool surface aligned with the real current runtime.
+
+## Hot-path actions
+
+Happier still keeps a small dynamic hot path for common actions.
+
+This hot path is **not** a hard-coded documentation list. It is derived from the canonical `ActionSpec` metadata, so when an action’s voice/tool metadata changes, the hot path changes with it.
+
+In practice, that means common actions like review, plan, delegate, request responses, and session targeting stay easy to reach without maintaining a second parallel registry.
+
+## Plan run vs plan mode
+
+These are two different user-facing concepts.
+
+### Plan subagent
+
+Use **Start plan run** when you want Happier to launch a separate planning run or planner-style subagent.
+
+This creates parallel work in the **Agents** surface.
+
+### Session mode
+
+Use **Set session mode** when you want the current session itself to switch into a provider-supported mode such as `plan`.
+
+This changes the mode of the current session. It does **not** start a new subagent.
+
+If the provider does not support session modes, Happier simply does not offer that control.
+
+## Responding to user actions
+
+Happier uses one generalized response path for user-action-style requests.
+
+That includes cases such as:
+
+- `AskUserQuestion`
+- `ExitPlanMode`
+- other structured user-action requests exposed by the provider/runtime
+
+The response action can:
+
+- approve
+- reject
+- request changes
+- return structured question/answer pairs
+
+This keeps request handling consistent across UI, voice, and agent-driven flows.
+
+## Where you see these tools in the product
+
+### App
+
+In the app, Happier tools show up through:
+
+- **Settings → MCP servers**
+- the session **MCP chip**
+- the transcript **tool timeline**
+- the **Agents** surface for subagent-related actions
+- voice surfaces when voice is enabled
+
+### CLI
+
+In the CLI, Happier exposes:
+
+```bash
+happier tools list
+```
+
+and:
+
+```bash
+happier tools call --session-id <session-id> --source happier --tool <tool-name> --args-json '<json>'
+```
+
+Use `list` when you want to inspect the current built-in and custom tool surface.
+
+Use `call` when you want to invoke one built-in Happier tool or one configured custom MCP tool directly.
+
+## Common workflows
+
+### I want an agent to find the right action instead of guessing
+
+Use the discovery flow:
+
+1. search the action catalog
+2. inspect the matching action spec
+3. resolve dynamic options if needed
+4. execute the action
+
+### I want plan behavior in the current session
+
+Switch the session into a supported mode such as `plan`.
+
+Use a plan subagent only when you want parallel planning work rather than changing the current session’s mode.
+
+### I want the same tool configuration to work across providers
+
+Configure the tool once in Happier.
+
+If the provider supports native MCP, Happier uses that. If not, Happier uses the shell bridge automatically when supported.
+
+### I want voice to do structured work reliably
+
+Voice can use the same built-in actions as the rest of Happier, including:
+
+- action discovery
+- subagent launch
+- session mode changes
+- permission responses
+- user-action answers
+
+That keeps voice aligned with the normal app and CLI surfaces instead of inventing separate voice-only commands.
+
+## Related pages
+
+- [MCP servers](./mcp-servers)
+- [Agents & subagents](./subagents)
+- [Permissions](./permissions)
+- [Inbox and approvals](./inbox-and-approvals)
+- [Voice](./voice)
+- [CLI](../clients/cli)

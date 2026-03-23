@@ -5,11 +5,11 @@ import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers
 
 describe('resolveSpawnChildEnvironment (explicit env keys marker)', () => {
   it('exports explicit GUI/auth env keys for downstream strict env filtering', async () => {
-    const options: SpawnSessionOptions = {
+    const options = {
       directory: '.',
       environmentVariables: {},
       token: 'token-123',
-    };
+    } as any as SpawnSessionOptions;
 
     const result = await resolveSpawnChildEnvironment({
       options,
@@ -29,6 +29,7 @@ describe('resolveSpawnChildEnvironment (explicit env keys marker)', () => {
     expect(typeof raw).toBe('string');
     const parsed = JSON.parse(String(raw));
     expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed).toEqual(expect.arrayContaining(['GITHUB_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']));
+    expect(parsed).toEqual(expect.arrayContaining(['GITHUB_TOKEN']));
+    expect(parsed).not.toEqual(expect.arrayContaining(['CLAUDE_CODE_OAUTH_TOKEN']));
   });
 });

@@ -1,9 +1,9 @@
 import React from 'react';
 import { Platform } from 'react-native';
 
-import type { CodeEditorProps } from './codeEditorTypes';
+import type { CodeEditorHandle, CodeEditorProps } from './codeEditorTypes';
 
-type Impl = (props: CodeEditorProps) => React.ReactElement;
+type Impl = React.ForwardRefExoticComponent<CodeEditorProps & React.RefAttributes<CodeEditorHandle>>;
 
 function loadImpl(): Impl {
     // Vite/Vitest doesn't resolve RN platform suffixes by default, so we route via runtime Platform.OS.
@@ -18,7 +18,6 @@ function loadImpl(): Impl {
 
 const ImplComponent = loadImpl();
 
-export function CodeEditor(props: CodeEditorProps) {
-    return <ImplComponent {...props} />;
-}
-
+export const CodeEditor = React.forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(props, ref) {
+    return <ImplComponent {...props} ref={ref} />;
+});

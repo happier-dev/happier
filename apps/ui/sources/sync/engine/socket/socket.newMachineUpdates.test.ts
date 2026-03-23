@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
+import * as executionRunActivityBus from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleUpdateContainer } from './socket';
 
 const initialStorageState = storage.getState();
@@ -172,6 +173,69 @@ describe('socket update handling: machine-activity for unknown machine', () => {
 
         expect(addMachineActivityUpdate).toHaveBeenCalledWith({ id: 'm_unknown', active: true, activeAt: 999 });
         expect(storage.getState().machines['m_unknown']).toBeUndefined();
+    });
+});
+
+describe('socket update handling: transcript-draft ephemerals', () => {
+    it('routes transcript draft updates to onTranscriptDraftUpdate callback', () => {
+        const onTranscriptDraftUpdate = vi.fn();
+
+        handleEphemeralSocketUpdate({
+            update: {
+                type: 'transcript-draft',
+                sessionId: 's1',
+                localId: 'local-1',
+                segmentKind: 'assistant',
+                sidechainId: null,
+                delta: { t: 'encrypted', c: 'ciphertext' },
+                createdAt: 123,
+            },
+            addActivityUpdate: () => {},
+            addMachineActivityUpdate: () => {},
+            onTranscriptDraftUpdate,
+        });
+
+        expect(onTranscriptDraftUpdate).toHaveBeenCalledWith({
+            type: 'transcript-draft',
+            sessionId: 's1',
+            localId: 'local-1',
+            segmentKind: 'assistant',
+            sidechainId: null,
+            delta: { t: 'encrypted', c: 'ciphertext' },
+            createdAt: 123,
+        });
+    });
+});
+
+describe('socket update handling: execution-run-updated ephemerals', () => {
+    it('notifies execution run activity so polling can recheck quickly', () => {
+        const listener = vi.fn();
+        const unsubscribe = executionRunActivityBus.subscribeExecutionRunActivity('s1', listener);
+
+        handleEphemeralSocketUpdate({
+            update: {
+                type: 'execution-run-updated',
+                sessionId: 's1',
+                run: {
+                    runId: 'run_1',
+                    callId: 'call_1',
+                    sidechainId: 'call_1',
+                    intent: 'review',
+                    backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                    permissionMode: 'read_only',
+                    retentionPolicy: 'ephemeral',
+                    runClass: 'bounded',
+                    ioMode: 'request_response',
+                    status: 'running',
+                    startedAtMs: 123,
+                },
+            },
+            addActivityUpdate: () => {},
+            addMachineActivityUpdate: () => {},
+        });
+
+        expect(listener).toHaveBeenCalledTimes(1);
+        unsubscribe();
     });
 });
 

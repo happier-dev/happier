@@ -4,27 +4,13 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { buildGitIdentityEnv } from '../../testkit/core/env_scope.mjs';
 import { run } from '../proc/proc.mjs';
 import { assertSafeRelativeRepoPath, getUncommittedOps } from './uncommitted_ops.mjs';
 
-function gitEnv() {
-  const clean = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (k.startsWith('HAPPIER_STACK_')) continue;
-    clean[k] = v;
-  }
-  return {
-    ...clean,
-    GIT_AUTHOR_NAME: 'Test',
-    GIT_AUTHOR_EMAIL: 'test@example.com',
-    GIT_COMMITTER_NAME: 'Test',
-    GIT_COMMITTER_EMAIL: 'test@example.com',
-  };
-}
-
 test('getUncommittedOps includes modified, deleted, and untracked paths', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'happy-review-uncommitted-ops-'));
-  const env = gitEnv();
+  const env = buildGitIdentityEnv();
   try {
     await run('git', ['init', '-q'], { cwd: repo, env });
     await run('git', ['checkout', '-q', '-b', 'main'], { cwd: repo, env });
@@ -51,7 +37,7 @@ test('getUncommittedOps includes modified, deleted, and untracked paths', async 
 
 test('getUncommittedOps handles repositories with no commits', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'happy-review-uncommitted-ops-empty-head-'));
-  const env = gitEnv();
+  const env = buildGitIdentityEnv();
   try {
     await run('git', ['init', '-q'], { cwd: repo, env });
     await run('git', ['checkout', '-q', '-b', 'main'], { cwd: repo, env });

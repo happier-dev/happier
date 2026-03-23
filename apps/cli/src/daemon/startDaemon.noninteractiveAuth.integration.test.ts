@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, type Dirent } from 'node:fs';
 
 import { projectPath } from '@/projectPath';
+import { waitForCondition } from '@/testkit/async/waitFor';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 function findDaemonLockFiles(homeDir: string): string[] {
   const serversDir = join(homeDir, 'servers');
@@ -54,23 +54,9 @@ function runNode(args: string[], env: NodeJS.ProcessEnv, timeoutMs: number) {
   });
 }
 
-async function waitFor(
-  fn: () => boolean,
-  opts: Readonly<{ timeoutMs: number; intervalMs?: number; label: string; debug?: () => string }>,
-): Promise<void> {
-  const start = Date.now();
-  const intervalMs = opts.intervalMs ?? 50;
-  while (Date.now() - start < opts.timeoutMs) {
-    if (fn()) return;
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  const debug = opts.debug ? `\n${opts.debug()}` : '';
-  throw new Error(`timed out waiting for ${opts.label} after ${opts.timeoutMs}ms${debug}`);
-}
-
 describe.sequential('daemon start-sync auth gating', () => {
   it('fails fast without creating a lock when started non-interactively with no credentials', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const home = await createTempDir('happier-cli-home-');
     const entry = join(projectPath(), 'src', 'index.ts');
 
     const env: NodeJS.ProcessEnv = {
@@ -87,14 +73,14 @@ describe.sequential('daemon start-sync auth gating', () => {
       expect(res.code).not.toBe(0);
       expect(findDaemonLockFiles(home)).toHaveLength(0);
     } finally {
-      await rm(home, { recursive: true, force: true });
+      await removeTempDir(home);
     }
   }, 40_000);
 
   it(
     'creates a lock and waits for credentials when HAPPIER_DAEMON_WAIT_FOR_AUTH=1',
     async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const home = await createTempDir('happier-cli-home-');
     const entry = join(projectPath(), 'src', 'index.ts');
 
     const env: NodeJS.ProcessEnv = {
@@ -123,7 +109,7 @@ describe.sequential('daemon start-sync auth gating', () => {
     });
 
     try {
-      await waitFor(() => {
+      await waitForCondition(() => {
         if (child.exitCode !== null) {
           throw new Error(
             `daemon exited early with code=${child.exitCode}\nstdout:\n${childStdout}\nstderr:\n${childStderr}`,
@@ -145,12 +131,12 @@ describe.sequential('daemon start-sync auth gating', () => {
         // ignore
       }
 
-      await waitFor(() => child.exitCode !== null, {
+      await waitForCondition(() => child.exitCode !== null, {
         timeoutMs: 30_000,
         label: 'daemon process termination',
         debug: () => `stdout:\n${childStdout}\nstderr:\n${childStderr}`,
       });
-      await waitFor(() => findDaemonLockFiles(home).length === 0, {
+      await waitForCondition(() => findDaemonLockFiles(home).length === 0, {
         timeoutMs: 30_000,
         label: 'lock file cleanup after daemon exit',
         debug: () => `stdout:\n${childStdout}\nstderr:\n${childStderr}`,
@@ -162,7 +148,7 @@ describe.sequential('daemon start-sync auth gating', () => {
       } catch {
         // ignore
       }
-      await rm(home, { recursive: true, force: true });
+      await removeTempDir(home);
     }
     },
     60_000,

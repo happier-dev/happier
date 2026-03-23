@@ -38,6 +38,9 @@ import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
 import { downloadVerifiedReleaseAssetBundle } from '@happier-dev/release-runtime/verifiedDownload';
 import { planArchiveExtraction } from '@happier-dev/release-runtime/extractPlan';
 import { fetchFirstGitHubReleaseByTags, fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
+import { findExtractedExecutableByName } from './self_host/findExtractedExecutableByName.mjs';
+import { maybeInstallCompanionCli } from './self_host/install_companion_cli.mjs';
+import { listVersionedDirectoryIdsNewestFirst, pruneVersionedDirectories } from './self_host/version_retention.mjs';
 
 const SUPPORTED_CHANNELS = new Set(['stable', 'preview']);
 const DEFAULTS = Object.freeze({
@@ -417,24 +420,6 @@ async function applySelfHostSqliteMigrationsAtInstallTime({ env }) {
   return { applied: appliedNow, skipped: false, reason: 'ok' };
 }
 
-async function findExecutableByName(rootDir, binaryName) {
-  const entries = await readdir(rootDir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(rootDir, entry.name);
-    if (entry.isDirectory()) {
-      const nested = await findExecutableByName(fullPath, binaryName);
-      if (nested) return nested;
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    if (entry.name !== binaryName) continue;
-    const info = await stat(fullPath);
-    if (process.platform === 'win32') return fullPath;
-    if ((info.mode & 0o111) !== 0) return fullPath;
-  }
-  return '';
-}
-
 function resolveConfig({ channel, mode = 'user', platform = process.platform } = {}) {
   const defaults = resolveSelfHostDefaults({ platform, mode, homeDir: homedir() });
   const installRoot = String(process.env.HAPPIER_SELF_HOST_INSTALL_ROOT ?? defaults.installRoot).trim();
@@ -543,6 +528,7 @@ export function renderServerEnvFile({
     );
   }
   const prismaEnginePath = prismaEngineCandidates.find((candidate) => existsSync(candidate)) || '';
+  const nodeModulesPath = serverBinDirRaw ? join(serverBinDirRaw, 'node_modules') : '';
   return [
     `PORT=${port}`,
     `HAPPIER_SERVER_HOST=${host}`,
@@ -552,6 +538,7 @@ export function renderServerEnvFile({
     'HAPPIER_DB_PROVIDER=sqlite',
     `DATABASE_URL=${databaseUrl}`,
     'HAPPIER_FILES_BACKEND=local',
+    ...(nodeModulesPath ? [`NODE_PATH=${nodeModulesPath}`] : []),
     ...(prismaEnginePath
       ? [
           'PRISMA_CLIENT_ENGINE_TYPE=library',
@@ -973,7 +960,7 @@ export function renderUpdaterLaunchdPlistXml({
       '--non-interactive',
     ],
     env: {
-      PATH: buildLaunchdPath({ execPath: process.execPath, basePath: process.env.PATH }),
+      PATH: buildLaunchdPath({ execPath: hstack, basePath: process.env.PATH }),
     },
     stdoutPath: out,
     stderrPath: err,
@@ -1366,12 +1353,247 @@ async function syncSelfHostGeneratedClients({ artifactRootDir, targetDir }) {
   return { copied: true, reason: 'ok' };
 }
 
+async function syncSelfHostNodeModules({ artifactRootDir, targetDir }) {
+  const root = String(artifactRootDir ?? '').trim();
+  const dest = String(targetDir ?? '').trim();
+  if (!root || !dest) return { copied: false, reason: 'missing-paths', copiedEntries: [], missingEntries: [] };
+
+  const sourceRoot = join(root, 'node_modules');
+  if (!existsSync(sourceRoot)) return { copied: false, reason: 'missing-source-root', copiedEntries: [], missingEntries: [] };
+
+  const sidecars = [
+    { sourcePath: join(sourceRoot, '.prisma'), targetPath: join(dest, '.prisma') },
+    { sourcePath: join(sourceRoot, '@prisma'), targetPath: join(dest, '@prisma') },
+  ];
+  const missingEntries = sidecars
+    .filter((sidecar) => !existsSync(sidecar.sourcePath))
+    .map((sidecar) => sidecar.sourcePath);
+  if (missingEntries.length > 0) {
+    return { copied: false, reason: 'incomplete-sidecars', copiedEntries: [], missingEntries };
+  }
+
+  const copiedEntries = [];
+
+  await rm(dest, { recursive: true, force: true });
+  await mkdir(dest, { recursive: true });
+  for (const sidecar of sidecars) {
+    await mkdir(dirname(sidecar.targetPath), { recursive: true });
+    await cp(sidecar.sourcePath, sidecar.targetPath, { recursive: true });
+    copiedEntries.push(sidecar.targetPath);
+  }
+
+  return copiedEntries.length > 0
+    ? { copied: true, reason: 'ok', copiedEntries, missingEntries: [] }
+    : { copied: false, reason: 'missing-sidecars', copiedEntries, missingEntries: [] };
+}
+
+function assertSelfHostNodeModulesSync(result) {
+  if (result?.copied) return;
+  const reason = String(result?.reason ?? 'unknown');
+  throw new Error(`[self-host] server runtime is missing packaged node_modules sidecars (${reason})`);
+}
+
+async function stageSelfHostRuntimePayload({ artifactRootDir, stageRootDir }) {
+  const stageRoot = String(stageRootDir ?? '').trim();
+  if (!stageRoot) {
+    throw new Error('[self-host] missing runtime staging directory');
+  }
+
+  const sqliteMigrationsDir = join(stageRoot, 'migrations', 'sqlite');
+  await syncSelfHostSqliteMigrations({
+    artifactRootDir,
+    targetDir: sqliteMigrationsDir,
+  }).catch(() => {});
+
+  const generatedDir = join(stageRoot, 'generated');
+  const generated = await syncSelfHostGeneratedClients({
+    artifactRootDir,
+    targetDir: generatedDir,
+  });
+  if (!generated.copied) {
+    throw new Error('[self-host] server runtime is missing packaged generated clients');
+  }
+
+  const nodeModulesDir = join(stageRoot, 'node_modules');
+  const nodeModules = await syncSelfHostNodeModules({
+    artifactRootDir,
+    targetDir: nodeModulesDir,
+  });
+  assertSelfHostNodeModulesSync(nodeModules);
+
+  return {
+    generatedDir,
+    nodeModulesDir,
+    sqliteMigrationsDir: existsSync(sqliteMigrationsDir) ? sqliteMigrationsDir : '',
+  };
+}
+
+async function promoteStagedDirectory({ stagedDir, targetDir }) {
+  const staged = String(stagedDir ?? '').trim();
+  const target = String(targetDir ?? '').trim();
+  if (!staged || !target || !existsSync(staged)) return;
+
+  await mkdir(dirname(target), { recursive: true });
+  const backupDir = `${target}.backup-${randomUUID()}`;
+  const hadTarget = existsSync(target);
+  if (hadTarget) {
+    await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    await rename(target, backupDir);
+  }
+
+  try {
+    await rename(staged, target).catch(async (e) => {
+      if (String(e?.code ?? '') !== 'EXDEV') throw e;
+      await cp(staged, target, { recursive: true });
+      await rm(staged, { recursive: true, force: true });
+    });
+    if (hadTarget) {
+      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    }
+  } catch (error) {
+    await rm(target, { recursive: true, force: true }).catch(() => {});
+    if (hadTarget && existsSync(backupDir)) {
+      await rename(backupDir, target).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+async function rollbackPromotedDirectory({ targetDir, backupDir, hadTarget }) {
+  const target = String(targetDir ?? '').trim();
+  const backup = String(backupDir ?? '').trim();
+  if (target) {
+    await rm(target, { recursive: true, force: true }).catch(() => {});
+  }
+  if (hadTarget && backup && existsSync(backup)) {
+    await rename(backup, target).catch(() => {});
+  }
+}
+
+async function prepareFailClosedBinaryPromotionWindow({ targetBinaryPath, previousBinaryPath }) {
+  const target = String(targetBinaryPath ?? '').trim();
+  const previous = String(previousBinaryPath ?? '').trim();
+  if (!target) {
+    return { targetBinaryPath: '', recoveryBinaryPath: '', hadActiveBinary: false };
+  }
+
+  await mkdir(dirname(target), { recursive: true });
+  const hadActiveBinary = existsSync(target);
+  if (!hadActiveBinary) {
+    return { targetBinaryPath: target, recoveryBinaryPath: '', hadActiveBinary };
+  }
+
+  if (previous) {
+    await mkdir(dirname(previous), { recursive: true });
+    await copyFile(target, previous);
+    await chmod(previous, 0o755).catch(() => {});
+  }
+
+  const recoveryBinaryPath = `${target}.rollback-${randomUUID()}`;
+  await rm(recoveryBinaryPath, { force: true }).catch(() => {});
+  await rename(target, recoveryBinaryPath);
+
+  return { targetBinaryPath: target, recoveryBinaryPath, hadActiveBinary };
+}
+
+async function finalizeFailClosedBinaryPromotionWindow(window) {
+  const recovery = String(window?.recoveryBinaryPath ?? '').trim();
+  if (recovery) {
+    await rm(recovery, { force: true }).catch(() => {});
+  }
+}
+
+async function rollbackFailClosedBinaryPromotionWindow(window) {
+  const target = String(window?.targetBinaryPath ?? '').trim();
+  const recovery = String(window?.recoveryBinaryPath ?? '').trim();
+  const hadActiveBinary = Boolean(window?.hadActiveBinary);
+
+  if (target) {
+    await rm(target, { force: true }).catch(() => {});
+  }
+  if (hadActiveBinary && recovery && existsSync(recovery)) {
+    await rename(recovery, target).catch(() => {});
+  }
+}
+
+async function promoteStagedSelfHostRuntimePayload({ stagedRuntime, config, beforeOnPromoted, onPromoted }) {
+  const promotions = [
+    {
+      stagedDir: stagedRuntime.sqliteMigrationsDir,
+      targetDir: join(config.dataDir, 'migrations', 'sqlite'),
+    },
+    {
+      stagedDir: stagedRuntime.generatedDir,
+      targetDir: join(dirname(config.serverBinaryPath), 'generated'),
+    },
+    {
+      stagedDir: stagedRuntime.nodeModulesDir,
+      targetDir: join(dirname(config.serverBinaryPath), 'node_modules'),
+    },
+  ].filter(({ stagedDir }) => {
+    const staged = String(stagedDir ?? '').trim();
+    return staged && existsSync(staged);
+  });
+
+  const binaryPromotionWindow = await prepareFailClosedBinaryPromotionWindow({
+    targetBinaryPath: config.serverBinaryPath,
+    previousBinaryPath: config.serverPreviousBinaryPath,
+  });
+
+  const promoted = [];
+  try {
+    for (const promotion of promotions) {
+      const target = String(promotion.targetDir ?? '').trim();
+      await mkdir(dirname(target), { recursive: true });
+      promotion.backupDir = `${target}.backup-${randomUUID()}`;
+      promotion.hadTarget = existsSync(target);
+      if (promotion.hadTarget) {
+        await rm(promotion.backupDir, { recursive: true, force: true }).catch(() => {});
+        await rename(target, promotion.backupDir);
+      }
+
+      try {
+        await promoteStagedDirectory({
+          stagedDir: promotion.stagedDir,
+          targetDir: promotion.targetDir,
+        });
+      } catch (error) {
+        await rollbackPromotedDirectory(promotion);
+        throw error;
+      }
+
+      promoted.push(promotion);
+    }
+
+    if (typeof beforeOnPromoted === 'function') {
+      await beforeOnPromoted();
+    }
+    if (typeof onPromoted === 'function') {
+      await onPromoted();
+    }
+    await finalizeFailClosedBinaryPromotionWindow(binaryPromotionWindow);
+
+    for (const promotion of promoted) {
+      if (promotion.hadTarget) {
+        await rm(promotion.backupDir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+  } catch (error) {
+    await rollbackFailClosedBinaryPromotionWindow(binaryPromotionWindow);
+    for (const promotion of promoted.reverse()) {
+      await rollbackPromotedDirectory(promotion);
+    }
+    throw error;
+  }
+}
+
 export async function installSelfHostBinaryFromBundle({
   bundle,
   binaryName,
   config,
   pubkeyFile = resolveMinisignPublicKeyText(process.env),
   userAgent = 'happier-self-host-installer',
+  beforeBinaryInstall,
 } = {}) {
   const resolvedBundle = bundle;
   const name = String(binaryName ?? '').trim();
@@ -1386,6 +1608,11 @@ export async function installSelfHostBinaryFromBundle({
   }
   const platform = String(config?.platform ?? process.platform).trim() || process.platform;
   const os = normalizeOs(platform);
+  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir: config.versionsDir,
+    entryPrefix: `${name}-`,
+  });
+  const previousVersionId = existingVersionIds.find((candidate) => candidate !== String(bundle?.version ?? '').trim()) ?? null;
 
   const tempDir = await mkdtemp(join(tmpdir(), 'happier-self-host-release-'));
   try {
@@ -1408,61 +1635,99 @@ export async function installSelfHostBinaryFromBundle({
       throw new Error(`[self-host] ${plan.requiredCommand} is required to extract release artifacts`);
     }
     runCommand(plan.command.cmd, plan.command.args, { stdio: 'ignore' });
-    const extractedBinary = await findExecutableByName(extractDir, name);
+    const extractedBinary = await findExtractedExecutableByName(extractDir, name);
     if (!extractedBinary) {
       throw new Error('[self-host] failed to locate extracted server binary');
     }
 
     const version = downloaded.version || String(resolvedBundle?.version ?? '').trim() || `${Date.now()}`;
-	    await installBinaryAtomically({
-	      sourceBinaryPath: extractedBinary,
-	      targetBinaryPath: config.serverBinaryPath,
-	      previousBinaryPath: config.serverPreviousBinaryPath,
-	      versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
-	    });
-	    const artifactRootDir = dirname(extractedBinary);
-	    await syncSelfHostSqliteMigrations({
-	      artifactRootDir,
-	      targetDir: join(config.dataDir, 'migrations', 'sqlite'),
-	    }).catch(() => {});
-    const generated = await syncSelfHostGeneratedClients({
+    const artifactRootDir = dirname(extractedBinary);
+    const stagedRuntime = await stageSelfHostRuntimePayload({
       artifactRootDir,
-      targetDir: join(dirname(config.serverBinaryPath), 'generated'),
+      stageRootDir: join(tempDir, 'runtime-stage'),
     });
-    if (!generated.copied) {
-      throw new Error('[self-host] server runtime is missing packaged generated clients');
-    }
+    await promoteStagedSelfHostRuntimePayload({
+      stagedRuntime,
+      config,
+      beforeOnPromoted: beforeBinaryInstall,
+      onPromoted: async () => installBinaryAtomically({
+        sourceBinaryPath: extractedBinary,
+        targetBinaryPath: config.serverBinaryPath,
+        previousBinaryPath: config.serverPreviousBinaryPath,
+        versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
+      }),
+    });
+    await pruneVersionedDirectories({
+      versionsDir: config.versionsDir,
+      entryPrefix: `${name}-`,
+      currentVersionId: version,
+      previousVersionId,
+    });
     return { version, source: resolvedBundle.archive.url };
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
 }
 
+export async function installSelfHostBinaryFromLocalPath({
+  sourceBinaryPath,
+  binaryName,
+  config,
+} = {}) {
+  const srcPath = String(sourceBinaryPath ?? '').trim();
+  const name = String(binaryName ?? '').trim();
+  if (!srcPath) {
+    throw new Error('[self-host] missing local source binary path');
+  }
+  if (!existsSync(srcPath)) {
+    throw new Error(`[self-host] missing --server-binary path: ${srcPath}`);
+  }
+  if (!name) {
+    throw new Error('[self-host] missing binary name');
+  }
+
+  const version = `local-${Date.now()}`;
+  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir: config.versionsDir,
+    entryPrefix: `${name}-`,
+  });
+  const previousVersionId = existingVersionIds.find((candidate) => candidate !== version) ?? null;
+  const artifactRootDir = dirname(srcPath);
+  const runtimeStageDir = await mkdtemp(join(tmpdir(), 'happier-self-host-local-runtime-stage-'));
+  try {
+    const stagedRuntime = await stageSelfHostRuntimePayload({
+      artifactRootDir,
+      stageRootDir: runtimeStageDir,
+    });
+    await promoteStagedSelfHostRuntimePayload({
+      stagedRuntime,
+      config,
+      onPromoted: async () => installBinaryAtomically({
+        sourceBinaryPath: srcPath,
+        targetBinaryPath: config.serverBinaryPath,
+        previousBinaryPath: config.serverPreviousBinaryPath,
+        versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
+      }),
+    });
+    await pruneVersionedDirectories({
+      versionsDir: config.versionsDir,
+      entryPrefix: `${name}-`,
+      currentVersionId: version,
+      previousVersionId,
+    });
+    return { version, source: 'local' };
+  } finally {
+    await rm(runtimeStageDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function installFromRelease({ product, binaryName, config, explicitBinaryPath = '' }) {
   if (explicitBinaryPath) {
-    const srcPath = explicitBinaryPath;
-    if (!existsSync(srcPath)) {
-      throw new Error(`[self-host] missing --server-binary path: ${srcPath}`);
-    }
-    const version = `local-${Date.now()}`;
-    await installBinaryAtomically({
-      sourceBinaryPath: srcPath,
-      targetBinaryPath: config.serverBinaryPath,
-      previousBinaryPath: config.serverPreviousBinaryPath,
-      versionedTargetPath: join(config.versionsDir, `${binaryName}-${version}`),
+    return installSelfHostBinaryFromLocalPath({
+      sourceBinaryPath: explicitBinaryPath,
+      binaryName,
+      config,
     });
-    await syncSelfHostSqliteMigrations({
-      artifactRootDir: dirname(srcPath),
-      targetDir: join(config.dataDir, 'migrations', 'sqlite'),
-    }).catch(() => {});
-    const generated = await syncSelfHostGeneratedClients({
-      artifactRootDir: dirname(srcPath),
-      targetDir: join(dirname(config.serverBinaryPath), 'generated'),
-    });
-    if (!generated.copied) {
-      throw new Error('[self-host] server runtime is missing packaged generated clients');
-    }
-    return { version, source: 'local' };
   }
 
   const channelTag = config.channel === 'preview' ? 'server-preview' : 'server-stable';
@@ -1554,6 +1819,10 @@ async function installUiWebFromRelease({ config }) {
     };
   }
   const { release, tag: channelTag } = resolvedRelease;
+  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir: config.uiWebVersionsDir,
+    entryPrefix: `${config.uiWebProduct}-`,
+  });
 
   const resolved = resolveReleaseAssetBundle({
     assets: release?.assets,
@@ -1593,6 +1862,7 @@ async function installUiWebFromRelease({ config }) {
 
 	    const version = resolved.version || String(release?.tag_name ?? '').replace(/^ui-web-v/, '') || `${Date.now()}`;
 	    const versionedTargetDir = join(config.uiWebVersionsDir, `${config.uiWebProduct}-${version}`);
+    const previousVersionId = existingVersionIds.find((candidate) => candidate !== version) ?? null;
     await rm(versionedTargetDir, { recursive: true, force: true });
     await mkdir(dirname(versionedTargetDir), { recursive: true });
     await cp(artifactRootDir, versionedTargetDir, { recursive: true });
@@ -1600,6 +1870,12 @@ async function installUiWebFromRelease({ config }) {
     await rm(config.uiWebCurrentDir, { recursive: true, force: true }).catch(() => {});
     await symlink(versionedTargetDir, config.uiWebCurrentDir, config.platform === 'win32' ? 'junction' : 'dir').catch(async () => {
       await cp(versionedTargetDir, config.uiWebCurrentDir, { recursive: true });
+    });
+    await pruneVersionedDirectories({
+      versionsDir: config.uiWebVersionsDir,
+      entryPrefix: `${config.uiWebProduct}-`,
+      currentVersionId: version,
+      previousVersionId,
     });
 
     return { installed: true, version, source: downloaded.source.archiveUrl, tag: channelTag };
@@ -1619,33 +1895,6 @@ async function writeSelfHostState(config, statePatch) {
   };
   await mkdir(dirname(config.statePath), { recursive: true });
   await writeFile(config.statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
-}
-
-async function maybeInstallCompanionCli({ channel, nonInteractive, withCli }) {
-  if (!withCli) return { installed: false, reason: 'disabled' };
-  if (commandExists('happier')) {
-    return { installed: false, reason: 'already-installed' };
-  }
-  if (!commandExists('curl') || !commandExists('bash')) {
-    return { installed: false, reason: 'missing-curl-or-bash' };
-  }
-  const result = runCommand(
-    'bash',
-    ['-lc', 'curl -fsSL https://happier.dev/install | bash'],
-    {
-      allowFail: true,
-      env: {
-        ...process.env,
-        HAPPIER_CHANNEL: channel,
-        HAPPIER_NONINTERACTIVE: nonInteractive ? '1' : '0',
-      },
-      stdio: 'inherit',
-    }
-  );
-  return {
-    installed: (result.status ?? 1) === 0,
-    reason: (result.status ?? 1) === 0 ? 'installed' : 'installer-failed',
-  };
 }
 
 function buildSelfHostServerServiceSpec({ config, envText }) {
@@ -1776,8 +2025,9 @@ async function cmdInstall({ channel, mode, argv, json }) {
 
   const cliResult = await maybeInstallCompanionCli({
     channel,
-    nonInteractive,
+    githubRepo: config.githubRepo,
     withCli: !withoutCli,
+    processEnv: process.env,
   });
   await writeSelfHostState(config, {
     channel,

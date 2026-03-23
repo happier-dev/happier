@@ -111,4 +111,33 @@ describe('startupMetadataUpdate', () => {
 
     expect((updates[0] as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 123, modelId: 'gpt-5-codex-high' });
   });
+
+  it('can remove specific metadata keys during attach startup updates', () => {
+    const updates: Metadata[] = [];
+    const fakeSession = {
+      updateMetadata: (updater: (current: Metadata) => Metadata) => {
+        const current = {
+          lifecycleState: 'archived',
+          acpSessionModesV1: { v: 1, provider: 'codex' },
+          acpSessionModelsV1: { v: 1, provider: 'codex' },
+          acpConfigOptionsV1: { v: 1, provider: 'codex' },
+        } as any as Metadata;
+        updates.push(updater(current));
+      },
+    };
+
+    applyStartupMetadataUpdateToSession({
+      session: fakeSession,
+      next: { hostPid: 42 } as any,
+      nowMs: 999,
+      permissionModeOverride: null,
+      mode: 'attach',
+      metadataKeysToUnsetOnAttach: ['acpSessionModesV1', 'acpSessionModelsV1', 'acpConfigOptionsV1'],
+    } as any);
+
+    expect((updates[0] as any).acpSessionModesV1).toBeUndefined();
+    expect((updates[0] as any).acpSessionModelsV1).toBeUndefined();
+    expect((updates[0] as any).acpConfigOptionsV1).toBeUndefined();
+    expect((updates[0] as any).hostPid).toBe(42);
+  });
 });

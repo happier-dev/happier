@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
+import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
 import type { AgentMessage } from '../../core/AgentMessage';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeAcpAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -65,80 +62,83 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend session models', () => {
   it('captures models from newSession and can set the current model', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-models-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
+    await withTempDir('happier-acp-models-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
 
-    let backend: AcpBackend | null = null;
-    try {
-      backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-      });
-
-      const events: AgentMessage[] = [];
-      backend.onMessage((msg) => {
-        if (msg.type === 'event') events.push(msg);
-      });
-
-      const started = await backend.startSession();
-      expect(started.sessionId).toBe('test-session');
-
-      const models = (backend as any).getSessionModelState?.();
-      expect(models).toEqual({
-        currentModelId: 'model-a',
-        availableModels: [
-          { id: 'model-a', name: 'Model A', description: 'Fast' },
-          { id: 'model-b', name: 'Model B', description: 'Accurate' },
-        ],
-      });
-
-      expect(events.some((e) => e.type === 'event' && e.name === 'session_models_state')).toBe(true);
-
-      await (backend as any).setSessionModel(started.sessionId, 'model-b');
-      const after = (backend as any).getSessionModelState?.();
-      expect(after?.currentModelId).toBe('model-b');
-
-      expect(events.some((e) => e.type === 'event' && e.name === 'current_model_update')).toBe(true);
-    } finally {
+      let backend: AcpBackend | null = null;
       try {
-        await backend?.dispose();
-      } catch {}
-      rmSync(dir, { recursive: true, force: true });
-    }
+        backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+        });
+
+        const events: AgentMessage[] = [];
+        backend.onMessage((msg) => {
+          if (msg.type === 'event') events.push(msg);
+        });
+
+        const started = await backend.startSession();
+        expect(started.sessionId).toBe('test-session');
+
+        const models = (backend as any).getSessionModelState?.();
+        expect(models).toEqual({
+          currentModelId: 'model-a',
+          availableModels: [
+            { id: 'model-a', name: 'Model A', description: 'Fast' },
+            { id: 'model-b', name: 'Model B', description: 'Accurate' },
+          ],
+        });
+
+        expect(events.some((e) => e.type === 'event' && e.name === 'session_models_state')).toBe(true);
+
+        await (backend as any).setSessionModel(started.sessionId, 'model-b');
+        const after = (backend as any).getSessionModelState?.();
+        expect(after?.currentModelId).toBe('model-b');
+
+        expect(events.some((e) => e.type === 'event' && e.name === 'current_model_update')).toBe(true);
+      } finally {
+        try {
+          await backend?.dispose();
+        } catch {}
+      }
+    });
   });
 
   it('rejects setSessionModel when sessionId does not match the active ACP session', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-models-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
+    await withTempDir('happier-acp-models-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
 
-    let backend: AcpBackend | null = null;
-    try {
-      backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-      });
-
-      const started = await backend.startSession();
-      expect(started.sessionId).toBe('test-session');
-
-      await expect((backend as any).setSessionModel('not-the-session', 'model-b')).rejects.toThrow(
-        /Session ID does not match the active ACP session/,
-      );
-    } finally {
+      let backend: AcpBackend | null = null;
       try {
-        await backend?.dispose();
-      } catch {}
-      rmSync(dir, { recursive: true, force: true });
-    }
+        backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+        });
+
+        const started = await backend.startSession();
+        expect(started.sessionId).toBe('test-session');
+
+        await expect((backend as any).setSessionModel('not-the-session', 'model-b')).rejects.toThrow(
+          /Session ID does not match the active ACP session/,
+        );
+      } finally {
+        try {
+          await backend?.dispose();
+        } catch {}
+      }
+    });
   });
 });

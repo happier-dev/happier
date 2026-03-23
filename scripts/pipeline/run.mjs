@@ -110,6 +110,32 @@ function parseBoolString(value, name) {
 }
 
 /**
+ * @param {string} value
+ * @returns {value is 'development' | 'canary' | 'preview' | 'production'}
+ */
+function isUiMobileReleaseEnvironment(value) {
+  return value === 'development' || value === 'canary' || value === 'preview' || value === 'production';
+}
+
+/**
+ * @param {'development' | 'canary' | 'preview' | 'production'} environment
+ * @returns {'development' | 'preview' | 'production'}
+ */
+function resolveUiMobilePipelineEnvironment(environment) {
+  if (environment === 'production') return 'production';
+  if (environment === 'development') return 'development';
+  return 'preview';
+}
+
+/**
+ * @param {'development' | 'canary' | 'preview' | 'production'} environment
+ * @returns {string}
+ */
+function resolveUiMobileProfilePrefix(environment) {
+  return environment;
+}
+
+/**
  * @param {unknown} value
  * @param {string} name
  * @returns {'auto' | 'prompt' | boolean}
@@ -1851,22 +1877,26 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         args: rest,
         options: {
           environment: { type: 'string' },
-        message: { type: 'string', default: '' },
-        'eas-cli-version': { type: 'string', default: '' },
-        'dry-run': { type: 'boolean', default: false },
-        'secrets-source': { type: 'string', default: 'auto' },
-        'keychain-service': { type: 'string', default: 'happier/pipeline' },
-        'keychain-account': { type: 'string', default: '' },
-      },
-      allowPositionals: false,
-    });
+          message: { type: 'string', default: '' },
+          interactive: { type: 'string', default: 'auto' },
+          'eas-cli-version': { type: 'string', default: '' },
+          'dry-run': { type: 'boolean', default: false },
+          'secrets-source': { type: 'string', default: 'auto' },
+          'keychain-service': { type: 'string', default: 'happier/pipeline' },
+          'keychain-account': { type: 'string', default: '' },
+        },
+        allowPositionals: false,
+      });
 
     const environment = String(values.environment ?? '').trim();
-    if (environment !== 'preview' && environment !== 'production') {
-      fail(`--environment must be 'preview' or 'production' (got: ${environment || '<empty>'})`);
+    if (!isUiMobileReleaseEnvironment(environment)) {
+      fail(`--environment must be 'development', 'canary', 'preview', or 'production' (got: ${environment || '<empty>'})`);
     }
 
-    const { env, sources } = loadPipelineEnv({ repoRoot });
+    const { env, sources } = loadPipelineEnv({
+      repoRoot,
+      deployEnvironment: resolveUiMobilePipelineEnvironment(environment),
+    });
     const secretsSourceRaw = String(values['secrets-source'] ?? '').trim();
     const secretsSource =
       secretsSourceRaw === 'auto' || secretsSourceRaw === 'env' || secretsSourceRaw === 'keychain'
@@ -1893,6 +1923,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     }
 
     const message = String(values.message ?? '').trim();
+    const interactive = String(values.interactive ?? '').trim();
     const easCliVersion = String(values['eas-cli-version'] ?? '').trim();
     const dryRun = values['dry-run'] === true;
 
@@ -1904,6 +1935,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         '--environment',
         environment,
         ...(message ? ['--message', message] : []),
+        ...(interactive ? ['--interactive', interactive] : []),
         ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
         ...(dryRun ? ['--dry-run'] : []),
       ],
@@ -1922,15 +1954,16 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'build-mode': { type: 'string', default: '' },
           'local-runtime': { type: 'string', default: '' },
           'artifact-out': { type: 'string', default: '' },
+          interactive: { type: 'string', default: 'auto' },
           'eas-cli-version': { type: 'string', default: '' },
           'dump-view': { type: 'string', default: 'true' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
-        'keychain-service': { type: 'string', default: 'happier/pipeline' },
-        'keychain-account': { type: 'string', default: '' },
-      },
-      allowPositionals: false,
-    });
+          'keychain-service': { type: 'string', default: 'happier/pipeline' },
+          'keychain-account': { type: 'string', default: '' },
+        },
+        allowPositionals: false,
+      });
 
     const platform = String(values.platform ?? '').trim();
     const profile = String(values.profile ?? '').trim();
@@ -1970,6 +2003,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const buildMode = String(values['build-mode'] ?? '').trim();
       const localRuntime = String(values['local-runtime'] ?? '').trim();
       const artifactOut = String(values['artifact-out'] ?? '').trim();
+      const interactive = String(values.interactive ?? '').trim();
       const dryRun = values['dry-run'] === true;
 
       runExpoNativeBuild({
@@ -1986,6 +2020,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           ...(buildMode ? ['--build-mode', buildMode] : []),
           ...(localRuntime ? ['--local-runtime', localRuntime] : []),
           ...(artifactOut ? ['--artifact-out', artifactOut] : []),
+          ...(interactive ? ['--interactive', interactive] : []),
           ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
           ...(dumpView ? ['--dump-view', dumpView] : []),
           ...(dryRun ? ['--dry-run'] : []),
@@ -2003,14 +2038,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           platform: { type: 'string' },
           path: { type: 'string', default: '' },
           profile: { type: 'string', default: '' },
+          interactive: { type: 'string', default: 'auto' },
           'eas-cli-version': { type: 'string', default: '' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
           'keychain-service': { type: 'string', default: 'happier/pipeline' },
-        'keychain-account': { type: 'string', default: '' },
-      },
-      allowPositionals: false,
-    });
+          'keychain-account': { type: 'string', default: '' },
+        },
+        allowPositionals: false,
+      });
 
     const environment = String(values.environment ?? '').trim();
     const platform = String(values.platform ?? '').trim();
@@ -2053,6 +2089,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const easCliVersion = String(values['eas-cli-version'] ?? '').trim();
       const profile = String(values.profile ?? '').trim();
       const submitPath = String(values.path ?? '').trim();
+      const interactive = String(values.interactive ?? '').trim();
       const dryRun = values['dry-run'] === true;
 
       runExpoSubmit({
@@ -2066,6 +2103,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           platform,
           ...(submitPath ? ['--path', submitPath] : []),
           ...(profile ? ['--profile', profile] : []),
+          ...(interactive ? ['--interactive', interactive] : []),
           ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
           ...(dryRun ? ['--dry-run'] : []),
         ],
@@ -2091,11 +2129,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     });
 
     const environment = String(values.environment ?? '').trim();
-    if (environment !== 'preview' && environment !== 'production') {
-      fail(`--environment must be 'preview' or 'production' (got: ${environment || '<empty>'})`);
+    if (!isUiMobileReleaseEnvironment(environment)) {
+      fail(`--environment must be 'development', 'canary', 'preview', or 'production' (got: ${environment || '<empty>'})`);
     }
 
-    const { env, sources } = loadPipelineEnv({ repoRoot });
+    const { env, sources } = loadPipelineEnv({
+      repoRoot,
+      deployEnvironment: resolveUiMobilePipelineEnvironment(environment),
+    });
     const secretsSourceRaw = String(values['secrets-source'] ?? '').trim();
     const secretsSource =
       secretsSourceRaw === 'auto' || secretsSourceRaw === 'env' || secretsSourceRaw === 'keychain'
@@ -2160,8 +2201,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     });
 
     const environment = String(values.environment ?? '').trim();
-    if (environment !== 'preview' && environment !== 'production') {
-      fail(`--environment must be 'preview' or 'production' (got: ${environment || '<empty>'})`);
+    if (!isUiMobileReleaseEnvironment(environment)) {
+      fail(`--environment must be 'development', 'canary', 'preview', or 'production' (got: ${environment || '<empty>'})`);
     }
     const downloadOk = String(values['download-ok'] ?? '').trim();
     const appVersion = String(values['app-version'] ?? '').trim();
@@ -2228,8 +2269,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     });
 
     const environment = String(values.environment ?? '').trim();
-    if (environment !== 'preview' && environment !== 'production') {
-      fail(`--environment must be 'preview' or 'production' (got: ${environment || '<empty>'})`);
+    if (!isUiMobileReleaseEnvironment(environment)) {
+      fail(`--environment must be 'development', 'canary', 'preview', or 'production' (got: ${environment || '<empty>'})`);
     }
 
     const apkPath = String(values['apk-path'] ?? '').trim();
@@ -2298,6 +2339,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'native-local-runtime': { type: 'string', default: 'host' },
         'build-json': { type: 'string', default: '/tmp/eas_build.json' },
         'out-dir': { type: 'string', default: 'dist/ui-mobile' },
+        interactive: { type: 'string', default: 'auto' },
         'eas-cli-version': { type: 'string', default: '' },
         'dump-view': { type: 'string', default: 'true' },
         'release-message': { type: 'string', default: '' },
@@ -2313,8 +2355,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     });
 
     const environment = String(values.environment ?? '').trim();
-    if (environment !== 'preview' && environment !== 'production') {
-      fail(`--environment must be 'preview' or 'production' (got: ${environment || '<empty>'})`);
+    if (!isUiMobileReleaseEnvironment(environment)) {
+      fail(`--environment must be 'development', 'canary', 'preview', or 'production' (got: ${environment || '<empty>'})`);
     }
 
     const action = String(values.action ?? '').trim();
@@ -2333,8 +2375,11 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     if ((action === 'native' || action === 'native_submit') && !profile) {
       fail('--profile is required for native actions');
     }
+    if (action === 'native_submit' && environment !== 'preview' && environment !== 'production') {
+      fail("--action 'native_submit' is supported only for --environment 'preview' or 'production'.");
+    }
     if (action === 'native' || action === 'native_submit') {
-      const expectedPrefix = environment === 'production' ? 'production' : 'preview';
+      const expectedPrefix = resolveUiMobileProfilePrefix(environment);
       if (!profile.startsWith(expectedPrefix)) {
         fail(`--profile must start with '${expectedPrefix}' for --environment '${environment}' (got: ${profile || '<empty>'}).`);
       }
@@ -2347,6 +2392,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
     const buildJson = String(values['build-json'] ?? '').trim() || '/tmp/eas_build.json';
     const outDir = String(values['out-dir'] ?? '').trim() || 'dist/ui-mobile';
+    const interactive = String(values.interactive ?? '').trim();
     const easCliVersion = String(values['eas-cli-version'] ?? '').trim();
     const dumpView = String(values['dump-view'] ?? '').trim();
     const releaseMessage = String(values['release-message'] ?? '').trim();
@@ -2379,7 +2425,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const nativeLocalRuntime = nativeLocalRuntimeRaw;
     const dryRun = values['dry-run'] === true;
 
-    const { env, sources } = loadPipelineEnv({ repoRoot, deployEnvironment: environment });
+    const { env, sources } = loadPipelineEnv({
+      repoRoot,
+      deployEnvironment: resolveUiMobilePipelineEnvironment(environment),
+    });
 
     if (uiVersionBump || uiVersion) {
       if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
@@ -2431,6 +2480,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         args: [
           '--environment',
           environment,
+          ...(interactive ? ['--interactive', interactive] : []),
           ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
           ...(dryRun ? ['--dry-run'] : []),
         ],
@@ -2459,10 +2509,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         if (p === 'android') {
           ext = profile.endsWith('-apk') ? 'apk' : 'aab';
         }
-        const base =
-          environment === 'production'
-            ? `happier-production-${p}-v${appVersion}.${ext}`
-            : `happier-preview-${p}.${ext}`;
+        const base = (() => {
+          if (environment === 'production') return `happier-production-${p}-v${appVersion}.${ext}`;
+          if (environment === 'preview') return `happier-preview-${p}.${ext}`;
+          if (environment === 'canary') return `happier-canary-${p}.${ext}`;
+          return `happier-development-${p}.${ext}`;
+        })();
         return path.join(outDir, base);
       }
 
@@ -2476,14 +2528,20 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       }
 
       const shouldHandleAndroid = platform === 'android' || platform === 'all';
+      const shouldDownloadAndroidApk = shouldHandleAndroid && profile.endsWith('-apk');
+      const supportsApkReleasePublishing = environment === 'preview' || environment === 'production';
+      if (publishApkReleaseMode === 'true' && !supportsApkReleasePublishing) {
+        fail("--publish-apk-release true is supported only for --environment 'preview' or 'production'.");
+      }
       const shouldPublishApkRelease =
         publishApkReleaseMode === 'true'
           ? true
           : publishApkReleaseMode === 'false'
             ? false
-            : nativeBuildMode === 'local'
-              ? shouldHandleAndroid && localArtifactOutForPlatform('android', appVersion || '0.0.0').endsWith('.apk')
-              : shouldHandleAndroid && profile.endsWith('-apk');
+            : supportsApkReleasePublishing &&
+              (nativeBuildMode === 'local'
+                ? shouldHandleAndroid && localArtifactOutForPlatform('android', appVersion || '0.0.0').endsWith('.apk')
+                : shouldDownloadAndroidApk);
 
       if (nativeBuildMode === 'local') {
         if (nativeLocalRuntime === 'dagger' && platform !== 'android') {
@@ -2514,6 +2572,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               ...(nativeLocalRuntime !== 'host' ? ['--local-runtime', nativeLocalRuntime] : []),
               '--artifact-out',
               localArtifactOutForPlatform(p, appVersion || '0.0.0'),
+              ...(interactive ? ['--interactive', interactive] : []),
               ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
               ...(dumpView ? ['--dump-view', dumpView] : []),
               ...(dryRun ? ['--dry-run'] : []),
@@ -2532,6 +2591,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             profile,
             '--out',
             buildJson,
+            ...(interactive ? ['--interactive', interactive] : []),
             ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
             ...(dumpView ? ['--dump-view', dumpView] : []),
             ...(dryRun ? ['--dry-run'] : []),
@@ -2539,17 +2599,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         });
       }
 
-      if (shouldPublishApkRelease) {
-        let apkPath = '';
+      let apkPath = '';
+      if (shouldDownloadAndroidApk) {
         if (nativeBuildMode === 'local') {
           apkPath = localArtifactOutForPlatform('android', appVersion || '0.0.0');
           if (!apkPath.endsWith('.apk')) {
-            fail('Android APK release publishing requires an *-apk EAS profile (preview-apk or production-apk).');
+            fail('Android APK workflows require an *-apk EAS profile (canary-apk, preview-apk, or production-apk).');
           }
         } else {
-          if (!profile.endsWith('-apk')) {
-            fail('Android APK release publishing requires an *-apk EAS profile (preview-apk or production-apk).');
-          }
           runExpoDownloadAndroidApk({
             repoRoot,
             env: mergedEnv,
@@ -2569,9 +2626,19 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
 
           apkPath =
-            environment === 'preview'
-              ? path.join(outDir, 'happier-preview-android.apk')
-              : path.join(outDir, `happier-production-android-v${appVersion}.apk`);
+            environment === 'production'
+              ? path.join(outDir, `happier-production-android-v${appVersion}.apk`)
+              : environment === 'preview'
+                ? path.join(outDir, 'happier-preview-android.apk')
+                : environment === 'canary'
+                  ? path.join(outDir, 'happier-canary-android.apk')
+                  : path.join(outDir, 'happier-development-android.apk');
+        }
+      }
+
+      if (shouldPublishApkRelease) {
+        if (!apkPath.endsWith('.apk')) {
+          fail('Android APK release publishing requires a downloaded or locally-built APK artifact.');
         }
 
         const sha = execFileSync('git', ['rev-parse', 'HEAD'], {

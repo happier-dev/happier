@@ -2,6 +2,7 @@ import React from 'react';
 import { Platform, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -14,6 +15,7 @@ import type { ScmDiffArea } from '@happier-dev/protocol';
 import { Modal } from '@/modal';
 import { t, type TranslationKey } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
+import { Switch } from '@/components/ui/forms/Switch';
 import type {
     ScmGitRepoPreferredBackend,
     ScmPushRejectPolicy,
@@ -227,6 +229,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [scmCommitMessageGeneratorBackendId, setScmCommitMessageGeneratorBackendId] = useSettingMutable('scmCommitMessageGeneratorBackendId');
     const [scmCommitMessageGeneratorInstructions, setScmCommitMessageGeneratorInstructions] = useSettingMutable('scmCommitMessageGeneratorInstructions');
     const [scmIncludeCoAuthoredBy, setScmIncludeCoAuthoredBy] = useSettingMutable('scmIncludeCoAuthoredBy');
+    const [filesEditorAutoSave, setFilesEditorAutoSave] = useSettingMutable('filesEditorAutoSave');
     const backendPlugins = scmBackendSettingsRegistry.listPlugins();
     const currentDiffModeByBackend = scmDefaultDiffModeByBackend ?? {};
     const effectiveFilesDiffSyntaxHighlightingMode = (filesDiffSyntaxHighlightingMode ?? 'off') as 'off' | 'simple' | 'advanced';
@@ -238,7 +241,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const effectiveCommitMessageGeneratorEnabled = scmCommitMessageGeneratorEnabled === true;
     const effectiveCommitMessageGeneratorBackendId = typeof scmCommitMessageGeneratorBackendId === 'string' && scmCommitMessageGeneratorBackendId.trim()
         ? scmCommitMessageGeneratorBackendId.trim()
-        : 'claude';
+        : DEFAULT_AGENT_ID;
     const effectiveCommitMessageGeneratorInstructions = typeof scmCommitMessageGeneratorInstructions === 'string'
         ? scmCommitMessageGeneratorInstructions
         : '';
@@ -337,7 +340,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     onPress={async () => {
                         const next = await Modal.prompt(t('settingsSourceControl.commitMessageGenerator.backendPromptTitle'), t('settingsSourceControl.commitMessageGenerator.backendPromptMessage'), {
                             defaultValue: effectiveCommitMessageGeneratorBackendId,
-                            placeholder: 'claude',
+                            placeholder: DEFAULT_AGENT_ID,
                             confirmText: t('common.save'),
                             cancelText: t('common.cancel'),
                         });
@@ -480,6 +483,21 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     ))}
                 </ItemGroup>
             ))}
+            {/* Editor */}
+            <ItemGroup title={t('settingsSourceControl.editor')} footer={t('settingsSourceControl.editorFooter')}>
+                <Item
+                    title={t('settingsSourceControl.editorAutoSave')}
+                    subtitle={t('settingsSourceControl.editorAutoSaveDescription')}
+                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            value={filesEditorAutoSave === true}
+                            onValueChange={setFilesEditorAutoSave}
+                        />
+                    }
+                    showChevron={false}
+                />
+            </ItemGroup>
         </ItemList>
     );
 });

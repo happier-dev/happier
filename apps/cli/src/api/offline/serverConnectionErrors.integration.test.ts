@@ -317,6 +317,31 @@ describe('startOfflineReconnection', () => {
             handle.cancel();
         });
 
+        it('should stop retrying when onReconnected fails with an auth-status error shape', async () => {
+            let attemptCount = 0;
+            const onReconnectedImpl = async () => {
+                attemptCount++;
+                const err = new Error('Auth failed') as any;
+                err.response = { status: 401 };
+                throw err;
+            };
+
+            const { handle, onNotify } = createTestHandle({
+                onReconnected: onReconnectedImpl,
+            });
+            await vi.waitFor(() => {
+                expect(attemptCount).toBe(1);
+            });
+
+            expect(onNotify).toHaveBeenCalledWith(
+                '❌ Authentication failed. Please re-authenticate with `happier auth`.'
+            );
+            await Promise.resolve();
+            expect(attemptCount).toBe(1);
+
+            handle.cancel();
+        });
+
         it('should retry on 500 server error', async () => {
             let attemptCount = 0;
             const healthCheck = async () => {
@@ -390,23 +415,21 @@ describe('startOfflineReconnection', () => {
             handle.cancel();
         }, 20000);
 
-        it('should NOT stop retrying on 403 forbidden (not auth failure)', async () => {
+        it('should stop retrying on 403 forbidden', async () => {
             let attemptCount = 0;
             const healthCheck = async () => {
                 attemptCount++;
-                if (attemptCount < 2) throw createAxiosError(403);
+                throw createAxiosError(403);
             };
 
             const { handle, onNotify } = createTestHandle({ healthCheck });
+            await vi.waitFor(() => {
+                expect(attemptCount).toBe(1);
+            });
 
-            await waitForReconnection(handle);
-
-            expect(attemptCount).toBeGreaterThanOrEqual(2);
-            // Should NOT show auth failure message for 403
-            expect(onNotify).not.toHaveBeenCalledWith(
-                expect.stringContaining('Authentication failed')
+            expect(onNotify).toHaveBeenCalledWith(
+                '❌ Authentication failed. Please re-authenticate with `happier auth`.'
             );
-            expect(onNotify).toHaveBeenCalledWith('✅ Reconnected! Session syncing in background.');
 
             handle.cancel();
         }, 20000);
@@ -579,6 +602,21 @@ describe('printOfflineWarning', () => {
 
         consoleSpy.mockRestore();
     });
+
+    it('does not throw when console output hits EPIPE', () => {
+        const epipeError = Object.assign(new Error('broken pipe'), { code: 'EPIPE' });
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {
+            throw epipeError;
+        });
+
+        try {
+            expect(() => {
+                printOfflineWarning('Claude');
+            }).not.toThrow();
+        } finally {
+            consoleSpy.mockRestore();
+        }
+    });
 });
 
 // ============================================================================
@@ -591,6 +629,7 @@ describe('isNetworkError', () => {
         expect(isNetworkError('ECONNREFUSED')).toBe(true);
         expect(isNetworkError('ENOTFOUND')).toBe(true);
         expect(isNetworkError('ETIMEDOUT')).toBe(true);
+        expect(isNetworkError('ECONNABORTED')).toBe(true);
         expect(isNetworkError('ECONNRESET')).toBe(true);
         expect(isNetworkError('EHOSTUNREACH')).toBe(true);
         expect(isNetworkError('ENETUNREACH')).toBe(true);
@@ -612,10 +651,11 @@ describe('isNetworkError', () => {
     });
 
     it('should have exactly 6 network error codes', () => {
-        expect(NETWORK_ERROR_CODES).toHaveLength(6);
+        expect(NETWORK_ERROR_CODES).toHaveLength(7);
         expect(NETWORK_ERROR_CODES).toContain('ECONNREFUSED');
         expect(NETWORK_ERROR_CODES).toContain('ENOTFOUND');
         expect(NETWORK_ERROR_CODES).toContain('ETIMEDOUT');
+        expect(NETWORK_ERROR_CODES).toContain('ECONNABORTED');
         expect(NETWORK_ERROR_CODES).toContain('ECONNRESET');
         expect(NETWORK_ERROR_CODES).toContain('EHOSTUNREACH');
         expect(NETWORK_ERROR_CODES).toContain('ENETUNREACH');

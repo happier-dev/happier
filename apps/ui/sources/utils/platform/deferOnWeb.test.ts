@@ -1,28 +1,34 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 describe('deferOnWeb', () => {
-    it('defers execution on web', async () => {
+    beforeEach(() => {
         vi.resetModules();
-        vi.useFakeTimers();
+        vi.unstubAllGlobals();
+    });
 
+    it('defers execution on web', async () => {
         vi.doMock('react-native', () => ({
             Platform: { OS: 'web' },
         }));
 
         const { deferOnWeb } = await import('./deferOnWeb');
         const action = vi.fn();
+        let frameCallback: FrameRequestCallback | undefined;
+
+        vi.stubGlobal('requestAnimationFrame', ((callback: FrameRequestCallback) => {
+            frameCallback = callback;
+            return 1;
+        }) as typeof requestAnimationFrame);
+
         deferOnWeb(action);
 
         expect(action).not.toHaveBeenCalled();
-
-        // requestAnimationFrame path (preferred)
-        vi.runAllTimers();
+        expect(frameCallback).toBeTypeOf('function');
+        frameCallback?.(0);
         expect(action).toHaveBeenCalledTimes(1);
     });
 
     it('runs immediately off web', async () => {
-        vi.resetModules();
-
         vi.doMock('react-native', () => ({
             Platform: { OS: 'ios' },
         }));
@@ -30,6 +36,24 @@ describe('deferOnWeb', () => {
         const { deferOnWeb } = await import('./deferOnWeb');
         const action = vi.fn();
         deferOnWeb(action);
+        expect(action).toHaveBeenCalledTimes(1);
+    });
+
+    it('blurs the active element before navigating on web', async () => {
+        const blurSpy = vi.fn();
+        vi.doMock('react-native', () => ({
+            Platform: { OS: 'web' },
+        }));
+        vi.stubGlobal('document', {
+            activeElement: { blur: blurSpy },
+        });
+
+        const { navigateWithBlurOnWeb } = await import('./deferOnWeb');
+        const action = vi.fn();
+
+        navigateWithBlurOnWeb(action);
+
+        expect(blurSpy).toHaveBeenCalledTimes(1);
         expect(action).toHaveBeenCalledTimes(1);
     });
 });

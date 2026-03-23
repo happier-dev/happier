@@ -2,61 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Machine } from '@/api/types';
 import { encodeBase64, encrypt } from '@/api/encryption';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { ApiMachineClient } from './apiMachine';
 
-const { mockIo, socket, axiosGet, readLastChangesCursor, writeLastChangesCursor } = vi.hoisted(() => {
-    const handlersByEvent = new Map<string, Array<(...args: any[]) => void>>();
-    const ioHandlersByEvent = new Map<string, Array<(...args: any[]) => void>>();
-
-    const socket: any = {
-        on: vi.fn((event: string, handler: (...args: any[]) => void) => {
-            const arr = handlersByEvent.get(event) ?? [];
-            arr.push(handler);
-            handlersByEvent.set(event, arr);
-        }),
-        connect: vi.fn(),
-        emit: vi.fn(),
-        emitWithAck: vi.fn(async (event: string, payload: any) => {
-            if (event === 'machine-update-state') {
-                return {
-                    result: 'success',
-                    version: 1,
-                    daemonState: payload.daemonState,
-                };
-            }
-
-            if (event === 'machine-update-metadata') {
-                return {
-                    result: 'success',
-                    version: 1,
-                    metadata: payload.metadata,
-                };
-            }
-
-            return { result: 'success', version: 1 };
-        }),
-        close: vi.fn(),
-        timeout: vi.fn().mockReturnThis(),
-        io: {
-            on: vi.fn((event: string, handler: (...args: any[]) => void) => {
-                const arr = ioHandlersByEvent.get(event) ?? [];
-                arr.push(handler);
-                ioHandlersByEvent.set(event, arr);
-            }),
-        },
-        __trigger: (event: string, ...args: any[]) => {
-            const list = handlersByEvent.get(event) ?? [];
-            for (const h of list) h(...args);
-        },
-        __reset: () => {
-            handlersByEvent.clear();
-            ioHandlersByEvent.clear();
-        },
-    };
-
+const { mockIo, axiosGet, readLastChangesCursor, writeLastChangesCursor } = vi.hoisted(() => {
     return {
-        mockIo: vi.fn(() => socket),
-        socket,
+        mockIo: vi.fn(),
         axiosGet: vi.fn(),
         readLastChangesCursor: vi.fn(async () => 0),
         writeLastChangesCursor: vi.fn(async () => {}),
@@ -78,6 +29,36 @@ vi.mock('@/persistence', () => ({
     writeLastChangesCursor,
 }));
 
+function createMachineSocket(options: {
+    emitWithAck?: (event: string, payload: unknown) => Promise<unknown> | unknown;
+} = {}) {
+    return createApiSessionSocketStub({
+        emitWithAck: async (event, payload) => {
+            if (options.emitWithAck) {
+                return await options.emitWithAck(event, payload);
+            }
+
+            if (event === 'machine-update-state' && payload && typeof payload === 'object') {
+                return {
+                    result: 'success',
+                    version: 1,
+                    daemonState: (payload as { daemonState?: unknown }).daemonState,
+                };
+            }
+
+            if (event === 'machine-update-metadata' && payload && typeof payload === 'object') {
+                return {
+                    result: 'success',
+                    version: 1,
+                    metadata: (payload as { metadata?: unknown }).metadata,
+                };
+            }
+
+            return { result: 'success', version: 1 };
+        },
+    });
+}
+
 describe('ApiMachineClient /v2/changes reconnect', () => {
     it('connect uses an http(s) base URL and explicitly connects the socket', async () => {
         const machine: Machine = {
@@ -90,9 +71,8 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             daemonStateVersion: 0,
         };
 
-        socket.__reset();
-        mockIo.mockClear();
-        socket.connect.mockClear();
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
 
         const client = new ApiMachineClient('token', machine);
         client.connect();
@@ -115,26 +95,12 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             daemonStateVersion: 0,
         };
 
-        const socketNoConnect: any = {
-            on: vi.fn(),
+        const socketNoConnect = {
+            ...createMachineSocket(),
+            connect: undefined,
             open: vi.fn(),
-            emit: vi.fn(),
-            emitWithAck: vi.fn(async (event: string, payload: any) => {
-                if (event === 'machine-update-state') {
-                    return {
-                        result: 'success',
-                        version: 1,
-                        daemonState: payload.daemonState,
-                    };
-                }
-                return { result: 'success', version: 1 };
-            }),
-            close: vi.fn(),
-            timeout: vi.fn().mockReturnThis(),
-            io: { on: vi.fn() },
-        };
-
-        mockIo.mockImplementationOnce(() => socketNoConnect);
+        } as any;
+        bindApiSessionSocketMock(mockIo, socketNoConnect);
 
         const client = new ApiMachineClient('token', machine);
         client.connect();
@@ -164,6 +130,8 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             }),
         );
 
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
         axiosGet.mockImplementation(async (url: string) => {
             if (url.includes('/v1/account/profile')) {
                 return { status: 200, data: { id: 'acc-1' } };
@@ -191,7 +159,6 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             throw new Error(`unexpected url: ${url}`);
         });
 
-        socket.__reset();
         axiosGet.mockClear();
         writeLastChangesCursor.mockClear();
         readLastChangesCursor.mockClear();
@@ -200,11 +167,11 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         client.connect();
 
         // First connect
-        socket.__trigger('connect');
+        socket.trigger('connect');
 
         // Disconnect + reconnect
-        socket.__trigger('disconnect');
-        socket.__trigger('connect');
+        socket.trigger('disconnect');
+        socket.trigger('connect');
         await vi.waitFor(() => {
             expect(machine.metadataVersion).toBe(2);
         });
@@ -240,6 +207,8 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             }),
         );
 
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
         axiosGet.mockImplementation(async (url: string) => {
             if (url.includes('/v1/account/profile')) {
                 return { status: 200, data: { id: 'acc-1' } };
@@ -267,7 +236,6 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             throw new Error(`unexpected url: ${url}`);
         });
 
-        socket.__reset();
         axiosGet.mockClear();
         writeLastChangesCursor.mockClear();
         readLastChangesCursor.mockClear();

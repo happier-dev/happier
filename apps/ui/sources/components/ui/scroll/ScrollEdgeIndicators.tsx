@@ -2,6 +2,8 @@ import * as React from 'react';
 import { View, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+
 export type ScrollEdgeIndicatorVisibility = Readonly<{
     top?: boolean;
     bottom?: boolean;
@@ -25,6 +27,10 @@ export function ScrollEdgeIndicators(props: {
 
     if (!edges.top && !edges.bottom && !edges.left && !edges.right) return null;
 
+    const renderIndicatorIcon = React.useCallback((name: React.ComponentProps<typeof Ionicons>['name']) => {
+        return normalizeNodeForView(<Ionicons name={name} size={size} color={props.color} />);
+    }, [props.color, size]);
+
     return (
         <>
             {edges.top ? (
@@ -44,7 +50,7 @@ export function ScrollEdgeIndicators(props: {
                         props.topStyle,
                     ]}
                 >
-                    <Ionicons name="chevron-up" size={size} color={props.color} />
+                    {renderIndicatorIcon('chevron-up')}
                 </View>
             ) : null}
 
@@ -65,7 +71,7 @@ export function ScrollEdgeIndicators(props: {
                         props.bottomStyle,
                     ]}
                 >
-                    <Ionicons name="chevron-down" size={size} color={props.color} />
+                    {renderIndicatorIcon('chevron-down')}
                 </View>
             ) : null}
 
@@ -87,7 +93,7 @@ export function ScrollEdgeIndicators(props: {
                     ]}
                 >
                     <View style={{ width: '100%', alignItems: 'center' }}>
-                        <Ionicons name="chevron-back" size={size} color={props.color} />
+                        {renderIndicatorIcon('chevron-back')}
                     </View>
                 </View>
             ) : null}
@@ -110,7 +116,7 @@ export function ScrollEdgeIndicators(props: {
                     ]}
                 >
                     <View style={{ width: '100%', alignItems: 'center' }}>
-                        <Ionicons name="chevron-forward" size={size} color={props.color} />
+                        {renderIndicatorIcon('chevron-forward')}
                     </View>
                 </View>
             ) : null}

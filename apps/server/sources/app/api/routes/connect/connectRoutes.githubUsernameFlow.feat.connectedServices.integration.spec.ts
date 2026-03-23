@@ -31,6 +31,19 @@ const ONE_BY_ONE_PNG = Buffer.from(
     "base64",
 );
 
+function applyGithubUsernameFlowEnv(
+    harness: LightSqliteHarness,
+    overrides: Record<string, string | undefined> = {},
+): void {
+    harness.resetEnv({
+        GITHUB_CLIENT_ID: "gh_client",
+        GITHUB_CLIENT_SECRET: "gh_secret",
+        GITHUB_REDIRECT_URL: "https://api.example.test/v1/oauth/github/callback",
+        HAPPIER_WEBAPP_URL: "https://app.example.test",
+        ...overrides,
+    });
+}
+
 describe("connectRoutes (GitHub) username flow (integration)", () => {
     const originalFetch = globalThis.fetch;
     let harness: LightSqliteHarness;
@@ -51,7 +64,7 @@ describe("connectRoutes (GitHub) username flow (integration)", () => {
 
     afterEach(async () => {
         await closeTrackedApps();
-        harness.restoreEnv();
+        harness.resetEnv();
         vi.unstubAllGlobals();
         await harness.resetDbTables([
             () => db.userRelationship.deleteMany(),
@@ -63,10 +76,7 @@ describe("connectRoutes (GitHub) username flow (integration)", () => {
     });
 
     it("redirects to github=username_required and does not connect when the GitHub login is already taken and the user has no username", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+        applyGithubUsernameFlowEnv(harness);
 
         const taken = await db.account.create({
             data: { publicKey: "pk-taken", username: "octocat" },
@@ -152,10 +162,7 @@ describe("connectRoutes (GitHub) username flow (integration)", () => {
     });
 
     it("finalizes GitHub connect after username selection, connecting GitHub and setting the chosen username", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+        applyGithubUsernameFlowEnv(harness);
 
         await db.account.create({
             data: { publicKey: "pk-taken", username: "octocat" },

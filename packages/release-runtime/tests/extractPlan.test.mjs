@@ -17,6 +17,20 @@ test('planArchiveExtraction selects tar for .tar.gz archives', () => {
   });
 });
 
+test('planArchiveExtraction selects tar for .tar.xz archives', () => {
+  const planned = planArchiveExtraction({
+    archiveName: 'node-v24.14.0-linux-arm64.tar.xz',
+    archivePath: '/tmp/node.txz',
+    destDir: '/tmp/extract',
+    os: 'linux',
+  });
+  assert.equal(planned.requiredCommand, 'tar');
+  assert.deepEqual(planned.command, {
+    cmd: 'tar',
+    args: ['-xJf', '/tmp/node.txz', '-C', '/tmp/extract'],
+  });
+});
+
 test('planArchiveExtraction selects powershell Expand-Archive for .zip archives on windows', () => {
   const planned = planArchiveExtraction({
     archiveName: 'happier-server-v1.2.3-windows-x64.zip',
@@ -39,4 +53,3 @@ test('planArchiveExtraction rejects unknown archive extensions', () => {
     });
   }, /unsupported/i);
 });
-

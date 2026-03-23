@@ -1,6 +1,8 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { serverFetch } from '@/sync/http/client';
+import { createSessionRequestWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import {
     SessionShare,
     SessionShareResponse,
@@ -18,6 +20,20 @@ import {
     ConsentRequiredError,
     SessionSharingError
 } from '@/sync/domains/social/sharingTypes';
+
+function createSessionSharingRequest(credentials: AuthCredentials, sessionId: string) {
+    return createSessionRequestWithServerScope({
+        serverId: resolvePreferredServerIdForSessionId(sessionId) ?? null,
+        activeRequest: (path, init) => {
+            const headers = new Headers(init?.headers);
+            headers.set('Authorization', `Bearer ${credentials.token}`);
+            return serverFetch(path, {
+                ...init,
+                headers,
+            }, { includeAuth: false });
+        },
+    });
+}
 
 /**
  * Get all shares for a session
@@ -38,12 +54,8 @@ export async function getSessionShares(
     sessionId: string
 ): Promise<SessionShare[]> {
     return await backoff(async () => {
-        const response = await serverFetch(`/v1/sessions/${sessionId}/shares`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${credentials.token}`,
-            }
-        }, { includeAuth: false });
+        const request = createSessionSharingRequest(credentials, sessionId);
+        const response = await request(`/v1/sessions/${sessionId}/shares`, { method: 'GET' });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -81,14 +93,14 @@ export async function createSessionShare(
     request: CreateSessionShareRequest
 ): Promise<SessionShare> {
     return await backoff(async () => {
-        const response = await serverFetch(`/v1/sessions/${sessionId}/shares`, {
+        const scopedRequest = createSessionSharingRequest(credentials, sessionId);
+        const response = await scopedRequest(`/v1/sessions/${sessionId}/shares`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(request)
-        }, { includeAuth: false });
+        });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -129,14 +141,14 @@ export async function updateSessionShare(
     patch: { accessLevel?: 'view' | 'edit' | 'admin'; canApprovePermissions?: boolean }
 ): Promise<SessionShare> {
     return await backoff(async () => {
-        const response = await serverFetch(`/v1/sessions/${sessionId}/shares/${shareId}`, {
+        const request = createSessionSharingRequest(credentials, sessionId);
+        const response = await request(`/v1/sessions/${sessionId}/shares/${shareId}`, {
             method: 'PATCH',
             headers: {
-                'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(patch)
-        }, { includeAuth: false });
+        });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -173,12 +185,8 @@ export async function deleteSessionShare(
     shareId: string
 ): Promise<void> {
     return await backoff(async () => {
-        const response = await serverFetch(`/v1/sessions/${sessionId}/shares/${shareId}`, {
-            method: 'DELETE',
-            headers: {
-                'Authorization': `Bearer ${credentials.token}`,
-            }
-        }, { includeAuth: false });
+        const request = createSessionSharingRequest(credentials, sessionId);
+        const response = await request(`/v1/sessions/${sessionId}/shares/${shareId}`, { method: 'DELETE' });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -215,14 +223,14 @@ export async function createPublicShare(
     request: CreatePublicShareRequest & { token: string }
 ): Promise<PublicSessionShare> {
     return await backoff(async () => {
-        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share`, {
+        const scopedRequest = createSessionSharingRequest(credentials, sessionId);
+        const response = await scopedRequest(`/v1/sessions/${sessionId}/public-share`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(request)
-        }, { includeAuth: false });
+        });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -244,12 +252,8 @@ export async function getPublicShare(
     sessionId: string
 ): Promise<PublicSessionShare | null> {
     return await backoff(async () => {
-        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${credentials.token}`,
-            }
-        }, { includeAuth: false });
+        const request = createSessionSharingRequest(credentials, sessionId);
+        const response = await request(`/v1/sessions/${sessionId}/public-share`, { method: 'GET' });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -271,12 +275,8 @@ export async function deletePublicShare(
     sessionId: string
 ): Promise<void> {
     return await backoff(async () => {
-        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share`, {
-            method: 'DELETE',
-            headers: {
-                'Authorization': `Bearer ${credentials.token}`,
-            }
-        }, { includeAuth: false });
+        const request = createSessionSharingRequest(credentials, sessionId);
+        const response = await request(`/v1/sessions/${sessionId}/public-share`, { method: 'DELETE' });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -358,12 +358,8 @@ export async function getPublicShareBlockedUsers(
     sessionId: string
 ): Promise<PublicShareBlockedUsersResponse> {
     return await backoff(async () => {
-        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share/blocked-users`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${credentials.token}`,
-            }
-        }, { includeAuth: false });
+        const request = createSessionSharingRequest(credentials, sessionId);
+        const response = await request(`/v1/sessions/${sessionId}/public-share/blocked-users`, { method: 'GET' });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -388,14 +384,14 @@ export async function blockPublicShareUser(
     request: BlockPublicShareUserRequest
 ): Promise<void> {
     return await backoff(async () => {
-        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share/blocked-users`, {
+        const scopedRequest = createSessionSharingRequest(credentials, sessionId);
+        const response = await scopedRequest(`/v1/sessions/${sessionId}/public-share/blocked-users`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(request)
-        }, { includeAuth: false });
+        });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -418,12 +414,8 @@ export async function unblockPublicShareUser(
     blockedUserId: string
 ): Promise<void> {
     return await backoff(async () => {
-        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share/blocked-users/${blockedUserId}`, {
-            method: 'DELETE',
-            headers: {
-                'Authorization': `Bearer ${credentials.token}`,
-            }
-        }, { includeAuth: false });
+        const request = createSessionSharingRequest(credentials, sessionId);
+        const response = await request(`/v1/sessions/${sessionId}/public-share/blocked-users/${blockedUserId}`, { method: 'DELETE' });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -451,12 +443,8 @@ export async function getPublicShareAccessLogs(
             ? `/v1/sessions/${sessionId}/public-share/access-logs?${query.toString()}`
             : `/v1/sessions/${sessionId}/public-share/access-logs`;
 
-        const response = await serverFetch(requestPath, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${credentials.token}`,
-            }
-        }, { includeAuth: false });
+        const request = createSessionSharingRequest(credentials, sessionId);
+        const response = await request(requestPath, { method: 'GET' });
 
         if (!response.ok) {
             if (response.status === 403) {

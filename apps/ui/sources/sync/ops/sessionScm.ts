@@ -1,4 +1,10 @@
 import type {
+    ScmBranchCheckoutRequest,
+    ScmBranchCheckoutResponse,
+    ScmBranchCreateRequest,
+    ScmBranchCreateResponse,
+    ScmBranchListRequest,
+    ScmBranchListResponse,
     ScmChangeApplyRequest,
     ScmChangeApplyResponse,
     ScmChangeDiscardRequest,
@@ -13,94 +19,30 @@ import type {
     ScmDiffFileResponse,
     ScmLogListRequest,
     ScmLogListResponse,
+    ScmRemotePublishRequest,
+    ScmRemotePublishResponse,
     ScmRemoteRequest,
     ScmRemoteResponse,
+    ScmStashApplyRequest,
+    ScmStashApplyResponse,
+    ScmStashDropRequest,
+    ScmStashDropResponse,
+    ScmStashListRequest,
+    ScmStashListResponse,
+    ScmStashPopRequest,
+    ScmStashPopResponse,
+    ScmStashShowRequest,
+    ScmStashShowResponse,
     ScmStatusSnapshotRequest,
     ScmStatusSnapshotResponse,
 } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
 import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { storage } from '../domains/state/storage';
-import { apiSocket } from '../api/session/apiSocket';
+import { assertScmResponse, runMachineScmRpc, scmFallbackError, withScmBackendPreference } from './scm/machineScm';
 import { canUseSessionRpc, readMachineTargetForSession, resolveMachinePathFromSessionBase, shouldFallbackToSessionRpc } from './sessionMachineTarget';
-
-const SCM_UNSUPPORTED_RESPONSE_ERROR = 'SCM_UNSUPPORTED_RESPONSE_ERROR';
-const SCM_DIFF_COMMIT_TIMEOUT_MS = 120_000;
-
-function resolveScmRpcTimeoutMs(method: string): number | undefined {
-    if (method === RPC_METHODS.SCM_DIFF_COMMIT) return SCM_DIFF_COMMIT_TIMEOUT_MS;
-    return undefined;
-}
-
-function scmFallbackError<T extends { success: boolean; error?: string; errorCode?: string }>(error: unknown): T {
-    if (error instanceof Error && error.message === SCM_UNSUPPORTED_RESPONSE_ERROR) {
-        return {
-            success: false,
-            error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND,
-            errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
-        } as T;
-    }
-    if (error && typeof error === 'object') {
-        const rpcError: RpcErrorCarrier = {
-            rpcErrorCode:
-                typeof (error as { rpcErrorCode?: unknown }).rpcErrorCode === 'string'
-                    ? (error as { rpcErrorCode: string }).rpcErrorCode
-                    : undefined,
-            message:
-                typeof (error as { message?: unknown }).message === 'string'
-                    ? (error as { message: string }).message
-                    : undefined,
-        };
-
-        if (isRpcMethodNotAvailableError(rpcError)) {
-            return {
-                success: false,
-                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
-            } as T;
-        }
-        if (isRpcMethodNotFoundError(rpcError)) {
-            return {
-                success: false,
-                error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND,
-                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
-            } as T;
-        }
-    }
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return {
-        success: false,
-        error: message,
-        errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-    } as T;
-}
-
-function assertScmResponse<T extends { success: boolean; error?: string; errorCode?: string }>(value: unknown): T {
-    if (
-        !value
-        || typeof value !== 'object'
-        || typeof (value as { success?: unknown }).success !== 'boolean'
-    ) {
-        throw new Error(SCM_UNSUPPORTED_RESPONSE_ERROR);
-    }
-    return value as T;
-}
-
-function withScmBackendPreference<T extends { backendPreference?: unknown }>(request: T): T {
-    const preferredBackend = storage.getState().settings.scmGitRepoPreferredBackend;
-    if (preferredBackend === 'sapling') {
-        return {
-            ...request,
-            backendPreference: {
-                kind: 'prefer',
-                backendId: 'sapling',
-            },
-        };
-    }
-    return request;
-}
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 
 async function callScmPreferMachine<
     T extends { success: boolean; error?: string; errorCode?: string },
@@ -114,22 +56,12 @@ async function callScmPreferMachine<
 
     if (machineTarget) {
         const cwd = resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: request.cwd });
-        const machineRequest = withScmBackendPreference({ ...request, cwd } as R);
-        const timeoutMs = resolveScmRpcTimeoutMs(method);
         try {
-            const response = timeoutMs
-                ? await apiSocket.machineRPC<T, R>(
-                    machineTarget.machineId,
-                    method,
-                    machineRequest as R,
-                    { timeoutMs },
-                )
-                : await apiSocket.machineRPC<T, R>(
-                    machineTarget.machineId,
-                    method,
-                    machineRequest as R,
-                );
-            return assertScmResponse<T>(response);
+            return await runMachineScmRpc<T, R>(
+                machineTarget.machineId,
+                method,
+                { ...request, cwd } as R,
+            );
         } catch (error) {
             if (!shouldFallbackToSessionRpc(sessionId, error)) {
                 return scmFallbackError<T>(error);
@@ -146,7 +78,12 @@ async function callScmPreferMachine<
     }
 
     try {
-        const response = await apiSocket.sessionRPC<T, R>(sessionId, method, withScmBackendPreference(request));
+        const response = await sessionRpcWithServerScope<T, R>({
+            sessionId,
+            serverId: resolvePreferredServerIdForSessionId(sessionId),
+            method,
+            payload: withScmBackendPreference(request),
+        });
         return assertScmResponse<T>(response);
     } catch (error) {
         return scmFallbackError<T>(error);
@@ -281,6 +218,105 @@ export async function sessionScmRemotePull(
     return await callScmPreferMachine<ScmRemoteResponse, ScmRemoteRequest>(
         sessionId,
         RPC_METHODS.SCM_REMOTE_PULL,
+        request
+    );
+}
+
+export async function sessionScmBranchList(
+    sessionId: string,
+    request: ScmBranchListRequest
+): Promise<ScmBranchListResponse> {
+    return await callScmPreferMachine<ScmBranchListResponse, ScmBranchListRequest>(
+        sessionId,
+        RPC_METHODS.SCM_BRANCH_LIST,
+        request
+    );
+}
+
+export async function sessionScmBranchCreate(
+    sessionId: string,
+    request: ScmBranchCreateRequest
+): Promise<ScmBranchCreateResponse> {
+    return await callScmPreferMachine<ScmBranchCreateResponse, ScmBranchCreateRequest>(
+        sessionId,
+        RPC_METHODS.SCM_BRANCH_CREATE,
+        request
+    );
+}
+
+export async function sessionScmBranchCheckout(
+    sessionId: string,
+    request: ScmBranchCheckoutRequest
+): Promise<ScmBranchCheckoutResponse> {
+    return await callScmPreferMachine<ScmBranchCheckoutResponse, ScmBranchCheckoutRequest>(
+        sessionId,
+        RPC_METHODS.SCM_BRANCH_CHECKOUT,
+        request
+    );
+}
+
+export async function sessionScmRemotePublish(
+    sessionId: string,
+    request: ScmRemotePublishRequest
+): Promise<ScmRemotePublishResponse> {
+    return await callScmPreferMachine<ScmRemotePublishResponse, ScmRemotePublishRequest>(
+        sessionId,
+        RPC_METHODS.SCM_REMOTE_PUBLISH,
+        request
+    );
+}
+
+export async function sessionScmStashList(
+    sessionId: string,
+    request: ScmStashListRequest
+): Promise<ScmStashListResponse> {
+    return await callScmPreferMachine<ScmStashListResponse, ScmStashListRequest>(
+        sessionId,
+        RPC_METHODS.SCM_STASH_LIST,
+        request
+    );
+}
+
+export async function sessionScmStashDrop(
+    sessionId: string,
+    request: ScmStashDropRequest
+): Promise<ScmStashDropResponse> {
+    return await callScmPreferMachine<ScmStashDropResponse, ScmStashDropRequest>(
+        sessionId,
+        RPC_METHODS.SCM_STASH_DROP,
+        request
+    );
+}
+
+export async function sessionScmStashPop(
+    sessionId: string,
+    request: ScmStashPopRequest
+): Promise<ScmStashPopResponse> {
+    return await callScmPreferMachine<ScmStashPopResponse, ScmStashPopRequest>(
+        sessionId,
+        RPC_METHODS.SCM_STASH_POP,
+        request
+    );
+}
+
+export async function sessionScmStashApply(
+    sessionId: string,
+    request: ScmStashApplyRequest
+): Promise<ScmStashApplyResponse> {
+    return await callScmPreferMachine<ScmStashApplyResponse, ScmStashApplyRequest>(
+        sessionId,
+        RPC_METHODS.SCM_STASH_APPLY,
+        request
+    );
+}
+
+export async function sessionScmStashShow(
+    sessionId: string,
+    request: ScmStashShowRequest
+): Promise<ScmStashShowResponse> {
+    return await callScmPreferMachine<ScmStashShowResponse, ScmStashShowRequest>(
+        sessionId,
+        RPC_METHODS.SCM_STASH_SHOW,
         request
     );
 }

@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+
 const verifyToken = vi.fn(async () => null as any);
 vi.mock("@/app/auth/auth", () => ({
     auth: { verifyToken },
@@ -31,84 +34,44 @@ vi.mock("@/app/events/eventRouter", () => ({
 vi.mock("@/storage/inTx", () => ({ afterTx: vi.fn(), inTx: vi.fn() }));
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 1) }));
 
-const dbTransaction = vi.fn();
-const publicSessionShareFindUnique = vi.fn();
-const sessionFindUnique = vi.fn();
-const sessionMessageFindMany = vi.fn();
-
-vi.mock("@/storage/db", () => ({
-    db: {
-        $transaction: (...args: any[]) => dbTransaction(...args),
-        publicSessionShare: {
-            findUnique: (...args: any[]) => publicSessionShareFindUnique(...args),
-        },
-        session: {
-            findUnique: (...args: any[]) => sessionFindUnique(...args),
-        },
-        sessionMessage: {
-            findMany: (...args: any[]) => sessionMessageFindMany(...args),
-        },
-    },
+const dbMocks = createDbMocks({
+    publicSessionShare: ["findUnique"],
+    session: ["findUnique"],
+    sessionMessage: ["findMany"],
+} as const);
+const txDbMocks = createDbMocks({
+    publicSessionShare: ["findUnique", "update"],
+} as const);
+const dbTransaction = createDbTransactionMock(() => ({
+    publicSessionShare: txDbMocks.db.publicSessionShare,
 }));
 
-class FakeApp {
-    public authenticate = vi.fn(async (_req: any, reply: any) => {
-        reply.code(401).send({ error: "invalid" });
-        throw new Error("unauthorized");
-    });
-    public routes = new Map<string, any>();
-
-    get(path: string, _opts: any, handler: any) {
-        this.routes.set(`GET ${path}`, handler);
-    }
-    post() {}
-    delete() {}
-}
-
-function makeReply() {
-    const reply: any = {
-        statusCode: 200,
-        _sent: false,
-        code: vi.fn((statusCode: number) => {
-            reply.statusCode = statusCode;
-            return reply;
-        }),
-        send: vi.fn((payload: any) => {
-            if (reply._sent) {
-                throw new Error("Reply was already sent");
-            }
-            reply._sent = true;
-            return payload;
-        }),
-    };
-    return reply;
-}
+installDbModuleMock(() => ({
+    db: dbTransaction.wrapDb(dbMocks.db),
+}));
 
 describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        dbMocks.reset();
+        txDbMocks.reset();
+        dbTransaction.transaction.mockClear();
     });
 
     it("does not call app.authenticate() for /v1/public-share/:token and succeeds even with invalid bearer", async () => {
-        dbTransaction.mockImplementation(async (fn: any) =>
-            fn({
-                publicSessionShare: {
-                    findUnique: vi.fn(async () => ({
-                        id: "ps1",
-                        sessionId: "s1",
-                        expiresAt: null,
-                        maxUses: null,
-                        useCount: 0,
-                        isConsentRequired: false,
-                        encryptedDataKey: new Uint8Array([1, 2, 3]),
-                        blockedUsers: undefined,
-                    })),
-                    update: vi.fn(async () => ({})),
-                },
-            }),
-        );
+        txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
+            id: "ps1",
+            sessionId: "s1",
+            expiresAt: null,
+            maxUses: null,
+            useCount: 0,
+            isConsentRequired: false,
+            encryptedDataKey: new Uint8Array([1, 2, 3]),
+            blockedUsers: undefined,
+        });
+        txDbMocks.db.publicSessionShare.update.mockResolvedValue({});
 
-        sessionFindUnique.mockImplementation(async () => ({
+        dbMocks.db.session.findUnique.mockResolvedValue({
             id: "s1",
             seq: 1,
             createdAt: new Date(1),
@@ -120,21 +83,38 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             active: true,
             lastActiveAt: new Date(3),
             account: { id: "owner" },
-        }));
+        });
 
         const { publicShareRoutes } = await import("./publicShareRoutes");
-        const app = new FakeApp();
-        publicShareRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v1/public-share/:token",
+            defaultRequest: {
+                params: { token: "tok" },
+                query: {},
+                headers: { authorization: "Bearer bad" },
+            },
+            registerRoutes(app) {
+                app.authenticate.mockImplementation(async (_req: any, reply: any) => {
+                    reply.code(401).send({ error: "invalid" });
+                    throw new Error("unauthorized");
+                });
+                publicShareRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("GET /v1/public-share/:token");
-        const reply = makeReply();
+        const reply = route.createReply();
+        const send = reply.send;
+        reply.send = vi.fn((payload: any) => {
+            if (reply.sent) {
+                throw new Error("Reply was already sent");
+            }
+            return send(payload);
+        });
 
-        const payload = await handler(
-            { params: { token: "tok" }, query: {}, headers: { authorization: "Bearer bad" } },
-            reply,
-        );
+        const payload = await route.handler(route.createRequest(), reply);
 
-        expect(app.authenticate).not.toHaveBeenCalled();
+        expect(route.app.authenticate).not.toHaveBeenCalled();
         expect(verifyToken).toHaveBeenCalledTimes(1);
         expect(reply.statusCode).toBe(200);
         expect(payload).toEqual(
@@ -146,7 +126,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
     });
 
     it("does not call app.authenticate() for /v1/public-share/:token/messages and succeeds even with invalid bearer", async () => {
-        publicSessionShareFindUnique.mockImplementation(async () => ({
+        dbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
             sessionId: "s1",
             expiresAt: null,
@@ -155,29 +135,46 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             isConsentRequired: false,
             blockedUsers: undefined,
             encryptedDataKey: new Uint8Array([1, 2, 3]),
-        }));
+        });
 
-        sessionFindUnique.mockImplementation(async () => ({
+        dbMocks.db.session.findUnique.mockResolvedValue({
             encryptionMode: "e2ee",
-        }));
+        });
 
-        sessionMessageFindMany.mockImplementation(async () => [
+        dbMocks.db.sessionMessage.findMany.mockResolvedValue([
             { id: "m1", seq: 1, localId: "l1", content: "c", createdAt: new Date(1), updatedAt: new Date(2) },
         ]);
 
         const { publicShareRoutes } = await import("./publicShareRoutes");
-        const app = new FakeApp();
-        publicShareRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "GET",
+            path: "/v1/public-share/:token/messages",
+            defaultRequest: {
+                params: { token: "tok" },
+                query: {},
+                headers: { authorization: "Bearer bad" },
+            },
+            registerRoutes(app) {
+                app.authenticate.mockImplementation(async (_req: any, reply: any) => {
+                    reply.code(401).send({ error: "invalid" });
+                    throw new Error("unauthorized");
+                });
+                publicShareRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("GET /v1/public-share/:token/messages");
-        const reply = makeReply();
+        const reply = route.createReply();
+        const send = reply.send;
+        reply.send = vi.fn((payload: any) => {
+            if (reply.sent) {
+                throw new Error("Reply was already sent");
+            }
+            return send(payload);
+        });
 
-        const payload = await handler(
-            { params: { token: "tok" }, query: {}, headers: { authorization: "Bearer bad" } },
-            reply,
-        );
+        const payload = await route.handler(route.createRequest(), reply);
 
-        expect(app.authenticate).not.toHaveBeenCalled();
+        expect(route.app.authenticate).not.toHaveBeenCalled();
         expect(verifyToken).toHaveBeenCalledTimes(1);
         expect(reply.statusCode).toBe(200);
         expect(payload).toEqual({ messages: [{ id: "m1", seq: 1, content: "c", localId: "l1", createdAt: 1, updatedAt: 2 }] });

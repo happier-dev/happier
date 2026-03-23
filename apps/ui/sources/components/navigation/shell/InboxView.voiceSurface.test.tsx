@@ -1,24 +1,31 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        View: 'View',
-        Text: 'Text',
-        ScrollView: 'ScrollView',
-        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-        ActivityIndicator: 'ActivityIndicator',
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Text: 'Text',
+                            ScrollView: 'ScrollView',
+                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                            ActivityIndicator: 'ActivityIndicator',
+                        }
+    );
 });
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: vi.fn() },
+    });
+    return routerMock.module;
+});
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
@@ -28,23 +35,34 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/track', () => ({
     trackFriendsSearch: vi.fn(),
     trackFriendsProfileView: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useAcceptedFriends: () => [],
+    useArtifacts: () => [],
     useFriendRequests: () => [],
     useRequestedFriends: () => [],
     useFeedItems: () => [],
     useFeedLoaded: () => true,
     useFriendsLoaded: () => true,
+    useSettings: () => ({ experiments: false, featureToggles: {} }),
     useAllSessions: () => [],
+    useMachine: () => null,
+});
+});
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: 'Text',
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => {
@@ -81,6 +99,14 @@ vi.mock('@/components/inbox/cards/FeedItemCard', () => ({
     FeedItemCard: 'FeedItemCard',
 }));
 
+vi.mock('@/components/inbox/cards/ApprovalInboxCard', () => ({
+    ApprovalInboxCard: 'ApprovalInboxCard',
+}));
+
+vi.mock('@/components/inbox/sessionAttention/InboxSessionAttentionGroupCard', () => ({
+    InboxSessionAttentionGroupCard: 'InboxSessionAttentionGroupCard',
+}));
+
 vi.mock('@/components/voice/surface/VoiceSurface', () => ({
     VoiceSurface: 'VoiceSurface',
 }));
@@ -91,6 +117,10 @@ vi.mock('@/components/friends/RequireFriendsIdentityForFriends', () => ({
 
 vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
     useFriendsIdentityReadiness: () => ({ isReady: true }),
+}));
+
+vi.mock('@/hooks/server/useFriendsEnabled', () => ({
+    useFriendsEnabled: () => false,
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -108,10 +138,8 @@ describe('InboxView voice placement', () => {
         const { InboxView } = await import('./InboxView');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<InboxView />);
-        });
+        tree = (await renderScreen(<InboxView />)).tree;
 
-        expect(tree!.root.findAllByType('VoiceSurface')).toHaveLength(0);
+        expect(tree!.findAllByType('VoiceSurface')).toHaveLength(0);
     });
 });

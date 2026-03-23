@@ -1,17 +1,24 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: {
-        select: ({ default: value }: { default: number }) => value,
-    },
-    View: 'View',
-    Pressable: 'Pressable',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        select: ({ default: value }: { default: number }) => value,
+                                    },
+                                    View: 'View',
+                                    Pressable: 'Pressable',
+                                }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -24,9 +31,10 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('FileActionToolbar', () => {
     const theme = {
@@ -46,186 +54,159 @@ describe('FileActionToolbar', () => {
     it('shows Stage file for untracked files even when hasPendingDelta is false', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(FileActionToolbar as any, {
-                    theme,
-                    displayMode: 'diff',
-                    onDisplayMode: () => {},
-                    diffMode: 'pending',
-                    onDiffMode: () => {},
-                    hasPendingDelta: false,
-                    hasIncludedDelta: false,
-                    scmWriteEnabled: true,
-                    includeExcludeEnabled: true,
-                    lineSelectionEnabled: false,
-                    selectedLineCount: 0,
-                    isApplyingStage: false,
-                    inFlightScmOperation: null,
-                    onStageFile: () => {},
-                    onUnstageFile: () => {},
-                    onApplySelectedLines: () => {},
-                    onClearSelection: () => {},
-                    isUntrackedFile: true,
-                })
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: false,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: true,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                isUntrackedFile: true,
+            }),
+        );
 
-        const texts = tree!.root.findAllByType('Text' as any);
-        expect(texts.some((node) => node.props.children === 'files.fileActions.stageFile')).toBe(true);
+        expect(screen.findByTestId('file-details-stage-file')).toBeTruthy();
     });
 
     it('hides include/exclude controls when backend does not support them', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(FileActionToolbar as any, {
-                    theme,
-                    displayMode: 'diff',
-                    onDisplayMode: () => {},
-                    diffMode: 'pending',
-                    onDiffMode: () => {},
-                    hasPendingDelta: true,
-                    hasIncludedDelta: false,
-                    scmWriteEnabled: true,
-                    includeExcludeEnabled: false,
-                    lineSelectionEnabled: false,
-                    selectedLineCount: 0,
-                    isApplyingStage: false,
-                    inFlightScmOperation: null,
-                    onStageFile: () => {},
-                    onUnstageFile: () => {},
-                    onApplySelectedLines: () => {},
-                    onClearSelection: () => {},
-                    isUntrackedFile: false,
-                })
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                isUntrackedFile: false,
+            }),
+        );
 
-        const texts = tree!.root.findAllByType('Text' as any);
-        expect(texts.some((node) => node.props.children === 'files.fileActions.stageFile')).toBe(false);
-        expect(texts.some((node) => node.props.children === 'files.fileActions.unstageFile')).toBe(false);
+        expect(screen.findByTestId('file-details-stage-file')).toBeNull();
+        expect(screen.findByTestId('file-details-unstage-file')).toBeNull();
     });
 
     it('keeps Stage file action enabled when conflicts are present', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(FileActionToolbar as any, {
-                    theme,
-                    displayMode: 'diff',
-                    onDisplayMode: () => {},
-                    diffMode: 'pending',
-                    onDiffMode: () => {},
-                    hasPendingDelta: true,
-                    hasIncludedDelta: false,
-                    scmWriteEnabled: true,
-                    includeExcludeEnabled: true,
-                    lineSelectionEnabled: false,
-                    selectedLineCount: 0,
-                    isApplyingStage: false,
-                    inFlightScmOperation: null,
-                    onStageFile: () => {},
-                    onUnstageFile: () => {},
-                    onApplySelectedLines: () => {},
-                    onClearSelection: () => {},
-                    isUntrackedFile: false,
-                })
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: true,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                isUntrackedFile: false,
+            }),
+        );
 
-        const stageButton = tree!.root
-            .findAllByType('Pressable' as any)
-            .find((pressable) =>
-                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'files.fileActions.stageFile')
-            );
-        expect(stageButton?.props.disabled).toBe(false);
+        expect(screen.findByTestId('file-details-stage-file')?.props.disabled).toBe(false);
     });
 
     it('shows virtual commit selection actions when live staging is disabled', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(FileActionToolbar as any, {
-                    theme,
-                    displayMode: 'diff',
-                    onDisplayMode: () => {},
-                    diffMode: 'pending',
-                    onDiffMode: () => {},
-                    hasPendingDelta: true,
-                    hasIncludedDelta: false,
-                    scmWriteEnabled: true,
-                    includeExcludeEnabled: false,
-                    virtualSelectionEnabled: true,
-                    isSelectedForCommit: true,
-                    lineSelectionEnabled: false,
-                    selectedLineCount: 0,
-                    isApplyingStage: false,
-                    inFlightScmOperation: null,
-                    onStageFile: () => {},
-                    onUnstageFile: () => {},
-                    onApplySelectedLines: () => {},
-                    onClearSelection: () => {},
-                    isUntrackedFile: false,
-                })
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: true,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                isUntrackedFile: false,
+            }),
+        );
 
-        const texts = tree!.root.findAllByType('Text' as any);
-        expect(texts.some((node) => node.props.children === 'files.fileActions.selectForCommit')).toBe(true);
-        expect(texts.some((node) => node.props.children === 'files.fileActions.removeFromSelection')).toBe(true);
+        expect(screen.findByTestId('file-details-stage-file')).toBeTruthy();
+        expect(screen.findByTestId('file-details-unstage-file')).toBeTruthy();
     });
 
     it('shows an Edit button in file mode when editor is enabled', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
         const onStartEditingFile = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(FileActionToolbar as any, {
-                    theme,
-                    displayMode: 'file',
-                    onDisplayMode: () => {},
-                    diffMode: 'pending',
-                    onDiffMode: () => {},
-                    hasPendingDelta: false,
-                    hasIncludedDelta: false,
-                    scmWriteEnabled: false,
-                    includeExcludeEnabled: false,
-                    virtualSelectionEnabled: false,
-                    isSelectedForCommit: false,
-                    lineSelectionEnabled: false,
-                    selectedLineCount: 0,
-                    isApplyingStage: false,
-                    inFlightScmOperation: null,
-                    onStageFile: () => {},
-                    onUnstageFile: () => {},
-                    onApplySelectedLines: () => {},
-                    onClearSelection: () => {},
-                    fileEditorEnabled: true,
-                    isEditingFile: false,
-                    onStartEditingFile,
-                }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'file',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: false,
+                hasIncludedDelta: false,
+                scmWriteEnabled: false,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: false,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                fileEditorEnabled: true,
+                isEditingFile: false,
+                onStartEditingFile,
+            }),
+        );
 
-        const editButton = tree!.root
-            .findAllByType('Pressable' as any)
-            .find((pressable) =>
-                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'common.edit')
-            );
+        const editButton = screen.findByTestId('file-details-edit');
         expect(editButton).toBeTruthy();
 
         act(() => {
-            editButton!.props.onPress();
+            editButton?.props.onPress();
         });
         expect(onStartEditingFile).toHaveBeenCalledTimes(1);
     });
@@ -233,37 +214,33 @@ describe('FileActionToolbar', () => {
     it('hides Diff/File toggles when only one mode is available', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(FileActionToolbar as any, {
-                    theme,
-                    displayMode: 'file',
-                    onDisplayMode: () => {},
-                    diffMode: 'pending',
-                    onDiffMode: () => {},
-                    hasPendingDelta: false,
-                    hasIncludedDelta: false,
-                    scmWriteEnabled: false,
-                    includeExcludeEnabled: false,
-                    virtualSelectionEnabled: false,
-                    isSelectedForCommit: false,
-                    lineSelectionEnabled: false,
-                    selectedLineCount: 0,
-                    isApplyingStage: false,
-                    inFlightScmOperation: null,
-                    onStageFile: () => {},
-                    onUnstageFile: () => {},
-                    onApplySelectedLines: () => {},
-                    onClearSelection: () => {},
-                    showDiffToggle: false,
-                    showFileToggle: true,
-                })
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'file',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: false,
+                hasIncludedDelta: false,
+                scmWriteEnabled: false,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: false,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                showDiffToggle: false,
+                showFileToggle: true,
+            }),
+        );
 
-        const texts = tree!.root.findAllByType('Text' as any).map((node) => node.props.children);
-        expect(texts).not.toContain('files.diff');
-        expect(texts).not.toContain('files.file');
+        expect(screen.findByTestId('file-details-toggle-diff')).toBeNull();
+        expect(screen.findByTestId('file-details-toggle-file')).toBeNull();
     });
 });

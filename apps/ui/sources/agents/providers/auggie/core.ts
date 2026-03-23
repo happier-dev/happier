@@ -1,4 +1,8 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
+import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
+import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const AUGGIE_CORE: AgentCoreConfig = {
@@ -13,14 +17,7 @@ export const AUGGIE_CORE: AgentCoreConfig = {
         connectRoute: null,
     },
     flavorAliases: ['auggie'],
-    cli: {
-        detectKey: 'auggie',
-        machineLoginKey: 'auggie',
-        installBanner: {
-            installKind: 'ifAvailable',
-        },
-        spawnAgent: 'auggie',
-    },
+    cli: buildCatalogProviderCliUiConfig('auggie'),
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
@@ -29,17 +26,16 @@ export const AUGGIE_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('auggie'),
     },
     model: getAgentModelConfig('auggie'),
-    resume: {
-        vendorResumeIdField: 'auggieSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'auggie',
         uiVendorResumeIdLabelKey: 'sessionInfo.auggieSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.auggieSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: false,
     },
+    tools: buildAgentToolsUiConfig({ agentId: 'auggie' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'auggie' }),
     ui: {
         agentPickerIconName: 'sparkles',
         cliGlyphScale: 1.0,

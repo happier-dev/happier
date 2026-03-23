@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from "@/testkit/env";
+
 const initiateShutdown = vi.fn(async () => {});
 vi.mock("./shutdown", () => ({ initiateShutdown }));
 
@@ -13,19 +15,13 @@ vi.mock("@sentry/node", () => ({
     flush: (...args: unknown[]) => sentryFlush(...args),
 }));
 
+const processHandlerEnvKeys = ["NODE_ENV", "HAPPY_EXIT_ON_FATAL"] as const;
+
 beforeEach(() => {
     initiateShutdown.mockClear();
     sentryCaptureException.mockClear();
     sentryFlush.mockClear();
 });
-
-function restoreEnvVar(name: string, value: string | undefined) {
-    if (value === undefined) {
-        delete process.env[name];
-        return;
-    }
-    process.env[name] = value;
-}
 
 function registerAndCaptureNewListeners() {
     const events = ["uncaughtException", "unhandledRejection", "warning", "exit"] as const;
@@ -73,11 +69,12 @@ describe("registerProcessHandlers", () => {
             return undefined as never;
         }) as any);
 
-        const originalNodeEnv = process.env.NODE_ENV;
-        const originalExitOnFatal = process.env.HAPPY_EXIT_ON_FATAL;
+        const envSnapshot = snapshotEnvValues(processHandlerEnvKeys);
         try {
-            process.env.NODE_ENV = "production";
-            process.env.HAPPY_EXIT_ON_FATAL = "1";
+            applyEnvValues({
+                NODE_ENV: "production",
+                HAPPY_EXIT_ON_FATAL: "1",
+            });
 
             vi.resetModules();
             const { registerProcessHandlers } = await import("./processHandlers");
@@ -97,8 +94,7 @@ describe("registerProcessHandlers", () => {
             expect(exitSpy).toHaveBeenCalledWith(1);
         } finally {
             exitSpy.mockRestore();
-            restoreEnvVar("NODE_ENV", originalNodeEnv);
-            restoreEnvVar("HAPPY_EXIT_ON_FATAL", originalExitOnFatal);
+            restoreEnvValues(envSnapshot);
         }
     });
 
@@ -109,9 +105,9 @@ describe("registerProcessHandlers", () => {
             return undefined as never;
         }) as any);
 
-        const originalNodeEnv = process.env.NODE_ENV;
+        const envSnapshot = snapshotEnvValues(processHandlerEnvKeys);
         try {
-            process.env.NODE_ENV = "test";
+            applyEnvValues({ NODE_ENV: "test" });
 
             vi.resetModules();
             const { registerProcessHandlers } = await import("./processHandlers");
@@ -131,7 +127,7 @@ describe("registerProcessHandlers", () => {
             expect(exitSpy).not.toHaveBeenCalled();
         } finally {
             exitSpy.mockRestore();
-            restoreEnvVar("NODE_ENV", originalNodeEnv);
+            restoreEnvValues(envSnapshot);
         }
     });
 });

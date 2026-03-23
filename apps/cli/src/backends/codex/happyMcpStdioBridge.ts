@@ -15,6 +15,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { registerHappierMcpBridgeTools } from './registerHappierMcpBridgeTools';
+import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
+import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 
 function parseArgs(argv: string[]): { url: string | null } {
   let url: string | null = null;
@@ -71,6 +73,9 @@ async function main() {
           : undefined;
       return await client.callTool({ name, arguments: toolArgs });
     },
+  });
+  registerHappierMcpResources(server as any, {
+    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'mcp' }),
   });
 
   // Start STDIO transport

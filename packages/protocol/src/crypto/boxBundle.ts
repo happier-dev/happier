@@ -1,5 +1,5 @@
 import tweetnacl from 'tweetnacl';
-import { sha512 } from '@noble/hashes/sha512';
+import { sha512 } from '@noble/hashes/sha512.js';
 
 export const BOX_BUNDLE_PUBLIC_KEY_BYTES = tweetnacl.box.publicKeyLength; // 32
 export const BOX_BUNDLE_NONCE_BYTES = tweetnacl.box.nonceLength; // 24
@@ -71,4 +71,3 @@ export function openBoxBundle(params: {
   const compatSecretKey = deriveBoxSecretKeyFromSeed(params.recipientSecretKeyOrSeed);
   return tryOpen(compatSecretKey);
 }
-

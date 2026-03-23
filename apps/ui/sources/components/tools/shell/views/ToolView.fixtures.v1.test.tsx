@@ -1,10 +1,26 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import {
+    afterEach,
+    beforeEach,
+    describe,
+    expect,
+    it,
+    vi,
+} from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: vi.fn(),
+    },
+}));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -15,24 +31,24 @@ vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({ theme: { colors: { text: '#000', textSecondary: '#666', warning: '#f90', surfaceHigh: '#fff', surfaceHighest: '#fff' } } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
+    DEFAULT_AGENT_ID: 'claude',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/utils/errors/toolErrorParser', () => ({
     parseToolUseError: () => ({ isToolUseError: false }),
@@ -93,17 +109,72 @@ vi.mock('@/components/tools/catalog', () => ({
 type ToolViewDetailLevel = 'title' | 'summary' | 'full';
 const mockSettings: { detailLevelDefault: ToolViewDetailLevel } = { detailLevelDefault: 'summary' };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return mockSettings.detailLevelDefault;
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return mockSettings.detailLevelDefault;
-        if (key === 'toolViewDetailLevelByToolName') return {};
-        if (key === 'toolViewTapAction') return 'expand';
-        if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
-        if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-        return null;
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => {
+                if (key === 'toolViewDetailLevelDefault') return mockSettings.detailLevelDefault;
+                if (key === 'toolViewDetailLevelDefaultLocalControl') return mockSettings.detailLevelDefault;
+                if (key === 'toolViewDetailLevelByToolName') return {};
+                if (key === 'toolViewTapAction') return 'expand';
+                if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
+                if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+                return null;
+            },
+        },
+    }));
+
+const fixtureTools: ReadonlyArray<Readonly<{ label: string; tool: ToolCall }>> = [
+    {
+        label: 'Bash',
+        tool: makeToolCall({
+            name: 'Bash',
+            input: { command: "echo 'hi'" },
+            result: { stdout: 'hi\n', exit_code: 0 },
+        }),
     },
-}));
+    {
+        label: 'Read',
+        tool: makeToolCall({
+            name: 'Read',
+            input: { file_path: '/tmp/a.txt' },
+            result: { file: { content: 'hello' } },
+        }),
+    },
+    {
+        label: 'Diff',
+        tool: makeToolCall({
+            name: 'Diff',
+            input: { unified_diff: '--- a\n+++ b\n' },
+            result: null,
+        }),
+    },
+    {
+        label: 'Patch',
+        tool: makeToolCall({
+            name: 'Patch',
+            input: { changes: { 'a.txt': { insert: { line: 1, content: 'x' } } } },
+            result: null,
+        }),
+    },
+    {
+        label: 'TodoWrite',
+        tool: makeToolCall({
+            name: 'TodoWrite',
+            input: { todos: [{ id: '1', text: 'do thing', completed: false }] },
+            result: { todos: [{ id: '1', text: 'do thing', completed: false }] },
+        }),
+    },
+    {
+        label: 'Reasoning',
+        tool: makeToolCall({
+            name: 'Reasoning',
+            input: { content: 'thinking' },
+            result: { content: 'ok' },
+        }),
+    },
+] as const;
 
 describe('ToolView fixtures (v1)', () => {
     beforeEach(() => {
@@ -112,56 +183,65 @@ describe('ToolView fixtures (v1)', () => {
         renderedFullSpy.mockClear();
     });
 
-    it('renders title/summary/full modes without crashing for common canonical tools', async () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    it.each(fixtureTools)('keeps $label in title mode without selecting a renderer', async ({ tool }) => {
         const { ToolView } = await import('./ToolView');
 
-        const tools: ToolCall[] = [
-            makeToolCall({ name: 'Bash', input: { command: "echo 'hi'" }, result: { stdout: 'hi\n', exit_code: 0 } }),
-            makeToolCall({ name: 'Read', input: { file_path: '/tmp/a.txt' }, result: { file: { content: 'hello' } } }),
-            makeToolCall({ name: 'Diff', input: { unified_diff: '--- a\n+++ b\n' }, result: null }),
-            makeToolCall({ name: 'Patch', input: { changes: { 'a.txt': { insert: { line: 1, content: 'x' } } } }, result: null }),
-            makeToolCall({
-                name: 'TodoWrite',
-                input: { todos: [{ id: '1', text: 'do thing', completed: false }] },
-                result: { todos: [{ id: '1', text: 'do thing', completed: false }] },
+        renderedSummarySpy.mockClear();
+        renderedFullSpy.mockClear();
+        mockSettings.detailLevelDefault = 'title';
+
+        const screen = await renderScreen(React.createElement(ToolView, { tool, metadata: null }));
+
+        expect(screen.findByTestId('tool-view-header-primary')).not.toBeNull();
+        expect(renderedSummarySpy).not.toHaveBeenCalled();
+        expect(renderedFullSpy).not.toHaveBeenCalled();
+    });
+
+    it.each(fixtureTools)('renders $label with the summary renderer in summary mode', async ({ tool }) => {
+        const { ToolView } = await import('./ToolView');
+
+        renderedSummarySpy.mockClear();
+        renderedFullSpy.mockClear();
+        mockSettings.detailLevelDefault = 'summary';
+
+        const screen = await renderScreen(React.createElement(ToolView, { tool, metadata: null }));
+
+        expect(screen.findAllByType('SummaryToolView' as any)).toHaveLength(1);
+        expect(renderedSummarySpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                toolName: tool.name,
+                props: expect.objectContaining({
+                    detailLevel: 'summary',
+                    tool: expect.objectContaining({ name: tool.name }),
+                }),
             }),
-            makeToolCall({ name: 'Reasoning', input: { content: 'thinking' }, result: { content: 'ok' } }),
-        ];
+        );
+        expect(renderedFullSpy).not.toHaveBeenCalled();
+    });
 
-        for (const tool of tools) {
-            // title
-            renderedSummarySpy.mockClear();
-            renderedFullSpy.mockClear();
-            mockSettings.detailLevelDefault = 'title';
-            let titleTree!: renderer.ReactTestRenderer;
-            await act(async () => {
-                titleTree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));
-            });
-            expect(renderedSummarySpy).not.toHaveBeenCalled();
-            expect(renderedFullSpy).not.toHaveBeenCalled();
-            expect(titleTree.toJSON()).toBeTruthy();
+    it.each(fixtureTools)('renders $label with the full renderer in full mode', async ({ tool }) => {
+        const { ToolView } = await import('./ToolView');
 
-            // summary
-            renderedSummarySpy.mockClear();
-            renderedFullSpy.mockClear();
-            mockSettings.detailLevelDefault = 'summary';
-            let summaryTree!: renderer.ReactTestRenderer;
-            await act(async () => {
-                summaryTree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));
-            });
-            expect(summaryTree.root.findAllByType('SummaryToolView' as any)).toHaveLength(1);
-            expect(summaryTree.toJSON()).toBeTruthy();
+        renderedSummarySpy.mockClear();
+        renderedFullSpy.mockClear();
+        mockSettings.detailLevelDefault = 'full';
 
-            // full (prefer full-view component)
-            renderedSummarySpy.mockClear();
-            renderedFullSpy.mockClear();
-            mockSettings.detailLevelDefault = 'full';
-            let fullTree!: renderer.ReactTestRenderer;
-            await act(async () => {
-                fullTree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));
-            });
-            expect(fullTree.root.findAllByType('FullToolView' as any)).toHaveLength(1);
-            expect(fullTree.toJSON()).toBeTruthy();
-        }
+        const screen = await renderScreen(React.createElement(ToolView, { tool, metadata: null }));
+
+        expect(screen.findAllByType('FullToolView' as any)).toHaveLength(1);
+        expect(renderedFullSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                toolName: tool.name,
+                props: expect.objectContaining({
+                    detailLevel: 'full',
+                    tool: expect.objectContaining({ name: tool.name }),
+                }),
+            }),
+        );
+        expect(renderedSummarySpy).not.toHaveBeenCalled();
     });
 });

@@ -1576,6 +1576,38 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
     });
 
     describe('ACP tool call normalization', () => {
+        it('accepts configured ACP provider ids in raw records', () => {
+            const raw = {
+                role: 'agent' as const,
+                content: {
+                    type: 'acp' as const,
+                    provider: 'acp:live-ui-acp-stub-preset',
+                    data: {
+                        type: 'message' as const,
+                        message: 'ACP_STUB_USAGE_UPDATE_DONE live-ui-manual-qa-20260309-1',
+                    },
+                },
+            };
+
+            const parsed = RawRecordSchema.safeParse(raw);
+            expect(parsed.success).toBe(true);
+
+            if (!parsed.success) {
+                return;
+            }
+
+            const normalized = normalizeRawMessage('msg-acp-configured-provider', null, Date.now(), parsed.data);
+            expect(normalized?.role).toBe('agent');
+            if (normalized && normalized.role === 'agent') {
+                expect(normalized.content[0]).toEqual({
+                    type: 'text',
+                    text: 'ACP_STUB_USAGE_UPDATE_DONE live-ui-manual-qa-20260309-1',
+                    uuid: 'msg-acp-configured-provider',
+                    parentUUID: null,
+                });
+            }
+        });
+
         it('parses ACP tool-call input when input is a JSON string', () => {
             const raw = {
                 role: 'agent' as const,

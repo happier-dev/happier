@@ -1,8 +1,10 @@
 import tweetnacl from 'tweetnacl';
-import { hmac } from '@noble/hashes/hmac';
-import { sha512 } from '@noble/hashes/sha512';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha512 } from '@noble/hashes/sha512.js';
 
 import { decodeBase64, encodeBase64 } from './base64.js';
+import { deriveKey } from './keyDerivation.js';
+import { parseSerializedJsonValue } from './serializedJsonValue.js';
 
 export type AccountScopedBlobKind =
   | 'account_settings'
@@ -37,30 +39,6 @@ function hmacSha512(key: Uint8Array, data: Uint8Array): Uint8Array {
   return hmac(sha512, key, data);
 }
 
-type KeyTreeState = Readonly<{ key: Uint8Array; chainCode: Uint8Array }>;
-
-function deriveSecretKeyTreeRoot(seed: Uint8Array, usage: string): KeyTreeState {
-  const I = hmacSha512(encodeUtf8(`${usage} Master Seed`), seed);
-  return { key: I.slice(0, 32), chainCode: I.slice(32) };
-}
-
-function deriveSecretKeyTreeChild(chainCode: Uint8Array, index: string): KeyTreeState {
-  const indexBytes = encodeUtf8(index);
-  const data = new Uint8Array(1 + indexBytes.length);
-  data[0] = 0;
-  data.set(indexBytes, 1);
-  const I = hmacSha512(chainCode, data);
-  return { key: I.slice(0, 32), chainCode: I.slice(32) };
-}
-
-function deriveKey(master: Uint8Array, usage: string, path: readonly string[]): Uint8Array {
-  let state = deriveSecretKeyTreeRoot(master, usage);
-  for (const index of path) {
-    state = deriveSecretKeyTreeChild(state.chainCode, index);
-  }
-  return state.key;
-}
-
 export function deriveAccountMachineKeyFromRecoverySecret(recoverySecret: Uint8Array): Uint8Array {
   const contentSeed = deriveKey(recoverySecret, 'Happy EnCoder', ['content']);
   // libsodium crypto_box_seed_keypair uses SHA-512(seed) and takes the first 32 bytes as the scalar.
@@ -81,7 +59,7 @@ function deriveAccountScopedSecretboxKey(params: { machineKey: Uint8Array; kind:
 function tryParseJson(value: Uint8Array): unknown | null {
   try {
     const decoded = new TextDecoder().decode(value);
-    return JSON.parse(decoded);
+    return parseSerializedJsonValue(decoded);
   } catch {
     return null;
   }

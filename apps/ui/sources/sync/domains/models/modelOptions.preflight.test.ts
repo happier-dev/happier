@@ -1,8 +1,36 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 import { getModelOptionsForAgentTypeOrPreflight } from './modelOptions';
 
 describe('modelOptions preflight', () => {
+    it('merges preflight models with canonical agent models instead of dropping catalog options', () => {
+        const out = getModelOptionsForAgentTypeOrPreflight({
+            agentType: 'claude',
+            preflight: {
+                availableModels: [
+                    { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
+                    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+                    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
+                ],
+                supportsFreeform: true,
+            },
+        });
+
+        expect(out.map((option) => option.value)).toEqual([
+            'default',
+            'claude-opus-4-6',
+            'claude-sonnet-4-6',
+            'claude-haiku-4-5',
+            'claude-opus-4-5',
+            'claude-sonnet-4-5',
+        ]);
+    });
+
     it('prefers preflight model list and always includes Default first', () => {
         const out = getModelOptionsForAgentTypeOrPreflight({
             agentType: 'opencode',

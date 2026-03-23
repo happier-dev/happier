@@ -3,17 +3,17 @@ import { describe, expect, it } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import { MultiPaneHost } from './MultiPaneHost';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('MultiPaneHost (overlayStack hidden right)', () => {
-    it('keeps the right pane mounted when hidden behind an overlay details pane', () => {
+    it('keeps the right pane mounted when hidden behind an overlay details pane', async () => {
         const tracker = createMountTracker();
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <MultiPaneHost
+        tree = (await renderScreen(<MultiPaneHost
                     main={<Main />}
                     rightPane={<Tracked tracker={tracker} name="right" />}
                     detailsPane={<Tracked tracker={tracker} name="details" />}
@@ -24,9 +24,7 @@ describe('MultiPaneHost (overlayStack hidden right)', () => {
                     onCloseDetails={() => {}}
                     onCommitRightDockWidthPx={() => {}}
                     onCommitDetailsDockWidthPx={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         expect(tracker.mounts.right).toBe(1);
         expect(tracker.unmounts.right ?? 0).toBe(0);

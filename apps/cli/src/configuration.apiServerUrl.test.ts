@@ -1,28 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+
+const envScope = createEnvKeyScope([
+  'HAPPIER_SERVER_URL',
+  'HAPPIER_LOCAL_SERVER_URL',
+  'HAPPIER_PUBLIC_SERVER_URL',
+  'HAPPIER_WEBAPP_URL',
+  'HAPPIER_HOME_DIR',
+]);
 
 describe('configuration apiServerUrl', () => {
-  const prevServerUrl = process.env.HAPPIER_SERVER_URL;
-  const prevLocalServerUrl = process.env.HAPPIER_LOCAL_SERVER_URL;
-  const prevPublicServerUrl = process.env.HAPPIER_PUBLIC_SERVER_URL;
-  const prevWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const prevHomeDir = process.env.HAPPIER_HOME_DIR;
-
   afterEach(() => {
-    if (prevServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = prevServerUrl;
-
-    if (prevLocalServerUrl === undefined) delete process.env.HAPPIER_LOCAL_SERVER_URL;
-    else process.env.HAPPIER_LOCAL_SERVER_URL = prevLocalServerUrl;
-
-    if (prevPublicServerUrl === undefined) delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-    else process.env.HAPPIER_PUBLIC_SERVER_URL = prevPublicServerUrl;
-
-    if (prevWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = prevWebappUrl;
-
-    if (prevHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = prevHomeDir;
-
+    envScope.restore();
     vi.resetModules();
   });
 
@@ -37,5 +26,17 @@ describe('configuration apiServerUrl', () => {
     expect((configuration as any).apiServerUrl).toBe('http://127.0.0.1:3005');
     expect(configuration.webappUrl).toBe('https://app.happier.dev');
   });
-});
 
+  it('ignores a stale HAPPIER_LOCAL_SERVER_URL when HAPPIER_SERVER_URL already points at a local stack', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:41845';
+    process.env.HAPPIER_LOCAL_SERVER_URL = 'http://127.0.0.1:49597';
+    delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+    process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:41845';
+
+    vi.resetModules();
+    const { configuration } = await import('./configuration');
+    expect(configuration.serverUrl).toBe('http://127.0.0.1:41845');
+    expect(configuration.apiServerUrl).toBe('http://127.0.0.1:41845');
+    expect(configuration.webappUrl).toBe('http://127.0.0.1:41845');
+  });
+});

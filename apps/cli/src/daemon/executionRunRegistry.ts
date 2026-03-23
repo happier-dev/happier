@@ -17,6 +17,42 @@ function resolveExecutionRunMarkerPath(runId: string): string {
   return join(resolveExecutionRunMarkerDir(), `run-${runId}.json`);
 }
 
+function isExecutionRunMarkerEntry(entry: string): boolean {
+  if (!entry.startsWith('run-')) return false;
+  return entry.endsWith('.json') || entry.includes('.json.tmp-');
+}
+
+function isCanonicalExecutionRunMarkerEntry(entry: string): boolean {
+  return entry.startsWith('run-') && entry.endsWith('.json');
+}
+
+async function readExecutionRunMarkerFile(path: string): Promise<ExecutionRunMarker | null> {
+  try {
+    const raw = await readFile(path, 'utf8');
+    const parsed = ExecutionRunMarkerSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) return null;
+    if (parsed.data.happyHomeDir !== configuration.happyHomeDir) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function shouldReplaceRecoveredMarker(params: Readonly<{
+  current: ExecutionRunMarker;
+  currentIsCanonical: boolean;
+  next: ExecutionRunMarker;
+  nextIsCanonical: boolean;
+}>): boolean {
+  if (params.next.updatedAtMs !== params.current.updatedAtMs) {
+    return params.next.updatedAtMs > params.current.updatedAtMs;
+  }
+  if (params.nextIsCanonical !== params.currentIsCanonical) {
+    return params.nextIsCanonical;
+  }
+  return false;
+}
+
 function isTerminalMarker(marker: ExecutionRunMarker): boolean {
   if (marker.status !== 'running') return true;
   return typeof (marker as any).finishedAtMs === 'number';
@@ -96,13 +132,36 @@ export async function writeExecutionRunMarker(marker: Omit<ExecutionRunMarker, '
 }
 
 export async function removeExecutionRunMarker(runId: string): Promise<void> {
-  const path = resolveExecutionRunMarkerPath(runId);
+  const dir = resolveExecutionRunMarkerDir();
   try {
-    await unlink(path);
+    await unlink(resolveExecutionRunMarkerPath(runId));
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err?.code !== 'ENOENT') {
       logger.debug(`[executionRunRegistry] Failed to remove marker run-${runId}.json`, e);
+    }
+  }
+
+  try {
+    const entries = await readdir(dir);
+    await Promise.all(
+      entries
+        .filter((entry) => entry.startsWith(`run-${runId}.json.tmp-`))
+        .map(async (entry) => {
+          try {
+            await unlink(join(dir, entry));
+          } catch (error) {
+            const unlinkErr = error as NodeJS.ErrnoException;
+            if (unlinkErr?.code !== 'ENOENT') {
+              logger.debug(`[executionRunRegistry] Failed to remove temp marker ${entry}`, error);
+            }
+          }
+        }),
+    );
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    if (err?.code !== 'ENOENT') {
+      logger.debug(`[executionRunRegistry] Failed to scan temp markers for run-${runId}.json`, e);
     }
   }
 }
@@ -112,21 +171,32 @@ export async function listExecutionRunMarkers(): Promise<ExecutionRunMarker[]> {
   await mkdir(dir, { recursive: true });
 
   const entries = await readdir(dir);
-  const out: ExecutionRunMarker[] = [];
+  const recovered = new Map<string, Readonly<{ marker: ExecutionRunMarker; isCanonical: boolean }>>();
   for (const entry of entries) {
-    if (!entry.startsWith('run-') || !entry.endsWith('.json')) continue;
+    if (!isExecutionRunMarkerEntry(entry)) continue;
     const path = join(dir, entry);
-    try {
-      const raw = await readFile(path, 'utf8');
-      const parsed = ExecutionRunMarkerSchema.safeParse(JSON.parse(raw));
-      if (!parsed.success) continue;
-      if (parsed.data.happyHomeDir !== configuration.happyHomeDir) continue;
-      out.push(parsed.data);
-    } catch {
-      // ignore invalid marker
+    const marker = await readExecutionRunMarkerFile(path);
+    if (!marker) continue;
+
+    const current = recovered.get(marker.runId);
+    const nextIsCanonical = isCanonicalExecutionRunMarkerEntry(entry);
+    if (!current) {
+      recovered.set(marker.runId, { marker, isCanonical: nextIsCanonical });
+      continue;
+    }
+    if (
+      shouldReplaceRecoveredMarker({
+        current: current.marker,
+        currentIsCanonical: current.isCanonical,
+        next: marker,
+        nextIsCanonical,
+      })
+    ) {
+      recovered.set(marker.runId, { marker, isCanonical: nextIsCanonical });
     }
   }
 
+  const out = Array.from(recovered.values(), (entry) => entry.marker);
   out.sort((a, b) => a.startedAtMs - b.startedAtMs);
   return out;
 }

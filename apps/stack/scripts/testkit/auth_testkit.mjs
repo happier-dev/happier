@@ -1,60 +1,25 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-function sanitizeEnv(env) {
-  if (!env) return undefined;
-  const clean = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value == null) continue;
-    clean[key] = String(value);
-  }
-  return clean;
-}
+import { buildStackFixtureEnv } from './core/env_scope.mjs';
+import { runNodeCapture as runNodeCaptureCore } from './core/run_node_capture.mjs';
+import { resolveHstackBinPath, resolveStackRootFromMeta, resolveStackScriptPath } from './core/stack_root.mjs';
+import { createTempFixture } from './core/temp_fixture.mjs';
 
 export function getStackRootFromMeta(metaUrl) {
-  const scriptsDir = dirname(fileURLToPath(metaUrl));
-  return dirname(scriptsDir);
+  return resolveStackRootFromMeta(metaUrl);
 }
 
 export function hstackBinPath(rootDir) {
-  return join(rootDir, 'bin', 'hstack.mjs');
+  return resolveHstackBinPath(rootDir);
 }
 
 export function authScriptPath(rootDir) {
-  return join(rootDir, 'scripts', 'auth.mjs');
+  return resolveStackScriptPath(rootDir, 'auth.mjs');
 }
 
-export async function runNodeCapture(args, { cwd, env, input } = {}) {
-  return await new Promise((resolve, reject) => {
-    const usePipeInput = input != null;
-    const proc = spawn(process.execPath, args, {
-      cwd,
-      env: sanitizeEnv(env),
-      stdio: [usePipeInput ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (chunk) => {
-      stdout += String(chunk);
-    });
-    proc.stderr.on('data', (chunk) => {
-      stderr += String(chunk);
-    });
-    proc.on('error', reject);
-    proc.on('close', (code, signal) => {
-      resolve({ code: code ?? (signal ? 128 : 0), signal, stdout, stderr });
-    });
-
-    if (usePipeInput) {
-      proc.stdin.write(String(input));
-      proc.stdin.end();
-    }
-  });
-}
+export const runNodeCapture = runNodeCaptureCore;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -91,11 +56,13 @@ export async function terminateChildProcess(child, { signal = 'SIGTERM', timeout
 }
 
 export async function createAuthStackFixture({
+  t,
   prefix,
   stackName = 'main',
   stackEnvLines = [],
 }) {
-  const tmpDir = await mkdtemp(join(tmpdir(), prefix));
+  const fixture = await createTempFixture(t, { prefix });
+  const tmpDir = fixture.root;
   const storageDir = join(tmpDir, 'storage');
   await mkdir(join(storageDir, stackName), { recursive: true });
   const envPath = join(storageDir, stackName, 'env');
@@ -106,16 +73,15 @@ export async function createAuthStackFixture({
     storageDir,
     envPath,
     buildEnv(extra = {}) {
-      return {
-        ...process.env,
-        HAPPIER_STACK_STORAGE_DIR: storageDir,
-        HAPPIER_STACK_STACK: stackName,
-        HAPPIER_STACK_ENV_FILE: envPath,
-        ...extra,
-      };
+      return buildStackFixtureEnv({
+        storageDir,
+        stackName,
+        envPath,
+        extraEnv: extra,
+      });
     },
     async cleanup() {
-      await rm(tmpDir, { recursive: true, force: true });
+      await fixture.cleanup();
     },
   };
 }

@@ -6,13 +6,15 @@ import { createSessionScanner } from "./utils/sessionScanner";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import type { Metadata, PermissionMode } from "@/api/types";
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from "./utils/permissionMode";
+import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionIntentFromArgs';
 import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/discardQueuedAndPendingForLocalSwitch';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
-import { resolveAcpSessionModeOverrideFromMetadataSnapshot, resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import { resolvePermissionIntentFromMetadataSnapshot, resolveSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { configuration } from '@/configuration';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { resolveClaudeCodeExperimentalEnvOverlay } from './spawn/resolveClaudeCodeExperimentalEnvOverlay';
+import { createClaudeRawMessageTurnDiffBridge } from './utils/createClaudeRawMessageTurnDiffBridge';
 
 function upsertClaudePermissionModeArgs(
     args: string[] | undefined,
@@ -20,6 +22,7 @@ function upsertClaudePermissionModeArgs(
 ): string[] | undefined {
     const filtered: string[] = [];
     const input = args ?? [];
+    const inferredPermissionIntent = inferPermissionIntentFromClaudeArgs(input);
 
     for (let i = 0; i < input.length; i++) {
         const arg = input[i];
@@ -38,7 +41,11 @@ function upsertClaudePermissionModeArgs(
         filtered.push(arg);
     }
 
-    const claudeMode = resolveClaudeSdkPermissionModeFromEnhancedMode(mode);
+    const claudeMode = resolveClaudeSdkPermissionModeFromEnhancedMode(
+        mode.permissionMode === 'default' && typeof inferredPermissionIntent === 'string'
+            ? { ...mode, permissionMode: inferredPermissionIntent }
+            : mode,
+    );
     if (claudeMode !== 'default') {
         filtered.push('--permission-mode', claudeMode);
     }
@@ -62,6 +69,12 @@ export async function claudeLocalLauncher(
 ): Promise<LauncherResult> {
 
         const entry = opts?.entry ?? 'initial';
+        const turnDiffBridge = createClaudeRawMessageTurnDiffBridge({
+            getSessionId: () => session.sessionId ?? session.client.sessionId ?? 'unknown',
+            sendMessage: (message) => {
+                session.client.sendClaudeSessionMessage(message);
+            },
+        });
 
         // Create scanner
             const scanner = await createSessionScanner({
@@ -69,18 +82,20 @@ export async function claudeLocalLauncher(
         transcriptPath: session.transcriptPath,
         claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
         workingDirectory: session.path,
-        onMessage: (message) => { 
-            // Block SDK summary messages - we generate our own
-            if (message.type !== 'summary') {
-                session.client.sendClaudeSessionMessage(message)
+        onMessage: (message) => {
+            const bridged = turnDiffBridge.observe(message);
+            if (bridged) {
+                session.client.sendClaudeSessionMessage(bridged);
+                turnDiffBridge.flushAfterForwardIfNeeded();
             }
         },
         onTranscriptMissing: () => {
             session.client.sendSessionEvent({
                 type: 'message',
-                message: 'Claude transcript file not found yet — waiting for it to appear…'
+                message: 'Claude transcript not available yet — waiting for it to appear…'
             });
         },
+        transcriptMissingWarningMs: configuration.claudeTranscriptMissingWarningMs,
     });
     
     // Register callback to notify scanner when session ID is found via hook
@@ -172,7 +187,7 @@ export async function claudeLocalLauncher(
             // Newer clients send a target mode. Older clients send no params.
             // Local launcher is already in local mode, so {to:'local'} is a no-op.
             const to = resolveSwitchRequestTarget(params);
-            if (to === 'local') return false;
+            if (to === 'local') return true;
             await doSwitch();
             return true;
         }); // When user wants to switch to remote mode
@@ -242,7 +257,7 @@ export async function claudeLocalLauncher(
                     typeof clientEmitter?.getMetadataSnapshot === 'function'
                         ? clientEmitter.getMetadataSnapshot()
                         : null;
-                const resolvedAgentMode = resolveAcpSessionModeOverrideFromMetadataSnapshot({
+                const resolvedAgentMode = resolveSessionModeOverrideFromMetadataSnapshot({
                     metadata: metadataSnapshot,
                 });
                 session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, {
@@ -259,6 +274,7 @@ export async function claudeLocalLauncher(
                     onThinkingChange: session.onThinkingChange,
                     abort: processAbortController.signal,
                     claudeArgs: session.claudeArgs,
+                    systemPromptText: session.defaultSystemPromptText,
                     envOverlay: resolveClaudeCodeExperimentalEnvOverlay({
                         claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
                     }),
@@ -296,6 +312,7 @@ export async function claudeLocalLauncher(
                     session.transcriptPath = resumeFromTranscriptPath;
                 }
                 if (!exitReason) {
+                    turnDiffBridge.reset();
                     errorCount += 1;
                     session.client.sendSessionEvent({
                         type: 'message',

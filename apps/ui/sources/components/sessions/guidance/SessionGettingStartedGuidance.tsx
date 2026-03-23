@@ -25,7 +25,9 @@ import type { SessionGettingStartedDecisionKind } from './gettingStartedModel';
 import type { SessionGettingStartedViewModel } from './gettingStartedModel';
 import { buildSessionGettingStartedViewModel } from './gettingStartedModel';
 import { Text } from '@/components/ui/text/Text';
-import { resolveHappierCliNpmPackageSpecifier } from './happierCliInstallCommand';
+import { buildHappierCliInstallCommand } from './happierCliInstallCommand';
+import { listSessionGettingStartedCliCommands } from './listSessionGettingStartedCliCommands';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
@@ -67,7 +69,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: 720,
         gap: 28,
         marginTop: 10,
-        fontSize: 22,
+        fontSize: 20,
         color: theme.colors.text,
         ...Typography.default('semiBold'),
     },
@@ -76,13 +78,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: 720,
         gap: 28,
         marginBottom: 16,
-        fontSize: 16,
+        fontSize: 14,
         color: theme.colors.textSecondary,
         ...Typography.default(),
     },
     terminalText: {
         ...Typography.mono(),
-        fontSize: 15,
+        fontSize: 12,
         color: theme.colors.status.connected,
     },
     stepsContainer: {
@@ -98,13 +100,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginBottom: 10,
     },
     stepTitle: {
-        fontSize: 16,
+        fontSize: 14,
         color: theme.colors.text,
         ...Typography.default('semiBold'),
     },
     stepDescription: {
         marginTop: 2,
-        fontSize: 14,
+        fontSize: 12,
         color: theme.colors.textSecondary,
         ...Typography.default(),
         maxWidth: 560,
@@ -191,11 +193,10 @@ function resolveAppVariantForCliInstall(): AppVariant {
 }
 
 function buildCliInstallCommand(): string {
-    const packageSpecifier = resolveHappierCliNpmPackageSpecifier({
+    return buildHappierCliInstallCommand({
         appVariant: resolveAppVariantForCliInstall(),
         distTagOverride: config.cliNpmDistTag,
     });
-    return `npm i -g ${packageSpecifier}`;
 }
 
 type SessionGettingStartedGuidanceStep = Readonly<{
@@ -244,7 +245,7 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
                 id: 'create_session',
                 title: 'Create a session',
                 description: 'Use the + button in the app, or run one of these from your terminal.',
-                command: ['happier', 'happier codex', 'happier opencode'].join('\n'),
+                command: listSessionGettingStartedCliCommands().join('\n'),
                 copyLabel: 'Create session',
             });
             return steps;
@@ -346,7 +347,9 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                                           style={styles.codeCopyButton}
                                           onPress={() => copyTextToClipboard({ label: step.copyLabel ?? t('common.command'), text: step.command ?? '' })}
                                       >
-                                          <Ionicons name="copy-outline" size={16} color={theme.colors.textSecondary} />
+                                          {normalizeNodeForView(
+                                              <Ionicons name="copy-outline" size={16} color={theme.colors.textSecondary} />,
+                                          )}
                                       </Pressable>
                                 </View>
                             ) : null}

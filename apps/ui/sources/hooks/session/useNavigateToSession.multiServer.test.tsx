@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,11 +10,15 @@ const routerNavigateSpy = vi.fn();
 const setActiveServerAndSwitchSpy = vi.fn(async () => false);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: {
         navigate: routerNavigateSpy,
-    }),
-}));
+    },
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ refreshFromActiveServer: refreshFromActiveServerSpy }),
@@ -36,9 +42,7 @@ describe('useNavigateToSession (multi-server)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         await act(async () => {
             await navigateToSession!('sess_123', { serverId: 'other' });
@@ -67,9 +71,7 @@ describe('useNavigateToSession (multi-server)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         await act(async () => {
             await navigateToSession!('sess_456', { serverId: 'same' });

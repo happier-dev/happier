@@ -12,20 +12,23 @@ import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@
 import type { AgentBackend, McpServerConfig, AgentFactoryOptions } from '@/agent/core';
 import { geminiTransport } from '@/backends/gemini/acp/transport';
 import { logger } from '@/ui/logger';
-import { 
-  GEMINI_API_KEY_ENV, 
-  GOOGLE_API_KEY_ENV, 
-  GEMINI_MODEL_ENV, 
-  DEFAULT_GEMINI_MODEL 
+import {
+  GEMINI_API_KEY_ENV,
+  GOOGLE_API_KEY_ENV,
+  GEMINI_MODEL_ENV,
+  DEFAULT_GEMINI_MODEL
 } from '@/backends/gemini/constants';
 import type { PermissionMode } from '@/api/types';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
-import { 
-  readGeminiLocalConfig, 
+import {
+  readGeminiLocalConfigFromEnv,
   determineGeminiModel,
   getGeminiModelSource
 } from '@/backends/gemini/utils/config';
+import { createGeminiMcpCliEnvironment } from '@/backends/gemini/mcp/createGeminiMcpCliEnvironment';
+import { wrapBackendDisposeWithCleanup } from '@/backends/gemini/mcp/wrapBackendDisposeWithCleanup';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
 function isTruthyEnv(value: string | undefined): boolean {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -79,6 +82,11 @@ export interface GeminiBackendResult {
  * @returns GeminiBackendResult with backend and resolved model (single source of truth)
  */
 export function createGeminiBackend(options: GeminiBackendOptions): GeminiBackendResult {
+  const scopedEnv = options.env ?? {};
+  const mergedSourceEnv = {
+    ...process.env,
+    ...scopedEnv,
+  };
 
   // Resolve API key from multiple sources (in priority order):
   // 1. Local Gemini CLI config files (~/.gemini/) (API keys only)
@@ -86,15 +94,17 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   // 3. GOOGLE_API_KEY environment variable - lowest priority
   
   // Try reading from local Gemini CLI config (token and model)
-  const localConfig = readGeminiLocalConfig();
+  const localConfig = readGeminiLocalConfigFromEnv(mergedSourceEnv);
   
   // Important: OAuth access tokens (from oauth_creds.json or gcloud ADC) are NOT Gemini API keys.
   // We only treat explicit API key sources as GEMINI_API_KEY inputs. OAuth-based auth is handled
   // via ACP authenticate() using oauth-personal.
   const explicitApiKey =
     options.apiKey ||
-    process.env[GEMINI_API_KEY_ENV] ||
-    process.env[GOOGLE_API_KEY_ENV] ||
+    scopedEnv[GEMINI_API_KEY_ENV] ||
+    scopedEnv[GOOGLE_API_KEY_ENV] ||
+    mergedSourceEnv[GEMINI_API_KEY_ENV] ||
+    mergedSourceEnv[GOOGLE_API_KEY_ENV] ||
     localConfig.token ||
     null;
 
@@ -105,14 +115,14 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
     logger.debug(`[Gemini] No API key found; using oauth-personal auth via Gemini CLI cached credentials.`);
   }
 
-  // Command to run gemini
-  const geminiCommand = 'gemini';
-  
+  // Resolve gemini CLI command (supports managed installs, overrides, and PATH)
+  const geminiLaunch = requireProviderCliLaunchSpec('gemini', { processEnv: mergedSourceEnv });
+
   // Get model from options, local config, system environment, or use default
   // Priority: options.model (if provided) > local config > env var > default
   // If options.model is undefined, check local config, then env, then use default
   // If options.model is explicitly null, skip local config and use env/default
-  const model = determineGeminiModel(options.model, localConfig);
+  const model = determineGeminiModel(options.model, localConfig, mergedSourceEnv);
 
   const intent = normalizePermissionModeToIntent(options.permissionMode ?? 'default') ?? 'default';
   const approvalMode =
@@ -127,7 +137,7 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   // Gemini CLI's `--sandbox` can prevent ACP from answering `initialize` (hangs before stdio bridge is ready).
   // Keep it OFF by default and let Happier permissions enforce safety; opt-in via env when needed.
   const sandboxEnabled = isTruthyEnv(
-    (options.env?.HAPPIER_GEMINI_USE_SANDBOX ?? process.env.HAPPIER_GEMINI_USE_SANDBOX)
+    mergedSourceEnv.HAPPIER_GEMINI_USE_SANDBOX
   );
 
   // Build args - ACP + provider-native approvals.
@@ -146,7 +156,7 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   if (localConfig.googleCloudProject) {
     const storedEmail = localConfig.googleCloudProjectEmail;
     const currentEmail = options.currentUserEmail;
-    
+
     // Use project if: no email stored (applies to all), or emails match
     if (!storedEmail || storedEmail === currentEmail) {
       googleCloudProject = localConfig.googleCloudProject;
@@ -155,14 +165,25 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
       logger.debug(`[Gemini] Skipping stored Google Cloud Project (stored for ${storedEmail}, current user is ${currentEmail || 'unknown'})`);
     }
   }
+  const shouldPrepareMcpCliEnvironment = Boolean(
+    options.mcpServers && Object.keys(options.mcpServers).length > 0,
+  );
+  const preparedMcpCliEnvironment = shouldPrepareMcpCliEnvironment
+    ? createGeminiMcpCliEnvironment({
+      cwd: options.cwd,
+      processEnv: mergedSourceEnv,
+      mcpServers: options.mcpServers ?? {},
+    })
+    : null;
 
   const backendOptions: AcpBackendOptions = {
     agentName: 'gemini',
     cwd: options.cwd,
-    command: geminiCommand,
-    args: geminiArgs,
+    command: geminiLaunch.command,
+    args: [...geminiLaunch.args, ...geminiArgs],
     env: {
-      ...options.env,
+      ...scopedEnv,
+      ...(preparedMcpCliEnvironment?.env ?? {}),
       ...(apiKey ? { [GEMINI_API_KEY_ENV]: apiKey, [GOOGLE_API_KEY_ENV]: apiKey } : {}),
       // Pass model via env var - gemini CLI reads GEMINI_MODEL automatically
       [GEMINI_MODEL_ENV]: model,
@@ -193,7 +214,7 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
  	  };
 
   // Determine model source for logging
-  const modelSource = getGeminiModelSource(options.model, localConfig);
+  const modelSource = getGeminiModelSource(options.model, localConfig, mergedSourceEnv);
 
   logger.debug('[Gemini] Creating ACP SDK backend with options:', {
     cwd: backendOptions.cwd,
@@ -206,7 +227,9 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   });
 
   return {
-    backend: new AcpBackend(backendOptions),
+    backend: preparedMcpCliEnvironment
+      ? wrapBackendDisposeWithCleanup(new AcpBackend(backendOptions), preparedMcpCliEnvironment.cleanup)
+      : new AcpBackend(backendOptions),
     model,
     modelSource,
   };

@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,6 +14,7 @@ const cachedDirectoryEntries = new Map<string, Array<{ name: string; type: 'file
 
 vi.mock('@/sync/domains/input/repositoryDirectory', () => ({
     listRepositoryDirectoryEntries: (input: any) => listRepositoryDirectoryEntriesSpy(input),
+    warmRepositoryDirectoryCache: (input: any) => listRepositoryDirectoryEntriesSpy(input),
     getCachedRepositoryDirectoryEntries: (input: any) => cachedDirectoryEntries.get(`${input.sessionId}:${input.directoryPath}`) ?? null,
     setCachedRepositoryDirectoryEntries: (input: any) => {
         cachedDirectoryEntries.set(`${input.sessionId}:${input.directoryPath}`, input.entries);
@@ -23,16 +26,13 @@ describe('useRepositoryTreeBrowser', () => {
         cachedDirectoryEntries.set('session-1:', [
             { name: 'cached.md', type: 'file' },
         ]);
+        let resolveRootEntries: ((value: { ok: true; entries: Array<{ name: string; type: 'file' | 'directory' }> }) => void) | null = null;
 
         listRepositoryDirectoryEntriesSpy.mockImplementation(async ({ directoryPath }) => {
             if (!directoryPath) {
-                return {
-                    ok: true,
-                    entries: [
-                        { name: 'src', type: 'directory' },
-                        { name: 'README.md', type: 'file' },
-                    ],
-                };
+                return await new Promise((resolve) => {
+                    resolveRootEntries = resolve;
+                });
             }
             return { ok: true, entries: [] };
         });
@@ -51,15 +51,25 @@ describe('useRepositoryTreeBrowser', () => {
             return null;
         }
 
-        act(() => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
 
         expect(api.nodes.map((n: any) => n.path)).toEqual(['cached.md']);
 
         // Revalidation should still occur.
         await act(async () => {});
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-1', directoryPath: '' });
+
+        await act(async () => {
+            resolveRootEntries?.({
+                ok: true,
+                entries: [
+                    { name: 'src', type: 'directory' },
+                    { name: 'README.md', type: 'file' },
+                ],
+            });
+            await Promise.resolve();
+        });
+        expect(api.nodes.map((n: any) => n.path)).toEqual(['src', 'README.md']);
     });
 
     it('persists expanded directories via provided callbacks and collapses all', async () => {
@@ -95,9 +105,7 @@ describe('useRepositoryTreeBrowser', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
         await act(async () => {});
 
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-1', directoryPath: '' });
@@ -178,9 +186,7 @@ describe('useRepositoryTreeBrowser', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
         await act(async () => {});
 
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-1', directoryPath: '' });
@@ -219,5 +225,78 @@ describe('useRepositoryTreeBrowser', () => {
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-2', directoryPath: 'src' });
         expect(apiRef.current.nodes.some((n: any) => n.path === 'src/b.ts')).toBe(true);
         expect(apiRef.current.nodes.some((n: any) => n.path === 'src/a.ts')).toBe(false);
+    });
+
+    it('revalidates already-expanded directories when reloadToken changes', async () => {
+        cachedDirectoryEntries.clear();
+
+        let srcEntries = [{ name: 'old.ts', type: 'file' as const }];
+        listRepositoryDirectoryEntriesSpy.mockImplementation(async ({ directoryPath }) => {
+            if (!directoryPath) {
+                return {
+                    ok: true,
+                    entries: [{ name: 'src', type: 'directory' }],
+                };
+            }
+            if (directoryPath === 'src') {
+                return { ok: true, entries: srcEntries };
+            }
+            return { ok: true, entries: [] };
+        });
+
+        const { useRepositoryTreeBrowser } = await import('./useRepositoryTreeBrowser');
+
+        const apiRef: { current: any } = { current: null };
+        let setReloadToken: ((value: number) => void) | null = null;
+
+        function Test() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            const [reloadToken, setReload] = React.useState(0);
+            setReloadToken = setReload;
+
+            apiRef.current = useRepositoryTreeBrowser({
+                sessionId: 'session-1',
+                enabled: true,
+                expandedPaths,
+                onExpandedPathsChange: setExpandedPaths,
+                reloadToken,
+            });
+            return null;
+        }
+
+        await renderScreen(<Test />);
+        await act(async () => {});
+
+        await act(async () => {
+            await apiRef.current.toggleDirectory('src');
+        });
+
+        for (let i = 0; i < 10; i += 1) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            if (apiRef.current.nodes.some((n: any) => n.path === 'src/old.ts')) break;
+        }
+
+        expect(apiRef.current.nodes.some((n: any) => n.path === 'src/old.ts')).toBe(true);
+
+        srcEntries = [{ name: 'new.ts', type: 'file' as const }];
+        listRepositoryDirectoryEntriesSpy.mockClear();
+
+        await act(async () => {
+            setReloadToken!(1);
+        });
+
+        for (let i = 0; i < 10; i += 1) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            if (apiRef.current.nodes.some((n: any) => n.path === 'src/new.ts')) break;
+        }
+
+        expect(listRepositoryDirectoryEntriesSpy.mock.calls).toContainEqual([{ sessionId: 'session-1', directoryPath: '' }]);
+        expect(listRepositoryDirectoryEntriesSpy.mock.calls).toContainEqual([{ sessionId: 'session-1', directoryPath: 'src' }]);
+        expect(apiRef.current.nodes.some((n: any) => n.path === 'src/new.ts')).toBe(true);
+        expect(apiRef.current.nodes.some((n: any) => n.path === 'src/old.ts')).toBe(false);
     });
 });

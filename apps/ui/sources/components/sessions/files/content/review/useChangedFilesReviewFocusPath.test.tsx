@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { useChangedFilesReviewFocusPath } from './useChangedFilesReviewFocusPath';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,7 +25,7 @@ function Harness(props: Readonly<{
 }
 
 describe('useChangedFilesReviewFocusPath', () => {
-    it('applies focus scrolling only once per focusPath value even if the file list identity changes', () => {
+    it('applies focus scrolling only once per focusPath value even if the file list identity changes', async () => {
         vi.useFakeTimers();
         const expandPath = vi.fn();
         const scrollToPath = vi.fn();
@@ -31,11 +33,7 @@ describe('useChangedFilesReviewFocusPath', () => {
         const file = { fullPath: 'src/a.ts' } as any as ScmFileStatus;
 
         let tree!: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <Harness focusPath="src/a.ts" reviewFiles={[file]} expandPath={expandPath} scrollToPath={scrollToPath} />
-            );
-        });
+        tree = (await renderScreen(<Harness focusPath="src/a.ts" reviewFiles={[file]} expandPath={expandPath} scrollToPath={scrollToPath} />)).tree;
 
         act(() => {
             vi.advanceTimersByTime(60);

@@ -10,6 +10,10 @@ describe('debounce utilities', () => {
         vi.useRealTimers();
     });
 
+    const advanceTimers = async (ms: number): Promise<void> => {
+        await vi.advanceTimersByTimeAsync(ms);
+    };
+
     describe('createCustomDebounce', () => {
         describe('immediate execution', () => {
             it('should execute first two calls immediately by default', () => {
@@ -41,7 +45,7 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'third');
             });
 
-            it('should handle zero immediate count', () => {
+            it('should handle zero immediate count', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, { 
                     delay: 1000, 
@@ -53,7 +57,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).not.toHaveBeenCalled();
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(1);
                 expect(mockFn).toHaveBeenCalledWith('second');
             });
@@ -72,7 +76,7 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenCalledTimes(8);
             });
 
-            it('should treat negative immediateCount as no immediate calls', () => {
+            it('should treat negative immediateCount as no immediate calls', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, {
                     delay: 1000,
@@ -83,14 +87,14 @@ describe('debounce utilities', () => {
                 debouncedFn('second');
 
                 expect(mockFn).not.toHaveBeenCalled();
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(1);
                 expect(mockFn).toHaveBeenCalledWith('second');
             });
         });
 
         describe('debounced execution', () => {
-            it('should debounce calls after immediate count is reached', () => {
+            it('should debounce calls after immediate count is reached', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, { delay: 1000 });
 
@@ -101,12 +105,12 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'fourth');
             });
 
-            it('should use latest value when no reducer provided', () => {
+            it('should use latest value when no reducer provided', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, { delay: 1000 });
 
@@ -118,12 +122,12 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'debounced3');
             });
 
-            it('should reset debounce timer on each call', () => {
+            it('should reset debounce timer on each call', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, { delay: 1000 });
 
@@ -131,20 +135,20 @@ describe('debounce utilities', () => {
                 debouncedFn('immediate2');
                 debouncedFn('debounced1');
                 
-                vi.advanceTimersByTime(500);
+                await advanceTimers(500);
                 debouncedFn('debounced2');
                 
-                vi.advanceTimersByTime(500);
+                await advanceTimers(500);
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(500);
+                await advanceTimers(500);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'debounced2');
             });
         });
 
         describe('reducer functionality', () => {
-            it('should use reducer to combine pending values', () => {
+            it('should use reducer to combine pending values', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, {
                     delay: 1000,
@@ -159,12 +163,12 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 12); // 3 + 4 + 5
             });
 
-            it('should work with object reducer for merging', () => {
+            it('should work with object reducer for merging', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, {
                     delay: 1000,
@@ -178,12 +182,12 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, { a: 3, b: 20 });
             });
 
-            it('should work with array reducer for concatenation', () => {
+            it('should work with array reducer for concatenation', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, {
                     delay: 1000,
@@ -197,12 +201,12 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, ['c', 'd', 'e']);
             });
 
-            it('should work with max value reducer', () => {
+            it('should work with max value reducer', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, {
                     delay: 1000,
@@ -217,12 +221,12 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 15);
             });
 
-            it('should handle complex object reducer', () => {
+            it('should handle complex object reducer', async () => {
                 interface SearchParams {
                     query: string;
                     filters: string[];
@@ -246,7 +250,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, {
                     query: 'final',
@@ -293,7 +297,7 @@ describe('debounce utilities', () => {
         });
 
         describe('edge cases', () => {
-            it('should handle multiple rapid calls correctly', () => {
+            it('should handle multiple rapid calls correctly', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, { delay: 1000 });
 
@@ -303,7 +307,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'call-99');
             });
@@ -320,7 +324,7 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(2, undefined);
             });
 
-            it('should handle reducer with null values', () => {
+            it('should handle reducer with null values', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, {
                     delay: 1000,
@@ -334,7 +338,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'fourth');
             });
@@ -343,7 +347,7 @@ describe('debounce utilities', () => {
 
     describe('createAdvancedDebounce', () => {
         describe('basic functionality', () => {
-            it('should work like createCustomDebounce for basic usage', () => {
+            it('should work like createCustomDebounce for basic usage', async () => {
                 const mockFn = vi.fn();
                 const { debounced } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -353,12 +357,12 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'third');
             });
 
-            it('executes immediately when delay is 0 (no timers)', () => {
+            it('executes immediately when delay is 0 (no timers)', async () => {
                 const mockFn = vi.fn();
                 const { debounced } = createAdvancedDebounce(mockFn, { delay: 0, immediateCount: 1 });
 
@@ -371,11 +375,11 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(2, 'second');
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'third');
 
-                vi.advanceTimersByTime(10);
+                await advanceTimers(10);
                 expect(mockFn).toHaveBeenCalledTimes(3);
             });
 
-            it('should work with reducer', () => {
+            it('should work with reducer', async () => {
                 const mockFn = vi.fn();
                 const { debounced } = createAdvancedDebounce(mockFn, {
                     delay: 1000,
@@ -389,14 +393,14 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 7); // 3 + 4
             });
         });
 
         describe('cancel functionality', () => {
-            it('should cancel pending execution', () => {
+            it('should cancel pending execution', async () => {
                 const mockFn = vi.fn();
                 const { debounced, cancel } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -408,11 +412,11 @@ describe('debounce utilities', () => {
                 
                 cancel();
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(2);
             });
 
-            it('should allow new calls after cancel', () => {
+            it('should allow new calls after cancel', async () => {
                 const mockFn = vi.fn();
                 const { debounced, cancel } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -424,7 +428,7 @@ describe('debounce utilities', () => {
                 
                 debounced('fourth');
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'fourth');
             });
@@ -438,7 +442,7 @@ describe('debounce utilities', () => {
         });
 
         describe('reset functionality', () => {
-            it('should reset call count and allow immediate execution again', () => {
+            it('should reset call count and allow immediate execution again', async () => {
                 const mockFn = vi.fn();
                 const { debounced, reset } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -458,7 +462,7 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(4, 'fifth');
             });
 
-            it('should cancel pending execution when resetting', () => {
+            it('should cancel pending execution when resetting', async () => {
                 const mockFn = vi.fn();
                 const { debounced, reset } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -468,7 +472,7 @@ describe('debounce utilities', () => {
                 
                 reset();
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(2);
             });
 
@@ -481,7 +485,7 @@ describe('debounce utilities', () => {
         });
 
         describe('flush functionality', () => {
-            it('should immediately execute pending call', () => {
+            it('should immediately execute pending call', async () => {
                 const mockFn = vi.fn();
                 const { debounced, flush } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -497,7 +501,7 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'third');
             });
 
-            it('should execute reduced value when reducer is provided', () => {
+            it('should execute reduced value when reducer is provided', async () => {
                 const mockFn = vi.fn();
                 const { debounced, flush } = createAdvancedDebounce(mockFn, {
                     delay: 1000,
@@ -515,7 +519,7 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(3, 7); // 3 + 4
             });
 
-            it('should prevent timer execution after flush', () => {
+            it('should prevent timer execution after flush', async () => {
                 const mockFn = vi.fn();
                 const { debounced, flush } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -525,7 +529,7 @@ describe('debounce utilities', () => {
                 
                 flush();
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(3);
             });
 
@@ -549,7 +553,7 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenCalledTimes(2);
             });
 
-            it('should allow new calls after flush', () => {
+            it('should allow new calls after flush', async () => {
                 const mockFn = vi.fn();
                 const { debounced, flush } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -561,14 +565,14 @@ describe('debounce utilities', () => {
                 
                 debounced('fourth');
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(4);
                 expect(mockFn).toHaveBeenNthCalledWith(4, 'fourth');
             });
         });
 
         describe('interaction between control methods', () => {
-            it('should handle cancel after reset', () => {
+            it('should handle cancel after reset', async () => {
                 const mockFn = vi.fn();
                 const { debounced, reset, cancel } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -583,11 +587,11 @@ describe('debounce utilities', () => {
                 
                 cancel();
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockFn).toHaveBeenCalledTimes(4);
             });
 
-            it('should handle flush after reset', () => {
+            it('should handle flush after reset', async () => {
                 const mockFn = vi.fn();
                 const { debounced, reset, flush } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -606,7 +610,7 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(5, 'sixth');
             });
 
-            it('should handle multiple control method calls', () => {
+            it('should handle multiple control method calls', async () => {
                 const mockFn = vi.fn();
                 const { debounced, reset, cancel, flush } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
@@ -625,7 +629,7 @@ describe('debounce utilities', () => {
         });
 
         describe('real-world scenarios', () => {
-            it('should handle search use case with cancel on unmount', () => {
+            it('should handle search use case with cancel on unmount', async () => {
                 const mockSearch = vi.fn();
                 const { debounced, cancel } = createAdvancedDebounce(mockSearch, {
                     delay: 500,
@@ -643,7 +647,7 @@ describe('debounce utilities', () => {
                 // Simulate component unmount
                 cancel();
                 
-                vi.advanceTimersByTime(500);
+                await advanceTimers(500);
                 expect(mockSearch).toHaveBeenCalledTimes(1);
             });
 
@@ -668,7 +672,7 @@ describe('debounce utilities', () => {
                 expect(mockSave).toHaveBeenCalledWith({ content: 'draft3' });
             });
 
-            it('should handle analytics batching use case', () => {
+            it('should handle analytics batching use case', async () => {
                 const mockSendAnalytics = vi.fn();
                 const { debounced } = createAdvancedDebounce(mockSendAnalytics, {
                     delay: 1000,
@@ -683,7 +687,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockSendAnalytics).not.toHaveBeenCalled();
                 
-                vi.advanceTimersByTime(1000);
+                await advanceTimers(1000);
                 expect(mockSendAnalytics).toHaveBeenCalledTimes(1);
                 expect(mockSendAnalytics).toHaveBeenCalledWith(['click', 'scroll', 'hover', 'focus', 'blur']);
             });

@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ApiClient } from '@/api/api';
-import { isMachineIdConflictError } from '@/api/api';
+import { isMachineIdConflictError, isMachineRevokedError } from '@/api/api';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
 import { updateSettings } from '@/persistence';
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+
+type RecoveryLogger = Readonly<{
+  info: (message: string, ...args: ReadonlyArray<unknown>) => void;
+}>;
 
 async function rotateMachineIdForActiveServer(opts: Readonly<{ expectedCurrentMachineId: string }>): Promise<string> {
   // Extremely defensive: UUID collisions are practically impossible, but avoid a no-op rotation.
@@ -27,12 +31,27 @@ async function rotateMachineIdForActiveServer(opts: Readonly<{ expectedCurrentMa
     }
     nextByServerId[activeServerId] = nextMachineId;
 
+    const normalizedTokenSub = typeof settings.lastTokenSubByServerId?.[activeServerId] === 'string'
+      ? (settings.lastTokenSubByServerId?.[activeServerId] ?? '').trim()
+      : '';
+
+    const nextByServerIdByAccountId = (() => {
+      if (!normalizedTokenSub) return settings.machineIdByServerIdByAccountId;
+
+      const next = { ...(settings.machineIdByServerIdByAccountId ?? {}) };
+      const nextForServer = { ...(next[activeServerId] ?? {}) };
+      nextForServer[normalizedTokenSub] = nextMachineId;
+      next[activeServerId] = nextForServer;
+      return next;
+    })();
+
     const nextConfirmed = { ...(settings.machineIdConfirmedByServerByServerId ?? {}) };
     if (activeServerId in nextConfirmed) delete nextConfirmed[activeServerId];
 
     return {
       ...settings,
       machineIdByServerId: nextByServerId,
+      ...(nextByServerIdByAccountId ? { machineIdByServerIdByAccountId: nextByServerIdByAccountId } : {}),
       machineIdConfirmedByServerByServerId: nextConfirmed,
       // derived (not persisted in v5+)
       machineId: nextMachineId,
@@ -49,6 +68,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
   daemonState?: DaemonState;
   timeoutMs?: number;
   caller?: string;
+  recoveryLogger?: RecoveryLogger;
 }>): Promise<{
   machine: Machine;
   machineId: string;
@@ -63,14 +83,15 @@ export async function ensureMachineRegistered(opts: Readonly<{
     });
     return { machine, machineId: opts.machineId, didRotateMachineId: false };
   } catch (error) {
-    if (!isMachineIdConflictError(error)) {
+    if (!isMachineIdConflictError(error) && !isMachineRevokedError(error)) {
       throw error;
     }
 
     const caller = opts.caller ? ` (${opts.caller})` : '';
+    const recoveryLogger = opts.recoveryLogger ?? logger;
     // Retry exactly once: if a second conflict happens, bubble it up rather than looping indefinitely.
-    logger.info(
-      `[MACHINE] [RECOVERED] Machine id conflict${caller}: ${opts.machineId} is registered to another account on this server; generating a new machine id and retrying once.`,
+    recoveryLogger.info(
+      `[MACHINE] [RECOVERED] Machine identity invalid${caller}: ${opts.machineId} cannot be reused on this server; generating a new machine id and retrying once.`,
     );
 
     const rotated = await rotateMachineIdForActiveServer({ expectedCurrentMachineId: opts.machineId });
@@ -82,7 +103,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
       timeoutMs: opts.timeoutMs,
     });
 
-    logger.info(`[MACHINE] [RECOVERED] Machine id rotated${caller}: ${opts.machineId} -> ${rotated}`);
+    recoveryLogger.info(`[MACHINE] [RECOVERED] Machine id rotated${caller}: ${opts.machineId} -> ${rotated}`);
 
     return { machine, machineId: rotated, didRotateMachineId: true };
   }

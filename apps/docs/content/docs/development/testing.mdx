@@ -17,9 +17,15 @@ yarn test
 ```
 
 This runs:
+- `yarn workspace @happier-dev/protocol test`
+- `yarn workspace @happier-dev/transfers test`
+- `yarn workspace @happier-dev/agents test`
+- `yarn workspace @happier-dev/cli-common test`
+- `yarn workspace @happier-dev/connection-supervisor test`
 - `yarn workspace @happier-dev/app test`
 - `yarn workspace @happier-dev/cli test:unit`
-- `yarn workspace @happier-dev/server test:unit`
+- `yarn --cwd apps/server test:unit`
+- `yarn --cwd packages/relay-server test`
 - `yarn --cwd apps/stack test:unit`
 
 Note: the UI workspace package name is `@happier-dev/app` and its directory is `apps/ui`.
@@ -41,16 +47,21 @@ yarn test:integration
 This runs:
 - `yarn workspace @happier-dev/app test:integration`
 - `yarn workspace @happier-dev/cli test:integration`
-- `yarn workspace @happier-dev/server test:integration`
+- `yarn --cwd apps/server test:integration`
 - `yarn --cwd apps/stack test:integration`
 
 ### 3) Server DB contract
 
 Server-only contract suite against explicit DB providers (Postgres/MySQL in Docker lanes).
 
-**Local command:**
+**Root command:**
 ```bash
-yarn workspace @happier-dev/server test:db-contract
+yarn test:db-contract:docker
+```
+
+**Package-local command:**
+```bash
+yarn --cwd apps/server test:db-contract
 ```
 
 ### 4) Core E2E
@@ -88,6 +99,7 @@ Notes:
 - These tests run Playwright against `expo start --web` and require Playwright browsers to be installed (see Playwright install docs).
 - UI E2E should stay small and focus on flows that are uniquely UI-driven (auth/login/connect, navigation, and key cross-app wiring). Lower-level server/daemon invariants belong in core E2E.
 - If you suspect stale Metro transforms, you can opt into clearing the Expo/Metro cache with `HAPPIER_E2E_EXPO_CLEAR=1` (default is off because `--clear` can occasionally crash Metro).
+- Manual QA tip: if concurrent code changes cause the UI to keep reloading, you can disable Expo web Fast Refresh/HMR **per browser tab** by opening the UI with `?happier_hmr=0` (re-enable with `?happier_hmr=1`). This is web-only + dev-only.
 
 ### 5) Providers
 
@@ -111,7 +123,38 @@ Repeat/chaos reliability suites in `packages/tests`.
 yarn test:stress
 ```
 
-### 7) Typecheck
+### 7) Test governance
+
+Repo-level governance checks for test file naming/lane placement and feature-tag validity.
+
+**Root commands:**
+```bash
+yarn test:wiring:self
+yarn test:wiring
+yarn test:policy:self
+yarn test:policy
+yarn test:inventory
+yarn test:migration:inventory
+```
+
+Notes:
+- `test:wiring:self` and `test:policy:self` are fast governance self-tests for the validators themselves.
+- `test:wiring` fails on invalid feature tags, obvious lane naming mistakes, and root-script/workflow/docs parity drift.
+- `test:policy` enforces only the low-noise rules that are safe today; noisier rules stay report-only until the repo cleanup catches up.
+- `test:inventory` and `test:migration:inventory` are report-only. They print lane/package-local coverage and write governance inventory artifacts under `.project/testing/reports/governance/`.
+- The current rollout is:
+  - `enforce`: `.only`, forbidden runtime imports from `@happier-dev/tests` internals, root-script/workflow/docs parity
+  - `report-only`: direct test `console.*`, direct `.skip/.todo`, hidden skip aliases, deprecated helper imports, duplicate-pattern inventory
+
+### 7b) Package-local-only lanes
+
+These lanes are intentionally not exposed as canonical root scripts:
+- CLI slow lane: `yarn --cwd apps/cli test:slow`
+- Website tests: package-local only under `apps/website`
+- Release runtime tests: `yarn --cwd packages/release-runtime test`
+- Stack unit/integration/native real-integration lanes: `yarn --cwd apps/stack test:unit`, `yarn --cwd apps/stack test:integration`, and the guarded real-integration files in `apps/stack`
+
+### 8) Typecheck
 
 TypeScript typechecking for the main runtime packages (UI/CLI/server).
 
@@ -120,7 +163,7 @@ TypeScript typechecking for the main runtime packages (UI/CLI/server).
 yarn typecheck
 ```
 
-### 8) Release contracts
+### 9) Release contracts
 
 Security/release-pipeline contract checks for workflow/install/signing invariants.
 
@@ -134,7 +177,7 @@ This runs:
 - including installer sync/security/publication invariants
 - and workflow policy guards like the production Tauri signing/notarization fail gate
 
-### 9) Extended DB matrix (Postgres/MySQL)
+### 10) Extended DB matrix (Postgres/MySQL)
 
 Optional validation that core E2E and DB contract tests behave on non-embedded engines.
 In CI this runs via a dedicated workflow using service containers.
@@ -201,7 +244,7 @@ CI sets these for relevant jobs. Local runs can set them manually when you need 
   - Requires: Node + Yarn + `git` available in PATH.
   - Spawns real child processes and validates process ownership/sweep behavior.
 
-### DB contract (`yarn workspace @happier-dev/server test:db-contract`)
+### DB contract (`yarn --cwd apps/server test:db-contract`)
 - Requires: DB provider runtime (`postgres`/`mysql`) and matching connection env.
 - Docker-backed helper commands:
   - `yarn test:db-contract:docker`
@@ -262,12 +305,13 @@ CI uploads this directory as an artifact on failure.
 Workflow: `CI — Tests` (`.github/workflows/tests.yml`)
 
 Default gate includes:
-- Unit (UI + app/unit lanes)
+- Unit (shared workspace packages + app/unit lanes)
 - Integration (UI/CLI/Server/Stack app lanes)
+- Governance validators (`test:wiring`, `test:policy`, plus report-only inventory commands)
 - Typecheck
 - Release contracts (release/workflow/install/signing guards)
-- Daemon integration E2E (`CLI + Server (light/pglite) E2E`)
-- Core E2E (pglite + sqlite)
+- Daemon integration E2E (`CLI + Server (light/sqlite) E2E`)
+- Core E2E fast (sqlite)
 
 The daemon integration E2E job is intentionally separate from app unit/integration lanes because it verifies cross-package boot/auth/daemon behavior against a real light server process.
 

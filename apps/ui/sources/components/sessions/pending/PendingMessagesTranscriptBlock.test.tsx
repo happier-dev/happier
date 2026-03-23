@@ -1,9 +1,15 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
-import { PendingMessagesTranscriptBlock } from './PendingMessagesTranscriptBlock';
+import { act } from 'react-test-renderer';
+import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+async function loadPendingMessagesTranscriptBlock() {
+    const mod = await import('./PendingMessagesTranscriptBlock');
+    return mod.PendingMessagesTranscriptBlock;
+}
 
 vi.mock('./PendingMessagesDragReorderList', () => ({
     PendingMessagesDragReorderList: (props: any) => {
@@ -21,7 +27,7 @@ vi.mock('./PendingMessagesDragReorderList', () => ({
     },
 }));
 
-const sendMessage = vi.fn();
+const sendPendingMessageNow = vi.fn();
 const deletePendingMessage = vi.fn();
 const discardPendingMessage = vi.fn();
 const sessionAbort = vi.fn();
@@ -37,14 +43,18 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSession: () => sessionValue,
     useSetting: () => undefined,
-}));
+    storage: { getState: () => ({}) },
+});
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
-        sendMessage: (...args: any[]) => sendMessage(...args),
+        sendPendingMessageNow: (...args: any[]) => sendPendingMessageNow(...args),
         deletePendingMessage: (...args: any[]) => deletePendingMessage(...args),
         discardPendingMessage: (...args: any[]) => discardPendingMessage(...args),
         updatePendingMessage: vi.fn(),
@@ -59,25 +69,37 @@ vi.mock('@/sync/ops', () => ({
     sessionAbort: (...args: any[]) => sessionAbort(...args),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: (...args: any[]) => modalConfirm(...args),
-        alert: (...args: any[]) => modalAlert(...args),
-        prompt: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: (...args: any[]) => modalConfirm(...args),
+            alert: (...args: any[]) => modalAlert(...args),
+            prompt: vi.fn(),
+        },
+    }).module;
+});
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ScrollView: 'ScrollView',
+            ActivityIndicator: 'ActivityIndicator',
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.web ?? value?.default,
+            },
+        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#000',
@@ -100,11 +122,8 @@ vi.mock('react-native-unistyles', () => ({
                 userMessageText: '#000',
             },
         },
-    }),
-    StyleSheet: {
-        create: (input: any) => (typeof input === 'function' ? input({ colors: {} }) : input),
-    },
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -154,7 +173,8 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 describe('PendingMessagesTranscriptBlock', () => {
     beforeEach(() => {
-        sendMessage.mockReset();
+        vi.resetModules();
+        sendPendingMessageNow.mockReset();
         deletePendingMessage.mockReset();
         discardPendingMessage.mockReset();
         sessionAbort.mockReset();
@@ -163,14 +183,6 @@ describe('PendingMessagesTranscriptBlock', () => {
         reorderPendingMessages.mockReset();
         sessionValue = null;
     });
-
-    function findPressableByTestId(tree: renderer.ReactTestRenderer, testID: string): ReactTestInstance | undefined {
-        return tree.root.findAllByType('Pressable').find((node) => node.props.testID === testID);
-    }
-
-    function findNodeByTestId(tree: renderer.ReactTestRenderer, testID: string): ReactTestInstance | undefined {
-        return tree.root.findAll((node) => (node.props as any)?.testID === testID)[0];
-    }
 
     function flattenStyle(style: any): Record<string, any> {
         if (!style) return {};
@@ -181,53 +193,50 @@ describe('PendingMessagesTranscriptBlock', () => {
         return {};
     }
 
-    async function hoverPendingMessageRow(tree: renderer.ReactTestRenderer, messageId: string) {
-        const row = findNodeByTestId(tree, `pendingMessages.row:${messageId}`);
+    async function hoverPendingMessageRow(screen: Awaited<ReturnType<typeof renderScreen>>, messageId: string) {
+        const row = screen.findByTestId(`pendingMessages.row:${messageId}`);
         expect(row).toBeTruthy();
         await act(async () => {
-            row!.props.onPointerEnter?.();
+            invokeTestInstanceHandler(row, 'onPointerEnter', undefined, `pendingMessages.row:${messageId}`);
         });
     }
 
-    async function hoverDiscardedMessageRow(tree: renderer.ReactTestRenderer, messageId: string) {
-        const row = findNodeByTestId(tree, `pendingMessages.discarded.row:${messageId}`);
+    async function hoverDiscardedMessageRow(screen: Awaited<ReturnType<typeof renderScreen>>, messageId: string) {
+        const row = screen.findByTestId(`pendingMessages.discarded.row:${messageId}`);
         expect(row).toBeTruthy();
         await act(async () => {
-            row!.props.onPointerEnter?.();
+            invokeTestInstanceHandler(row, 'onPointerEnter', undefined, `pendingMessages.discarded.row:${messageId}`);
         });
     }
 
     it('aborts+send+delete in order when send-now is pressed', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         modalConfirm.mockResolvedValueOnce(true);
         sessionAbort.mockResolvedValueOnce(undefined);
-        sendMessage.mockResolvedValueOnce(undefined);
+        sendPendingMessageNow.mockResolvedValueOnce(undefined);
         deletePendingMessage.mockResolvedValueOnce(undefined);
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
                 discardedMessages: [],
             }));
-        });
 
         // Web-only: action icons show on hover.
-        await hoverPendingMessageRow(tree!, 'p1');
+        await hoverPendingMessageRow(screen, 'p1');
 
-        const sendNow = findPressableByTestId(tree!, 'pendingMessages.sendNow:p1');
+        const sendNow = screen.findByTestId('pendingMessages.sendNow:p1');
         expect(sendNow).toBeTruthy();
 
-        await act(async () => {
-            await sendNow!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('pendingMessages.sendNow:p1');
 
         expect(sessionAbort).toHaveBeenCalledTimes(1);
-        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(sendPendingMessageNow).toHaveBeenCalledTimes(1);
+        expect(sendPendingMessageNow).toHaveBeenCalledWith('s1', expect.objectContaining({ localId: 'p1' }));
         expect(deletePendingMessage).toHaveBeenCalledTimes(1);
 
         const abortOrder = sessionAbort.mock.invocationCallOrder[0]!;
-        const sendOrder = sendMessage.mock.invocationCallOrder[0]!;
+        const sendOrder = sendPendingMessageNow.mock.invocationCallOrder[0]!;
         const deleteOrder = deletePendingMessage.mock.invocationCallOrder[0]!;
 
         expect(abortOrder).toBeLessThan(sendOrder);
@@ -235,24 +244,21 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('renders a per-message pending affordance label', async () => {
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
                 discardedMessages: [],
             }));
-        });
 
-        const affordance = findNodeByTestId(tree!, 'pendingMessages.pendingAffordance:p1');
+        const affordance = screen.findByTestId('pendingMessages.pendingAffordance:p1');
         expect(affordance).toBeTruthy();
         expect(flattenStyle(affordance!.props.style).position).toBe('absolute');
     });
 
     it('renders a block header label that reads as a section header', async () => {
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [
                     { id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} },
@@ -260,15 +266,13 @@ describe('PendingMessagesTranscriptBlock', () => {
                 ],
                 discardedMessages: [],
             }));
-        });
 
-        expect(findNodeByTestId(tree!, 'pendingMessages.headerLabel')).toBeTruthy();
+        expect(screen.findByTestId('pendingMessages.headerLabel')).toBeTruthy();
     });
 
     it('wires reorder persistence via PendingMessagesDragReorderList', async () => {
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [
                     { id: 'p1', text: 'one', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} },
@@ -276,11 +280,10 @@ describe('PendingMessagesTranscriptBlock', () => {
                 ],
                 discardedMessages: [],
             }));
-        });
 
-        const list = tree!.root.findByType('PendingMessagesDragReorderList');
+        const list = screen.findByType('PendingMessagesDragReorderList');
         await act(async () => {
-            list.props.onReorderIds(['p2', 'p1']);
+            invokeTestInstanceHandler(list, 'onReorderIds', ['p2', 'p1'], 'PendingMessagesDragReorderList');
         });
 
         expect(reorderPendingMessages).toHaveBeenCalledTimes(1);
@@ -288,24 +291,22 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('does not show per-message action icons until hover on web', async () => {
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
                 discardedMessages: [],
             }));
-        });
 
-        const overlay = findNodeByTestId(tree!, 'pendingMessages.actionsOverlay:p1');
+        const overlay = screen.findByTestId('pendingMessages.actionsOverlay:p1');
         expect(overlay).toBeTruthy();
         expect(flattenStyle(overlay!.props.style).opacity).toBe(0);
         expect(overlay!.props.pointerEvents).toBeUndefined();
         expect(flattenStyle(overlay!.props.style).pointerEvents).toBe('none');
 
-        await hoverPendingMessageRow(tree!, 'p1');
+        await hoverPendingMessageRow(screen, 'p1');
 
-        const overlayAfterHover = findNodeByTestId(tree!, 'pendingMessages.actionsOverlay:p1');
+        const overlayAfterHover = screen.findByTestId('pendingMessages.actionsOverlay:p1');
         expect(overlayAfterHover).toBeTruthy();
         expect(flattenStyle(overlayAfterHover!.props.style).opacity).toBe(1);
         expect(overlayAfterHover!.props.pointerEvents).toBeUndefined();
@@ -313,6 +314,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('offers steer-now while a steer-capable session is thinking and does not abort the turn', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         sessionValue = {
             thinking: true,
             presence: 'online',
@@ -321,106 +323,93 @@ describe('PendingMessagesTranscriptBlock', () => {
         };
 
         modalConfirm.mockResolvedValueOnce(true);
-        sendMessage.mockResolvedValueOnce(undefined);
+        sendPendingMessageNow.mockResolvedValueOnce(undefined);
         deletePendingMessage.mockResolvedValueOnce(undefined);
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
                 discardedMessages: [],
             }));
-        });
 
-        await hoverPendingMessageRow(tree!, 'p1');
+        await hoverPendingMessageRow(screen, 'p1');
 
-        const steerNow = findPressableByTestId(tree!, 'pendingMessages.steerNow:p1');
+        const steerNow = screen.findByTestId('pendingMessages.steerNow:p1');
         expect(steerNow).toBeTruthy();
 
-        await act(async () => {
-            await steerNow!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('pendingMessages.steerNow:p1');
 
         expect(sessionAbort).toHaveBeenCalledTimes(0);
-        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(sendPendingMessageNow).toHaveBeenCalledTimes(1);
+        expect(sendPendingMessageNow).toHaveBeenCalledWith('s1', expect.objectContaining({ localId: 'p1' }));
         expect(deletePendingMessage).toHaveBeenCalledTimes(1);
     });
 
     it('renders with app theme shape (no secondary background / no danger box)', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         await expect((async () => {
-            await act(async () => {
-                    renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+            await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                         sessionId: 's1',
                         pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
                         discardedMessages: [],
                     }));
-                });
             })()).resolves.toBeUndefined();
     });
 
     it('does not delete or close when send fails', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         modalConfirm.mockResolvedValueOnce(true);
         sessionAbort.mockResolvedValueOnce(undefined);
-        sendMessage.mockRejectedValueOnce(new Error('send failed'));
+        sendPendingMessageNow.mockRejectedValueOnce(new Error('send failed'));
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
                 discardedMessages: [],
             }));
-        });
 
-        await hoverPendingMessageRow(tree!, 'p1');
+        await hoverPendingMessageRow(screen, 'p1');
 
-        const sendNow = findPressableByTestId(tree!, 'pendingMessages.sendNow:p1');
+        const sendNow = screen.findByTestId('pendingMessages.sendNow:p1');
         expect(sendNow).toBeTruthy();
 
-        await act(async () => {
-            await sendNow!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('pendingMessages.sendNow:p1');
 
         expect(deletePendingMessage).toHaveBeenCalledTimes(0);
         expect(modalAlert).toHaveBeenCalledTimes(1);
     });
 
     it('uses a smaller default max-height for the pending queue block', async () => {
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
                 discardedMessages: [],
             }));
-        });
 
-        const scroll = tree!.root.findByType('ScrollView');
+        const scroll = screen.findByType('ScrollView');
         expect(scroll.props.style?.maxHeight).toBe(64);
     });
 
     it('does not show discarded action icons until hover on web', async () => {
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [],
                 discardedMessages: [
                     { id: 'd1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, discardedAt: 1, discardedReason: 'manual', localId: 'd1', rawRecord: {} },
                 ],
             }));
-        });
 
-        const overlay = findNodeByTestId(tree!, 'pendingMessages.discarded.actionsOverlay:d1');
+        const overlay = screen.findByTestId('pendingMessages.discarded.actionsOverlay:d1');
         expect(overlay).toBeTruthy();
         expect(flattenStyle(overlay!.props.style).opacity).toBe(0);
         expect(overlay!.props.pointerEvents).toBeUndefined();
         expect(flattenStyle(overlay!.props.style).pointerEvents).toBe('none');
 
-        await hoverDiscardedMessageRow(tree!, 'd1');
+        await hoverDiscardedMessageRow(screen, 'd1');
 
-        const overlayAfterHover = findNodeByTestId(tree!, 'pendingMessages.discarded.actionsOverlay:d1');
+        const overlayAfterHover = screen.findByTestId('pendingMessages.discarded.actionsOverlay:d1');
         expect(overlayAfterHover).toBeTruthy();
         expect(flattenStyle(overlayAfterHover!.props.style).opacity).toBe(1);
         expect(overlayAfterHover!.props.pointerEvents).toBeUndefined();
@@ -428,9 +417,8 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('hides the next pending chip while hovering a message on web', async () => {
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [
                     { id: 'p1', text: 'one', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} },
@@ -438,23 +426,21 @@ describe('PendingMessagesTranscriptBlock', () => {
                 ],
                 discardedMessages: [],
             }));
-        });
 
-        const chipP2Before = findNodeByTestId(tree!, 'pendingMessages.pendingAffordance:p2');
+        const chipP2Before = screen.findByTestId('pendingMessages.pendingAffordance:p2');
         expect(chipP2Before).toBeTruthy();
         expect(flattenStyle(chipP2Before!.props.style).opacity).not.toBe(0);
 
-        await hoverPendingMessageRow(tree!, 'p1');
+        await hoverPendingMessageRow(screen, 'p1');
 
-        const chipP2After = findNodeByTestId(tree!, 'pendingMessages.pendingAffordance:p2');
+        const chipP2After = screen.findByTestId('pendingMessages.pendingAffordance:p2');
         expect(chipP2After).toBeTruthy();
         expect(flattenStyle(chipP2After!.props.style).opacity).toBe(0);
     });
 
     it('does not render per-message up/down chevron actions', async () => {
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [
                     { id: 'p1', text: 'one', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} },
@@ -462,17 +448,15 @@ describe('PendingMessagesTranscriptBlock', () => {
                 ],
                 discardedMessages: [],
             }));
-        });
 
-        await hoverPendingMessageRow(tree!, 'p2');
-        expect(findPressableByTestId(tree!, 'pendingMessages.moveUp:p2')).toBeFalsy();
-        expect(findPressableByTestId(tree!, 'pendingMessages.moveDown:p1')).toBeFalsy();
+        await hoverPendingMessageRow(screen, 'p2');
+        expect(screen.findByTestId('pendingMessages.moveUp:p2')).toBeFalsy();
+        expect(screen.findByTestId('pendingMessages.moveDown:p1')).toBeFalsy();
     });
 
     it('renders reorder affordance without nested pressable action', async () => {
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
                 pendingMessages: [
                     { id: 'p1', text: 'one', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} },
@@ -480,13 +464,12 @@ describe('PendingMessagesTranscriptBlock', () => {
                 ],
                 discardedMessages: [],
             }));
-        });
 
-        await hoverPendingMessageRow(tree!, 'p1');
+        await hoverPendingMessageRow(screen, 'p1');
 
-        const reorderHandle = tree!.root.findAllByType('View').find((node) => (node.props as any)?.testID === 'pendingMessages.reorder:p1');
+        const reorderHandle = screen.findByTestId('pendingMessages.reorder:p1');
         expect(reorderHandle).toBeTruthy();
-        expect(findPressableByTestId(tree!, 'pendingMessages.reorder:p1')).toBeFalsy();
+        expect(screen.findAllByType('Pressable').find((node) => node.props.testID === 'pendingMessages.reorder:p1')).toBeFalsy();
         expect((reorderHandle!.props as any).pointerEvents).toBeUndefined();
         expect(flattenStyle((reorderHandle!.props as any).style).pointerEvents).toBe('none');
     });

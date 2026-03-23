@@ -10,6 +10,9 @@ describe('codex local-control rollout tool mapping', () => {
         'shell',
         'shell_command',
         'exec_command',
+        'spawn_agent',
+        'wait_agent',
+        'close_agent',
         'context7__get-library-docs',
         'context7__resolve-library-id',
         'update_plan',
@@ -90,6 +93,9 @@ describe('codex local-control rollout tool mapping', () => {
     it('marks agent-internal tools as debug-only or ignore', () => {
         expect(canonicalizeCodexRolloutToolName('update_plan').visibility).toBe('debug-only');
         expect(canonicalizeCodexRolloutToolName('write_stdin').visibility).toBe('ignore');
+        expect(canonicalizeCodexRolloutToolName('spawn_agent').visibility).toBe('ignore');
+        expect(canonicalizeCodexRolloutToolName('wait_agent').visibility).toBe('ignore');
+        expect(canonicalizeCodexRolloutToolName('close_agent').visibility).toBe('ignore');
     });
 
     it('defaults unknown tool names to debug-only (do not drop)', () => {

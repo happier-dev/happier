@@ -3,6 +3,10 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge'
 
+const { requireJavaScriptRuntimeExecutableMock } = vi.hoisted(() => ({
+  requireJavaScriptRuntimeExecutableMock: vi.fn(async (): Promise<string> => process.execPath),
+}))
+
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(() => false),
 }))
@@ -16,6 +20,10 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
   resolveCliTsxTsconfigPath: vi.fn(() => '/repo/tsconfig.json'),
 }))
 
+vi.mock('@/runtime/js/requireJavaScriptRuntimeExecutable', () => ({
+  requireJavaScriptRuntimeExecutable: requireJavaScriptRuntimeExecutableMock,
+}))
+
 vi.mock('@/mcp/startHappyServer', () => ({
   startHappyServer: vi.fn(async () => ({
     url: 'http://127.0.0.1:12345',
@@ -27,6 +35,8 @@ describe('createHappierMcpBridge', () => {
   beforeEach(() => {
     vi.mocked(existsSync).mockReset()
     vi.mocked(existsSync).mockReturnValue(false)
+    requireJavaScriptRuntimeExecutableMock.mockReset()
+    requireJavaScriptRuntimeExecutableMock.mockResolvedValue(process.execPath)
   })
 
   it('uses direct script mode by default', async () => {
@@ -34,8 +44,14 @@ describe('createHappierMcpBridge', () => {
     const { mcpServers } = await createHappierMcpBridge(session)
 
     expect(mcpServers.happier).toEqual({
-      command: '/repo/bin/happier-mcp.mjs',
-      args: ['--url', 'http://127.0.0.1:12345'],
+      command: process.execPath,
+      args: [
+        '--no-warnings',
+        '--no-deprecation',
+        '/repo/package-dist/backends/codex/happyMcpStdioBridge.mjs',
+        '--url',
+        'http://127.0.0.1:12345',
+      ],
     })
   })
 
@@ -45,8 +61,50 @@ describe('createHappierMcpBridge', () => {
 
     expect(mcpServers.happier).toEqual({
       command: process.execPath,
-      args: ['/repo/bin/happier-mcp.mjs', '--url', 'http://127.0.0.1:12345'],
+      args: [
+        '--no-warnings',
+        '--no-deprecation',
+        '/repo/package-dist/backends/codex/happyMcpStdioBridge.mjs',
+        '--url',
+        'http://127.0.0.1:12345',
+      ],
     })
+  })
+
+  it('prefers the source entrypoint when the CLI source-entrypoint e2e flag is enabled', async () => {
+    const previousFlag = process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT
+    process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT = '1'
+    try {
+      vi.mocked(existsSync).mockImplementation((pathLike) => {
+        const path = String(pathLike)
+        if (path.endsWith('/package-dist/backends/codex/happyMcpStdioBridge.mjs')) return true
+        if (path.endsWith('/src/backends/codex/happyMcpStdioBridge.ts')) return true
+        return false
+      })
+
+      const session = {} as any
+      const { mcpServers } = await createHappierMcpBridge(session)
+
+      expect(mcpServers.happier).toEqual({
+        command: process.execPath,
+        args: [
+          '--no-warnings',
+          '--no-deprecation',
+          '--import',
+          '/repo/node_modules/tsx/dist/esm/index.mjs',
+          '/repo/src/backends/codex/happyMcpStdioBridge.ts',
+          '--url',
+          'http://127.0.0.1:12345',
+        ],
+        env: { TSX_TSCONFIG_PATH: '/repo/tsconfig.json' },
+      })
+    } finally {
+      if (previousFlag === undefined) {
+        delete process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT
+      } else {
+        process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT = previousFlag
+      }
+    }
   })
 
   it('falls back to TSX source entrypoint when dist bridge is unavailable', async () => {
@@ -73,5 +131,36 @@ describe('createHappierMcpBridge', () => {
       ],
       env: { TSX_TSCONFIG_PATH: '/repo/tsconfig.json' },
     })
+  })
+
+  it('uses the ensured JavaScript runtime for the bundled dist bridge when direct script mode runs under bun', async () => {
+    requireJavaScriptRuntimeExecutableMock.mockResolvedValue('/managed/js-runtime')
+
+    const session = {} as any
+    const { mcpServers } = await createHappierMcpBridge(session)
+
+    expect(mcpServers.happier).toEqual({
+      command: '/managed/js-runtime',
+      args: [
+        '--no-warnings',
+        '--no-deprecation',
+        '/repo/package-dist/backends/codex/happyMcpStdioBridge.mjs',
+        '--url',
+        'http://127.0.0.1:12345',
+      ],
+    })
+  })
+
+  it('fails closed when the bundled bridge script cannot resolve a JavaScript runtime', async () => {
+    requireJavaScriptRuntimeExecutableMock.mockRejectedValue(new ReferenceError('Set HAPPIER_JS_RUNTIME_PATH'))
+    vi.mocked(existsSync).mockImplementation((pathLike) => {
+      const path = String(pathLike)
+      if (path.endsWith('/dist/backends/codex/happyMcpStdioBridge.mjs')) return true
+      return false
+    })
+
+    const session = {} as any
+
+    await expect(createHappierMcpBridge(session)).rejects.toThrow(/HAPPIER_JS_RUNTIME_PATH/)
   })
 })

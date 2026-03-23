@@ -28,6 +28,7 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
         invalidateFriendRequests: vi.fn(),
         invalidateFeed: vi.fn(),
         invalidateAutomations: vi.fn(),
+        invalidateAutomationsCoalesced: vi.fn(),
         invalidateTodos: vi.fn(),
         log: { log: vi.fn() },
         ...overrides,
@@ -35,7 +36,7 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
 }
 
 describe('socket automation updates', () => {
-    it('invalidates automation sync on automation-upsert updates', async () => {
+    it('uses coalesced automation invalidation on automation-upsert updates', async () => {
         const params = buildBaseParams();
         const updateData: ApiUpdateContainer = {
             id: 'u_automation',
@@ -55,8 +56,37 @@ describe('socket automation updates', () => {
             updateData,
         });
 
-        expect(params.invalidateAutomations).toHaveBeenCalledTimes(1);
+        expect(params.invalidateAutomationsCoalesced).toHaveBeenCalledTimes(1);
+        expect(params.invalidateAutomations).not.toHaveBeenCalled();
         expect(params.invalidateSessions).not.toHaveBeenCalled();
         expect(params.invalidateTodos).not.toHaveBeenCalled();
+    });
+
+    it('uses coalesced automation invalidation for automation-run-updated events', async () => {
+        const params = buildBaseParams();
+        const updateData: ApiUpdateContainer = {
+            id: 'u_automation_run',
+            seq: 1,
+            createdAt: 1,
+            body: {
+                t: 'automation-run-updated',
+                automationId: 'a1',
+                runId: 'r1',
+                state: 'running',
+                scheduledAt: 1,
+                startedAt: 1,
+                finishedAt: null,
+                updatedAt: 2,
+                machineId: 'm1',
+            },
+        } as ApiUpdateContainer;
+
+        await handleUpdateContainer({
+            ...params,
+            updateData,
+        });
+
+        expect(params.invalidateAutomationsCoalesced).toHaveBeenCalledTimes(1);
+        expect(params.invalidateAutomations).not.toHaveBeenCalled();
     });
 });

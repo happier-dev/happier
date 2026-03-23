@@ -1,6 +1,7 @@
 import type { ApiClient } from '@/api/api'
 import type { ApiSessionClient } from '@/api/session/sessionClient'
 import type { AgentState, Metadata, Session } from '@/api/types'
+import type { SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol'
 import { setupOfflineReconnection } from '@/api/offline/setupOfflineReconnection'
 import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach'
 import {
@@ -9,6 +10,8 @@ import {
   type ModelOverride,
   type PermissionModeOverride,
 } from '@/agent/runtime/startupMetadataUpdate'
+import { mergeSessionMetadataForStartup } from '@/agent/runtime/mergeSessionMetadataForStartup'
+import { readSessionAttachMetadataIdentityPolicyFromEnv } from '@/agent/runtime/readSessionAttachMetadataIdentityPolicyFromEnv'
 import {
   persistTerminalAttachmentInfoIfNeeded,
   primeAgentStateForUi,
@@ -28,16 +31,18 @@ export interface InitializeBackendRunSessionOptions {
     acpSessionModeOverride?: AcpSessionModeOverride
     modelOverride?: ModelOverride
   }
+  metadataKeysToUnsetOnAttach?: readonly string[]
+  attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null
   /**
    * Optional: forward offline reconnection status updates (e.g. "Reconnected!") to the caller's UX.
    * When omitted, the offline reconnection utility uses console output.
    */
   offlineNotify?: (message: string) => void
   allowOfflineStub?: boolean
-  onSessionSwap?: (newSession: ApiSessionClient) => void
+  onSessionSwap?: (newSession: ApiSessionClient) => void | Promise<void>
   onAttachMetadataSnapshotError?: (error: unknown) => void
   onAttachMetadataSnapshotMissing?: (error: unknown | null) => void
-  onAttachMetadataSnapshotReady?: (snapshot: unknown, session: ApiSessionClient) => void
+  onAttachMetadataSnapshotReady?: (snapshot: unknown, session: ApiSessionClient) => void | Promise<void>
   startupSideEffectsOrder?: 'report-first' | 'persist-first'
 }
 
@@ -47,6 +52,8 @@ export interface InitializeBackendRunSessionResult {
   reportedSessionId: string | null
   attachedToExistingSession: boolean
 }
+
+type DaemonReportMode = 'await' | 'background'
 
 type InitializeBackendRunSessionDeps = {
   createBaseSessionForAttachFn?: typeof createBaseSessionForAttach
@@ -79,16 +86,33 @@ export async function initializeBackendRunSession(
   const startupSideEffectsOrder = opts.startupSideEffectsOrder ?? 'report-first'
 
   const existingSessionId = normalizeExistingSessionId(opts.existingSessionId)
+  const attachMetadataIdentityPolicy =
+    opts.attachMetadataIdentityPolicy
+    ?? readSessionAttachMetadataIdentityPolicyFromEnv()
+    ?? null
   const terminal = opts.metadata.terminal
-  const runStartupSideEffects = async (sessionToUse: ApiSessionClient, sessionId: string): Promise<void> => {
+  const startDaemonReport = (sessionId: string, metadata: Metadata, mode: DaemonReportMode): Promise<void> => {
+    const reportPromise = reportSessionToDaemonIfRunningFn({ sessionId, metadata })
+    if (mode === 'background') {
+      void reportPromise.catch(() => {})
+      return Promise.resolve()
+    }
+    return reportPromise
+  }
+  const runStartupSideEffects = async (
+    sessionToUse: ApiSessionClient,
+    sessionId: string,
+    metadata: Metadata,
+    daemonReportMode: DaemonReportMode,
+  ): Promise<void> => {
     if (startupSideEffectsOrder === 'persist-first') {
       await persistTerminalAttachmentInfoIfNeededFn({ sessionId, terminal })
       sendTerminalFallbackMessageIfNeededFn({ session: sessionToUse, terminal })
-      await reportSessionToDaemonIfRunningFn({ sessionId, metadata: opts.metadata })
+      await startDaemonReport(sessionId, metadata, daemonReportMode)
       return
     }
 
-    await reportSessionToDaemonIfRunningFn({ sessionId, metadata: opts.metadata })
+    await startDaemonReport(sessionId, metadata, daemonReportMode)
     await persistTerminalAttachmentInfoIfNeededFn({ sessionId, terminal })
     sendTerminalFallbackMessageIfNeededFn({ session: sessionToUse, terminal })
   }
@@ -101,8 +125,9 @@ export async function initializeBackendRunSession(
     })
     const session = opts.api.sessionSyncClient(baseSession)
 
-    let snapshot: unknown = null
+    let snapshot: Metadata | null = null
     let snapshotError: unknown = null
+    let daemonReportMetadata = opts.metadata
     try {
       snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 30_000 })
     } catch (error) {
@@ -111,22 +136,36 @@ export async function initializeBackendRunSession(
     }
 
     if (snapshot) {
-      applyStartupMetadataUpdateToSessionFn({
-        session,
+      const startupNowMs = nowFn()
+      daemonReportMetadata = mergeSessionMetadataForStartup({
+        current: snapshot,
         next: opts.metadata,
-        nowMs: nowFn(),
+        nowMs: startupNowMs,
         permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
         acpSessionModeOverride: opts.startupMetadataOverrides.acpSessionModeOverride,
         modelOverride: opts.startupMetadataOverrides.modelOverride,
+        metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
+        attachMetadataIdentityPolicy,
         mode: 'attach',
       })
-      opts.onAttachMetadataSnapshotReady?.(snapshot, session)
+      await applyStartupMetadataUpdateToSessionFn({
+        session,
+        next: opts.metadata,
+        nowMs: startupNowMs,
+        permissionModeOverride: opts.startupMetadataOverrides.permissionModeOverride,
+        acpSessionModeOverride: opts.startupMetadataOverrides.acpSessionModeOverride,
+        modelOverride: opts.startupMetadataOverrides.modelOverride,
+        metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach,
+        attachMetadataIdentityPolicy,
+        mode: 'attach',
+      })
+      await opts.onAttachMetadataSnapshotReady?.(snapshot, session)
     } else {
       opts.onAttachMetadataSnapshotMissing?.(snapshotError)
     }
 
     primeAgentStateForUiFn(session, opts.uiLogPrefix)
-    await runStartupSideEffects(session, existingSessionId)
+    await runStartupSideEffects(session, existingSessionId, daemonReportMetadata, 'background')
 
     return {
       session,
@@ -151,7 +190,7 @@ export async function initializeBackendRunSession(
   const runStartupSideEffectsOnce = async (sessionToUse: ApiSessionClient, sessionId: string): Promise<void> => {
     if (ranStartupSideEffects) return
     ranStartupSideEffects = true
-    await runStartupSideEffects(sessionToUse, sessionId)
+    await runStartupSideEffects(sessionToUse, sessionId, opts.metadata, 'await')
   }
 
   const { session, reconnectionHandle } = setupOfflineReconnectionFn({
@@ -162,7 +201,13 @@ export async function initializeBackendRunSession(
     response: response as Session | null,
     onNotify: opts.offlineNotify,
     onSessionSwap: (newSession) => {
-      opts.onSessionSwap?.(newSession)
+      if (opts.onSessionSwap) {
+        try {
+          void Promise.resolve(opts.onSessionSwap(newSession)).catch(() => {})
+        } catch {
+          // Swallow hook failures; reconnection should continue.
+        }
+      }
 
       // If startup began offline (no session id yet), rerun UI priming and startup side effects once the
       // real session arrives. Do not do this for normal online starts (reportedSessionId is set).

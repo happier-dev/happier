@@ -8,7 +8,7 @@ function makeSnapshot(overrides?: Partial<ScmWorkingSnapshot>): ScmWorkingSnapsh
     return {
         projectKey: 'machine:/repo',
         fetchedAt: Date.now(),
-        repo: { isRepo: true, rootPath: '/repo', backendId: 'sapling', mode: '.sl' },
+        repo: { isRepo: true, rootPath: '/repo', backendId: 'sapling', mode: '.sl', worktrees: [] },
         capabilities: {
             readStatus: true,
             readDiffFile: true,
@@ -23,7 +23,7 @@ function makeSnapshot(overrides?: Partial<ScmWorkingSnapshot>): ScmWorkingSnapsh
             writeRemoteFetch: true,
             writeRemotePull: true,
             writeRemotePush: true,
-            workspaceWorktreeCreate: false,
+            worktreeCreate: false,
             changeSetModel: 'working-copy',
             supportedDiffAreas: ['pending'],
         },

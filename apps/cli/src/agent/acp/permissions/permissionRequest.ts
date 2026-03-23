@@ -18,21 +18,24 @@ export type PermissionRequestLike = {
   options?: unknown;
 };
 
-const ALLOWED_TITLE_TOOL_INFERENCES = new Set([
-  'read',
-  'write',
-  'edit',
-  'delete',
-  'search',
-  'execute',
-  'bash',
-  'glob',
-  'grep',
-  'fetch',
-  'task',
-  'websearch',
-  'webfetch',
-]);
+const ALLOWED_TITLE_TOOL_INFERENCES = new Set(
+  [
+    'read',
+    'write',
+    'edit',
+    'delete',
+    'search',
+    'execute',
+    'bash',
+    'glob',
+    'grep',
+    'fetch',
+    'task',
+    'websearch',
+    'webfetch',
+    'change_title',
+  ].map(normalizeInferenceKey)
+);
 
 const TOOL_INFERENCE_RISK: Record<string, number> = {
   // Read-ish
@@ -43,6 +46,7 @@ const TOOL_INFERENCE_RISK: Record<string, number> = {
   fetch: 1,
   websearch: 1,
   webfetch: 1,
+  change_title: 1,
 
   // Mutations
   edit: 2,
@@ -62,9 +66,36 @@ function inferenceRisk(toolLower: string): number | null {
   return typeof v === 'number' ? v : null;
 }
 
+function normalizeInferenceKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function inferenceSpecificity(toolLower: string): number {
+  if (!toolLower || toolLower === 'unknown' || toolLower === 'unknowntool' || toolLower === 'other') return 0;
+  if (toolLower === 'webfetch' || toolLower === 'websearch') return 2;
+  return 1;
+}
+
+function inferToolTokenFromLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^([A-Za-z][A-Za-z0-9_-]*)\b/);
+  const inferred = match?.[1] ?? null;
+  if (!inferred) return null;
+  return ALLOWED_TITLE_TOOL_INFERENCES.has(normalizeInferenceKey(inferred)) ? inferred : null;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function isMetadataOnlyRecord(value: Record<string, unknown>): boolean {
+  const keys = Object.keys(value);
+  if (keys.length === 0) return true;
+
+  return keys.every((key) => key === 'title' || key === 'description' || key === '_acp' || key === 'locations');
 }
 
 function extractCommandHintFromLabel(value: unknown): string | null {
@@ -101,37 +132,89 @@ function extractCommandHintFromOptions(options: unknown): string | null {
   return fallbackCandidate;
 }
 
-export function extractPermissionInput(params: PermissionRequestLike): Record<string, unknown> {
-  const toolCall = params.toolCall ?? undefined;
-  const input =
-    (toolCall && (toolCall.rawInput ?? toolCall.input ?? toolCall.arguments ?? toolCall.content))
-    ?? params.rawInput
-    ?? params.input
-    ?? params.arguments
-    ?? params.content;
+function extractCommandHintFromContentItems(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
 
-  // Some ACP agents (notably Gemini) can send raw argv arrays or stringified commands instead of objects.
-  // Normalize these to a stable object shape so UI renderers can extract a command consistently.
-  if (Array.isArray(input)) {
+  for (const item of value) {
+    const record = asRecord(item);
+    if (!record) continue;
+    const content = asRecord(record.content);
+    const text = typeof content?.text === 'string' ? content.text : typeof record.text === 'string' ? record.text : null;
+    const candidate = extractCommandHintFromLabel(text);
+    if (candidate) return candidate;
+  }
+
+  return null;
+}
+
+function normalizePermissionInputCandidate(value: unknown): Record<string, unknown> | null {
+  if (Array.isArray(value)) {
     const argv: string[] = [];
-    for (const item of input) {
-      if (typeof item !== 'string') {
-        argv.length = 0;
-        break;
+    for (const item of value) {
+      if (typeof item === 'string') {
+        argv.push(item);
+        continue;
       }
-      argv.push(item);
+      argv.length = 0;
+      break;
     }
     if (argv.length > 0) return { command: argv };
-  }
-  if (typeof input === 'string') {
-    const command = input.trim();
-    if (command.length > 0) return { command };
+
+    const contentCommand = extractCommandHintFromContentItems(value);
+    if (contentCommand) return { command: contentCommand };
+    return null;
   }
 
-  if (input && typeof input === 'object' && !Array.isArray(input)) {
-    const inputRecord = input as Record<string, unknown>;
-    if (Object.keys(inputRecord).length > 0) {
-      return inputRecord;
+  if (typeof value === 'string') {
+    const command = value.trim();
+    if (command.length > 0) return { command };
+    return null;
+  }
+
+  const record = asRecord(value);
+  if (!record) return null;
+
+  if ('content' in record) {
+    const nestedContent = normalizePermissionInputCandidate(record.content);
+    if (nestedContent) return nestedContent;
+  }
+
+  if ('items' in record) {
+    const nestedItems = normalizePermissionInputCandidate(record.items);
+    if (nestedItems) return nestedItems;
+  }
+
+  if (Object.keys(record).length > 0 && !isMetadataOnlyRecord(record)) {
+    return record;
+  }
+
+  const titleCommand = extractCommandHintFromLabel(record.title);
+  if (titleCommand) return { command: titleCommand };
+
+  const acp = asRecord(record._acp);
+  const acpTitleCommand = extractCommandHintFromLabel(acp?.title);
+  if (acpTitleCommand) return { command: acpTitleCommand };
+
+  return null;
+}
+
+export function extractPermissionInput(params: PermissionRequestLike): Record<string, unknown> {
+  const toolCall = params.toolCall ?? undefined;
+  const candidates = [
+    toolCall?.rawInput,
+    toolCall?.input,
+    toolCall?.arguments,
+    toolCall?.content,
+    params.rawInput,
+    params.input,
+    params.arguments,
+    params.content,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizePermissionInputCandidate(candidate);
+    if (normalized) {
+      return normalized;
     }
   }
 
@@ -165,17 +248,50 @@ export function extractPermissionToolNameHint(params: PermissionRequestLike): st
   const toolName = typeof toolCall?.toolName === 'string' ? toolCall.toolName.trim() : '';
   const title = typeof toolCall?.title === 'string' ? toolCall.title.trim() : '';
   const paramsKind = typeof params.kind === 'string' ? params.kind.trim() : '';
+  const metadataCandidates = [
+    title,
+    typeof asRecord(toolCall?.rawInput)?.title === 'string' ? String(asRecord(toolCall?.rawInput)?.title).trim() : '',
+    typeof asRecord(toolCall?.input)?.title === 'string' ? String(asRecord(toolCall?.input)?.title).trim() : '',
+    typeof asRecord(toolCall?.arguments)?.title === 'string' ? String(asRecord(toolCall?.arguments)?.title).trim() : '',
+    typeof asRecord(toolCall?.content)?.title === 'string' ? String(asRecord(toolCall?.content)?.title).trim() : '',
+    typeof asRecord(asRecord(toolCall?.rawInput)?._acp)?.title === 'string'
+      ? String(asRecord(asRecord(toolCall?.rawInput)?._acp)?.title).trim()
+      : '',
+    typeof asRecord(asRecord(toolCall?.input)?._acp)?.title === 'string'
+      ? String(asRecord(asRecord(toolCall?.input)?._acp)?.title).trim()
+      : '',
+    typeof asRecord(asRecord(toolCall?.arguments)?._acp)?.title === 'string'
+      ? String(asRecord(asRecord(toolCall?.arguments)?._acp)?.title).trim()
+      : '',
+    typeof asRecord(params.rawInput)?.title === 'string' ? String(asRecord(params.rawInput)?.title).trim() : '',
+    typeof asRecord(asRecord(params.rawInput)?._acp)?.title === 'string'
+      ? String(asRecord(asRecord(params.rawInput)?._acp)?.title).trim()
+      : '',
+  ].filter((value) => value.length > 0);
+
+  const inferredFromMetadata = (() => {
+    for (const candidate of metadataCandidates) {
+      const inferred = inferToolTokenFromLabel(candidate);
+      if (!inferred) continue;
+      return inferred;
+    }
+    return null;
+  })();
 
   // ACP agents may send `kind: other` for permission prompts while also providing a more specific `toolName`.
   // Prefer the more specific name when kind is generic.
   const genericKind = kind.toLowerCase();
-  if (kind && genericKind !== 'other' && genericKind !== 'unknown') return kind;
+  if (kind && genericKind !== 'other' && genericKind !== 'unknown') {
+    if (inferredFromMetadata && shouldReplaceCachedPermissionToolName(kind, inferredFromMetadata)) {
+      return inferredFromMetadata;
+    }
+    return kind;
+  }
 
   if (genericKind === 'other' || genericKind === 'unknown') {
-    if (title) {
-      const match = title.match(/^([A-Za-z][A-Za-z0-9_-]*)\b/);
-      const inferred = match ? match[1] : null;
-      const inferredLower = inferred?.toLowerCase() ?? '';
+    for (const candidate of metadataCandidates) {
+      const inferred = inferToolTokenFromLabel(candidate);
+      const inferredLower = normalizeInferenceKey(inferred ?? '');
       const toolLower = toolName.toLowerCase();
       const inferredRisk = inferenceRisk(inferredLower);
       const toolRisk = toolLower ? inferenceRisk(toolLower) : null;
@@ -191,7 +307,7 @@ export function extractPermissionToolNameHint(params: PermissionRequestLike): st
         toolNameIsGeneric ||
         (inferredRisk !== null && toolRisk !== null && inferredRisk >= toolRisk);
 
-      if (inferred && ALLOWED_TITLE_TOOL_INFERENCES.has(inferredLower) && inferredLower !== toolLower && canOverride) {
+      if (inferred && inferredLower !== normalizeInferenceKey(toolLower) && canOverride) {
         return inferred;
       }
     }
@@ -202,6 +318,31 @@ export function extractPermissionToolNameHint(params: PermissionRequestLike): st
   return 'Unknown tool';
 }
 
+export function shouldReplaceCachedPermissionToolName(currentToolName: string, nextToolName: string): boolean {
+  const currentTrimmed = currentToolName.trim();
+  const nextTrimmed = nextToolName.trim();
+  if (!nextTrimmed) return false;
+  if (!currentTrimmed) return true;
+
+  const currentKey = normalizeInferenceKey(currentTrimmed);
+  const nextKey = normalizeInferenceKey(nextTrimmed);
+  if (currentKey === nextKey) return false;
+
+  const currentRisk = inferenceRisk(currentKey);
+  const nextRisk = inferenceRisk(nextKey);
+  if (currentRisk !== null && nextRisk !== null && nextRisk < currentRisk) return false;
+
+  // Always promote to a higher-risk classification, even if it isn't "more specific" by name.
+  if (
+    (currentRisk === null && nextRisk !== null)
+    || (currentRisk !== null && nextRisk !== null && nextRisk > currentRisk)
+  ) {
+    return true;
+  }
+
+  return inferenceSpecificity(nextKey) > inferenceSpecificity(currentKey);
+}
+
 export function resolvePermissionToolName(opts: {
   toolNameHint: string;
   toolCallId: string;
@@ -209,7 +350,26 @@ export function resolvePermissionToolName(opts: {
 }): string {
   const mapped = opts.toolCallIdToNameMap?.get(opts.toolCallId);
   if (typeof mapped === 'string' && mapped.trim().length > 0) {
+    if (shouldReplaceCachedPermissionToolName(mapped, opts.toolNameHint)) {
+      return opts.toolNameHint;
+    }
     return mapped.trim();
   }
   return opts.toolNameHint;
+}
+
+export function refinePermissionToolNameWithInput(toolNameHint: string, input: unknown): string {
+  if (!toolNameHint.trim()) return toolNameHint;
+  const inputDerivedHint = extractPermissionToolNameHint({
+    toolCall: {
+      kind: toolNameHint,
+      rawInput: input,
+    },
+  });
+
+  if (shouldReplaceCachedPermissionToolName(toolNameHint, inputDerivedHint)) {
+    return inputDerivedHint;
+  }
+
+  return toolNameHint;
 }

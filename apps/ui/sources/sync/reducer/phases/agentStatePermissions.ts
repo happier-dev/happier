@@ -106,7 +106,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
 
                 // Check if we already have a message for this permission ID
                 const existingMessageId = state.toolIdToMessageId.get(permId);
-                if (existingMessageId) {
+                if (existingMessageId != null) {
                     // Update existing tool message with permission info and latest arguments
                     const message = state.messages.get(existingMessageId);
                     if (message?.tool) {
@@ -114,6 +114,10 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             console.log(`[REDUCER] Updating existing tool ${permId} with permission`);
                         }
                         let hasChanged = false;
+                        if (message.tool.id !== permId) {
+                            message.tool.id = permId;
+                            hasChanged = true;
+                        }
 
                         // Update input only when it actually changed (keeps reducer idempotent).
                         // This still allows late-arriving fields (e.g. proposedExecpolicyAmendment)
@@ -188,6 +192,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                     // Create a new tool message for the permission request
                     let mid = allocateId();
                     let toolCall: ToolCall = {
+                        id: permId,
                         name: request.tool,
                         state: 'running' as const,
                         input: request.arguments,
@@ -204,15 +209,16 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         }
                     };
 
-	                    state.messages.set(mid, {
-	                        id: mid,
-	                        realID: null,
-	                        seq: null,
-	                        role: 'agent',
-	                        createdAt: request.createdAt || Date.now(),
-	                        text: null,
-	                        tool: toolCall,
-	                        event: null,
+		                    state.messages.set(mid, {
+		                        id: mid,
+		                        realID: null,
+		                        seq: null,
+		                        localId: null,
+		                        role: 'agent',
+		                        createdAt: request.createdAt || Date.now(),
+		                        text: null,
+		                        tool: toolCall,
+		                        event: null,
 	                    });
 	                    setThinkingMergeCursor(state, null, 'agentstate-permission-create');
 
@@ -248,7 +254,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                 }
                 // Check if we have a message for this permission ID
                 const messageId = state.toolIdToMessageId.get(permId);
-                if (messageId) {
+                if (messageId != null) {
                     const message = state.messages.get(messageId);
                     if (message?.tool) {
                         // Skip if tool has already started actual execution with approval
@@ -389,6 +395,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                     // Create a new message for completed permission without tool
                     let mid = allocateId();
                     let toolCall: ToolCall = {
+                        id: permId,
                         name: completed.tool,
                         state: completed.status === 'approved' ? 'completed' : 'error',
                         input: completed.arguments,
@@ -409,15 +416,16 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         }
                     };
 
-	                    state.messages.set(mid, {
-	                        id: mid,
-	                        realID: null,
-	                        seq: null,
-	                        role: 'agent',
-	                        createdAt: completed.createdAt || Date.now(),
-	                        text: null,
-	                        tool: toolCall,
-	                        event: null,
+		                    state.messages.set(mid, {
+		                        id: mid,
+		                        realID: null,
+		                        seq: null,
+		                        localId: null,
+		                        role: 'agent',
+		                        createdAt: completed.createdAt || Date.now(),
+		                        text: null,
+		                        tool: toolCall,
+		                        event: null,
 	                    });
 	                    setThinkingMergeCursor(state, null, 'agentstate-permission-create');
 

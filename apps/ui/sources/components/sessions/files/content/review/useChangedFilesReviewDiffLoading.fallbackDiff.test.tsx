@@ -1,8 +1,11 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { useChangedFilesReviewDiffLoading } from './useChangedFilesReviewDiffLoading';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,9 +21,10 @@ vi.mock('@/sync/ops', () => ({
     sessionReadFile: (...args: any[]) => sessionReadFileSpy(...args),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/scm/utils/filePresentation', () => ({
     isBinaryContent: () => false,
@@ -42,7 +46,7 @@ describe('useChangedFilesReviewDiffLoading (fallback diff)', () => {
             linesRemoved: 0,
         } as any;
 
-        let captured: any = null;
+        let diffStateSource: any = null;
 
         function Probe() {
             const reviewFiles = React.useMemo(() => [file], []);
@@ -59,25 +63,25 @@ describe('useChangedFilesReviewDiffLoading (fallback diff)', () => {
                 normalizeError,
                 fallbackError: 'fallback',
             });
-            captured = hook.getDiffState('src/new.txt');
+            diffStateSource = hook.diffStateSource;
             return React.createElement('Probe');
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         for (let i = 0; i < 30; i++) {
             await act(async () => {
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
-            if (typeof captured?.diff === 'string' && captured.diff.includes('diff --git')) break;
+            const current = diffStateSource?.getDiffState?.('src/new.txt');
+            if (typeof current?.diff === 'string' && current.diff.includes('diff --git')) break;
         }
 
         expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(1);
         expect(sessionReadFileSpy).toHaveBeenCalledTimes(1);
-        expect(String(captured?.diff ?? '')).toContain('diff --git a/src/new.txt b/src/new.txt');
-        expect(String(captured?.diff ?? '')).toContain('+hello');
-        expect(String(captured?.diff ?? '')).toContain('+world');
+        const finalState = diffStateSource?.getDiffState?.('src/new.txt');
+        expect(String(finalState?.diff ?? '')).toContain('diff --git a/src/new.txt b/src/new.txt');
+        expect(String(finalState?.diff ?? '')).toContain('+hello');
+        expect(String(finalState?.diff ?? '')).toContain('+world');
     });
 });

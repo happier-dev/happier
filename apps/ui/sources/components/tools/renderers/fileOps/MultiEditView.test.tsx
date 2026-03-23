@@ -1,8 +1,10 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,21 +20,33 @@ vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, vars?: any) => {
-        if (key === 'tools.multiEdit.editNumber') return `Edit ${vars.index}/${vars.total}`;
-        if (key === 'tools.multiEdit.replaceAll') return 'Replace all';
-        if (key === 'tools.common.more') return `+${vars.count} more`;
-        return key;
-    },
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key, params) => {
+            if (key === 'tools.common.more' && typeof params?.count === 'number') {
+                return `+${params.count} more`;
+            }
+            if (key === 'tools.multiEdit.editNumber' && typeof params?.index === 'number' && typeof params?.total === 'number') {
+                return `Edit ${params.index}/${params.total}`;
+            }
+            if (key === 'tools.multiEdit.replaceAll') {
+                return 'Replace all';
+            }
+            return key;
+        },
+    });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'showLineNumbersInToolViews') return false;
         return undefined;
     },
-}));
+});
+});
 
 describe('MultiEditView', () => {
     function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
@@ -54,14 +68,10 @@ describe('MultiEditView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { MultiEditView } = await import('./MultiEditView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     MultiEditView,
                     makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ),
-            );
-        });
+                ))).tree;
         return tree;
     }
 

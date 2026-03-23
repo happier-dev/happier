@@ -13,6 +13,7 @@ import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { sync } from '@/sync/sync';
 import { useProfile, useSettings } from '@/sync/store/hooks';
+import { useApplySettings } from '@/sync/store/settingsWriters';
 import { deleteConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { connectedServiceProfileKey, resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol';
@@ -33,6 +34,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
   const auth = useAuth();
   const profile = useProfile();
   const settings = useSettings();
+  const applySettings = useApplySettings();
 
   const connectedServicesEnabled = useFeatureEnabled('connectedServices');
   const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
@@ -66,9 +68,24 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
     );
   }
 
-  const serviceLabel = resolveConnectedServiceDisplayName(serviceId);
+  const serviceLabel = resolveConnectedServiceDisplayName(serviceId, t);
   const svc = profile.connectedServicesV2.find((s) => s.serviceId === serviceId) ?? null;
   const profileRecord = (svc?.profiles ?? []).find((p) => p.profileId === profileId) ?? null;
+
+  if (!svc || !profileRecord) {
+    return (
+      <ItemList>
+        <ItemGroup title={t('connectedServices.detail.alerts.unknownProfileTitle')}>
+          <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+            <Text style={{ color: theme.colors.textSecondary }}>
+              {t('connectedServices.detail.alerts.unknownProfileBody', { profileId, service: serviceLabel })}
+            </Text>
+          </View>
+        </ItemGroup>
+      </ItemList>
+    );
+  }
+
   const status = profileRecord?.status === 'connected' ? 'connected' : 'needs_reauth';
   const providerEmail = typeof profileRecord?.providerEmail === 'string' ? profileRecord.providerEmail : '';
   const providerAccountId = typeof profileRecord?.providerAccountId === 'string' ? profileRecord.providerAccountId : '';
@@ -106,7 +123,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
     const nextMap = { ...settings.connectedServicesDefaultProfileByServiceId };
     if (isDefault) delete nextMap[serviceId];
     else nextMap[serviceId] = profileId;
-    await sync.applySettings({ connectedServicesDefaultProfileByServiceId: nextMap });
+    applySettings({ connectedServicesDefaultProfileByServiceId: nextMap });
   };
 
   const handleEditLabel = async () => {
@@ -135,7 +152,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
     if (trimmed) nextMap[key] = trimmed;
     else delete nextMap[key];
 
-    await sync.applySettings({ connectedServicesProfileLabelByKey: nextMap });
+    applySettings({ connectedServicesProfileLabelByKey: nextMap });
   };
 
   const pinnedKey = connectedServiceProfileKey({ serviceId, profileId });
@@ -145,7 +162,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
     const nextMap = { ...settings.connectedServicesQuotaPinnedMeterIdsByKey };
     if (nextPinned.length === 0) delete nextMap[pinnedKey];
     else nextMap[pinnedKey] = [...nextPinned];
-    await sync.applySettings({ connectedServicesQuotaPinnedMeterIdsByKey: nextMap });
+    applySettings({ connectedServicesQuotaPinnedMeterIdsByKey: nextMap });
   };
 
   return (

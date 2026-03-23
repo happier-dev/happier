@@ -282,6 +282,7 @@ function createFakeSession() {
   return {
     keepAlive: () => {},
     sendAgentMessage: () => {},
+    sendTranscriptDraftDelta: () => {},
     sendUserTextMessageCommitted: async () => {},
     sendAgentMessageCommitted: async () => {},
     ensureMetadataSnapshot: async () => ({ ok: true }),

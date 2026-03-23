@@ -1,36 +1,16 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
+import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
 import { auth } from "@/app/auth/auth";
-import { initEncrypt } from "@/modules/encrypt";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+
 
 function createTestApp() {
     const app = Fastify();
@@ -50,61 +30,29 @@ function createTestApp() {
 }
 
 describe("connectRoutes (connected services quotas v2) sealed quota snapshot endpoints (integration)", () => {
-    const envBackup = { ...process.env };
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-connected-services-quotas-v2-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = { ...process.env };
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await initEncrypt();
-        await auth.init();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-connected-services-quotas-v2-",
+            initAuth: true,
+            initEncrypt: true,
+        });
     }, 120_000);
 
     afterAll(async () => {
-        await db.$disconnect();
-        process.env = envBackup;
-        await rm(baseDir, { recursive: true, force: true });
+        await harness.close();
     });
-
-    const restoreEnv = (base: NodeJS.ProcessEnv) => {
-        for (const key of Object.keys(process.env)) {
-            if (!(key in base)) {
-                delete (process.env as any)[key];
-            }
-        }
-        for (const [key, value] of Object.entries(base)) {
-            if (typeof value === "string") {
-                process.env[key] = value;
-            }
-        }
-    };
-
     afterEach(async () => {
         await closeTrackedApps();
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
         await (db as any).serviceAccountQuotaSnapshot?.deleteMany?.().catch(() => {});
         await db.serviceAccountToken.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
     });
 
     it("does not register quota snapshot routes when HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED=0", async () => {
-        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "0";
+        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "0" });
         const user = await db.account.create({ data: { publicKey: "pk-quota-disabled" }, select: { id: true } });
 
         const app = createTestApp();
@@ -120,7 +68,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota snapshot end
     });
 
     it("stores and returns sealed quota snapshots when enabled", async () => {
-        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "1";
+        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
         const user = await db.account.create({ data: { publicKey: "pk-quota-enabled" }, select: { id: true } });
 
         const app = createTestApp();
@@ -153,7 +101,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota snapshot end
     });
 
     it("accepts a refresh request and exposes refreshRequestedAt in metadata", async () => {
-        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "1";
+        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
         const user = await db.account.create({ data: { publicKey: "pk-quota-refresh" }, select: { id: true } });
 
         const app = createTestApp();
@@ -190,7 +138,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota snapshot end
     });
 
     it("accepts a refresh request even when no quota snapshot exists yet", async () => {
-        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "1";
+        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
         const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-missing" }, select: { id: true } });
 
         const app = createTestApp();
@@ -220,7 +168,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota snapshot end
     });
 
     it("includes refreshRequestedAt in metadata even when it is 0", async () => {
-        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "1";
+        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
         const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-zero" }, select: { id: true } });
 
         const app = createTestApp();

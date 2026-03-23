@@ -1,19 +1,32 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPartialStorageModuleMock } from '@/dev/testkit';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import { collectHostText, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const ensureSidechainMessagesLoadedMock = vi.fn();
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
+    },
+}));
+
 vi.mock('react-native', async () => {
-    const actual = await import('@/dev/reactNativeStub');
-    return {
-        ...actual,
-        AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
-        Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
-        Platform: { OS: 'ios', select: (v: any) => v.ios },
-        useWindowDimensions: () => ({ width: 800, height: 600 }),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
+                                        Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
+                                        Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
+                                        useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                    }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -28,20 +41,19 @@ vi.mock('@/components/tools/catalog', () => ({
     knownTools: {},
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'toolViewShowDebugByDefault') return false;
-        return null;
-    },
-}));
-
-vi.mock('@/components/ui/media/CodeView', () => ({
-    CodeView: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    await createPartialStorageModuleMock(importOriginal, {
+        useSetting: (key: string) => {
+            if (key === 'toolViewShowDebugByDefault') return false;
+            return null;
+        },
+    }),
+);
 
 vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: () => null,
@@ -56,6 +68,10 @@ vi.mock('../permissions/PermissionFooter', () => ({
 }));
 
 describe('ToolFullView (error message formatting)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('renders JSON for object-shaped tool errors', async () => {
         let ToolFullView: any;
         try {
@@ -71,12 +87,11 @@ describe('ToolFullView (error message formatting)', () => {
             result: { error: 'Tool call failed', status: 'failed' },
         });
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolFullView, { tool, sessionId: 's1', metadata: null, messages: [] }));
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolFullView, { tool, sessionId: 's1', metadata: null, messages: [] }),
+        );
 
-        const flattened = collectHostText(tree!);
+        const flattened = collectHostText(screen.tree);
         expect(flattened.join('\n')).toContain('"error"');
         expect(flattened.join('\n')).toContain('"status"');
         expect(flattened.join('\n')).toContain('Tool call failed');

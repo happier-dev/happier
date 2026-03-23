@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -48,9 +50,7 @@ describe('usePairingSession (pairing deep link server URL)', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<Probe />);
-        });
+        tree = (await renderScreen(<Probe />)).tree;
         try {
             await act(async () => {
                 const res = await hookApi!.startPairing();
@@ -84,9 +84,7 @@ describe('usePairingSession (pairing deep link server URL)', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<Probe />);
-        });
+        tree = (await renderScreen(<Probe />)).tree;
         try {
             await act(async () => {
                 const res = await hookApi!.startPairing();
@@ -121,9 +119,7 @@ describe('usePairingSession (pairing deep link server URL)', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<Probe />);
-        });
+        tree = (await renderScreen(<Probe />)).tree;
         try {
             await act(async () => {
                 const res = await hookApi!.startPairing();

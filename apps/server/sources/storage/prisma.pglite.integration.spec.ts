@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { applyEnvValues } from "@/testkit/env";
 import { initDbPglite, shutdownDbPglite } from "./prisma";
 import { acquirePgliteDirLock } from "./locks/pgliteLock";
 
@@ -21,10 +22,12 @@ async function safeShutdownPglite(): Promise<void> {
 describe("storage/prisma initDbPglite", () => {
     afterEach(async () => {
         await safeShutdownPglite();
-        delete process.env.HAPPY_SERVER_LIGHT_DB_DIR;
-        delete process.env.HAPPY_SERVER_LIGHT_DATA_DIR;
-        delete process.env.HAPPIER_SERVER_LIGHT_DB_DIR;
-        delete process.env.HAPPIER_SERVER_LIGHT_DATA_DIR;
+        applyEnvValues({
+            HAPPY_SERVER_LIGHT_DB_DIR: undefined,
+            HAPPY_SERVER_LIGHT_DATA_DIR: undefined,
+            HAPPIER_SERVER_LIGHT_DB_DIR: undefined,
+            HAPPIER_SERVER_LIGHT_DATA_DIR: undefined,
+        });
         while (createdDirs.length > 0) {
             const dir = createdDirs.pop();
             if (!dir) continue;
@@ -34,7 +37,7 @@ describe("storage/prisma initDbPglite", () => {
 
     it("rejects re-entrant init attempts while initialization is in progress", async () => {
         const root = await createHarnessDir();
-        process.env.HAPPY_SERVER_LIGHT_DATA_DIR = root;
+        applyEnvValues({ HAPPY_SERVER_LIGHT_DATA_DIR: root });
 
         const first = initDbPglite();
         const second = initDbPglite();
@@ -50,7 +53,7 @@ describe("storage/prisma initDbPglite", () => {
     it("releases the pglite directory lock on shutdown", async () => {
         const root = await createHarnessDir();
         const dbDir = join(root, "pglite");
-        process.env.HAPPY_SERVER_LIGHT_DATA_DIR = root;
+        applyEnvValues({ HAPPY_SERVER_LIGHT_DATA_DIR: root });
 
         await initDbPglite();
         await shutdownDbPglite();
@@ -62,7 +65,7 @@ describe("storage/prisma initDbPglite", () => {
     it("does not keep partial initialization state when lock acquisition fails", async () => {
         const root = await createHarnessDir();
         const dbDir = join(root, "pglite");
-        process.env.HAPPY_SERVER_LIGHT_DATA_DIR = root;
+        applyEnvValues({ HAPPY_SERVER_LIGHT_DATA_DIR: root });
 
         const release = await acquirePgliteDirLock(dbDir, { purpose: "external-lock" });
         await expect(initDbPglite()).rejects.toThrow(/already in use/i);
@@ -75,7 +78,7 @@ describe("storage/prisma initDbPglite", () => {
     it("accepts HAPPIER_ prefixed light data dir env var", async () => {
         const root = await createHarnessDir();
         const dbDir = join(root, "pglite");
-        process.env.HAPPIER_SERVER_LIGHT_DATA_DIR = root;
+        applyEnvValues({ HAPPIER_SERVER_LIGHT_DATA_DIR: root });
 
         await expect(initDbPglite()).resolves.toBeUndefined();
         await shutdownDbPglite();

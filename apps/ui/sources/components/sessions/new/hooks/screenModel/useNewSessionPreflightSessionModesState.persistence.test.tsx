@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import { resetDynamicSessionModeProbeCacheForTests } from '@/sync/domains/sessionModes/dynamicSessionModeProbeCache';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,7 +38,7 @@ describe('useNewSessionPreflightSessionModesState (persistence)', () => {
 
     function Harness() {
       useNewSessionPreflightSessionModesState({
-        agentType: 'opencode' as any,
+        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -45,10 +47,7 @@ describe('useNewSessionPreflightSessionModesState (persistence)', () => {
     }
 
     let root1!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root1 = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root1 = (await renderScreen(React.createElement(Harness))).tree;
     await act(async () => {
       root1.unmount();
     });
@@ -59,7 +58,7 @@ describe('useNewSessionPreflightSessionModesState (persistence)', () => {
 
     function Harness2() {
       useNewSessionPreflightSessionModesState2({
-        agentType: 'opencode' as any,
+        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -68,10 +67,7 @@ describe('useNewSessionPreflightSessionModesState (persistence)', () => {
     }
 
     let root2!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root2 = renderer.create(React.createElement(Harness2));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root2 = (await renderScreen(React.createElement(Harness2))).tree;
     await act(async () => {
       root2.unmount();
     });
@@ -79,4 +75,3 @@ describe('useNewSessionPreflightSessionModesState (persistence)', () => {
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
   });
 });
-

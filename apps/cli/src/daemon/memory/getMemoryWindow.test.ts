@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Credentials } from '@/persistence';
-import { encryptSessionPayload, type SessionEncryptionContext } from '@/sessionControl/sessionEncryptionContext';
-import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
+import { encryptSessionPayload, type SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 describe('getMemoryWindow', () => {
   it('decrypts a bounded transcript range and returns a redacted snippet window', async () => {
@@ -28,7 +28,7 @@ describe('getMemoryWindow', () => {
       seqTo: 2,
       paddingMessages: 0,
       deps: {
-        fetchSessionById: async () => makeSessionFixtureRow({ id: 'sess-1', active: true, activeAt: 1, metadata: 'b64' }),
+        fetchSessionById: async () => createSessionRecordFixture({ id: 'sess-1', active: true, activeAt: 1, metadata: 'b64' }),
         fetchEncryptedTranscriptRange: async () => ({
           ok: true as const,
           rows: [
@@ -59,7 +59,7 @@ describe('getMemoryWindow', () => {
       seqTo: 2,
       paddingMessages: 0,
       deps: {
-        fetchSessionById: async () => makeSessionFixtureRow({ id: 'sess-plain', active: true, activeAt: 1, metadata: '{}' }),
+        fetchSessionById: async () => createSessionRecordFixture({ id: 'sess-plain', active: true, activeAt: 1, metadata: '{}' }),
         fetchEncryptedTranscriptRange: async () => ({
           ok: true as const,
           rows: [

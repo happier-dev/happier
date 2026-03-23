@@ -2,9 +2,10 @@ import type { FeaturesResponse } from "@/app/features/types";
 import { readServerEnabledBit, type FeatureId } from "@happier-dev/protocol";
 
 import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
+import { serverFeatureRegistry } from "./serverFeatureRegistry";
 
 export function resolveServerFeaturesForGating(env: NodeJS.ProcessEnv): FeaturesResponse {
-    return resolveServerFeaturePayload(env);
+    return resolveServerFeaturePayload(env, serverFeatureRegistry);
 }
 
 export function isServerFeatureEnabledForRequest(featureId: FeatureId, env: NodeJS.ProcessEnv): boolean {

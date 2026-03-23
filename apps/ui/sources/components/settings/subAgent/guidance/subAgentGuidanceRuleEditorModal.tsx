@@ -2,11 +2,10 @@ import * as React from 'react';
 import { Platform, ScrollView, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
+import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
-import type { AgentId } from '@/agents/catalog/catalog';
-import { DEFAULT_AGENT_ID, isAgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { getAgentDropdownMenuItems } from '@/components/settings/pickers/agentDropdownItems';
 import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
 import { Item } from '@/components/ui/lists/Item';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -22,6 +21,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useAllMachines } from '@/sync/store/hooks';
 import { useSetting } from '@/sync/domains/state/storage';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 
 import type { SubAgentGuidanceRuleEditorResult } from './showSubAgentGuidanceRuleEditorModal';
 
@@ -53,11 +53,9 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
     const [title, setTitle] = React.useState<string>(normalizeText(props.entry.title));
     const [description, setDescription] = React.useState<string>(normalizeText(props.entry.description));
     const [intent, setIntent] = React.useState<Intent | undefined>(toIntent(props.entry.suggestedIntent));
-    const [backendId, setBackendId] = React.useState<AgentId | undefined>(() => {
-        const raw = props.entry.suggestedBackendId;
-        if (typeof raw !== 'string') return undefined;
-        const trimmed = raw.trim();
-        return trimmed && isAgentId(trimmed as any) ? (trimmed as AgentId) : undefined;
+    const [backendTarget, setBackendTarget] = React.useState<BackendTargetRefV1 | undefined>(() => {
+        const raw = props.entry.suggestedBackendTarget;
+        return raw ?? undefined;
     });
     const [modelId, setModelId] = React.useState<ModelMode | undefined>(() => {
         const raw = props.entry.suggestedModelId;
@@ -70,6 +68,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
     const canSave = description.trim().length > 0;
     const machines = useAllMachines();
     const recentMachinePaths = useSetting('recentMachinePaths') as any[] | undefined;
+    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const preflightMachineId = React.useMemo(() => {
         return resolvePreferredMachineId({
             machines,
@@ -77,9 +77,22 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
         });
     }, [machines, recentMachinePaths]);
 
+    const backendEntries = React.useMemo(() => {
+        return getResolvedBackendCatalogEntries({
+            enabledAgentIds,
+            acpCatalogSettingsV1: acpCatalogSettingsV1 as any,
+            backendEnabledByTargetKey: backendEnabledByTargetKey as Record<string, boolean> | undefined,
+        });
+    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, enabledAgentIds]);
+
+    const selectedBackendEntry = React.useMemo(() => {
+        if (!backendTarget) return null;
+        return backendEntries.find((entry) => entry.targetKey === buildBackendTargetKey(backendTarget)) ?? null;
+    }, [backendEntries, backendTarget]);
+
     const preflightModels = useNewSessionPreflightModelsState({
-        agentType: (backendId ?? DEFAULT_AGENT_ID) as any,
-        selectedMachineId: backendId ? preflightMachineId : null,
+        backendTarget: backendTarget ?? { kind: 'builtInAgent', agentId: DEFAULT_AGENT_ID },
+        selectedMachineId: backendTarget ? preflightMachineId : null,
         capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
     });
 
@@ -103,14 +116,14 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
             ...(enabled ? {} : { enabled: false }),
             ...(title.trim().length > 0 ? { title: title.trim() } : {}),
             ...(intent ? { suggestedIntent: intent } : {}),
-            ...(backendId ? { suggestedBackendId: backendId } : {}),
+            ...(backendTarget ? { suggestedBackendTarget: backendTarget } : {}),
             ...(modelId ? { suggestedModelId: modelId } : {}),
             ...(exampleToolCalls.trim().length > 0
                 ? { exampleToolCalls: exampleToolCalls.split('\n').map((l) => l.trim()).filter(Boolean) }
                 : {}),
         };
         props.onResolve({ kind: 'save', entry: next });
-    }, [backendId, canSave, description, enabled, exampleToolCalls, intent, modelId, props, title]);
+    }, [backendTarget, canSave, description, enabled, exampleToolCalls, intent, modelId, props, title]);
 
     const containerStyle = {
         backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
@@ -247,7 +260,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                     variant="selectable"
                     search={true}
                     searchPlaceholder={t('subAgentGuidance.ruleEditor.backendPicker.searchPlaceholder')}
-                    selectedId={backendId ?? ''}
+                    selectedId={selectedBackendEntry?.targetKey ?? ''}
                     showCategoryTitles={false}
                     matchTriggerWidth={true}
                     connectToTrigger={true}
@@ -257,7 +270,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                         <View style={cardStyle}>
                             <Item
                                 title={t('subAgentGuidance.ruleEditor.backendPicker.title')}
-                                subtitle={backendId ?? t('subAgentGuidance.ruleEditor.common.noPreference')}
+                                subtitle={selectedBackendEntry?.title ?? t('subAgentGuidance.ruleEditor.common.noPreference')}
                                 icon={<Ionicons name="hardware-chip-outline" size={24} color={theme.colors.textSecondary} />}
                                 rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.textSecondary} />}
                                 onPress={toggle}
@@ -277,26 +290,32 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                                 </View>
                               ),
                           },
-                          ...getAgentDropdownMenuItems({
-                                agentIds: enabledAgentIds as any,
-                                iconColor: theme.colors.textSecondary,
-                            }),
+                          ...backendEntries.map((entry) => ({
+                              id: entry.targetKey,
+                              title: entry.title,
+                              subtitle: entry.subtitle ?? undefined,
+                              icon: (
+                                  <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                      <Ionicons name="hardware-chip-outline" size={22} color={theme.colors.textSecondary} />
+                                  </View>
+                              ),
+                          })),
                       ]}
                       onSelect={(id) => {
                         const next = String(id ?? '').trim();
                         if (!next) {
-                            setBackendId(undefined);
+                            setBackendTarget(undefined);
                             setModelId(undefined);
                             return;
                         }
-                        if (isAgentId(next as any)) {
-                            setBackendId(next as any);
-                            setModelId(undefined);
-                        }
+                        const resolved = backendEntries.find((entry) => entry.targetKey === next) ?? null;
+                        if (!resolved) return;
+                        setBackendTarget(resolved.target);
+                        setModelId(undefined);
                     }}
                 />
 
-                {backendId ? (
+                {backendTarget ? (
                     <DropdownMenu
                         open={openPicker === 'model'}
                         onOpenChange={(next) => setOpenPicker(next ? 'model' : null)}

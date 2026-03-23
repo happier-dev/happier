@@ -6,10 +6,10 @@
  */
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import { qwenTransport } from '@/backends/qwen/acp/transport';
 import type { PermissionMode } from '@/api/types';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import { buildQwenAcpArgs } from './approvalMode';
 
 export interface QwenBackendOptions extends AgentFactoryOptions {
@@ -19,11 +19,14 @@ export interface QwenBackendOptions extends AgentFactoryOptions {
 }
 
 export function createQwenBackend(options: QwenBackendOptions): AgentBackend {
+  const processEnv = { ...process.env, ...options.env };
+  const launch = requireProviderCliLaunchSpec('qwen', { processEnv });
+
   const backendOptions: AcpBackendOptions = {
     agentName: 'qwen',
     cwd: options.cwd,
-    command: resolveCliPathOverride({ agentId: 'qwen' }) ?? 'qwen',
-    args: buildQwenAcpArgs(options.permissionMode),
+    command: launch.command,
+    args: [...launch.args, ...buildQwenAcpArgs(options.permissionMode)],
     env: {
       ...options.env,
       // Keep output clean; ACP must own stdout.

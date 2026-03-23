@@ -29,6 +29,7 @@ function computeExponentialBackoffMs({ attempt, baseMs, maxMs }) {
 export function createServiceDaemonAutostarter({
   enabled,
   isShuttingDown,
+  isServerReady,
   pollMs,
   maxAttemptsPerCredentials,
   retryBaseMs,
@@ -50,6 +51,7 @@ export function createServiceDaemonAutostarter({
   const cancelImpl = typeof cancel === 'function' ? cancel : (id) => clearTimeout(id);
 
   const isDown = typeof isShuttingDown === 'function' ? isShuttingDown : () => false;
+  const serverReady = typeof isServerReady === 'function' ? isServerReady : async () => true;
   const creds = typeof getCredentialFingerprint === 'function' ? getCredentialFingerprint : async () => null;
   const daemonRunning = typeof isDaemonRunning === 'function' ? isDaemonRunning : () => false;
   const start = typeof startDaemon === 'function' ? startDaemon : async () => {};
@@ -82,7 +84,7 @@ export function createServiceDaemonAutostarter({
         // ignore
       }
     }
-    timerId = scheduleImpl(() => void tick(), Math.max(0, Number(delayMs) || 0));
+    timerId = scheduleImpl(tick, Math.max(0, Number(delayMs) || 0));
   };
 
   const tick = async () => {
@@ -93,6 +95,12 @@ export function createServiceDaemonAutostarter({
 
     inFlight = true;
     try {
+      const ready = await serverReady();
+      if (!ready) {
+        scheduleNext(pollIntervalMs);
+        return;
+      }
+
       const fingerprint = (await creds()) ?? null;
       if (!fingerprint) {
         lastFingerprint = null;

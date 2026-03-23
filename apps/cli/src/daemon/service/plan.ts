@@ -1,8 +1,7 @@
 import { join, win32 as win32Path } from 'node:path';
 
 import { buildLaunchAgentPlistXml, buildLaunchdPath } from './darwin';
-import { buildServicePath } from './servicePath';
-import { planServiceAction, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
+import { buildServicePath, planServiceAction, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
 
 export type DaemonServicePlatform = 'darwin' | 'linux' | 'win32';
 export type DaemonServiceMode = 'user' | 'system';
@@ -229,7 +228,7 @@ export function planDaemonServiceInstall(params: Readonly<{
     execStart: programArgs,
     workingDirectory: mode === 'system' ? params.userHomeDir : '%h',
     env: {
-      PATH: buildServicePath({ execPath: params.nodePath, homeDir: params.userHomeDir }),
+      PATH: buildServicePath({ execPath: params.nodePath, homeDir: params.userHomeDir, platform: 'linux' }),
       HAPPIER_HOME_DIR: params.happierHomeDir,
       HAPPIER_ACTIVE_SERVER_ID: instanceId,
       HAPPIER_SERVER_URL: params.serverUrl,

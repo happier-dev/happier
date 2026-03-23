@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createCodexMcpMessageHandler,
   forwardCodexErrorToUi,
   forwardCodexStatusToUi,
 } from './mcpMessageHandler';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('forwardCodexStatusToUi', () => {
   it('writes to terminal buffer and session events', () => {
@@ -58,6 +62,8 @@ describe('createCodexMcpMessageHandler', () => {
     let currentTaskId: string | null = null;
     const session = {
       sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendTranscriptDraftDelta: vi.fn(),
       sendCodexMessage: vi.fn(),
       sendSessionEvent: vi.fn(),
       keepAlive: vi.fn(),
@@ -90,13 +96,24 @@ describe('createCodexMcpMessageHandler', () => {
     expect(logger.debug).toHaveBeenCalled();
   });
 
-  it('tracks thinking state and emits ready on task completion', () => {
+  it('tracks thinking state and emits ready only after transcript flush completes on task completion', async () => {
     let thinking = false;
     let currentTaskId: string | null = null;
     const keepAlive = vi.fn();
     const sendReady = vi.fn();
+    let resolveInitialCommit: (() => void) | undefined;
+    let durableCommitCount = 0;
     const session = {
       sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {
+        durableCommitCount += 1;
+        if (durableCommitCount === 1) {
+          await new Promise<void>((resolve) => {
+            resolveInitialCommit = resolve;
+          });
+        }
+      }),
+      sendTranscriptDraftDelta: vi.fn(),
       sendCodexMessage: vi.fn(),
       sendSessionEvent: vi.fn(),
       keepAlive,
@@ -127,49 +144,147 @@ describe('createCodexMcpMessageHandler', () => {
     expect(keepAlive).toHaveBeenCalledWith(true, 'remote');
     expect(sendReady).not.toHaveBeenCalled();
 
+    handler({ type: 'agent_message', message: 'Hello from Codex' });
     handler({ type: 'task_complete' });
+
+    await Promise.resolve();
     expect(thinking).toBe(false);
     expect(keepAlive).toHaveBeenCalledWith(false, 'remote');
-    expect(sendReady).toHaveBeenCalledTimes(1);
+    expect(sendReady).not.toHaveBeenCalled();
+
+    const releaseInitialCommit = resolveInitialCommit;
+    if (!releaseInitialCommit) {
+      throw new Error('expected initial durable commit resolver');
+    }
+    releaseInitialCommit();
+    await vi.waitFor(() => {
+      expect(sendReady).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('streams agent_message text through transcript-vNext instead of creating standalone Codex rows', () => {
+    vi.stubEnv('HAPPIER_STREAM_DRAFT_FLUSH_MS', '0');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
+
+      let thinking = false;
+      let currentTaskId: string | null = null;
+      const session = {
+        sendAgentMessage: vi.fn(),
+        sendAgentMessageCommitted: vi.fn(async () => {}),
+        sendTranscriptDraftDelta: vi.fn(),
+        sendCodexMessage: vi.fn(),
+        sendSessionEvent: vi.fn(),
+        keepAlive: vi.fn(),
+      };
+      const messageBuffer = { addMessage: vi.fn() };
+      const logger = { debug: vi.fn() };
+      const diffProcessor = { processDiff: vi.fn() };
+
+      const handler = createCodexMcpMessageHandler({
+        logger,
+        session,
+        messageBuffer,
+        sendReady: vi.fn(),
+        publishCodexThreadIdToMetadata: vi.fn(),
+        diffProcessor,
+        getCurrentTaskId: () => currentTaskId,
+        setCurrentTaskId: (next: string | null) => {
+          currentTaskId = next;
+        },
+        getThinking: () => thinking,
+        setThinking: (next: boolean) => {
+          thinking = next;
+        },
+      });
+
+      handler({ type: 'agent_message', message: 'Hello from Codex' });
+
+      expect(session.sendAgentMessageCommitted).toHaveBeenCalledWith(
+        'codex',
+        { type: 'message', message: 'Hello from Codex' },
+        expect.objectContaining({
+          localId: expect.any(String),
+          meta: expect.objectContaining({
+            happierStreamSegmentV1: expect.objectContaining({
+              v: 1,
+              segmentKind: 'assistant',
+              segmentState: 'streaming',
+            }),
+          }),
+        }),
+      );
+      expect(session.sendTranscriptDraftDelta).toHaveBeenCalledWith(
+        'codex',
+        expect.objectContaining({
+          segmentKind: 'assistant',
+          deltaText: 'Hello from Codex',
+        }),
+      );
+      expect(session.sendCodexMessage).not.toHaveBeenCalled();
   });
 
   it('streams agent_reasoning deltas as ACP thinking messages (not tool calls)', () => {
-    let thinking = false;
-    let currentTaskId: string | null = null;
-    const keepAlive = vi.fn();
-    const sendReady = vi.fn();
-    const session = {
-      sendAgentMessage: vi.fn(),
-      sendCodexMessage: vi.fn(),
-      sendSessionEvent: vi.fn(),
-      keepAlive,
-    };
-    const messageBuffer = { addMessage: vi.fn() };
-    const logger = { debug: vi.fn() };
-    const diffProcessor = { processDiff: vi.fn() };
+    vi.stubEnv('HAPPIER_STREAM_DRAFT_FLUSH_MS', '0');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
 
-    const handler = createCodexMcpMessageHandler({
-      logger,
-      session,
-      messageBuffer,
-      sendReady,
-      publishCodexThreadIdToMetadata: vi.fn(),
-      diffProcessor,
-      getCurrentTaskId: () => currentTaskId,
-      setCurrentTaskId: (next: string | null) => {
-        currentTaskId = next;
-      },
-      getThinking: () => thinking,
-      setThinking: (next: boolean) => {
-        thinking = next;
-      },
-    });
+      let thinking = false;
+      let currentTaskId: string | null = null;
+      const keepAlive = vi.fn();
+      const sendReady = vi.fn();
+      const session = {
+        sendAgentMessage: vi.fn(),
+        sendAgentMessageCommitted: vi.fn(async () => {}),
+        sendTranscriptDraftDelta: vi.fn(),
+        sendCodexMessage: vi.fn(),
+        sendSessionEvent: vi.fn(),
+        keepAlive,
+      };
+      const messageBuffer = { addMessage: vi.fn() };
+      const logger = { debug: vi.fn() };
+      const diffProcessor = { processDiff: vi.fn() };
 
-    handler({ type: 'agent_reasoning_delta', delta: '**Title**\n\nHello' });
-    expect(session.sendAgentMessage).toHaveBeenCalledWith('codex', {
-      type: 'thinking',
-      text: '**Title**\n\nHello',
-    });
-    expect(session.sendCodexMessage).not.toHaveBeenCalled();
+      const handler = createCodexMcpMessageHandler({
+        logger,
+        session,
+        messageBuffer,
+        sendReady,
+        publishCodexThreadIdToMetadata: vi.fn(),
+        diffProcessor,
+        getCurrentTaskId: () => currentTaskId,
+        setCurrentTaskId: (next: string | null) => {
+          currentTaskId = next;
+        },
+        getThinking: () => thinking,
+        setThinking: (next: boolean) => {
+          thinking = next;
+        },
+      });
+
+      handler({ type: 'agent_reasoning_delta', delta: '**Title**\n\nHello' });
+      expect(session.sendAgentMessage).not.toHaveBeenCalled();
+      expect(session.sendAgentMessageCommitted).toHaveBeenCalledWith(
+        'codex',
+        { type: 'thinking', text: '**Title**\n\nHello' },
+        expect.objectContaining({
+          localId: expect.any(String),
+          meta: expect.objectContaining({
+            happierStreamSegmentV1: expect.objectContaining({
+              v: 1,
+              segmentKind: 'thinking',
+              segmentState: 'streaming',
+            }),
+          }),
+        }),
+      );
+      expect(session.sendTranscriptDraftDelta).toHaveBeenCalledWith(
+        'codex',
+        expect.objectContaining({
+          segmentKind: 'thinking',
+          deltaText: '**Title**\n\nHello',
+        }),
+      );
+      expect(session.sendCodexMessage).not.toHaveBeenCalled();
   });
 });

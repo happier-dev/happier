@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
@@ -13,11 +14,20 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { fetchDaemonMemorySettings, writeDaemonMemorySettings } from '@/sync/domains/memory/fetchDaemonMemorySettings';
 import { useAllMachines } from '@/sync/domains/state/storage';
-import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { fetchDaemonMemoryStatus } from '@/sync/domains/memory/fetchDaemonMemoryStatus';
+import { getDaemonMemoryStatusStateTranslationKey } from '@/sync/domains/memory/getDaemonMemoryStatusStateTranslationKey';
+import { getDaemonMemoryEmbeddingsStatusTranslationKey } from '@/sync/domains/memory/getDaemonMemoryEmbeddingsStatusTranslationKey';
+import { presentDaemonMemoryStatus } from '@/sync/domains/memory/presentDaemonMemoryStatus';
+import { presentDaemonMemoryEmbeddingsStatus } from '@/sync/domains/memory/presentDaemonMemoryEmbeddingsStatus';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
-import { DEFAULT_MEMORY_SETTINGS, MemorySettingsV1Schema, RPC_METHODS, type MemorySettingsV1 } from '@happier-dev/protocol';
+import {
+    DEFAULT_MEMORY_SETTINGS,
+    type MemorySettingsV1,
+    type MemoryStatusV1,
+} from '@happier-dev/protocol';
 import { MemorySettingsBudgetsSection } from './MemorySettingsBudgetsSection';
 import { MemorySettingsEmbeddingsSection } from './MemorySettingsEmbeddingsSection';
 import { MemorySettingsPrivacySection } from './MemorySettingsPrivacySection';
@@ -33,6 +43,8 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
 
     const [selectedMachineId, setSelectedMachineId] = React.useState<string>(() => machines[0]?.id ?? '');
     const [settings, setSettings] = React.useState<MemorySettingsV1>(() => DEFAULT_MEMORY_SETTINGS);
+    const [settingsRpcSupported, setSettingsRpcSupported] = React.useState(true);
+    const [memoryStatus, setMemoryStatus] = React.useState<MemoryStatusV1 | null>(null);
     const [loading, setLoading] = React.useState(false);
     const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
     const [indexModeMenuOpen, setIndexModeMenuOpen] = React.useState(false);
@@ -49,14 +61,21 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
         if (!memorySearchEnabled) return;
         if (!serverId || !selectedMachineId) return;
         setLoading(true);
+        setMemoryStatus(null);
         try {
-            const raw = await machineRpcWithServerScope<unknown, unknown>({
-                machineId: selectedMachineId,
-                serverId,
-                method: RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET,
-                payload: {},
-            });
-            setSettings(MemorySettingsV1Schema.parse(raw));
+            const [settingsResult, status] = await Promise.all([
+                fetchDaemonMemorySettings({
+                    machineId: selectedMachineId,
+                    serverId,
+                }),
+                fetchDaemonMemoryStatus({
+                    machineId: selectedMachineId,
+                    serverId,
+                }).catch(() => null),
+            ]);
+            setSettings(settingsResult.settings);
+            setSettingsRpcSupported(settingsResult.supported);
+            setMemoryStatus(status);
         } finally {
             setLoading(false);
         }
@@ -70,14 +89,21 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
     const writeSettings = React.useCallback(async (next: MemorySettingsV1) => {
         if (!memorySearchEnabled) return;
         if (!serverId || !selectedMachineId) return;
-        const raw = await machineRpcWithServerScope<unknown, unknown>({
+        const result = await writeDaemonMemorySettings({
             machineId: selectedMachineId,
             serverId,
-            method: RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET,
-            payload: next,
+            settings: next,
         });
-        const parsed = MemorySettingsV1Schema.parse(raw);
-        setSettings(parsed);
+        setSettings(result.settings);
+        setSettingsRpcSupported(result.supported);
+        if (!result.supported) {
+            return;
+        }
+        const status = await fetchDaemonMemoryStatus({
+            machineId: selectedMachineId,
+            serverId,
+        }).catch(() => null);
+        setMemoryStatus(status);
     }, [memorySearchEnabled, selectedMachineId, serverId]);
 
     const machineItems = React.useMemo(() => {
@@ -111,6 +137,42 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
         return label && label.trim().length > 0 ? label : t('memorySearchSettings.machine.noMachine');
     }, [machines, selectedMachineId]);
 
+    const statusPresentation = React.useMemo(() => presentDaemonMemoryStatus(memoryStatus), [memoryStatus]);
+    const embeddingsStatusPresentation = React.useMemo(
+        () => presentDaemonMemoryEmbeddingsStatus(memoryStatus),
+        [memoryStatus],
+    );
+    const statusSubtitle = React.useMemo(() => {
+        if (loading && !statusPresentation) return t('common.loading');
+        return t(getDaemonMemoryStatusStateTranslationKey(statusPresentation));
+    }, [loading, statusPresentation]);
+    const embeddingsStatusSubtitle = React.useMemo(() => {
+        if (loading && !embeddingsStatusPresentation) return t('common.loading');
+        return t(getDaemonMemoryEmbeddingsStatusTranslationKey(embeddingsStatusPresentation));
+    }, [embeddingsStatusPresentation, loading]);
+    const diskUsageSubtitle = React.useMemo(() => {
+        if (!statusPresentation) return t('memorySearchSettings.status.diskUsageUnavailable');
+        return t('memorySearchSettings.status.diskUsage', {
+            lightMb: statusPresentation.lightMb ?? 0,
+            deepMb: statusPresentation.deepMb ?? 0,
+        });
+    }, [statusPresentation]);
+    const showEmbeddingsStatus = (memoryStatus?.indexMode ?? settings.indexMode) === 'deep';
+    const embeddingsProviderSubtitle = React.useMemo(() => {
+        const providerKind = embeddingsStatusPresentation?.providerKind;
+        if (providerKind === 'local_transformers') {
+            return t('memorySearchSettings.status.embeddingsProviderLocal');
+        }
+        if (providerKind === 'openai_compatible') {
+            return t('memorySearchSettings.status.embeddingsProviderOpenAiCompatible');
+        }
+        return t('common.unavailable');
+    }, [embeddingsStatusPresentation?.providerKind]);
+    const embeddingsModelSubtitle = React.useMemo(() => {
+        return embeddingsStatusPresentation?.modelId ?? t('common.unavailable');
+    }, [embeddingsStatusPresentation?.modelId]);
+    const showReadOnlySettings = settingsRpcSupported !== true;
+
     if (!memorySearchEnabled) {
         return (
             <ItemList style={{ paddingTop: 0 }}>
@@ -133,7 +195,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
         <ItemList style={{ paddingTop: 0 }}>
             <ItemGroup
                 title={t('settings.memorySearch')}
-                footer={t('memorySearchSettings.enabled.footer')}
+                footer={showReadOnlySettings ? t('common.unavailable') : t('memorySearchSettings.enabled.footer')}
             >
                 <Item
                     title={t('memorySearchSettings.machine.title')}
@@ -161,9 +223,9 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                 </View>
                 <Item
                     title={t('memorySearchSettings.enabled.title')}
-                    subtitle={t('memorySearchSettings.enabled.subtitle')}
+                    subtitle={showReadOnlySettings ? t('common.unavailable') : t('memorySearchSettings.enabled.subtitle')}
                     icon={<Ionicons name="search-outline" size={29} color={theme.colors.success} />}
-                    rightElement={(
+                    rightElement={showReadOnlySettings ? null : (
                         <Switch
                             value={settings.enabled}
                             onValueChange={(value) => {
@@ -173,8 +235,44 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     )}
                     showChevron={false}
                 />
+                <Item
+                    title={t('memorySearchSettings.status.title')}
+                    subtitle={statusSubtitle}
+                    icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.orange} />}
+                    showChevron={false}
+                />
+                <Item
+                    title={t('memorySearchSettings.status.diskUsageTitle')}
+                    subtitle={diskUsageSubtitle}
+                    icon={<Ionicons name="hardware-chip-outline" size={29} color={theme.colors.accent.purple} />}
+                    showChevron={false}
+                />
+                {showEmbeddingsStatus ? (
+                    <>
+                        <Item
+                            title={t('memorySearchSettings.status.embeddingsTitle')}
+                            subtitle={embeddingsStatusSubtitle}
+                            icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.indigo} />}
+                            showChevron={false}
+                        />
+                        <Item
+                            title={t('memorySearchSettings.status.embeddingsProviderTitle')}
+                            subtitle={embeddingsProviderSubtitle}
+                            icon={<Ionicons name="cloud-outline" size={29} color={theme.colors.accent.blue} />}
+                            showChevron={false}
+                        />
+                        <Item
+                            title={t('memorySearchSettings.status.embeddingsModelTitle')}
+                            subtitle={embeddingsModelSubtitle}
+                            icon={<Ionicons name="cube-outline" size={29} color={theme.colors.accent.purple} />}
+                            showChevron={false}
+                        />
+                    </>
+                ) : null}
             </ItemGroup>
 
+            {showReadOnlySettings ? null : (
+                <>
             <ItemGroup
                 title={t('memorySearchSettings.indexMode.title')}
                 footer={t('memorySearchSettings.indexMode.footer')}
@@ -239,7 +337,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                             t('memorySearchSettings.hints.backend.promptBody'),
                             {
                                 defaultValue: settings.hints.summarizerBackendId,
-                                placeholder: 'claude',
+                                placeholder: DEFAULT_AGENT_ID,
                                 confirmText: t('common.save'),
                                 cancelText: t('common.cancel'),
                             },
@@ -301,6 +399,8 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
             <MemorySettingsPrivacySection settings={settings} writeSettings={writeSettings} />
 
             <MemorySettingsEmbeddingsSection settings={settings} writeSettings={writeSettings} />
+                </>
+            )}
         </ItemList>
     );
 });

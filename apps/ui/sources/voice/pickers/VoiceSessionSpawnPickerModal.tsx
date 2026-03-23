@@ -233,6 +233,10 @@ export function VoiceSessionSpawnPickerModal({ onClose, onResolve }: Props) {
                 favoriteDirectories={favoriteDirectories}
                 onChangeFavoriteDirectories={(dirs) => setFavoriteDirectoriesRaw(dirs)}
                 submitBehavior="showRow"
+                machineBrowse={{
+                  enabled: true,
+                  machineId: selectedMachine?.id ?? null,
+                }}
               />
             </ScrollView>
           </>

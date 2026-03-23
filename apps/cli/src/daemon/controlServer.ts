@@ -9,9 +9,9 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { Metadata } from '@/api/types';
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
 import { TrackedSession } from './types';
 import { SPAWN_SESSION_ERROR_CODES, SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import { mergeSpawnSessionOptions, SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 
 function safeTokenEquals(provided: string, expected: string): boolean {
   const hashA = createHash('sha256').update(provided).digest();
@@ -19,28 +19,26 @@ function safeTokenEquals(provided: string, expected: string): boolean {
   return timingSafeEqual(hashA, hashB);
 }
 
-function asNonEmptyStringTuple<T extends string>(values: readonly T[]): [T, ...T[]] {
-  if (values.length === 0) {
-    throw new Error('CATALOG_AGENT_IDS must not be empty');
-  }
-  return values as [T, ...T[]];
-}
-
 export function createDaemonControlApp({
   getChildren,
+  machineId,
   stopSession,
   spawnSession,
   requestShutdown,
+  beforeShutdown,
   onHappySessionWebhook,
   controlToken,
 }: {
   getChildren: () => TrackedSession[];
+  machineId: string;
   stopSession: (sessionId: string) => Promise<boolean>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
+  beforeShutdown?: () => Promise<void>;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void;
   controlToken: string;
 }): FastifyInstance {
+  void machineId;
   const normalizedControlToken = controlToken.trim();
   if (!normalizedControlToken) {
     throw new Error('Daemon control token is required');
@@ -159,25 +157,7 @@ export function createDaemonControlApp({
   // Spawn new session
       typed.post('/spawn-session', {
         schema: {
-          body: z.object({
-            directory: z.string(),
-            sessionId: z.string().optional(),
-            existingSessionId: z.string().optional(),
-            agent: z.enum(asNonEmptyStringTuple(CATALOG_AGENT_IDS as readonly CatalogAgentId[])).optional(),
-            token: z.string().optional(),
-            experimentalCodexResume: z.boolean().optional(),
-            experimentalCodexAcp: z.boolean().optional(),
-            terminal: z.object({
-              mode: z.enum(['plain', 'tmux']).optional(),
-              tmux: z.object({
-                sessionName: z.string().optional(),
-            isolated: z.boolean().optional(),
-            tmpDir: z.union([z.string(), z.null()]).optional(),
-          }).optional(),
-        }).optional(),
-        environmentVariables: z.record(z.string(), z.string()).optional(),
-        connectedServices: z.unknown().optional(),
-      }),
+          body: SpawnDaemonSessionRequestSchema,
       response: {
         200: z.object({
           success: z.boolean(),
@@ -200,38 +180,21 @@ export function createDaemonControlApp({
     },
         preHandler: requireAuth,
       }, async (request, reply) => {
-        const {
-          directory,
-          sessionId,
-          existingSessionId,
-          agent,
-          token,
-          experimentalCodexResume,
-          experimentalCodexAcp,
-          terminal,
-          environmentVariables,
-          connectedServices,
-        } = request.body;
+        const { directory, sessionId, existingSessionId } = request.body;
 
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
         let result: SpawnSessionResult;
         try {
           const normalizedExistingSessionId = typeof existingSessionId === 'string' && existingSessionId.trim().length > 0
             ? existingSessionId.trim()
-            : typeof sessionId === 'string' && sessionId.trim().length > 0
-              ? sessionId.trim()
-              : undefined;
-          result = await spawnSession({
-            directory,
-            ...(normalizedExistingSessionId ? { existingSessionId: normalizedExistingSessionId } : {}),
-            agent,
-            token,
-            experimentalCodexResume,
-            experimentalCodexAcp,
-            terminal,
-            environmentVariables,
-            connectedServices,
-          });
+            : undefined;
+          result = await spawnSession(
+            mergeSpawnSessionOptions(
+              request.body,
+              normalizedExistingSessionId ? { existingSessionId: normalizedExistingSessionId } : {},
+              normalizedExistingSessionId ? { omit: ['sessionId'] } : {},
+            ) as SpawnSessionOptions,
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           reply.code(500);
@@ -300,28 +263,35 @@ export function createDaemonControlApp({
     // Give time for response to arrive
     setTimeout(() => {
       logger.debug('[CONTROL SERVER] Triggering daemon shutdown');
-      if (!stopSessions) {
-        requestShutdown();
-        return;
-      }
+      const runBeforeShutdown = async (): Promise<void> => {
+        if (!beforeShutdown) return;
+        try {
+          await beforeShutdown();
+        } catch (error) {
+          logger.debug('[CONTROL SERVER] beforeShutdown hook failed (best-effort)', error);
+        }
+      };
 
       void (async () => {
         try {
-          const children = getChildren();
-          logger.debug(`[CONTROL SERVER] stopSessions requested: stopping ${children.length} tracked sessions`);
-          for (const child of children) {
-            const sessionId = typeof child.happySessionId === 'string' ? child.happySessionId.trim() : '';
-            const fallbackSessionId =
-              Number.isFinite(child.pid) && child.pid > 1 ? `PID-${Math.trunc(child.pid)}` : '';
-            const id = sessionId || fallbackSessionId;
-            if (!id) continue;
-            try {
-              // eslint-disable-next-line no-await-in-loop
-              await stopSession(id);
-            } catch (error) {
-              logger.debug(`[CONTROL SERVER] Failed to stop session ${id}`, error);
+          if (stopSessions) {
+            const children = getChildren();
+            logger.debug(`[CONTROL SERVER] stopSessions requested: stopping ${children.length} tracked sessions`);
+            for (const child of children) {
+              const sessionId = typeof child.happySessionId === 'string' ? child.happySessionId.trim() : '';
+              const fallbackSessionId =
+                Number.isFinite(child.pid) && child.pid > 1 ? `PID-${Math.trunc(child.pid)}` : '';
+              const id = sessionId || fallbackSessionId;
+              if (!id) continue;
+              try {
+                // eslint-disable-next-line no-await-in-loop
+                await stopSession(id);
+              } catch (error) {
+                logger.debug(`[CONTROL SERVER] Failed to stop session ${id}`, error);
+              }
             }
           }
+          await runBeforeShutdown();
         } catch (error) {
           logger.debug('[CONTROL SERVER] stopSessions failed', error);
         } finally {
@@ -338,25 +308,31 @@ export function createDaemonControlApp({
 
 export function startDaemonControlServer({
   getChildren,
+  machineId,
   stopSession,
   spawnSession,
   requestShutdown,
+  beforeShutdown,
   onHappySessionWebhook,
   controlToken,
 }: {
   getChildren: () => TrackedSession[];
+  machineId: string;
   stopSession: (sessionId: string) => Promise<boolean>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
+  beforeShutdown?: () => Promise<void>;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void;
   controlToken: string;
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = createDaemonControlApp({
       getChildren,
+      machineId,
       stopSession,
       spawnSession,
       requestShutdown,
+      beforeShutdown,
       onHappySessionWebhook,
       controlToken,
     });

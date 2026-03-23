@@ -8,6 +8,7 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getAgentDropdownMenuItems } from '@/components/settings/pickers/agentDropdownItems';
 import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
 import { getMachineDropdownMenuItems } from '@/components/settings/pickers/machineDropdownItems';
+import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -25,7 +26,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useAllMachines } from '@/sync/store/hooks';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useSetting, useSettings } from '@/sync/domains/state/storage';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 
 function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
@@ -42,6 +43,7 @@ export function LocalConversationSection(props: {
   const { theme } = useUnistyles();
   const voiceAgentEnabled = useFeatureEnabled('voice.agent');
   const enabledAgentIds = useEnabledAgentIds();
+  const settings = useSettings();
   const [openMenu, setOpenMenu] = React.useState<
     | null
     | 'conversationMode'
@@ -89,7 +91,10 @@ export function LocalConversationSection(props: {
         id: '__custom__',
         title: t('settingsVoice.local.modelCustomTitle'),
         subtitle: t('settingsVoice.local.conversation.customBackendIdSubtitle'),
-        icon: <Ionicons name="create-outline" size={22} color={theme.colors.textSecondary} />,
+        icon: renderDropdownItemIcon({
+          name: 'create-outline',
+          color: theme.colors.textSecondary,
+        }),
       },
     ];
   }, [enabledAgentIds, theme.colors.textSecondary]);
@@ -114,7 +119,7 @@ export function LocalConversationSection(props: {
   }, [cfg.agent.machineTargetId, cfg.agent.machineTargetMode, machines, recentMachinePaths]);
 
   const preflightModels = useNewSessionPreflightModelsState({
-    agentType: (selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID) as any,
+    backendTarget: { kind: 'builtInAgent', agentId: (selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID) as any },
     selectedMachineId: preflightMachineId,
     capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
   });
@@ -138,7 +143,10 @@ export function LocalConversationSection(props: {
         id: '__custom__',
         title: t('settingsVoice.local.modelCustomTitle'),
         subtitle: t('settingsVoice.local.modelCustomSubtitle'),
-        icon: <Ionicons name="create-outline" size={22} color={theme.colors.textSecondary} />,
+        icon: renderDropdownItemIcon({
+          name: 'create-outline',
+          color: theme.colors.textSecondary,
+        }),
       },
     ];
   }, [selectableModelMenuItems, theme.colors.textSecondary]);
@@ -191,8 +199,8 @@ export function LocalConversationSection(props: {
     if (cfg.agent.agentSource !== 'agent') return true;
     const agentId = String(cfg.agent.agentId ?? '').trim();
     if (!agentId) return false;
-    return canAgentResume(agentId);
-  }, [cfg.agent.agentId, cfg.agent.agentSource, enabled]);
+    return canAgentResume(agentId, { accountSettings: settings as any });
+  }, [cfg.agent.agentId, cfg.agent.agentSource, enabled, settings]);
 
   if (!enabled) return null;
 
@@ -559,9 +567,6 @@ export function LocalConversationSection(props: {
                     );
                     if (!confirmed) return;
                     await resetGlobalVoiceAgentPersistence();
-                    const epochRaw = Number(cfg.agent.transcript?.epoch ?? 0);
-                    const epoch = Number.isFinite(epochRaw) && epochRaw >= 0 ? Math.floor(epochRaw) : 0;
-                    setAgent({ transcript: { ...(cfg.agent.transcript ?? {}), epoch: epoch + 1 } });
                   })(), { tag: 'LocalConversationSection.confirm.resetVoiceAgent' });
                   }}
                 />
@@ -1198,10 +1203,12 @@ export function LocalConversationSection(props: {
       <ItemGroup title={t('settingsVoice.local.conversation.streaming.title')}>
         <Item
           title={t('settingsVoice.local.conversation.streaming.enableTitle')}
+          subtitle={t('settingsVoice.local.conversation.streaming.enableSubtitle')}
           rightElement={<Switch value={cfg.streaming.enabled} onValueChange={(v) => setStreaming({ enabled: v })} />}
         />
         <Item
           title={t('settingsVoice.local.conversation.streaming.enableTtsTitle')}
+          subtitle={t('settingsVoice.local.conversation.streaming.enableTtsSubtitle')}
           rightElement={<Switch value={cfg.streaming.ttsEnabled} onValueChange={(v) => setStreaming({ ttsEnabled: v })} />}
         />
         <Item

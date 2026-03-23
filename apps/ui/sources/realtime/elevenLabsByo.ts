@@ -1,10 +1,16 @@
 import { getElevenLabsApiBaseUrl, getElevenLabsApiTimeoutMs } from './elevenlabs/elevenLabsApi';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
-export async function fetchElevenLabsConversationTokenByo(params: {
+type ElevenLabsByoAuthParams = {
     agentId: string;
     apiKey: string;
-}): Promise<string> {
+};
+
+async function fetchElevenLabsByoAuthJson<T>(params: ElevenLabsByoAuthParams & {
+    path: string;
+    errorPrefix: string;
+    pick: (data: any) => T | null;
+}): Promise<T> {
     const agentId = params.agentId.trim();
     const apiKey = params.apiKey.trim();
     if (!agentId) throw new Error('Missing ElevenLabs agentId');
@@ -16,7 +22,7 @@ export async function fetchElevenLabsConversationTokenByo(params: {
     try {
         const baseUrl = getElevenLabsApiBaseUrl();
         res = await runtimeFetch(
-            `${baseUrl}/convai/conversation/token?agent_id=${encodeURIComponent(agentId)}`,
+            `${baseUrl}${params.path}?agent_id=${encodeURIComponent(agentId)}`,
             {
                 method: 'GET',
                 headers: {
@@ -37,12 +43,30 @@ export async function fetchElevenLabsConversationTokenByo(params: {
 
     const data = await res.json().catch(() => null);
     if (!res.ok) {
-        throw new Error(`ElevenLabs token request failed (${res.status})`);
+        throw new Error(`${params.errorPrefix} failed (${res.status})`);
     }
 
-    const token = data?.token;
-    if (typeof token !== 'string' || !token.trim()) {
-        throw new Error('ElevenLabs token response missing token');
+    const picked = params.pick(data);
+    if (picked == null || (typeof picked === 'string' && !picked.trim())) {
+        throw new Error(`${params.errorPrefix} response missing value`);
     }
-    return token;
+    return picked;
+}
+
+export async function fetchElevenLabsConversationTokenByo(params: ElevenLabsByoAuthParams): Promise<string> {
+    return await fetchElevenLabsByoAuthJson({
+        ...params,
+        path: '/convai/conversation/token',
+        errorPrefix: 'ElevenLabs token request',
+        pick: (data) => (typeof data?.token === 'string' ? data.token : null),
+    });
+}
+
+export async function fetchElevenLabsConversationSignedUrlByo(params: ElevenLabsByoAuthParams): Promise<string> {
+    return await fetchElevenLabsByoAuthJson({
+        ...params,
+        path: '/convai/conversation/get-signed-url',
+        errorPrefix: 'ElevenLabs signed URL request',
+        pick: (data) => (typeof data?.signed_url === 'string' ? data.signed_url : null),
+    });
 }

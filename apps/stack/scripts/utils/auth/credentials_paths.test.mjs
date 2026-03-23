@@ -10,6 +10,7 @@ import {
   findAnyCredentialPathInCliHome,
   resolveStackDaemonStatePaths,
   resolvePreferredStackDaemonStatePaths,
+  findAnyDaemonStatePairInCliHome,
 } from './credentials_paths.mjs';
 
 test('resolveStackCredentialPaths returns legacy + server-scoped paths', async () => {
@@ -161,6 +162,63 @@ test('resolvePreferredStackDaemonStatePaths falls back to legacy paths', async (
   const preferred = resolvePreferredStackDaemonStatePaths({ cliHomeDir: dir, serverUrl });
   assert.equal(preferred.statePath, out.legacyStatePath);
   assert.equal(preferred.lockPath, out.legacyLockPath);
+});
+
+test('findAnyDaemonStatePairInCliHome prefers the newest server-scoped daemon state over legacy', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-any-'));
+  const legacyStatePath = join(dir, 'daemon.state.json');
+  const newerServerDir = join(dir, 'servers', 'stack_dev-built__id_default');
+  const olderServerDir = join(dir, 'servers', 'stack_main__id_default');
+  await mkdir(newerServerDir, { recursive: true });
+  await mkdir(olderServerDir, { recursive: true });
+
+  await writeFile(legacyStatePath, '{"pid":1}\n', 'utf-8');
+  await writeFile(join(olderServerDir, 'daemon.state.json'), '{"pid":2}\n', 'utf-8');
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  await writeFile(join(newerServerDir, 'daemon.state.json'), '{"pid":3}\n', 'utf-8');
+
+  const found = findAnyDaemonStatePairInCliHome({ cliHomeDir: dir });
+  assert.deepEqual(found, {
+    statePath: join(newerServerDir, 'daemon.state.json'),
+    lockPath: join(newerServerDir, 'daemon.state.json.lock'),
+  });
+});
+
+test('resolvePreferredStackDaemonStatePaths falls back to any existing server-scoped daemon state before legacy when no server context is requested', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-any-preferred-'));
+  const legacyStatePath = join(dir, 'daemon.state.json');
+  const serverDir = join(dir, 'servers', 'stack_dev-built__id_default');
+  await mkdir(serverDir, { recursive: true });
+
+  await writeFile(legacyStatePath, '{"pid":1}\n', 'utf-8');
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  await writeFile(join(serverDir, 'daemon.state.json'), '{"pid":3}\n', 'utf-8');
+
+  const preferred = resolvePreferredStackDaemonStatePaths({ cliHomeDir: dir, serverUrl: '' });
+  assert.equal(preferred.statePath, join(serverDir, 'daemon.state.json'));
+  assert.equal(preferred.lockPath, join(serverDir, 'daemon.state.json.lock'));
+});
+
+test('resolvePreferredStackDaemonStatePaths does not fall back to another server-scoped daemon state for a requested server context', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-isolated-preferred-'));
+  const serverUrl = 'http://127.0.0.1:4311';
+  const paths = resolveStackDaemonStatePaths({
+    cliHomeDir: dir,
+    serverUrl,
+    env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_dev2__id_default' },
+  });
+  const otherServerDir = join(dir, 'servers', 'stack_dev__id_default');
+  await mkdir(otherServerDir, { recursive: true });
+  await writeFile(join(otherServerDir, 'daemon.state.json'), '{"pid":3}\n', 'utf-8');
+
+  const preferred = resolvePreferredStackDaemonStatePaths({
+    cliHomeDir: dir,
+    serverUrl,
+    env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_dev2__id_default' },
+  });
+
+  assert.equal(preferred.statePath, paths.serverScopedStatePath);
+  assert.equal(preferred.lockPath, paths.serverScopedLockPath);
 });
 
 test('resolvePreferredStackDaemonStatePaths falls back to url-hash server-scoped state when stable scope is empty', async () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
+import { applyEnvValues, restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
 
 describe("auth (persistent seed compatibility)", () => {
     const envBackup = snapshotEnv();
@@ -12,7 +12,7 @@ describe("auth (persistent seed compatibility)", () => {
     });
 
     it("retries persistent token init when runtime key import rejects the seed", async () => {
-        process.env.HANDY_MASTER_SECRET = "fallback-seed";
+        applyEnvValues({ HANDY_MASTER_SECRET: "fallback-seed" });
 
         let generatorCalls = 0;
         const mockGenerator = {

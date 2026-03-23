@@ -4,6 +4,7 @@ import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type {
   ExecutionRunManagerStartParams,
   ExecutionRunStartResult,
@@ -15,11 +16,16 @@ import type {
   ExecutionRunVoiceAgentController,
 } from '@/agent/executionRuns/controllers/types';
 import { VoiceAgentError, type VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
-import { forwardAcpMessageDelta } from '@/agent/acp/bridge/acpSessionForwarding';
-import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgentMessageForwarder';
-import { computeSidechainStreamText } from '@/agent/executionRuns/runtime/sidechainStreamText';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
+import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/registry/executionRunBackendTypes';
+import { createStreamedTranscriptWriter, type StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
+import { createBackendControllerMessageHandler } from '@/agent/executionRuns/runtime/createBackendControllerMessageHandler';
+import {
+  areExecutionRunBackendTargetsEqual,
+  resolveExecutionRunBuiltInAgentId,
+  resolveExecutionRunRuntimeBackendId,
+} from '@/agent/executionRuns/runtime/backendTargets';
 
 type SendAcp = (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
 
@@ -31,6 +37,7 @@ type FinishRunNext = Omit<
   | 'sessionId'
   | 'depth'
   | 'intent'
+  | 'backendTarget'
   | 'backendId'
   | 'instructions'
   | 'permissionMode'
@@ -51,6 +58,12 @@ type FinishRun = (
   structuredMeta?: ExecutionRunStructuredMeta,
 ) => void;
 
+function normalizeVoiceAgentModelId(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  return trimmed === 'default' ? '' : trimmed;
+}
+
 type ExecuteBoundedRun = (args: {
   runId: string;
   callId: string;
@@ -63,13 +76,16 @@ export async function startExecutionRun(args: Readonly<{
   params: ExecutionRunManagerStartParams;
   parentProvider: ACPProvider;
   sendAcp: SendAcp;
-  createBackend: (opts: {
-    runId?: string;
-    backendId: string;
-    permissionMode: string;
-    modelId?: string;
-    start?: ExecutionRunManagerStartParams;
-  }) => AgentBackend;
+  streamedTranscriptSession: StreamedTranscriptWriterSession | null;
+    createBackend: (opts: {
+      runId?: string;
+      backendId: string;
+      backendTarget?: BackendTargetRefV1;
+      permissionMode: string;
+      modelId?: string;
+      accountSettings?: Readonly<Record<string, unknown>> | null;
+      start?: ExecutionRunBackendStartContext;
+    }) => AgentBackend;
   getNowMs: () => number;
   budgetRegistry: ExecutionBudgetRegistry | null;
   runs: Map<string, ExecutionRunState>;
@@ -84,6 +100,7 @@ export async function startExecutionRun(args: Readonly<{
   ) => Promise<{ ok: boolean; errorCode?: string; error?: string }>;
   voiceAgentManager: VoiceAgentManager;
   getDepthByCallId: (callId: string) => number | null;
+  onPublicStateUpdated?: (runId: string) => void;
 }>): Promise<ExecutionRunStartResult> {
   const profile = resolveExecutionRunIntentProfile(args.params.intent);
   const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
@@ -114,6 +131,7 @@ export async function startExecutionRun(args: Readonly<{
   }
 
   const startedAtMs = args.getNowMs();
+  const backendId = resolveExecutionRunRuntimeBackendId(args.params.backendTarget);
   args.runs.set(runId, {
     runId,
     callId,
@@ -121,8 +139,10 @@ export async function startExecutionRun(args: Readonly<{
     sessionId: args.params.sessionId,
     depth,
     intent: args.params.intent,
-    backendId: args.params.backendId,
+    backendTarget: args.params.backendTarget,
+    backendId,
     instructions: args.params.instructions ?? '',
+    ...(typeof args.params.intentInput !== 'undefined' ? { intentInput: args.params.intentInput } : {}),
     ...(args.params.display ? { display: args.params.display } : {}),
     permissionMode: args.params.permissionMode,
     retentionPolicy: args.params.retentionPolicy,
@@ -132,6 +152,7 @@ export async function startExecutionRun(args: Readonly<{
     startedAtMs,
     resumeHandle: null,
   });
+  args.onPublicStateUpdated?.(runId);
 
   // Persist a daemon-visible marker so machine-wide UIs can see the run immediately.
   const startMarkerPayload = {
@@ -141,8 +162,9 @@ export async function startExecutionRun(args: Readonly<{
     callId,
     sidechainId,
     intent: args.params.intent,
-    backendId: args.params.backendId,
+    backendTarget: args.params.backendTarget,
     ...(args.params.display ? { display: args.params.display } : {}),
+    permissionMode: args.params.permissionMode,
     runClass: args.params.runClass,
     ioMode: args.params.ioMode,
     retentionPolicy: args.params.retentionPolicy,
@@ -162,8 +184,9 @@ export async function startExecutionRun(args: Readonly<{
       input: {
         runId,
         intent: args.params.intent,
-        backendId: args.params.backendId,
+        backendTarget: args.params.backendTarget,
         instructions: args.params.instructions ?? '',
+        ...(typeof args.params.intentInput !== 'undefined' ? { intentInput: args.params.intentInput } : {}),
         ...(args.params.display ? { display: args.params.display } : {}),
         permissionMode: args.params.permissionMode,
         retentionPolicy: args.params.retentionPolicy,
@@ -186,27 +209,49 @@ export async function startExecutionRun(args: Readonly<{
       const persistenceMode = args.params.transcript?.persistenceMode === 'persistent' ? 'persistent' : 'ephemeral';
 
       const permissionPolicy = args.params.permissionMode === 'no_tools' ? 'no_tools' : 'read_only';
+      const profileId =
+        typeof args.params.profileId === 'string' && args.params.profileId.trim().length > 0
+          ? args.params.profileId.trim()
+          : null;
       const initialContext = [String(args.params.initialContext ?? '').trim(), String(args.params.instructions ?? '').trim()]
         .filter((t) => t.length > 0)
         .join('\n\n');
 
-      const chatModelId = String(args.params.chatModelId ?? 'default');
-      const commitModelId = String(args.params.commitModelId ?? 'default');
+      const chatModelId = normalizeVoiceAgentModelId(args.params.chatModelId);
+      const commitModelId = normalizeVoiceAgentModelId(args.params.commitModelId);
       const commitIsolation = args.params.commitIsolation === true;
       const idleTtlSeconds = typeof args.params.idleTtlSeconds === 'number' ? args.params.idleTtlSeconds : 600;
+      const initialContextMode = args.params.initialContextMode === 'first_turn' ? 'first_turn' : 'bootstrap';
       const verbosity = args.params.verbosity === 'balanced' ? 'balanced' : 'short';
       const bootstrapMode = args.params.bootstrapMode === 'ready_handshake' ? 'ready_handshake' : 'none';
+      const bootstrapTimeoutMs =
+        typeof args.params.bootstrapTimeoutMs === 'number' && Number.isFinite(args.params.bootstrapTimeoutMs) && args.params.bootstrapTimeoutMs > 0
+          ? Math.floor(args.params.bootstrapTimeoutMs)
+          : undefined;
+      const disabledActionIds = Array.isArray(args.params.disabledActionIds)
+        ? args.params.disabledActionIds.map((value) => String(value ?? '').trim()).filter(Boolean)
+        : [];
+
+      const builtInAgentId = resolveExecutionRunBuiltInAgentId(args.params.backendTarget);
+      if (!builtInAgentId) {
+        throw new VoiceAgentError('VOICE_AGENT_UNSUPPORTED', 'Voice agent runs require a built-in backend');
+      }
 
       const startedVoice = await args.voiceAgentManager.start({
-        agentId: args.params.backendId as any,
+        agentId: builtInAgentId as any,
+        ...(profileId ? { profileId } : {}),
+        contextSessionId: args.params.sessionId,
         chatModelId,
         commitModelId,
         commitIsolation,
         permissionPolicy,
         idleTtlSeconds,
         initialContext,
+        initialContextMode,
         verbosity,
         bootstrapMode,
+        ...(typeof bootstrapTimeoutMs === 'number' ? { bootstrapTimeoutMs } : {}),
+        disabledActionIds,
       });
 
       const resumeHandle = args.voiceAgentManager.getResumeHandle(startedVoice.voiceAgentId);
@@ -216,16 +261,21 @@ export async function startExecutionRun(args: Readonly<{
           ...existing,
           resumeHandle: resumeHandle ?? existing.resumeHandle ?? null,
           voiceAgentConfig: {
+            ...(profileId ? { profileId } : {}),
             chatModelId,
             commitModelId,
             commitIsolation,
             permissionPolicy,
             idleTtlSeconds,
             initialContext,
+            initialContextMode,
             verbosity,
+            ...(typeof bootstrapTimeoutMs === 'number' ? { bootstrapTimeoutMs } : {}),
+            disabledActionIds,
             transcript: { persistenceMode, epoch },
           },
         });
+        args.onPublicStateUpdated?.(runId);
       }
 
       const ctrl: ExecutionRunVoiceAgentController = {
@@ -245,18 +295,34 @@ export async function startExecutionRun(args: Readonly<{
       return { runId, callId, sidechainId };
     }
 
-    const backend = args.createBackend({ runId, backendId: args.params.backendId, permissionMode: args.params.permissionMode, start: args.params });
+    const backend = args.createBackend({
+      runId,
+      backendId,
+      backendTarget: args.params.backendTarget,
+      permissionMode: args.params.permissionMode,
+      accountSettings: args.params.accountSettings ?? null,
+      start: args.params,
+    });
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
       resolveTerminal = resolve;
     });
+    const backendSupportsResume = Boolean(backend.loadSessionWithReplayCapture || backend.loadSession);
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
       backend,
+      backendSupportsResume,
       childSessionId: null,
       buffer: '',
       sidechainStreamBuffer: '',
       sidechainStreamKey: '',
+      streamWriter:
+        shouldMaterializeInTranscript && args.streamedTranscriptSession && args.params.ioMode === 'streaming'
+          ? createStreamedTranscriptWriter({
+              provider: args.parentProvider,
+              session: args.streamedTranscriptSession,
+            })
+          : null,
       cancelled: false,
       turnCount: 0,
       turnEpoch: 0,
@@ -271,79 +337,20 @@ export async function startExecutionRun(args: Readonly<{
     };
     args.controllers.set(runId, ctrl);
 
-    const forwarder = createAcpAgentMessageForwarder({
-      sendAcp,
-      provider: args.parentProvider,
+    const onMessage: AgentMessageHandler = createBackendControllerMessageHandler({
+      ctrl,
+      runId,
       sidechainId,
-      makeId: () => randomUUID(),
+      intent: args.params.intent,
+      ioMode: args.params.ioMode,
+      sendAcp,
+      parentProvider: args.parentProvider,
+      runs: args.runs,
+      backendSupportsResume,
+      writeActivityMarker: args.writeActivityMarker,
+      getNowMs: args.getNowMs,
+      onPublicStateUpdated: args.onPublicStateUpdated,
     });
-
-    const onMessage: AgentMessageHandler = (msg) => {
-      if (msg.type === 'event' && msg.name === 'vendor_session_id') {
-        const vendorSessionId = (msg.payload as any)?.sessionId;
-        if (typeof vendorSessionId === 'string' && vendorSessionId.trim().length > 0) {
-          ctrl.childSessionId = vendorSessionId as SessionId;
-          const run = args.runs.get(runId);
-          if (run?.retentionPolicy === 'resumable') {
-            args.runs.set(runId, {
-              ...run,
-              resumeHandle: { kind: 'vendor_session.v1', backendId: run.backendId, vendorSessionId },
-            });
-          }
-        }
-        return;
-      }
-
-      forwarder.forward(msg as any);
-
-      if (msg.type !== 'model-output') return;
-      const prevFullText = ctrl.buffer;
-      if (typeof (msg as any).fullText === 'string') {
-        ctrl.buffer = String((msg as any).fullText);
-      } else if (typeof (msg as any).textDelta === 'string') {
-        ctrl.buffer += String((msg as any).textDelta);
-      }
-
-      // Streaming: emit best-effort sidechain transcript updates.
-      if (args.params.ioMode === 'streaming') {
-        const streamKey = `${sidechainId}:turn:${ctrl.turnCount}`;
-        if (!ctrl.sidechainStreamKey || ctrl.sidechainStreamKey !== streamKey) {
-          ctrl.sidechainStreamKey = streamKey;
-          ctrl.sidechainStreamBuffer = '';
-        }
-
-        const nextStreamText = computeSidechainStreamText(args.params.intent, ctrl.buffer);
-        if (typeof nextStreamText === 'string') {
-          const prevStreamText = ctrl.sidechainStreamBuffer;
-
-          const delta = (() => {
-            if (nextStreamText.startsWith(prevStreamText)) {
-              return nextStreamText.slice(prevStreamText.length);
-            }
-
-            // Fallback: if the backend reports cumulative fullText but it diverges (vendor bug/restarts),
-            // emit the delta between previous and current fullText as best-effort.
-            if (ctrl.buffer === prevFullText) return '';
-            return nextStreamText;
-          })();
-
-          if (delta && delta.length > 0) {
-            ctrl.sidechainStreamBuffer = nextStreamText;
-            forwardAcpMessageDelta({
-              sendAcp,
-              provider: args.parentProvider,
-              delta,
-              sidechainId,
-              streamMetaKey: 'happierSidechainStreamKey',
-              streamKey,
-            });
-          }
-        }
-      }
-
-      // Best-effort: reflect activity for machine-wide run listing.
-      void args.writeActivityMarker(runId, args.getNowMs());
-    };
 
     backend.onMessage(onMessage);
 
@@ -355,7 +362,9 @@ export async function startExecutionRun(args: Readonly<{
           const childSessionId = await (async () => {
             const handle = args.params.retentionPolicy === 'resumable' ? (args.params.resumeHandle ?? null) : null;
             const wantsResume =
-              handle?.kind === 'vendor_session.v1' && handle.backendId === args.params.backendId ? handle.vendorSessionId : null;
+              handle?.kind === 'vendor_session.v1' && areExecutionRunBackendTargetsEqual(handle.backendTarget, args.params.backendTarget)
+                ? handle.vendorSessionId
+                : null;
             if (wantsResume) {
               if (!backend.loadSessionWithReplayCapture && !backend.loadSession) {
                 const err: any = new Error('Backend does not support resume');
@@ -373,12 +382,13 @@ export async function startExecutionRun(args: Readonly<{
           ctrl.childSessionId = childSessionId;
 
           const existing = args.runs.get(runId);
-          if (existing && args.params.retentionPolicy === 'resumable') {
+          if (existing && args.params.retentionPolicy === 'resumable' && backendSupportsResume) {
             args.runs.set(runId, {
               ...existing,
-              resumeHandle: { kind: 'vendor_session.v1', backendId: args.params.backendId, vendorSessionId: childSessionId },
+              resumeHandle: { kind: 'vendor_session.v1', backendTarget: args.params.backendTarget, vendorSessionId: childSessionId },
             });
             void args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
+            args.onPublicStateUpdated?.(runId);
           }
 
           void args
@@ -404,7 +414,7 @@ export async function startExecutionRun(args: Readonly<{
                   runId,
                   callId,
                   sidechainId,
-                  backendId: args.params.backendId,
+                  backendId,
                   intent: args.params.intent,
                   startedAtMs,
                   finishedAtMs,
@@ -436,7 +446,10 @@ export async function startExecutionRun(args: Readonly<{
     // so follow-up execution.run.send calls don't race the vendor session startup.
     const childSessionId = await (async () => {
       const handle = args.params.retentionPolicy === 'resumable' ? (args.params.resumeHandle ?? null) : null;
-      const wantsResume = handle?.kind === 'vendor_session.v1' && handle.backendId === args.params.backendId ? handle.vendorSessionId : null;
+      const wantsResume =
+        handle?.kind === 'vendor_session.v1' && areExecutionRunBackendTargetsEqual(handle.backendTarget, args.params.backendTarget)
+          ? handle.vendorSessionId
+          : null;
       if (wantsResume) {
         if (!backend.loadSessionWithReplayCapture && !backend.loadSession) {
           const err: any = new Error('Backend does not support resume');
@@ -454,12 +467,13 @@ export async function startExecutionRun(args: Readonly<{
     ctrl.childSessionId = childSessionId;
 
     const existing = args.runs.get(runId);
-    if (existing && args.params.retentionPolicy === 'resumable') {
+    if (existing && args.params.retentionPolicy === 'resumable' && backendSupportsResume) {
       args.runs.set(runId, {
         ...existing,
-        resumeHandle: { kind: 'vendor_session.v1', backendId: args.params.backendId, vendorSessionId: childSessionId },
+        resumeHandle: { kind: 'vendor_session.v1', backendTarget: args.params.backendTarget, vendorSessionId: childSessionId },
       });
       await args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
+      args.onPublicStateUpdated?.(runId);
     }
 
     if (typeof args.params.instructions === 'string' && args.params.instructions.trim().length > 0) {
@@ -469,7 +483,8 @@ export async function startExecutionRun(args: Readonly<{
         callId,
         sidechainId,
         intent: args.params.intent,
-        backendId: args.params.backendId,
+        backendId,
+        backendTarget: args.params.backendTarget,
         instructions: args.params.instructions ?? '',
         permissionMode: args.params.permissionMode,
         retentionPolicy: args.params.retentionPolicy,
@@ -497,7 +512,7 @@ export async function startExecutionRun(args: Readonly<{
             runId,
             callId,
             sidechainId,
-            backendId: args.params.backendId,
+            backendId,
             intent: args.params.intent,
             startedAtMs,
             finishedAtMs,

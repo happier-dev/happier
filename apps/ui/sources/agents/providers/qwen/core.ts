@@ -1,4 +1,8 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
+import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
+import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const QWEN_CORE: AgentCoreConfig = {
@@ -13,16 +17,7 @@ export const QWEN_CORE: AgentCoreConfig = {
         connectRoute: null,
     },
     flavorAliases: ['qwen', 'qwen-code'],
-    cli: {
-        detectKey: 'qwen',
-        machineLoginKey: 'qwen',
-        installBanner: {
-            installKind: 'command',
-            installCommand: 'npm install -g @qwenlm/qwen-code',
-            guideUrl: 'https://qwenlm.github.io/qwen-code-docs/',
-        },
-        spawnAgent: 'qwen',
-    },
+    cli: buildCatalogProviderCliUiConfig('qwen'),
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
@@ -31,17 +26,16 @@ export const QWEN_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('qwen'),
     },
     model: getAgentModelConfig('qwen'),
-    resume: {
-        vendorResumeIdField: 'qwenSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'qwen',
         uiVendorResumeIdLabelKey: 'sessionInfo.qwenSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.qwenSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },
+    tools: buildAgentToolsUiConfig({ agentId: 'qwen' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'qwen' }),
     ui: {
         agentPickerIconName: 'code-slash-outline',
         cliGlyphScale: 1.0,

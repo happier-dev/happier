@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import tweetnacl from 'tweetnacl';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 
-import { installAxiosFastifyAdapter } from '@/ui/testkit/axiosFastifyAdapter.testkit';
-import { createEnvKeyScope, setStdioTtyForTest } from '@/ui/testkit/authNonInteractiveGlobals.testkit';
+import { decodeBase64 } from '@/api/encryption';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { setStdioTtyForTest } from '@/testkit/process/stdio';
 
 const spawnSyncMock = vi.fn();
 
@@ -37,7 +39,7 @@ describe('auth pair-remote (ssh) (json)', () => {
   beforeEach(async () => {
     vi.useRealTimers();
     envScope = createEnvKeyScope(envKeys);
-    localHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-auth-local-'));
+    localHomeDir = await createTempDir('happier-cli-auth-local-');
     restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
     spawnSyncMock.mockReset();
   });
@@ -48,7 +50,7 @@ describe('auth pair-remote (ssh) (json)', () => {
     envScope.restore();
     vi.resetModules();
     vi.unstubAllGlobals();
-    await rm(localHomeDir, { recursive: true, force: true });
+    await removeTempDir(localHomeDir);
   });
 
   it('orchestrates remote request + local approve + remote wait using ssh', async () => {
@@ -79,7 +81,8 @@ describe('auth pair-remote (ssh) (json)', () => {
       });
       vi.resetModules();
       const { writeCredentialsLegacy } = await import('@/persistence');
-      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: 'local-token' });
+      const legacySecret = new Uint8Array(32).fill(9);
+      await writeCredentialsLegacy({ secret: legacySecret, token: 'local-token' });
 
       const remoteKeypair = tweetnacl.box.keyPair();
       const remotePublicKey = Buffer.from(remoteKeypair.publicKey).toString('base64');
@@ -101,11 +104,12 @@ describe('auth pair-remote (ssh) (json)', () => {
 
       vi.resetModules();
       const { handleAuthPairRemote } = await import('./auth/pairRemote');
-      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const { decryptWithEphemeralKey } = await import('@/ui/auth');
+      const output = captureConsoleLogAndMuteStdout();
       try {
         await handleAuthPairRemote(['--ssh', 'user@host', '--json']);
       } finally {
-        logSpy.mockRestore();
+        output.restore();
       }
 
       expect(spawnSyncMock).toHaveBeenCalledTimes(2);
@@ -120,6 +124,86 @@ describe('auth pair-remote (ssh) (json)', () => {
       expect(secondCall[1].join(' ')).toContain(`happier auth wait --public-key ${remotePublicKey} --json`);
 
       expect(requests.has(remotePublicKey)).toBe(true);
+      const response = requests.get(remotePublicKey)?.response;
+      expect(typeof response).toBe('string');
+      const decrypted = decryptWithEphemeralKey(decodeBase64(String(response)), remoteKeypair.secretKey);
+      const expectedMachineKey = deriveAccountMachineKeyFromRecoverySecret(legacySecret);
+      expect(decrypted).not.toBeNull();
+      expect(decrypted?.[0]).toBe(0);
+      expect(Array.from(decrypted?.slice(1, 33) ?? [])).toEqual(Array.from(expectedMachineKey));
+    } finally {
+      restoreAxios();
+      await app.close().catch(() => {});
+    }
+  }, 20_000);
+
+  it('reuses the approving machine data key when pairing a remote machine', async () => {
+    const requests = new Map<string, { response: string | null }>();
+    const app = fastify({ logger: false });
+
+    app.post('/v1/auth/response', async (req, reply) => {
+      const authHeader = String((req.headers as any)?.authorization ?? '');
+      if (authHeader !== 'Bearer local-token') return reply.code(401).send({ error: 'unauthorized' });
+      const body = req.body as { publicKey?: unknown; response?: unknown } | undefined;
+      const publicKey = typeof body?.publicKey === 'string' ? body.publicKey : '';
+      const response = typeof body?.response === 'string' ? body.response : '';
+      if (!publicKey || !response) return reply.code(400).send({ error: 'invalid' });
+      requests.set(publicKey, { response });
+      return reply.send({ success: true });
+    });
+
+    await app.ready();
+    const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
+
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: localHomeDir,
+        HAPPIER_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_PUBLIC_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_WEBAPP_URL: 'http://webapp.test',
+        HAPPIER_VARIANT: 'stable',
+      });
+      vi.resetModules();
+      const machineKey = new Uint8Array(32).fill(7);
+      const { writeCredentialsDataKey } = await import('@/persistence');
+      await writeCredentialsDataKey({
+        publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey,
+        machineKey,
+        token: 'local-token',
+      });
+
+      const remoteKeypair = tweetnacl.box.keyPair();
+      const remotePublicKey = Buffer.from(remoteKeypair.publicKey).toString('base64');
+      const remoteRequestJson = JSON.stringify({ publicKey: remotePublicKey, claimSecret: Buffer.from(new Uint8Array(32).fill(1)).toString('base64url') });
+
+      spawnSyncMock
+        .mockImplementationOnce((_cmd, _args) => ({
+          status: 0,
+          stdout: Buffer.from(remoteRequestJson + '\n', 'utf8'),
+          stderr: Buffer.alloc(0),
+        }))
+        .mockImplementationOnce((_cmd, _args) => ({
+          status: 0,
+          stdout: Buffer.from(JSON.stringify({ success: true }) + '\n', 'utf8'),
+          stderr: Buffer.alloc(0),
+        }));
+
+      vi.resetModules();
+      const { handleAuthPairRemote } = await import('./auth/pairRemote');
+      const { decryptWithEphemeralKey } = await import('@/ui/auth');
+      const output = captureConsoleLogAndMuteStdout();
+      try {
+        await handleAuthPairRemote(['--ssh', 'user@host', '--json']);
+      } finally {
+        output.restore();
+      }
+
+      const response = requests.get(remotePublicKey)?.response;
+      expect(typeof response).toBe('string');
+      const decrypted = decryptWithEphemeralKey(decodeBase64(String(response)), remoteKeypair.secretKey);
+      expect(decrypted).not.toBeNull();
+      expect(decrypted?.[0]).toBe(0);
+      expect(Array.from(decrypted?.slice(1, 33) ?? [])).toEqual(Array.from(machineKey));
     } finally {
       restoreAxios();
       await app.close().catch(() => {});

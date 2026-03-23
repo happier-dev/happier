@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -10,7 +10,9 @@ import { getExpoStatePaths, isStateProcessRunning, looksLikeExpoMetro } from '..
 import { resolveLocalhostHost } from '../paths/localhost_host.mjs';
 import { getStackRuntimeStatePath, isPidAlive, readStackRuntimeStateFile } from '../stack/runtime_state.mjs';
 import { readEnvObjectFromFile } from '../env/read.mjs';
-import { resolveServerUrls } from '../server/urls.mjs';
+import { getWebappUrlEnvOverride, resolveServerUrls } from '../server/urls.mjs';
+import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { resolveRuntimeManifestEntrypoint } from '../../runtime/shared/runtime_manifest.mjs';
 
 function extractEnvVar(cmd, key) {
   const re = new RegExp(`${key}="([^"]+)"`);
@@ -138,9 +140,36 @@ async function fetchText(url, { timeoutMs = 2000 } = {}) {
   }
 }
 
+async function fetchResponse(url, { timeoutMs = 2000 } = {}) {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeout = setTimeout(() => controller?.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller?.signal });
+    return { ok: true, status: res.status, response: res };
+  } catch (e) {
+    return {
+      ok: false,
+      status: 0,
+      error: String(e?.message ?? e),
+      response: null,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function pickHtmlBundlePath(html) {
   const m = String(html ?? '').match(/<script[^>]+src="([^"]+)"[^>]*><\/script>/i);
   return m?.[1] ? String(m[1]) : '';
+}
+
+const HAPPIER_SERVER_UI_READY_MARKER = 'Welcome to Happier Server!';
+
+function isHappierServerHtmlResponse({ ok, contentType, body }) {
+  if (!ok) return false;
+  const html = String(body ?? '');
+  const looksLikeHtml = String(contentType ?? '').includes('text/html') || /<html|<!doctype/i.test(html);
+  return looksLikeHtml && html.includes(HAPPIER_SERVER_UI_READY_MARKER);
 }
 
 export function parseExpoBundleErrorPayload(payload) {
@@ -159,7 +188,7 @@ export function parseExpoBundleErrorPayload(payload) {
 async function detectSymlinkedNodeModules({ worktreeDir }) {
   try {
     const p = join(worktreeDir, 'node_modules');
-    const st = await stat(p);
+    const st = await lstat(p);
     return Boolean(st.isSymbolicLink && st.isSymbolicLink());
   } catch {
     return false;
@@ -197,13 +226,16 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
     }
 
     // eslint-disable-next-line no-await-in-loop
-    const bundleRes = await fetchText(`${base}${bundlePath.startsWith('/') ? '' : '/'}${bundlePath}`, { timeoutMs: 8000 });
-    if (bundleRes.ok) {
+    const bundleRes = await fetchResponse(`${base}${bundlePath.startsWith('/') ? '' : '/'}${bundlePath}`, { timeoutMs: 8000 });
+    if (bundleRes.ok && bundleRes.status >= 200 && bundleRes.status < 300) {
+      bundleRes.response?.body?.cancel?.().catch?.(() => {});
       return;
     }
 
     // Metro resolver errors are deterministic: surface immediately with actionable hints.
-    const bundleError = parseExpoBundleErrorPayload(bundleRes.text);
+    const bundleText = bundleRes.response ? await bundleRes.response.text().catch(() => '') : String(bundleRes.error ?? '');
+    bundleRes.response?.body?.cancel?.().catch?.(() => {});
+    const bundleError = parseExpoBundleErrorPayload(bundleText);
     if (bundleError?.isResolverError) {
       let hint = '';
       try {
@@ -244,19 +276,80 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
   }
 }
 
-export async function resolveStackWebappUrlForAuth({ rootDir, stackName, env = process.env }) {
-  // Fast path: runtime Expo metadata is a hint, but only accepted when liveness checks pass.
+async function assertServerWebappReadyOrThrow({ webappUrl, timeoutMs = 30_000 } = {}) {
+  const timeout = Number(timeoutMs);
+  const deadline = Date.now() + (Number.isFinite(timeout) && timeout > 0 ? timeout : 30_000);
+  let lastError = '';
+  while (Date.now() < deadline) {
+    // eslint-disable-next-line no-await-in-loop
+    const rootRes = await fetchText(webappUrl, { timeoutMs: 2500 });
+    const contentType = String(rootRes.headers?.get?.('content-type') ?? '').toLowerCase();
+    const body = String(rootRes.text ?? '');
+    if (isHappierServerHtmlResponse({ ok: rootRes.ok, contentType, body })) {
+      return;
+    }
+    lastError = rootRes.ok
+      ? contentType.includes('text/html') || /<html|<!doctype/i.test(body)
+        ? `missing Happier UI readiness marker at ${webappUrl}`
+        : `non-html response from ${webappUrl}`
+      : `HTTP ${rootRes.status} loading ${webappUrl}`;
+    // eslint-disable-next-line no-await-in-loop
+    await delay(Math.min(500, Math.max(0, deadline - Date.now())));
+  }
+
+  throw new Error(
+    '[auth] stack-served web UI did not become ready for guided login.\n' +
+      `[auth] URL: ${webappUrl}\n` +
+      `[auth] Last error: ${lastError || 'unknown error'}\n`
+  );
+}
+
+export async function assertGuidedAuthWebappReadyOrThrow({ rootDir, stackName, webappUrl, kind = 'expo', timeoutMs } = {}) {
+  if (kind === 'server') {
+    await assertServerWebappReadyOrThrow({ webappUrl, timeoutMs });
+    return;
+  }
+  await assertExpoWebappBundlesOrThrow({ rootDir, stackName, webappUrl, timeoutMs });
+}
+
+async function resolveServerWebappUrlForAuth({ stackName, env = process.env }) {
+  const { envWebappUrl } = getWebappUrlEnvOverride({ env, stackName });
+  if (envWebappUrl) {
+    return await preferStackLocalhostUrl(envWebappUrl, { stackName });
+  }
+
+  const serverPort = await resolveServerPortForCoreAuth({ stackName, env });
+  if (!serverPort) return '';
+
+  const localhostUrl = await preferStackLocalhostUrl(`http://localhost:${serverPort}`, { stackName });
+  if (localhostUrl) return localhostUrl;
+
+  const resolved = await resolveServerUrls({
+    env,
+    serverPort,
+    allowEnable: false,
+  });
+  return resolved.publicServerUrl ? await preferStackLocalhostUrl(resolved.publicServerUrl, { stackName }) : '';
+}
+
+export async function resolveStackWebappTargetForAuth({ rootDir, stackName, env = process.env } = {}) {
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env });
+  if (runtimeLaunchContext.snapshot) {
+    const runtimeServerUrl = await resolveServerWebappUrlForAuth({ stackName, env });
+    if (runtimeServerUrl) {
+      return { webappUrl: runtimeServerUrl, kind: 'server' };
+    }
+  }
+
   const runtimeExpoUrl = await resolveRuntimeExpoWebappUrlForAuth({ stackName });
   if (runtimeExpoUrl) {
-    return await preferStackLocalhostUrl(runtimeExpoUrl, { stackName });
+    return { webappUrl: await preferStackLocalhostUrl(runtimeExpoUrl, { stackName }), kind: 'expo' };
   }
 
   const authFlow =
     (env.HAPPIER_STACK_AUTH_FLOW ?? '').toString().trim() === '1' ||
     (env.HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim() === '1';
 
-  // Prefer the Expo web UI URL when running in dev mode.
-  // This is crucial for guided login: the browser needs the UI origin, not the server port.
   const timeoutMsRaw =
     (env.HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS ?? '180000').toString().trim();
   const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 180_000;
@@ -266,10 +359,9 @@ export async function resolveStackWebappUrlForAuth({ rootDir, stackName, env = p
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 180_000,
   });
   if (expoUrl) {
-    return await preferStackLocalhostUrl(expoUrl, { stackName });
+    return { webappUrl: await preferStackLocalhostUrl(expoUrl, { stackName }), kind: 'expo' };
   }
 
-  // Fail closed for guided auth flows: falling back to server URLs opens the wrong origin.
   if (authFlow) {
     throw new Error(
       `[auth] failed to resolve Expo web UI URL for guided login.\n` +
@@ -290,10 +382,15 @@ export async function resolveStackWebappUrlForAuth({ rootDir, stackName, env = p
     const parsed = JSON.parse(String(raw ?? '').trim());
     const cmd = typeof parsed?.cmd === 'string' ? parsed.cmd : '';
     const url = extractEnvVar(cmd, 'HAPPIER_WEBAPP_URL');
-    return url ? await preferStackLocalhostUrl(url, { stackName }) : '';
+    return { webappUrl: url ? await preferStackLocalhostUrl(url, { stackName }) : '', kind: 'server' };
   } catch {
-    return '';
+    return { webappUrl: '', kind: 'server' };
   }
+}
+
+export async function resolveStackWebappUrlForAuth({ rootDir, stackName, env = process.env }) {
+  const resolved = await resolveStackWebappTargetForAuth({ rootDir, stackName, env });
+  return String(resolved?.webappUrl ?? '').trim();
 }
 
 function resolvePortFromUrl(urlRaw) {
@@ -367,7 +464,36 @@ async function prepareCoreAuthEnv({ stackName, webappUrl, env = process.env } = 
   };
 }
 
-export function buildStackAuthLoginInvocation({ rootDir, stackName, webappUrl, env = process.env } = {}) {
+export async function resolveStackAuthCliExecutable({ rootDir, env = process.env } = {}) {
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env });
+  const runtimeCliPath = runtimeLaunchContext.snapshot
+    ? resolveRuntimeManifestEntrypoint({
+        snapshotPath: runtimeLaunchContext.snapshot.snapshotPath,
+        manifest: runtimeLaunchContext.snapshot.manifest,
+        component: 'daemon',
+      })
+    : '';
+  if (runtimeCliPath) {
+    return runtimeCliPath;
+  }
+
+  const cliDir = getComponentDir(rootDir, 'happier-cli', env);
+  const preferredEntrypoints = [
+    join(cliDir, 'package-dist', 'index.mjs'),
+    join(cliDir, 'dist', 'index.mjs'),
+    join(cliDir, 'bin', 'happier.mjs'),
+  ];
+
+  for (const candidate of preferredEntrypoints) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return preferredEntrypoints[0];
+}
+
+export async function buildStackAuthLoginInvocation({ rootDir, stackName, webappUrl, env = process.env } = {}) {
   const root = String(rootDir ?? '').trim();
   if (!root) {
     throw new Error('[auth] buildStackAuthLoginInvocation requires rootDir');
@@ -376,7 +502,7 @@ export function buildStackAuthLoginInvocation({ rootDir, stackName, webappUrl, e
   if (!url) {
     throw new Error('[auth] buildStackAuthLoginInvocation requires a webappUrl');
   }
-  const cliBin = join(getComponentDir(root, 'happier-cli', env), 'bin', 'happier.mjs');
+  const cliExecutable = await resolveStackAuthCliExecutable({ rootDir: root, env });
   const merged = { ...(env ?? process.env), HAPPIER_WEBAPP_URL: url };
   const method = String(merged.HAPPIER_AUTH_METHOD ?? '').trim().toLowerCase();
   if (method && method !== 'web' && method !== 'browser' && method !== 'mobile') {
@@ -384,7 +510,9 @@ export function buildStackAuthLoginInvocation({ rootDir, stackName, webappUrl, e
   }
   const normalizedMethod = method === 'browser' ? 'web' : method;
 
-  const args = [cliBin, 'auth', 'login'];
+  const executableLooksLikeScript = cliExecutable.endsWith('.mjs') || cliExecutable.endsWith('.js') || cliExecutable.endsWith('.cjs');
+  const command = executableLooksLikeScript ? process.execPath : cliExecutable;
+  const args = executableLooksLikeScript ? [cliExecutable, 'auth', 'login'] : ['auth', 'login'];
   if (String(merged.HAPPIER_AUTH_FORCE ?? '').trim() === '1') {
     args.push('--force');
   }
@@ -396,14 +524,19 @@ export function buildStackAuthLoginInvocation({ rootDir, stackName, webappUrl, e
   }
 
   return {
+    command,
     args,
     env: merged,
   };
 }
 
-export async function guidedStackAuthLoginNow({ rootDir, stackName, env = process.env, webappUrl = null }) {
+export async function guidedStackAuthLoginNow({ rootDir, stackName, env = process.env, webappUrl = null, webappKind = '' }) {
   const name = String(stackName ?? '').trim() || 'main';
-  const resolved = (webappUrl ?? '').toString().trim() || (await resolveStackWebappUrlForAuth({ rootDir, stackName: name, env }));
+  const resolvedTarget =
+    (webappUrl ?? '').toString().trim()
+      ? { webappUrl: String(webappUrl).trim(), kind: String(webappKind ?? '').trim() || 'server' }
+      : await resolveStackWebappTargetForAuth({ rootDir, stackName: name, env });
+  const resolved = String(resolvedTarget?.webappUrl ?? '').trim();
   if (!resolved) {
     throw new Error('[auth] cannot start guided login: web UI URL is empty');
   }
@@ -413,17 +546,18 @@ export async function guidedStackAuthLoginNow({ rootDir, stackName, env = proces
   if (!skipBundleCheck) {
     const timeoutMsRaw = String(env.HAPPIER_STACK_AUTH_EXPO_BUNDLE_READY_TIMEOUT_MS ?? '').trim();
     const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : null;
-    await assertExpoWebappBundlesOrThrow({
+    await assertGuidedAuthWebappReadyOrThrow({
       rootDir,
       stackName: name,
       webappUrl: resolved,
+      kind: resolvedTarget.kind,
       timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined,
     });
   }
 
   const preparedEnv = await prepareCoreAuthEnv({ stackName: name, webappUrl: resolved, env });
-  const inv = buildStackAuthLoginInvocation({ rootDir, stackName: name, webappUrl: resolved, env: preparedEnv });
-  await run(process.execPath, inv.args, { cwd: rootDir, env: inv.env });
+  const inv = await buildStackAuthLoginInvocation({ rootDir, stackName: name, webappUrl: resolved, env: preparedEnv });
+  await run(inv.command, inv.args, { cwd: rootDir, env: inv.env });
 }
 
 export async function stackAuthCopyFrom({ rootDir, stackName, fromStackName, env = process.env, link = true }) {

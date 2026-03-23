@@ -13,8 +13,11 @@
  * Agent-specific stderr parsing can be added later if needed.
  */
 
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
+import {
+  CHANGE_TITLE_TOOL_NAME_ALIASES,
+  isChangeTitleToolNameAlias,
+  redactBugReportSensitiveText,
+} from '@happier-dev/protocol';
 import type {
   TransportHandler,
   ToolPattern,
@@ -41,7 +44,10 @@ export const OPENCODE_TIMEOUTS = {
   toolCall: 120_000,
   investigation: 300_000,
   think: 30_000,
-  idle: 500,
+  // OpenCode can emit post-tool assistant chunks in staggered bursts with >1s gaps.
+  // Keep idle detection conservative enough to avoid prematurely finalizing strict-JSON turns.
+  idle: 1_500,
+  idleWithoutAssistantMessage: 10_000,
 } as const;
 
 const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
@@ -104,6 +110,28 @@ const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
     inputFields: ['title'],
   },
 ] as const;
+
+function canonicalizeOpenCodeCustomMcpAlias(params: Readonly<{
+  toolName: string;
+  input: Record<string, unknown>;
+}>): string | null {
+  const rawToolName = params.toolName.trim();
+  if (!rawToolName || rawToolName.includes('/') || rawToolName.startsWith('mcp__')) return null;
+  if (!/^[a-z0-9_]+$/i.test(rawToolName)) return null;
+
+  const hintedToolName = [params.input.tool_name, params.input.toolName, params.input.name]
+    .find((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0)
+    ?.trim();
+  if (!hintedToolName || !/^[a-z0-9_]+$/i.test(hintedToolName)) return null;
+
+  const expectedSuffix = `_${hintedToolName}`;
+  if (!rawToolName.endsWith(expectedSuffix)) return null;
+
+  const serverAlias = rawToolName.slice(0, -expectedSuffix.length).trim();
+  if (!serverAlias) return null;
+
+  return `mcp__${serverAlias}__${hintedToolName.replaceAll('/', '__')}`;
+}
 
 export class OpenCodeTransport implements TransportHandler {
   readonly agentName = 'opencode';
@@ -229,6 +257,14 @@ export class OpenCodeTransport implements TransportHandler {
     return { message: null };
   }
 
+  getIdleWithoutAssistantMessageTimeoutMs(): number {
+    return OPENCODE_TIMEOUTS.idleWithoutAssistantMessage;
+  }
+
+  getPostToolCallIdleTimeoutMs(): number {
+    return OPENCODE_TIMEOUTS.idle;
+  }
+
   getToolPatterns(): ToolPattern[] {
     // TransportHandler expects a mutable array type; keep our source list readonly and
     // return a shallow copy to satisfy the signature without risking accidental mutation.
@@ -263,7 +299,7 @@ export class OpenCodeTransport implements TransportHandler {
     }
 
     // OpenCode uses `change_title` as the task/subagent tool in some ACP implementations.
-    // Map it to `Task` when ACP metadata indicates this is the task tool so that downstream
+    // Map it to `SubAgent` when ACP metadata indicates this is the task tool so that downstream
     // features (like sidechain replay import) can key off a stable name.
     if (isChangeTitleToolNameAlias(toolName)) {
       const acp = input?._acp;
@@ -271,7 +307,7 @@ export class OpenCodeTransport implements TransportHandler {
         acp && typeof acp === 'object' && !Array.isArray(acp) && typeof (acp as any).title === 'string'
           ? String((acp as any).title).trim().toLowerCase()
           : '';
-      if (acpTitle === 'task') return 'Task';
+      if (acpTitle === 'task') return 'SubAgent';
 
       const title = typeof input.title === 'string' ? input.title.trim() : '';
       const memory = typeof input.memory === 'string' ? input.memory.trim() : '';
@@ -282,11 +318,14 @@ export class OpenCodeTransport implements TransportHandler {
       const looksLikeChangeTitle = Boolean(title);
       const looksLikeSaveMemory = Boolean(memory);
 
-      if (looksLikeTaskTool && !looksLikeChangeTitle && !looksLikeSaveMemory) return 'Task';
+      if (looksLikeTaskTool && !looksLikeChangeTitle && !looksLikeSaveMemory) return 'SubAgent';
     }
 
     const directToolName = findToolNameFromId(toolName, OPENCODE_TOOL_PATTERNS, { preferLongestMatch: true });
     if (directToolName) return directToolName;
+
+    const directCustomMcpTool = canonicalizeOpenCodeCustomMcpAlias({ toolName, input });
+    if (directCustomMcpTool) return directCustomMcpTool;
 
     if (toolName !== 'other' && toolName !== 'Unknown tool') return toolName;
 

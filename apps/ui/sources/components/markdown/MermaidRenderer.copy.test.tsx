@@ -1,6 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,11 +11,10 @@ const clipboardMocks = vi.hoisted(() => ({
 }));
 vi.mock('expo-clipboard', () => clipboardMocks);
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: vi.fn(),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 let lastWebViewHtml: string | null = null;
 vi.mock('react-native-webview', () => ({
@@ -29,9 +30,7 @@ describe('MermaidRenderer', () => {
 
     let tree: ReturnType<typeof renderer.create> | undefined;
     try {
-      await act(async () => {
-        tree = renderer.create(<MermaidRenderer content={'graph TD\\nA-->B'} />);
-      });
+      tree = (await renderScreen(<MermaidRenderer content={'graph TD\\nA-->B'} />)).tree;
 
       const copyButtons =
         tree?.root.findAll((n) => n.props?.testID === 'mermaid-copy-button') ?? [];
@@ -59,9 +58,7 @@ describe('MermaidRenderer', () => {
 
     let tree: ReturnType<typeof renderer.create> | undefined;
     try {
-      await act(async () => {
-        tree = renderer.create(<MermaidRenderer content={payload} />);
-      });
+      tree = (await renderScreen(<MermaidRenderer content={payload} />)).tree;
 
       expect(typeof lastWebViewHtml).toBe('string');
       expect(lastWebViewHtml).toContain('<div id=\"mermaid-container\"></div>');

@@ -1,8 +1,12 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, it, expect, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+    Octicons: 'Octicons',
+}));
 
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {
@@ -12,24 +16,50 @@ vi.mock('@/components/tools/catalog', () => ({
     },
 }));
 
+vi.mock('@/components/tools/renderers/core/_registry', () => ({
+    getToolViewComponent: () => null,
+}));
+
+vi.mock('@/components/tools/normalization/core/normalizeToolCallForRendering', () => ({
+    normalizeToolCallForRendering: (tool: any) => tool,
+}));
+
+vi.mock('@/components/tools/shell/presentation/resolveToolHeaderTextPresentation', () => ({
+    resolveToolHeaderTextPresentation: () => ({
+        normalizedToolName: 'test-tool',
+        title: 'Test',
+        subtitle: null,
+        statusText: null,
+    }),
+}));
+
+vi.mock('@/agents/catalog/catalog', () => ({
+    resolveAgentIdFromFlavor: () => null,
+    getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
+}));
+
 describe('ToolHeader', () => {
     it('does not crash when knownTool.icon is present but not a function', async () => {
-        const { ToolHeader } = await import('./ToolHeader');
-        const tool = { name: 'test-tool' } as any;
-        let tree: renderer.ReactTestRenderer | undefined;
-        let thrown: unknown;
-        try {
-            await act(async () => {
-                tree = renderer.create(<ToolHeader tool={tool} />);
-            });
-        } catch (error) {
-            thrown = error;
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const { buildToolHeaderModel } = await import('./buildToolHeaderModel');
 
-        expect(thrown).toBeUndefined();
+        let model: any;
+        expect(() => {
+            model = buildToolHeaderModel({
+                tool: {
+                    id: 'tool-1',
+                    name: 'test-tool',
+                    state: 'completed',
+                    input: {},
+                    result: null,
+                } as any,
+                metadata: null,
+                iconSize: 18,
+                iconColorPrimary: '#000',
+                iconColorSecondary: '#666',
+            });
+        }).not.toThrow();
+
+        expect(model).toBeTruthy();
+        expect(model.icon).toBeTruthy();
     });
 });

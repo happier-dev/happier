@@ -1,9 +1,12 @@
 import * as React from 'react';
+import { buildBackendTargetKey, isBuiltInAgentTarget, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { getModelOptionsForAgentTypeOrPreflight, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
+import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
 import {
     readDynamicModelProbeCache,
     runDynamicModelProbeDedupe,
@@ -12,10 +15,11 @@ import {
 } from '@/sync/domains/models/dynamicModelProbeCache';
 
 export function useNewSessionPreflightModelsState(params: Readonly<{
-    agentType: AgentId;
+    backendTarget: BackendTargetRefV1;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
+    codexBackendModeOverride?: 'mcp' | 'acp' | 'appServer' | null;
 }>): Readonly<{
     preflightModels: PreflightModelList | null;
     modelOptions: ReturnType<typeof getModelOptionsForAgentTypeOrPreflight>;
@@ -35,14 +39,31 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         setRefreshNonce((n) => n + 1);
     }, []);
 
+    const backendTargetKind = params.backendTarget.kind;
+    const backendTargetAgentId = isBuiltInAgentTarget(params.backendTarget) ? params.backendTarget.agentId : null;
+    const backendTargetBackendId = isBuiltInAgentTarget(params.backendTarget) ? null : params.backendTarget.backendId;
+
+    const backendTarget = React.useMemo<BackendTargetRefV1>(() => {
+        return backendTargetKind === 'builtInAgent'
+            ? { kind: 'builtInAgent', agentId: backendTargetAgentId! }
+            : { kind: 'configuredAcpBackend', backendId: backendTargetBackendId! };
+    }, [backendTargetAgentId, backendTargetBackendId, backendTargetKind]);
+
+    const agentType = React.useMemo<AgentId>(() => {
+        return resolveProviderAgentIdForBackendTarget(backendTarget);
+    }, [backendTarget]);
+
+    const backendTargetKey = React.useMemo(() => buildBackendTargetKey(backendTarget), [backendTarget]);
+
     const preflightModelsKey = React.useMemo(() => {
         return buildDynamicModelProbeCacheKey({
             machineId: params.selectedMachineId,
-            agentType: params.agentType,
+            targetKey: backendTargetKey,
             serverId: params.capabilityServerId,
             cwd: params.cwd ?? null,
+            codexBackendModeOverride: params.codexBackendModeOverride ?? null,
         });
-    }, [params.agentType, params.capabilityServerId, params.cwd, params.selectedMachineId]);
+    }, [backendTargetKey, params.capabilityServerId, params.codexBackendModeOverride, params.cwd, params.selectedMachineId]);
 
     React.useEffect(() => {
         if (!preflightModelsKey) {
@@ -70,18 +91,24 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
         let cancelled = false;
         const run = async () => {
-            const core = getAgentCore(params.agentType);
-            if (core.model.supportsSelection !== true) return;
-            if (!params.selectedMachineId) return;
+            const core = getAgentCore(agentType);
+            if (core.model.supportsSelection !== true || !params.selectedMachineId) {
+                if (!cancelled) {
+                    setProbePhase('idle');
+                }
+                return;
+            }
             const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
 
             setProbePhase(cached ? 'refreshing' : 'loading');
             const list = await runDynamicModelProbeDedupe(preflightModelsKey, async () => {
                 const res = await machineCapabilitiesInvoke(params.selectedMachineId!, {
-                    id: `cli.${params.agentType}` as any,
+                    id: `cli.${agentType}` as any,
                     method: 'probeModels',
                     params: {
                         timeoutMs: 15_000,
+                        backendTarget,
+                        ...(params.codexBackendModeOverride ? { codexBackendModeOverride: params.codexBackendModeOverride } : {}),
                         ...(cwd ? { cwd } : {}),
                     },
                 }, {
@@ -94,7 +121,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 const raw = res.response.result as any;
                 const modelsRaw = raw?.availableModels;
                 const supportsFreeformRaw = raw?.supportsFreeform;
-                if (!Array.isArray(modelsRaw) || modelsRaw.length === 0) return null;
+                if (!Array.isArray(modelsRaw)) return null;
 
                 const parsed: PreflightModelList = {
                     availableModels: modelsRaw
@@ -103,10 +130,13 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                             id: String(m.id),
                             name: String(m.name),
                             ...(typeof m.description === 'string' ? { description: m.description } : {}),
+                            ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0
+                                ? { modelOptions: m.modelOptions as readonly AcpConfigOption[] }
+                                : {}),
                         })),
                     supportsFreeform: Boolean(supportsFreeformRaw),
                 };
-                if (parsed.availableModels.length === 0) return null;
+                if (parsed.availableModels.length === 0 && parsed.supportsFreeform !== true) return null;
                 return parsed;
             });
 
@@ -135,11 +165,11 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
         void run();
         return () => { cancelled = true; };
-    }, [preflightModelsKey, params.agentType, params.selectedMachineId, params.capabilityServerId, params.cwd, refreshNonce]);
+    }, [agentType, backendTarget, preflightModelsKey, params.capabilityServerId, params.codexBackendModeOverride, params.cwd, params.selectedMachineId, refreshNonce]);
 
     const modelOptions = React.useMemo(
-        () => getModelOptionsForAgentTypeOrPreflight({ agentType: params.agentType, preflight: preflightModels }),
-        [params.agentType, preflightModels],
+        () => getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: preflightModels }),
+        [agentType, preflightModels],
     );
 
     return {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { computeMonotonicUpdatedAt } from "./monotonic.js";
-import { computeNextMetadataStringOverrideV1, computeNextPermissionIntentMetadata } from "./publish.js";
+import { computeNextMetadataConfigOptionOverrideV1, computeNextMetadataStringOverrideV1, computeNextPermissionIntentMetadata } from "./publish.js";
 
 describe("sessionControls monotonic", () => {
     it("applies newer updates with ignore_older", () => {
@@ -118,6 +118,55 @@ describe("sessionControls publish metadata", () => {
                 v: 1,
                 updatedAt: 21,
                 modelId: null,
+            },
+        });
+    });
+
+    it("dual-writes canonical and legacy session mode override keys", () => {
+        const next = computeNextMetadataStringOverrideV1({
+            metadata: {},
+            overrideKey: "acpSessionModeOverrideV1",
+            valueKey: "modeId",
+            value: "plan",
+            updatedAt: 20,
+        });
+
+        expect(next).toMatchObject({
+            sessionModeOverrideV1: {
+                v: 1,
+                updatedAt: 20,
+                modeId: "plan",
+            },
+            acpSessionModeOverrideV1: {
+                v: 1,
+                updatedAt: 20,
+                modeId: "plan",
+            },
+        });
+    });
+
+    it("dual-writes canonical and legacy config option override keys", () => {
+        const next = computeNextMetadataConfigOptionOverrideV1({
+            metadata: {},
+            configId: "telemetry",
+            value: "true",
+            updatedAt: 30,
+        });
+
+        expect(next).toMatchObject({
+            sessionConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 30,
+                overrides: {
+                    telemetry: { updatedAt: 30, value: "true" },
+                },
+            },
+            acpConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 30,
+                overrides: {
+                    telemetry: { updatedAt: 30, value: "true" },
+                },
             },
         });
     });

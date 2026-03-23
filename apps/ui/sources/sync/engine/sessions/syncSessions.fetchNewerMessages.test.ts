@@ -7,11 +7,13 @@ function buildApiMessage(id: string, seq: number): ApiMessage {
         id,
         seq,
         localId: null,
+        sidechainId: null,
         content: {
             t: 'encrypted',
             c: `encrypted-${id}`,
         },
         createdAt: 1_000 + seq,
+        updatedAt: 2_000 + seq,
     };
 }
 
@@ -49,7 +51,7 @@ describe('fetchAndApplyNewerMessages', () => {
             limit: 150,
             getSessionEncryption: () => ({ decryptMessages }),
             request,
-            sessionReceivedMessages: new Map(),
+            sessionReceivedMessages: new Map<string, Map<string, number>>(),
             applyMessages,
             onTaskLifecycleEvent,
             log: { log: () => {} },
@@ -92,7 +94,7 @@ describe('fetchAndApplyNewerMessages', () => {
       limit: 150,
       getSessionEncryption: () => ({ decryptMessages }),
       request,
-      sessionReceivedMessages: new Map(),
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
       applyMessages,
       log: { log: () => {} },
     });
@@ -131,7 +133,7 @@ describe('fetchAndApplyNewerMessages', () => {
       limit: 150,
       getSessionEncryption: () => ({ decryptMessages }),
       request,
-      sessionReceivedMessages: new Map(),
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
       applyMessages,
       onNormalizedMessages,
       log: { log: () => {} },
@@ -140,5 +142,48 @@ describe('fetchAndApplyNewerMessages', () => {
     expect(onNormalizedMessages).toHaveBeenCalledTimes(1);
     expect(onNormalizedMessages.mock.calls[0]?.[0]?.[0]?.id).toBe('m1');
     expect(applyMessages).toHaveBeenCalledWith('s1', expect.any(Array));
+  });
+
+  it('marks scope=sidechain newer messages when the API response omits sidechainId', async () => {
+    const applyMessages = vi.fn();
+    const request = vi.fn(async () => new Response(
+      JSON.stringify({
+        messages: [buildApiMessage('m1', 2)],
+        nextAfterSeq: null,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+
+    const decryptMessages = vi.fn(async () => [
+      {
+        id: 'm1',
+        seq: 2,
+        localId: null,
+        createdAt: 1_002,
+        content: {
+          role: 'user',
+          content: { type: 'text', text: 'hello' },
+        },
+      },
+    ]);
+
+    await fetchAndApplyNewerMessages({
+      sessionId: 's1',
+      afterSeq: 1,
+      limit: 150,
+      scope: 'sidechain',
+      sidechainId: 'tool_task_1',
+      getSessionEncryption: () => ({ decryptMessages }),
+      request,
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
+      applyMessages,
+      log: { log: () => {} },
+    });
+
+    expect(applyMessages).toHaveBeenCalledWith('s1', [expect.objectContaining({
+      id: 'm1',
+      isSidechain: true,
+      sidechainId: 'tool_task_1',
+    })]);
   });
 });

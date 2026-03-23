@@ -1,19 +1,22 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import {
   deriveBoxPublicKeyFromSeed,
   sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleJsonOutput, captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 
 describe('happier session list (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
-  const originalAccountSettingsMode = process.env.HAPPIER_ACCOUNT_SETTINGS_MODE;
+  const envKeys = [
+    'HAPPIER_SERVER_URL',
+    'HAPPIER_WEBAPP_URL',
+    'HAPPIER_HOME_DIR',
+    'HAPPIER_ACCOUNT_SETTINGS_MODE',
+  ] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
 
@@ -24,7 +27,7 @@ describe('happier session list (integration)', () => {
   beforeEach(async () => {
     process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
 
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-list-'));
+    happyHomeDir = await createTempDir('happier-cli-session-list-');
     const dek = new Uint8Array(32).fill(3);
     const machineKeySeed = new Uint8Array(32).fill(8);
     const recipientPublicKey = deriveBoxPublicKeyFromSeed(machineKeySeed);
@@ -188,17 +191,12 @@ describe('happier session list (integration)', () => {
     }
     server = null;
     if (happyHomeDir) {
-      await rm(happyHomeDir, { recursive: true, force: true });
+      await removeTempDir(happyHomeDir);
+      happyHomeDir = '';
     }
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
-    if (originalAccountSettingsMode === undefined) delete process.env.HAPPIER_ACCOUNT_SETTINGS_MODE;
-    else process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = originalAccountSettingsMode;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -207,10 +205,7 @@ describe('happier session list (integration)', () => {
   it('returns a session_list JSON envelope', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(['list', '--json'], {
@@ -224,7 +219,7 @@ describe('happier session list (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_list');
@@ -235,17 +230,14 @@ describe('happier session list (integration)', () => {
       expect(parsed.data?.sessions?.[0]?.encryption?.type).toBe('dataKey');
       expect(parsed.data?.sessions?.some((s: any) => s.id === systemSessionId)).toBe(false);
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('supports --archived by listing /v2/sessions/archived', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(['list', '--archived', '--json'], {
@@ -259,24 +251,21 @@ describe('happier session list (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_list');
       expect(parsed.data?.sessions?.[0]?.id).toBe(archivedSessionId);
       expect(parsed.data?.sessions?.[0]?.tag).toBe('ArchivedTag');
       expect(parsed.data?.sessions?.[0]?.title).toBe('Archived Title');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('omits system sessions without --include-system', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleLogAndMuteStdout();
 
     try {
       await handleSessionCommand(['list'], {
@@ -290,21 +279,19 @@ describe('happier session list (integration)', () => {
         }),
       });
 
-      expect(stdout.join('\n')).toContain('ID');
-      expect(stdout.join('\n')).not.toContain(systemSessionId);
-      expect(stdout.join('\n')).toContain(normalSessionId.slice(0, 12));
+      const rendered = output.logs.join('\n');
+      expect(rendered).toContain('ID');
+      expect(rendered).not.toContain(systemSessionId);
+      expect(rendered).toContain(normalSessionId.slice(0, 12));
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('includes system sessions with --include-system and marks them in human output', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleLogAndMuteStdout();
 
     try {
       await handleSessionCommand(['list', '--include-system'], {
@@ -318,21 +305,19 @@ describe('happier session list (integration)', () => {
         }),
       });
 
-      expect(stdout.join('\n')).toContain('ID');
-      expect(stdout.join('\n')).toContain(`system:${'voice_carrier'}`);
-      expect(stdout.join('\n')).toContain(systemSessionId.slice(0, 12));
+      const rendered = output.logs.join('\n');
+      expect(rendered).toContain('ID');
+      expect(rendered).toContain(`system:${'voice_carrier'}`);
+      expect(rendered).toContain(systemSessionId.slice(0, 12));
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('supports --plain by printing the legacy one-line format', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleLogAndMuteStdout();
 
     try {
       await handleSessionCommand(['list', '--include-system', '--plain'], {
@@ -346,21 +331,19 @@ describe('happier session list (integration)', () => {
         }),
       });
 
-      expect(stdout.join('\n')).toContain(systemSessionId);
-      expect(stdout.join('\n')).toContain(`system:${'voice_carrier'}`);
-      expect(stdout.join('\n')).not.toContain('ID');
+      const rendered = output.logs.join('\n');
+      expect(rendered).toContain(systemSessionId);
+      expect(rendered).toContain(`system:${'voice_carrier'}`);
+      expect(rendered).not.toContain('ID');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('includes system markers in JSON when --include-system is used', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(['list', '--include-system', '--json'], {
@@ -374,7 +357,7 @@ describe('happier session list (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       const systemSession = parsed.data?.sessions?.find((session: any) => session.id === systemSessionId);
       expect(systemSession).toMatchObject({
         id: systemSessionId,
@@ -382,17 +365,14 @@ describe('happier session list (integration)', () => {
         systemPurpose: 'voice_carrier',
       });
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('supports --resumable by filtering to vendor-resumable inactive sessions', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleLogAndMuteStdout();
 
     try {
       await handleSessionCommand(['list', '--resumable'], {
@@ -406,13 +386,13 @@ describe('happier session list (integration)', () => {
         }),
       });
 
-      const output = stdout.join('\n');
-      expect(output).toContain('ID');
-      expect(output).toContain(normalSessionId.slice(0, 12));
-      expect(output).not.toContain('system:voice_carrier');
-      expect(output).not.toContain('ArchivedTag');
+      const rendered = output.logs.join('\n');
+      expect(rendered).toContain('ID');
+      expect(rendered).toContain(normalSessionId.slice(0, 12));
+      expect(rendered).not.toContain('system:voice_carrier');
+      expect(rendered).not.toContain('ArchivedTag');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   bundleWorkspacePackages,
   findRepoRoot,
+  resolveWorkspaceBundlesFromPackageJson,
   vendorBundledPackageRuntimeDependencies,
 } from '../../../packages/cli-common/dist/workspaces/index.js';
 
@@ -13,28 +14,10 @@ export function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
   const stackDir = opts.stackDir ?? resolve(repoRoot, 'apps', 'stack');
 
-  const bundles = [
-    {
-      packageName: '@happier-dev/protocol',
-      srcDir: resolve(repoRoot, 'packages', 'protocol'),
-      destDir: resolve(stackDir, 'node_modules', '@happier-dev', 'protocol'),
-    },
-    {
-      packageName: '@happier-dev/agents',
-      srcDir: resolve(repoRoot, 'packages', 'agents'),
-      destDir: resolve(stackDir, 'node_modules', '@happier-dev', 'agents'),
-    },
-    {
-      packageName: '@happier-dev/cli-common',
-      srcDir: resolve(repoRoot, 'packages', 'cli-common'),
-      destDir: resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common'),
-    },
-    {
-      packageName: '@happier-dev/release-runtime',
-      srcDir: resolve(repoRoot, 'packages', 'release-runtime'),
-      destDir: resolve(stackDir, 'node_modules', '@happier-dev', 'release-runtime'),
-    },
-  ];
+  const bundles = resolveWorkspaceBundlesFromPackageJson({
+    repoRoot,
+    hostPackageDir: stackDir,
+  });
 
   bundleWorkspacePackages({ bundles });
 

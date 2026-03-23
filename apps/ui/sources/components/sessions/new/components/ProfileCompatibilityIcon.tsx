@@ -2,15 +2,16 @@ import React from 'react';
 import { View, ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
-import type { AIBackendProfile } from '@/sync/domains/settings/settings';
-import { isProfileCompatibleWithAgent } from '@/sync/domains/settings/settings';
+import { isProfileCompatibleWithBackendTarget, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getAgentCliGlyph, getAgentCore } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { Text } from '@/components/ui/text/Text';
+import { useSetting } from '@/sync/domains/state/storage';
 
 
 type Props = {
-    profile: Pick<AIBackendProfile, 'compatibility' | 'isBuiltIn'>;
+    profile: Pick<AIBackendProfile, 'compatibility' | 'compatibilityByTargetKey' | 'isBuiltIn'>;
     size?: number;
     style?: ViewStyle;
 };
@@ -35,34 +36,51 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function ProfileCompatibilityIcon({ profile, size = 32, style }: Props) {
     useUnistyles(); // Subscribe to theme changes for re-render
     const styles = stylesheet;
-    const enabledAgents = useEnabledAgentIds();
+    const enabledAgentIds = useEnabledAgentIds();
+    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
+    const backendEntries = React.useMemo(() => {
+        return getResolvedBackendCatalogEntries({
+            enabledAgentIds,
+            acpCatalogSettingsV1: acpCatalogSettingsV1 as any,
+            backendEnabledByTargetKey: backendEnabledByTargetKey as Record<string, boolean> | undefined,
+        });
+    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, enabledAgentIds]);
 
     const glyphs = React.useMemo(() => {
         const items: Array<{ key: string; glyph: string; factor: number }> = [];
-        for (const agentId of enabledAgents) {
-            if (!isProfileCompatibleWithAgent(profile, agentId)) continue;
-            const core = getAgentCore(agentId);
+        for (const entry of backendEntries) {
+            if (!isProfileCompatibleWithBackendTarget(profile, entry.target)) continue;
+            const core = getAgentCore(entry.iconAgentId);
             items.push({
-                key: agentId,
-                glyph: getAgentCliGlyph(agentId),
+                key: entry.targetKey,
+                glyph: getAgentCliGlyph(entry.iconAgentId),
                 factor: core.ui.profileCompatibilityGlyphScale ?? 1.0,
             });
         }
         if (items.length === 0) items.push({ key: 'none', glyph: '•', factor: 0.85 });
         return items;
-    }, [enabledAgents, profile.compatibility]);
+    }, [backendEntries, profile]);
 
-    const multiScale = glyphs.length === 1 ? 1 : glyphs.length === 2 ? 0.6 : 0.5;
+    const visibleGlyphs = React.useMemo(() => {
+        if (glyphs.length <= 2) return glyphs;
+        return [
+            ...glyphs.slice(0, 2),
+            { key: 'more', glyph: '...', factor: 0.75 },
+        ];
+    }, [glyphs]);
+
+    const multiScale = visibleGlyphs.length === 1 ? 1 : visibleGlyphs.length === 2 ? 0.6 : 0.5;
 
     return (
         <View style={[styles.container, { width: size, height: size }, style]}>
-            {glyphs.length === 1 ? (
-                <Text style={[styles.glyph, { fontSize: Math.round(size * glyphs[0].factor) }]}>
-                    {glyphs[0].glyph}
+            {visibleGlyphs.length === 1 ? (
+                <Text style={[styles.glyph, { fontSize: Math.round(size * visibleGlyphs[0].factor) }]}>
+                    {visibleGlyphs[0].glyph}
                 </Text>
             ) : (
                 <View style={styles.stack}>
-                    {glyphs.map((item) => {
+                    {visibleGlyphs.map((item) => {
                         const fontSize = Math.round(size * multiScale * item.factor);
                         return (
                             <Text

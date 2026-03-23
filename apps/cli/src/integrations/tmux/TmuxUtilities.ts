@@ -172,6 +172,16 @@ export class TmuxUtilities {
         ...(this.tmuxCommandEnv ?? {}),
         ...(options.env ?? {}),
       };
+      // If we are intentionally targeting a specific tmux server (via TMUX_TMPDIR or -S socket),
+      // do not inherit an ambient tmux client context from the parent process.
+      // Keeping TMUX/TMUX_PANE can cause tmux to connect to the wrong server, ignoring TMUX_TMPDIR.
+      if (typeof mergedEnv.TMUX_TMPDIR === 'string' && mergedEnv.TMUX_TMPDIR.trim().length > 0) {
+        delete (mergedEnv as Record<string, unknown>).TMUX;
+        delete (mergedEnv as Record<string, unknown>).TMUX_PANE;
+      } else if (typeof this.tmuxSocketPath === 'string' && this.tmuxSocketPath.trim().length > 0) {
+        delete (mergedEnv as Record<string, unknown>).TMUX;
+        delete (mergedEnv as Record<string, unknown>).TMUX_PANE;
+      }
 
       const child = spawn(args[0], args.slice(1), {
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -540,18 +550,17 @@ export class TmuxUtilities {
       const retryDelayMs = readNonNegativeIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS', 25);
 
       let createResult: TmuxCommandResult | null = null;
+      let lastArgs = createWindowArgs;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        // On first attempt, use default args (let tmux auto-assign index).
-        // On retry, query for an available index and explicitly target it.
         let currentArgs = createWindowArgs;
         if (attempt > 1) {
           const availableIndex = await this.findAvailableWindowIndex(sessionName, baseWindowIndex);
           logger.debug(`[TMUX] Retrying with explicit window index ${availableIndex}`);
-          // Rebuild args with explicit target: session:index
           const explicitTarget = `${sessionName}:${availableIndex}`;
           currentArgs = this.buildArgsWithExplicitTarget(createWindowArgs, explicitTarget);
         }
 
+        lastArgs = currentArgs;
         createResult = await this.executeTmuxCommand(currentArgs);
         if (createResult && createResult.returncode === 0) break;
 
@@ -567,7 +576,9 @@ export class TmuxUtilities {
       }
 
       if (!createResult || createResult.returncode !== 0) {
-        throw new Error(`Failed to create tmux window: ${createResult?.stderr}`);
+        const tIndex = lastArgs.indexOf('-t');
+        const target = tIndex >= 0 ? lastArgs[tIndex + 1] : sessionName;
+        throw new Error(`Failed to create tmux window (target=${target}): ${createResult?.stderr}`);
       }
 
       // Extract the PID from the output

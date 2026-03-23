@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 function randomScope(): string {
     return `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -12,7 +12,14 @@ function stubWebRuntime(origin: string) {
         removeItem: (k: string) => void store.delete(k),
         clear: () => void store.clear(),
     });
-    vi.stubGlobal('window', { location: { origin } });
+    const hostname = (() => {
+        try {
+            return new URL(origin).hostname;
+        } catch {
+            return '';
+        }
+    })();
+    vi.stubGlobal('window', { location: { origin, hostname } });
     vi.stubGlobal('document', {});
 }
 
@@ -21,21 +28,44 @@ async function importFreshServerConfig() {
     return await import('./serverConfig');
 }
 
+function restoreEnvVar(key: string, value: string | undefined): void {
+    if (value === undefined) {
+        delete process.env[key];
+        return;
+    }
+    process.env[key] = value;
+}
+
+function clearServerEnv(): void {
+    delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+    delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+    delete process.env.EXPO_PUBLIC_SERVER_URL;
+    delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
+    delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
+    delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+}
+
 describe('getServerUrl', () => {
+    const previousCanonicalEnv = process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
     const previousEnv = process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+    const previousLegacyGenericEnv = process.env.EXPO_PUBLIC_SERVER_URL;
     const previousContext = process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
     const previousPreconfigured = process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
 
+    beforeEach(() => {
+        clearServerEnv();
+        vi.resetModules();
+    });
+
     afterEach(() => {
         vi.unstubAllGlobals();
-        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = previousEnv;
-        if (previousContext === undefined) delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
-        else process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = previousContext;
-        if (previousPreconfigured === undefined) delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
-        else process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS = previousPreconfigured;
-        if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
-        else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
+        restoreEnvVar('EXPO_PUBLIC_HAPPIER_SERVER_URL', previousCanonicalEnv);
+        restoreEnvVar('EXPO_PUBLIC_HAPPY_SERVER_URL', previousEnv);
+        restoreEnvVar('EXPO_PUBLIC_SERVER_URL', previousLegacyGenericEnv);
+        restoreEnvVar('EXPO_PUBLIC_HAPPY_SERVER_CONTEXT', previousContext);
+        restoreEnvVar('EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS', previousPreconfigured);
+        restoreEnvVar('EXPO_PUBLIC_HAPPY_STORAGE_SCOPE', previousScope);
     });
 
     it('uses window.location.origin on web when EXPO_PUBLIC_HAPPY_SERVER_URL is empty', async () => {
@@ -45,6 +75,19 @@ describe('getServerUrl', () => {
         const { getServerUrl } = await importFreshServerConfig();
 
         expect(getServerUrl()).toBe('https://stack.example.test');
+    });
+
+    it('prefers injected web runtime config serverUrl over window.location.origin when env is empty', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = '';
+        stubWebRuntime('https://stack.example.test');
+        vi.stubGlobal('window', {
+            location: { origin: 'https://stack.example.test', hostname: 'stack.example.test' },
+            __HAPPIER_WEB_RUNTIME_CONFIG__: { serverUrl: 'https://server-override.example.test' },
+        });
+
+        const { getServerUrl } = await importFreshServerConfig();
+
+        expect(getServerUrl()).toBe('https://server-override.example.test');
     });
 
     it('falls back to an empty value when no server can be resolved', async () => {
@@ -65,8 +108,40 @@ describe('getServerUrl', () => {
         expect(getServerUrl()).toBe('https://stack.example.test');
     });
 
-    it('defaults to Happier Cloud on native when no server is configured', async () => {
+    it('uses EXPO_PUBLIC_HAPPIER_SERVER_URL as the canonical default server env var', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL = 'https://canonical.example.test';
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://legacy-happy.example.test';
+        process.env.EXPO_PUBLIC_SERVER_URL = 'https://legacy-generic.example.test';
+
+        const { getServerUrl } = await importFreshServerConfig();
+
+        expect(getServerUrl()).toBe('https://canonical.example.test');
+    });
+
+    it('uses EXPO_PUBLIC_HAPPY_SERVER_URL as a legacy alias when canonical env is unset', async () => {
+        delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://legacy-happy.example.test';
+        process.env.EXPO_PUBLIC_SERVER_URL = 'https://legacy-generic.example.test';
+
+        const { getServerUrl } = await importFreshServerConfig();
+
+        expect(getServerUrl()).toBe('https://legacy-happy.example.test');
+    });
+
+    it('uses EXPO_PUBLIC_SERVER_URL as a last-resort alias when canonical and happy env vars are unset', async () => {
+        delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
         delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        process.env.EXPO_PUBLIC_SERVER_URL = 'https://legacy-generic.example.test';
+
+        const { getServerUrl } = await importFreshServerConfig();
+
+        expect(getServerUrl()).toBe('https://legacy-generic.example.test');
+    });
+
+    it('defaults to Happier Cloud on native when no server is configured', async () => {
+        delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_SERVER_URL;
         delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
 
         const { getServerUrl } = await importFreshServerConfig();
@@ -149,5 +224,16 @@ describe('getServerUrl', () => {
 
         const profiles = await import('./serverProfiles');
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'http://localhost:3013')).toBe(true);
+    });
+
+    it('rewrites stack-scoped private IP server URL to a loopback hostname on web', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://172.20.10.4:53288';
+        stubWebRuntime('http://happier-dev.localhost:19364');
+
+        const { getServerUrl } = await importFreshServerConfig();
+
+        expect(getServerUrl()).toBe('http://happier-dev.localhost:53288');
     });
 });

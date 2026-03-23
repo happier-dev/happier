@@ -3,9 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 describe('modelOptions i18n', () => {
     it('uses translation lookup for default option labels', async () => {
         vi.resetModules();
-        vi.doMock('@/text', () => ({
-            t: (key: string) => `tx:${key}`,
-        }));
+        vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => `tx:${key}`,
+    });
+});
 
         const { getModelOptionsForAgentType } = await import('./modelOptions');
         const options = getModelOptionsForAgentType('gemini');

@@ -1,46 +1,21 @@
 import { io, type Socket } from 'socket.io-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
-function describeError(error: unknown): string {
-  if (error && typeof error === 'object' && 'message' in error) {
-    return String((error as { message?: unknown }).message ?? error);
-  }
-  return String(error);
-}
+import { attachSocketEventCollector, SocketEventCollector, type CapturedEvent } from './socketEventCollector';
 
-export type UpdateEvent = {
-  id?: string;
-  seq?: number;
-  createdAt?: number;
-  body?: { t?: string; [k: string]: unknown };
-  [k: string]: unknown;
-};
-export type EphemeralEvent = { type?: string; [k: string]: unknown };
+export type { CapturedEvent } from './socketEventCollector';
+
 type RpcRequestPayload = { method: string; params: string };
 type RpcRegisterEventPayload = { method?: unknown; error?: unknown };
 type RpcResponseEnvelope = { ok?: unknown; result?: unknown; error?: unknown; errorCode?: unknown };
 
-export type CapturedEvent =
-  | { at: number; kind: 'update'; payload: UpdateEvent }
-  | { at: number; kind: 'ephemeral'; payload: EphemeralEvent }
-  | { at: number; kind: 'connect' }
-  | { at: number; kind: 'disconnect'; reason?: string }
-  | { at: number; kind: 'connect_error'; message: string };
-
 export class SocketCollector {
   private readonly socket: Socket;
-  private readonly events: CapturedEvent[] = [];
+  private readonly eventCollector: SocketEventCollector;
 
   constructor(socket: Socket) {
     this.socket = socket;
-
-    socket.on('connect', () => this.events.push({ at: Date.now(), kind: 'connect' }));
-    socket.on('disconnect', (reason) => this.events.push({ at: Date.now(), kind: 'disconnect', reason }));
-    socket.on('connect_error', (err: unknown) => this.events.push({ at: Date.now(), kind: 'connect_error', message: describeError(err) }));
-    socket.on('update', (payload: unknown) => this.events.push({ at: Date.now(), kind: 'update', payload: (payload ?? {}) as UpdateEvent }));
-    socket.on('ephemeral', (payload: unknown) =>
-      this.events.push({ at: Date.now(), kind: 'ephemeral', payload: (payload ?? {}) as EphemeralEvent }),
-    );
+    this.eventCollector = attachSocketEventCollector(socket);
   }
 
   connect(): void {
@@ -60,7 +35,7 @@ export class SocketCollector {
   }
 
   getEvents(): CapturedEvent[] {
-    return [...this.events];
+    return this.eventCollector.getEvents();
   }
 
   async emitWithAck<T = unknown>(event: string, data: unknown, timeoutMs = 10_000): Promise<T> {
@@ -73,7 +48,8 @@ export class SocketCollector {
         const out = await handler(data);
         callback(out);
       } catch (e: unknown) {
-        callback(JSON.stringify({ ok: false, error: describeError(e) }));
+        const message = e && typeof e === 'object' && 'message' in e ? String((e as { message?: unknown }).message ?? e) : String(e);
+        callback(JSON.stringify({ ok: false, error: message }));
       }
     };
     this.socket.on(SOCKET_RPC_EVENTS.REQUEST as any, listener as any);
@@ -138,10 +114,20 @@ export function createUserScopedSocketCollector(baseUrl: string, token: string):
   return new SocketCollector(socket);
 }
 
-export function createSessionScopedSocketCollector(baseUrl: string, token: string, sessionId: string): SocketCollector {
+export function createSessionScopedSocketCollector(
+  baseUrl: string,
+  token: string,
+  sessionId: string,
+  machineId?: string,
+): SocketCollector {
   const socket = io(baseUrl, {
     path: '/v1/updates',
-    auth: { token, clientType: 'session-scoped' as const, sessionId },
+    auth: {
+      token,
+      clientType: 'session-scoped' as const,
+      sessionId,
+      ...(typeof machineId === 'string' ? { machineId } : {}),
+    },
     transports: ['websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,

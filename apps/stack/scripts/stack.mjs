@@ -41,7 +41,7 @@ import {
   withStackEnv,
   writeStackEnv,
 } from './stack/stack_environment.mjs';
-import { cmdAuth, cmdListStacks, cmdService, cmdSrv, cmdTailscale, cmdWt } from './stack/delegated_script_commands.mjs';
+import { cmdAuth, cmdListStacks, cmdRuntime, cmdService, cmdSrv, cmdTailscale, cmdWt } from './stack/delegated_script_commands.mjs';
 import { runStackDaemonCommand } from './stack/stack_daemon_command.mjs';
 import { runStackHappierPassthroughCommand } from './stack/stack_happier_passthrough_command.mjs';
 import { runStackMobileInstallCommand } from './stack/stack_mobile_install_command.mjs';
@@ -981,14 +981,18 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
   const forceAuth = resolveAuthForceFlag({ flags, kv });
 
   if (json) {
-    // Keep JSON mode non-interactive and stable by using the existing stack command output.
-    // (We intentionally don't run the guided login flow in JSON mode.)
-    const createArgs = ['new', name, '--no-copy-auth', '--server', serverComponent, '--json'];
-    const created = await runCapture(process.execPath, [join(rootDir, 'scripts', 'stack.mjs'), ...createArgs], { cwd: rootDir, env: process.env }).catch((e) => {
-      throw new Error(
-        `[stack] create-dev-auth-seed: failed to create auth seed stack "${name}": ${e instanceof Error ? e.message : String(e)}`
-      );
-    });
+    // Keep JSON mode non-interactive and stable by reusing an existing seed stack instead of
+    // recreating it, which would overwrite its pinned repo/worktree selection.
+    let createdPayload = { ok: true, stackName: name, reused: true };
+    if (!stackExistsSync(name)) {
+      const createArgs = ['new', name, '--no-copy-auth', '--server', serverComponent, '--json'];
+      const created = await runCapture(process.execPath, [join(rootDir, 'scripts', 'stack.mjs'), ...createArgs], { cwd: rootDir, env: process.env }).catch((e) => {
+        throw new Error(
+          `[stack] create-dev-auth-seed: failed to create auth seed stack "${name}": ${e instanceof Error ? e.message : String(e)}`
+        );
+      });
+      createdPayload = created.trim() ? JSON.parse(created.trim()) : { ok: true, stackName: name };
+    }
 
     printResult({
       json,
@@ -996,7 +1000,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
         ok: true,
         seedStack: name,
         serverComponent,
-        created: created.trim() ? JSON.parse(created.trim()) : { ok: true },
+        created: createdPayload,
         next: {
           login: `hstack stack auth ${name} login`,
           setEnv: `# add to ${getHomeEnvLocalPath()}:\nHAPPIER_STACK_AUTH_SEED_FROM=${name}\nHAPPIER_STACK_AUTO_AUTH_SEED=1`,
@@ -2147,7 +2151,7 @@ async function main() {
       cmd === 'service'
         ? [
             '[stack] usage:',
-            '  hstack stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail>',
+                  '  hstack stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail> [-- ...]',
             '',
             'example:',
             '  hstack stack service exp1 status',
@@ -2168,15 +2172,23 @@ async function main() {
                 'example:',
                 '  hstack stack srv exp1 -- status',
               ]
-            : cmd === 'env'
-              ? [
-                  '[stack] usage:',
-                  '  hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...]',
-                  '  hstack stack env <name> unset KEY [KEY2...]',
-                  '  hstack stack env <name> get KEY',
-                  '  hstack stack env <name> list',
-                  '  hstack stack env <name> path',
-                ]
+              : cmd === 'env'
+                ? [
+                    '[stack] usage:',
+                    '  hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...]',
+                    '  hstack stack env <name> unset KEY [KEY2...]',
+                    '  hstack stack env <name> get KEY',
+                    '  hstack stack env <name> list',
+                    '  hstack stack env <name> path',
+                  ]
+                : cmd === 'runtime'
+                  ? [
+                      '[stack] usage:',
+                      '  hstack stack runtime <name> activate [--web|--server|--daemon|--all] [--json]',
+                      '',
+                      'example:',
+                      '  hstack stack runtime exp1 activate --web',
+                    ]
               : cmd === 'eas'
                 ? [
                     '[stack] usage:',
@@ -2354,7 +2366,7 @@ async function main() {
         data: { ok: false, error: 'missing_service_subcommand', stackName },
         text: [
           '[stack] usage:',
-          '  hstack stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail>',
+          '  hstack stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail> [-- ...]',
           '',
           'example:',
           `  hstack stack service ${stackName} status`,
@@ -2362,13 +2374,32 @@ async function main() {
       });
       process.exit(1);
     }
-    await cmdService({ rootDir, stackName, svcCmd });
+    await cmdService({ rootDir, stackName, svcCmd, args: passthrough.slice(1) });
+    return;
+  }
+  if (cmd === 'runtime') {
+    const runtimeCmd = passthrough[0];
+    if (runtimeCmd !== 'activate') {
+      printResult({
+        json,
+        data: { ok: false, error: 'missing_runtime_subcommand', stackName },
+        text: [
+          '[stack] usage:',
+          '  hstack stack runtime <name> activate [--web|--server|--daemon|--all] [--json]',
+          '',
+          'example:',
+          `  hstack stack runtime ${stackName} activate --web`,
+        ].join('\n'),
+      });
+      process.exit(1);
+    }
+    await cmdRuntime({ rootDir, stackName, args: passthrough.slice(1) });
     return;
   }
 
   if (cmd.startsWith('service:')) {
     const svcCmd = cmd.slice('service:'.length);
-    await cmdService({ rootDir, stackName, svcCmd });
+    await cmdService({ rootDir, stackName, svcCmd, args: passthrough });
     return;
   }
   if (cmd.startsWith('tailscale:')) {

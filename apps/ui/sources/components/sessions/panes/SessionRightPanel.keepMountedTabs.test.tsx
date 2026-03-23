@@ -1,44 +1,21 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { select: (value: any) => value?.default ?? null },
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    __esModule: true,
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f6f6f6',
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f6f6f6',
-                        divider: '#ddd',
-                        text: '#000',
-                        textSecondary: '#666',
-                    },
-                })
-                : value,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                        Platform: {
+                            OS: 'web',
+                        },
+                    }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -52,9 +29,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', () => ({
     SessionRepositoryTreeBrowserView: (props: any) => React.createElement('SessionRepositoryTreeBrowserView', props),
@@ -91,31 +69,35 @@ describe('SessionRightPanel (keep mounted tabs)', () => {
     it('keeps Git and Files tab surfaces mounted so switching tabs preserves state', async () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
 
-        expect(tree!.root.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
+        const getStyleValue = (node: ReactTestInstance, key: string) => {
+            const styles = Array.isArray(node.props.style) ? node.props.style : [node.props.style];
+            for (const entry of styles) {
+                if (entry && typeof entry === 'object' && key in entry) {
+                    return (entry as Record<string, unknown>)[key];
+                }
+            }
+            return undefined;
+        };
+
+        expect(screen.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
         // Lazy-mount inactive tabs for faster initial open.
-        expect(tree!.root.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(0);
+        expect(screen.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(0);
 
-        await act(async () => {
-            const filesTab = tree!.root.findByProps({ testID: 'session-rightpanel-tab-files' });
-            filesTab.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-rightpanel-tab:files');
 
-        expect(tree!.root.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
-        expect(tree!.root.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
-        const repositoryTree = tree!.root.findByType('SessionRepositoryTreeBrowserView');
-        expect(repositoryTree).toBeTruthy();
+        expect(screen.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
+        expect(screen.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
+        expect(screen.findByType('SessionRepositoryTreeBrowserView')).toBeTruthy();
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-git')!, 'visibility')).toBe('hidden');
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-files')!, 'visibility')).toBe('visible');
 
         // Switching back keeps both mounted.
-        await act(async () => {
-            const gitTab = tree!.root.findByProps({ testID: 'session-rightpanel-tab-git' });
-            gitTab.props.onPress();
-        });
-        expect(tree!.root.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
-        expect(tree!.root.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
+        await screen.pressByTestIdAsync('session-rightpanel-tab:git');
+        expect(screen.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
+        expect(screen.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-git')!, 'visibility')).toBe('visible');
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-files')!, 'visibility')).toBe('hidden');
     });
 });

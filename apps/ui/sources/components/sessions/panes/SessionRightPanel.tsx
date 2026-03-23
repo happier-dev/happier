@@ -5,18 +5,30 @@ import { Octicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionRepositoryTreeBrowserView } from '@/components/sessions/files/views/SessionRepositoryTreeBrowserView';
 import { SessionRightPanelGitView } from '@/components/sessions/panes/git/SessionRightPanelGitView';
+import { SessionRightPanelAgentsView } from '@/components/sessions/panes/agents/SessionRightPanelAgentsView';
+import { SessionRightPanelTerminalView } from '@/components/sessions/panes/terminal/SessionRightPanelTerminalView';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { t } from '@/text';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { useLocalSetting } from '@/sync/domains/state/storage';
+import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
 
 export type SessionRightPanelProps = Readonly<{
     sessionId: string;
     scopeId: string;
+    /**
+     * Optional override for the close action. Used by fullscreen/mobile routes that render the
+     * same surface as the desktop right pane but need to navigate back in the router stack.
+     */
+    onRequestClose?: () => void;
 }>;
 
-type RightTabId = 'git' | 'files';
+type RightTabId = 'git' | 'files' | 'agents' | 'terminal';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -38,31 +50,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 10,
     },
-    segmented: {
-        flexDirection: 'row',
-        backgroundColor: theme.colors.surface,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        borderRadius: 10,
-        overflow: 'hidden',
+    segmentedContainer: {
         flex: 1,
-    },
-    segment: {
-        flex: 1,
-        paddingVertical: 7,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    segmentActive: {
-        backgroundColor: theme.colors.surfaceHigh,
-    },
-    segmentLabel: {
-        fontSize: 12,
-        color: theme.colors.textSecondary,
-        ...Typography.default('semiBold'),
-    },
-    segmentLabelActive: {
-        color: theme.colors.text,
     },
     closeButton: {
         width: 34,
@@ -84,10 +73,20 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const deviceType = useDeviceType();
     const pane = useAppPaneScope(props.scopeId);
     const scopeState = pane.scopeState;
 
-    const activeTab = (scopeState?.right.activeTabId as RightTabId | null) ?? 'git';
+    const terminalEnabled = useFeatureEnabled('terminal.embeddedPty');
+    const dockLocationRaw = useLocalSetting('embeddedTerminalDockLocation');
+    const dockLocation = deviceType === 'phone' ? 'sidebar' : dockLocationRaw;
+    const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
+    const terminalTabAvailable = terminalEnabled && dockLocation === 'sidebar';
+    const rawActiveTab = (scopeState?.right.activeTabId as RightTabId | null) ?? 'git';
+    const activeTab: RightTabId =
+        rawActiveTab === 'terminal' && !terminalTabAvailable
+            ? 'git'
+            : rawActiveTab;
 
     const setActiveTab = React.useCallback((tabId: RightTabId) => {
         pane.openRight({ tabId });
@@ -99,7 +98,10 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
         if (!scopeState.right.activeTabId) {
             pane.setRightTab('git');
         }
-    }, [pane, scopeState?.right.activeTabId, scopeState?.right.isOpen]);
+        if (scopeState.right.activeTabId === 'terminal' && !terminalTabAvailable) {
+            pane.setRightTab('git');
+        }
+    }, [pane, scopeState?.right.activeTabId, scopeState?.right.isOpen, terminalTabAvailable]);
 
     const openFileInDetails = React.useCallback((fullPath: string) => {
         const fileName = fullPath.split('/').pop() ?? fullPath;
@@ -128,34 +130,32 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
         });
     }, [pane]);
 
+    const rightPanelTabs = React.useMemo((): ReadonlyArray<SegmentedTab<RightTabId>> => {
+        const base: SegmentedTab<RightTabId>[] = [
+            { id: 'git', label: t('settings.sourceControl') },
+            { id: 'files', label: t('common.files') },
+            { id: 'agents', label: t('session.subagents.panel.title') },
+        ];
+        if (terminalTabAvailable) {
+            base.push({ id: 'terminal', label: t('settings.terminal') });
+        }
+        return base;
+    }, [terminalTabAvailable]);
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-                <View style={styles.segmented}>
-                    <Pressable
-                        testID="session-rightpanel-tab-git"
-                        onPress={() => setActiveTab('git')}
-                        style={[styles.segment, activeTab === 'git' ? styles.segmentActive : null]}
-                        accessibilityRole="button"
-                    >
-                        <Text style={[styles.segmentLabel, activeTab === 'git' ? styles.segmentLabelActive : null]}>
-                            {t('settings.sourceControl')}
-                        </Text>
-                    </Pressable>
-                    <Pressable
-                        testID="session-rightpanel-tab-files"
-                        onPress={() => setActiveTab('files')}
-                        style={[styles.segment, activeTab === 'files' ? styles.segmentActive : null]}
-                        accessibilityRole="button"
-                    >
-                        <Text style={[styles.segmentLabel, activeTab === 'files' ? styles.segmentLabelActive : null]}>
-                            {t('common.files')}
-                        </Text>
-                    </Pressable>
+                <View style={styles.segmentedContainer}>
+                    <SegmentedTabBar
+                        tabs={rightPanelTabs}
+                        activeTabId={activeTab}
+                        onSelectTab={setActiveTab}
+                        testIDPrefix={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-tab') ?? undefined}
+                    />
                 </View>
                 <Pressable
-                    testID="session-rightpanel-close"
-                    onPress={pane.closeRight}
+                    testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-close')}
+                    onPress={props.onRequestClose ?? pane.closeRight}
                     style={styles.closeButton}
                     accessibilityRole="button"
                     accessibilityLabel={t('common.close')}
@@ -165,12 +165,18 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
             </View>
             <View style={styles.body}>
                 <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
-                    <RightTabSurface isActive={activeTab === 'git'}>
+                    <RightTabSurface
+                        isActive={activeTab === 'git'}
+                        testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-git')}
+                    >
                         <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.textSecondary} />}>
                             <SessionRightPanelGitView sessionId={props.sessionId} scopeId={props.scopeId} />
                         </React.Suspense>
                     </RightTabSurface>
-                    <RightTabSurface isActive={activeTab === 'files'}>
+                    <RightTabSurface
+                        isActive={activeTab === 'files'}
+                        testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-files')}
+                    >
                         <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.textSecondary} />}>
                             <SessionRepositoryTreeBrowserView
                                 sessionId={props.sessionId}
@@ -180,6 +186,24 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
                             />
                         </React.Suspense>
                     </RightTabSurface>
+                    <RightTabSurface
+                        isActive={activeTab === 'agents'}
+                        testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-agents')}
+                    >
+                        <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.textSecondary} />}>
+                            <SessionRightPanelAgentsView sessionId={props.sessionId} scopeId={props.scopeId} />
+                        </React.Suspense>
+                    </RightTabSurface>
+                    {terminalTabAvailable && (
+                        <RightTabSurface
+                            isActive={activeTab === 'terminal'}
+                            testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-terminal')}
+                        >
+                            <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.textSecondary} />}>
+                                <SessionRightPanelTerminalView sessionId={props.sessionId} scopeId={props.scopeId} />
+                            </React.Suspense>
+                        </RightTabSurface>
+                    )}
                 </View>
             </View>
         </View>
@@ -197,7 +221,7 @@ const PaneLoadingFallback = React.memo((props: Readonly<{ color: string }>) => {
     );
 });
 
-const RightTabSurface = React.memo((props: Readonly<{ isActive: boolean; children: React.ReactNode }>) => {
+const RightTabSurface = React.memo((props: Readonly<{ isActive: boolean; testID?: string; children: React.ReactNode }>) => {
     const active = props.isActive;
     const [hasMounted, setHasMounted] = React.useState(active);
 
@@ -208,9 +232,14 @@ const RightTabSurface = React.memo((props: Readonly<{ isActive: boolean; childre
     if (!active && !hasMounted) return null;
     return (
         <View
+            testID={props.testID}
+            pointerEvents={active ? 'auto' : 'none'}
             style={[
                 StyleSheet.absoluteFillObject,
-                { opacity: active ? 1 : 0, pointerEvents: active ? 'auto' : 'none' },
+                {
+                    opacity: active ? 1 : 0,
+                    visibility: Platform.OS === 'web' ? (active ? 'visible' : 'hidden') : 'visible',
+                },
             ]}
         >
             {props.children}

@@ -33,6 +33,12 @@ export type ProviderUnderTest = {
   enableEnvVar: string;
   protocol: ProviderProtocol;
   traceProvider: string;
+  coverageExpectation?: {
+    providerLaneScope: 'acp-only' | 'declared-scenarios';
+    defaultRuntimePath: 'provider-lane' | 'appServer';
+    appServerCoverage: 'excluded' | 'not-applicable' | 'capability-contract';
+    appServerCapabilitySurfaces?: Array<'modes' | 'models' | 'speed' | 'rollback'>;
+  };
   /**
    * Environment variables that must be present for this provider to run.
    *

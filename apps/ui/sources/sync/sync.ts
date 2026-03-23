@@ -1,9 +1,9 @@
 import Constants from 'expo-constants';
 import { apiSocket } from '@/sync/api/session/apiSocket';
-import { type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { Encryption } from '@/sync/encryption/encryption';
-import { decodeBase64, encodeBase64 } from '@/encryption/base64';
+import { encodeBase64 } from '@/encryption/base64';
 import { storage } from './domains/state/storage';
 import { ApiMessage } from './api/types/apiTypes';
 import type { ApiEphemeralActivityUpdate } from './api/types/apiTypes';
@@ -11,12 +11,16 @@ import { Session, Machine, MetadataSchema, type Metadata } from './domains/state
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { PauseController } from '@/utils/timing/pauseController';
 import { loadSyncTuning, type SyncTuning } from '@/sync/runtime/syncTuning';
+import {
+    computeSessionMessagesPaginationUpdateFromPage,
+    type SessionMessagesPaginationState,
+} from '@/sync/runtime/sessionMessagesPagination';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
 import { MachineActivityAccumulator, type MachineActivityUpdate } from './reducer/machineActivityAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
 import { Platform, AppState } from 'react-native';
 import { resolveSentFrom } from './domains/messages/sentFrom';
-import { NormalizedMessage, normalizeRawMessage, RawRecord } from './typesRaw';
+import { NormalizedMessage, normalizeRawMessage, RawRecord, RawRecordSchema } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
 import { Profile, profileDefaults } from './domains/profiles/profile';
 import {
@@ -26,7 +30,21 @@ import {
     saveSessionMaterializedMaxSeqById,
     loadChangesCursor,
     saveChangesCursor,
+    loadProfile as loadPersistedProfile,
 } from './domains/state/persistence';
+import {
+    clearWarmCacheAccountScope,
+    loadMachineDisplayWarmCacheEntries,
+    loadSessionListWarmCacheEntries,
+    resolveWarmCacheAccountScope,
+    setWarmCacheAccountScope,
+} from './domains/state/warmCachePersistence';
+import {
+    buildMachineDisplayCacheEntriesFromRenderables,
+    buildMachineDisplayRenderableFromCacheEntry,
+    buildSessionListCacheEntriesFromRenderables,
+    buildSessionListRenderableFromCacheEntry,
+} from './domains/state/warmCacheAdapters';
 import { initializeTracking, tracking } from '@/track';
 import { applyCrashReportsOptOut } from '@/utils/system/sentry';
 import { parseToken } from '@/utils/auth/parseToken';
@@ -34,6 +52,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { RevenueCat } from './domains/purchases';
 import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, trackPaywallRestored, trackPaywallError } from '@/track';
 import { getActiveServerSnapshot } from './domains/server/serverRuntime';
+import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import { setActiveServerSessionListCache } from './store/sessionListCache';
 import { config } from '@/config';
 import { log } from '@/log';
@@ -41,14 +60,14 @@ import { scmStatusSync } from '@/scm/scmStatusSync';
 import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
 import { projectManager } from './runtime/orchestration/projectManager';
 import { voiceHooks } from '@/voice/context/voiceHooks';
+import { notifyActivityReady } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { Message } from './domains/messages/messageTypes';
 import { EncryptionCache } from './encryption/encryptionCache';
-import { buildSessionAppendSystemPrompt } from '../agents/prompt/buildSessionAppendSystemPrompt';
 import { nowServerMs } from './runtime/time';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { computeNextReadStateV1 } from './domains/state/readStateV1';
 import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type UpdateMetadataAck } from './domains/session/metadata/updateSessionMetadataWithRetry';
-import type { DecryptedArtifact } from './domains/artifacts/artifactTypes';
+import type { ArtifactHeader, DecryptedArtifact } from './domains/artifacts/artifactTypes';
 import type { Automation, AutomationRun } from './domains/automations/automationTypes';
 import { getUserProfile } from './api/social/apiFriends';
 import {
@@ -69,27 +88,50 @@ import { UserProfile } from './domains/social/friendTypes';
 import { buildSendMessageMeta } from './domains/messages/buildSendMessageMeta';
 import { HappyError } from '@/utils/errors/errors';
 import { dbgSettings, isSettingsSyncDebugEnabled, summarizeSettings, summarizeSettingsDelta } from './domains/settings/debugSettings';
-import { deriveSettingsSecretsKey, decryptSecretValue, encryptSecretString, sealSecretsDeep } from './encryption/secretSettings';
+import {
+    decryptSecretValueWithKeys,
+    deriveSettingsSecretsKeySet,
+    encryptSecretString,
+    sealSecretsDeep,
+} from './encryption/secretSettings';
 import { didControlReturnToMobile } from './domains/session/control/controlledByUserTransitions';
 import { chooseSubmitMode } from './domains/session/control/submitMode';
-import type { SavedSecret } from './domains/settings/settings';
+import type { SavedSecret } from './domains/settings/savedSecretTypes';
 import type { PermissionMode } from './domains/permissions/permissionTypes';
 import { scheduleDebouncedPendingSettingsFlush } from './engine/pending/pendingSettings';
-import { applySettingsLocalDelta, syncSettings as syncSettingsEngine } from './engine/settings/syncSettings';
+import {
+    applySettingsLocalDelta,
+    syncSettings as syncSettingsEngine,
+    type SyncSettingsParams,
+} from './engine/settings/syncSettings';
 import { getOfferings as getOfferingsEngine, presentPaywall as presentPaywallEngine, purchaseProduct as purchaseProductEngine, syncPurchases as syncPurchasesEngine } from './engine/purchases/syncPurchases';
 import { fetchChanges } from './api/session/apiChanges';
 import { runWithInFlightDedupe } from '@/sync/runtime/orchestration/runWithInFlightDedupe';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import { decideMessageCatchUpPolicy } from '@/sync/runtime/orchestration/messageCatchUpPolicy';
 import { applyMessageCatchUpDecision } from '@/sync/runtime/orchestration/applyMessageCatchUpDecision';
+import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { normalizeDirectTranscriptMessages } from '@/sync/runtime/directSessions/normalizeDirectTranscriptMessages';
+import { readStoredSessionRawRecord } from '@/sync/runtime/readStoredSessionContent';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope';
+import { fetchSessionByIdWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
+import { createSessionRequestWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
+import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
+import {
+    machineDirectSessionTranscriptPage,
+    machineDirectSessionTranscriptReadAfter,
+} from '@/sync/ops/machineDirectSessions';
 import {
     createArtifactViaApi,
+    createArtifactWithHeaderViaApi,
     fetchAndApplyArtifactsList,
     fetchArtifactWithBodyFromApi,
     handleDeleteArtifactSocketUpdate,
     handleNewArtifactSocketUpdate,
     handleUpdateArtifactSocketUpdate,
     updateArtifactViaApi,
+    updateArtifactWithHeaderViaApi,
 } from './engine/artifacts/syncArtifacts';
 import { fetchAndApplyFeed, handleNewFeedPostUpdate, handleRelationshipUpdatedSocketUpdate, handleTodoKvBatchUpdate } from './engine/social/syncFeed';
 import { fetchAndApplyFriends } from './engine/social/syncFriends';
@@ -105,7 +147,10 @@ import { publishPermissionModeToMetadata as publishPermissionModeToMetadataEngin
 import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrideToMetadataEngine } from './engine/overrides/acpSessionModeOverridePublish';
 import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/overrides/modelOverridePublish';
 import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/overrides/acpConfigOptionOverridePublish';
+import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { serverFetch } from './http/client';
 import {
     buildUpdatedSessionFromSocketUpdate,
@@ -143,6 +188,8 @@ import {
 
 const SESSION_MESSAGES_PAGE_SIZE = 150;
 
+type SessionMessagesScope = 'main' | 'sidechain';
+
 export type SyncMessageTransport = Readonly<{
     emitWithAck: <T = unknown>(event: string, payload: unknown, opts?: { timeoutMs?: number }) => Promise<T>;
     send: (event: string, payload: unknown) => unknown;
@@ -154,6 +201,29 @@ function createDefaultMessageTransport(): SyncMessageTransport {
             apiSocket.emitWithAck<T>(event, payload, opts),
         send: (event: string, payload: unknown) => apiSocket.send(event, payload),
     };
+}
+
+function isFallbackSafeSessionUserMessageRpcError(error: unknown): boolean {
+    if (readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+        return true;
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+    if (
+        errorMessage === 'Method not found'
+        || errorMessage === 'RPC method not available'
+        || errorMessage === 'Socket not connected'
+        || errorMessage === 'Socket connect timeout'
+    ) {
+        return true;
+    }
+
+    const normalized = errorMessage.toLowerCase();
+    return normalized.includes('connect_error') || normalized.includes('session encryption not found');
+}
+
+function readOptionalSessionMetadataString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
 class Sync {
@@ -170,16 +240,22 @@ class Sync {
       private isForeground = AppState.currentState === 'active';
       public encryptionCache = new EncryptionCache();
       private sessionsSync: InvalidateSync;
-      private messagesSync = new Map<string, InvalidateSync>();
+    private messagesSync = new Map<string, InvalidateSync>();
     private activeServerSessionIds = new Set<string>();
     private hasFetchedSessionsSnapshotForActiveServer = false;
-    private sessionByIdHydrationInFlight = new Map<string, Promise<boolean>>();
-      private sessionReceivedMessages = new Map<string, Set<string>>();
-      private sessionMessagesBeforeSeq = new Map<string, number>();
-      private sessionMessagesHasMoreOlder = new Map<string, boolean>();
-      private sessionMessagesLoadingOlder = new Set<string>();
-      private sessionMessagesLoadingNewer = new Set<string>();
-      private sessionMessagesPaginationSupported = new Map<string, boolean>();
+    private serverScopeGeneration = 0;
+      private sessionByIdHydrationInFlight = new Map<string, Promise<boolean>>();
+      private sessionReceivedMessages = new Map<string, Map<string, number>>();
+      private sessionMessagesBeforeSeqByKey = new Map<string, number>();
+      private sessionMessagesHasMoreOlderByKey = new Map<string, boolean>();
+      private sessionMessagesFetchLatestInFlightByKey = new Set<string>();
+      private sessionMessagesFetchedLatestByKey = new Set<string>();
+      private sessionMessagesLoadingOlderByKey = new Set<string>();
+      private sessionMessagesLoadingNewerByKey = new Set<string>();
+      private sessionMessagesPaginationSupportedByKey = new Map<string, boolean>();
+      private directSessionOlderCursorBySessionId = new Map<string, string | null>();
+      private directSessionHasMoreOlderBySessionId = new Map<string, boolean>();
+      private directSessionTailCursorBySessionId = new Map<string, string | null>();
       private sessionViewport = new Map<string, { isPinned: boolean; offsetY: number; lastUpdatedAt: number }>();
       private deferredForwardLoadingSessions = new Set<string>();
       private sessionDataKeys = new Map<string, Uint8Array>(); // Store session data encryption keys internally
@@ -214,6 +290,7 @@ class Sync {
       private lastSocketDisconnectedAtMs: number | null = null;
       revenueCatInitialized = false;
     private settingsSecretsKey: Uint8Array | null = null;
+    private settingsSecretsReadKeys: readonly Uint8Array[] = [];
     private messageTransport: SyncMessageTransport = createDefaultMessageTransport();
     private updatesSubscribed = false;
 
@@ -371,20 +448,20 @@ class Sync {
         this.encryption = encryption;
         this.anonID = encryption.anonID;
         this.serverID = parseToken(credentials.token);
+        setWarmCacheAccountScope(this.serverID);
         this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
         this.changesCursorDirty = false;
         // Derive a stable per-account key for field-level secret settings.
         // This is separate from the outer settings blob encryption.
         try {
-            const secretKey = isLegacyAuthCredentials(credentials)
-                ? decodeBase64(credentials.secret, 'base64url')
-                : decodeBase64(credentials.encryption.machineKey, 'base64');
-            if (secretKey.length === 32) {
-                this.settingsSecretsKey = await deriveSettingsSecretsKey(secretKey);
-            }
+            const keySet = deriveSettingsSecretsKeySet(resolveAccountScopedCryptoMaterialFromCredentials(credentials));
+            this.settingsSecretsKey = keySet.writeKey;
+            this.settingsSecretsReadKeys = keySet.readKeys;
         } catch {
             this.settingsSecretsKey = null;
+            this.settingsSecretsReadKeys = [];
         }
+        this.hydrateWarmCachesForActiveServer();
         await this.#init();
 
         // UX: avoid blocking login forever if initial sync fetches hang/retry indefinitely.
@@ -404,22 +481,43 @@ class Sync {
         this.encryption = encryption;
         this.anonID = encryption.anonID;
         this.serverID = parseToken(credentials.token);
+        setWarmCacheAccountScope(this.serverID);
         this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
         this.changesCursorDirty = false;
         try {
-            const secretKey = isLegacyAuthCredentials(credentials)
-                ? decodeBase64(credentials.secret, 'base64url')
-                : decodeBase64(credentials.encryption.machineKey, 'base64');
-            if (secretKey.length === 32) {
-                this.settingsSecretsKey = await deriveSettingsSecretsKey(secretKey);
-            }
+            const keySet = deriveSettingsSecretsKeySet(resolveAccountScopedCryptoMaterialFromCredentials(credentials));
+            this.settingsSecretsKey = keySet.writeKey;
+            this.settingsSecretsReadKeys = keySet.readKeys;
         } catch {
             this.settingsSecretsKey = null;
+            this.settingsSecretsReadKeys = [];
         }
+        this.hydrateWarmCachesForActiveServer();
         await this.#init();
     }
 
+    private hydrateWarmCachesForActiveServer(): void {
+        const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        const accountId = resolveWarmCacheAccountScope(loadPersistedProfile().id);
+        if (!serverId || !accountId) return;
+
+        const machineEntries = loadMachineDisplayWarmCacheEntries(serverId, accountId);
+        if (Object.keys(machineEntries).length > 0) {
+            storage.getState().replaceMachineDisplays(
+                Object.values(machineEntries).map((entry) => buildMachineDisplayRenderableFromCacheEntry(entry)),
+            );
+        }
+
+        const sessionEntries = loadSessionListWarmCacheEntries(serverId, accountId);
+        if (Object.keys(sessionEntries).length > 0) {
+            storage.getState().replaceSessionListRenderables(
+                Object.values(sessionEntries).map((entry) => buildSessionListRenderableFromCacheEntry(entry)),
+            );
+        }
+    }
+
     private resetServerScopedRuntimeState = () => {
+        this.serverScopeGeneration += 1;
         apiSocket.disconnect();
         this.activityAccumulator.reset();
         this.machineActivityAccumulator.reset();
@@ -433,16 +531,18 @@ class Sync {
             timer.stop();
         }
         this.messagesSync.clear();
-          this.sessionReceivedMessages.clear();
-          this.sessionMessagesBeforeSeq.clear();
-          this.sessionMessagesHasMoreOlder.clear();
-          this.sessionMessagesLoadingOlder.clear();
-          this.sessionMessagesLoadingNewer.clear();
-          this.sessionMessagesPaginationSupported.clear();
-          this.sessionViewport.clear();
-          this.deferredForwardLoadingSessions.clear();
-          this.activeServerSessionIds.clear();
-          this.hasFetchedSessionsSnapshotForActiveServer = false;
+        this.sessionReceivedMessages.clear();
+        this.sessionMessagesBeforeSeqByKey.clear();
+        this.sessionMessagesHasMoreOlderByKey.clear();
+        this.sessionMessagesFetchLatestInFlightByKey.clear();
+        this.sessionMessagesFetchedLatestByKey.clear();
+        this.sessionMessagesLoadingOlderByKey.clear();
+        this.sessionMessagesLoadingNewerByKey.clear();
+        this.sessionMessagesPaginationSupportedByKey.clear();
+        this.sessionViewport.clear();
+        this.deferredForwardLoadingSessions.clear();
+        this.activeServerSessionIds.clear();
+        this.hasFetchedSessionsSnapshotForActiveServer = false;
         this.sessionDataKeys.clear();
         this.machineDataKeys.clear();
         this.artifactDataKeys.clear();
@@ -461,6 +561,7 @@ class Sync {
             ...state,
             profile: { ...profileDefaults },
             sessions: {},
+            sessionListRenderables: {},
             sessionsData: null,
             sessionListViewData: null,
             sessionListViewDataByServerId: setActiveServerSessionListCache(
@@ -469,6 +570,7 @@ class Sync {
             ),
             sessionScmStatus: {},
             machines: {},
+            machineDisplayById: {},
             sessionMessages: {},
             sessionPending: {},
             artifacts: {},
@@ -502,6 +604,7 @@ class Sync {
 
     public disconnectServer(): void {
         this.resetServerScopedRuntimeState();
+        clearWarmCacheAccountScope();
     }
 
     /**
@@ -520,7 +623,7 @@ class Sync {
      * Prefer this over adding per-field helpers unless a field needs special handling.
      */
     public decryptSecretValue(input: import('./encryption/secretSettings').SecretString | null | undefined): string | null {
-        return decryptSecretValue(input, this.settingsSecretsKey);
+        return decryptSecretValueWithKeys(input, this.settingsSecretsReadKeys);
     }
 
     async #init() {
@@ -563,6 +666,12 @@ class Sync {
         }
     }
 
+        refreshSessionMessages = async (sessionId: string): Promise<void> => {
+            const normalized = String(sessionId ?? '').trim();
+            if (!normalized) return;
+            await this.getOrCreateMessagesSync(normalized).invalidateAndAwait();
+        }
+
         /**
          * Hydrate a visible session by id for deep links / hard refreshes.
          *
@@ -571,38 +680,98 @@ class Sync {
          * the active server snapshot may not include that session id yet, which causes message fetch to no-op.
          * This helper fetches `/v2/sessions/:id` and initializes encryption so messages can be loaded.
          */
-        ensureSessionVisibleForMessageRoute = async (sessionId: string): Promise<void> => {
+        ensureSessionVisibleForMessageRoute = async (
+            sessionId: string,
+            options?: Readonly<{ forceRefresh?: boolean }>,
+        ): Promise<boolean> => {
             const normalized = String(sessionId ?? '').trim();
-            if (!normalized) return;
+            if (!normalized) return true;
+            const forceRefresh = options?.forceRefresh === true;
 
-            // Fast-path when we already know the session exists on this server.
-            if (this.isSessionKnownOnActiveServer(normalized) && storage.getState().sessions[normalized]) {
-                return;
+            const DEBUG_SESSION_HYDRATE =
+                typeof globalThis !== 'undefined'
+                && (
+                    (globalThis as any).__HAPPIER_DEBUG_SESSION_HYDRATE__ === true
+                    || (() => {
+                        try {
+                            return typeof localStorage !== 'undefined' && localStorage.getItem('happier.debug.sessionHydrate') === '1';
+                        } catch {
+                            return false;
+                        }
+                    })()
+                );
+
+            // Fast-path when we already know the session exists on this server and, for e2ee sessions,
+            // encryption has been initialized (deep links can occur before the sessions snapshot bootstraps).
+            const existingSession = storage.getState().sessions[normalized];
+            if (!forceRefresh && this.isSessionKnownOnActiveServer(normalized) && existingSession) {
+                const encryptionMode: 'e2ee' | 'plain' = existingSession.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+                const hasEncryption = Boolean(this.encryption.getSessionEncryption(normalized));
+                if (DEBUG_SESSION_HYDRATE) {
+                    log.log(`[sessionHydrate] fast-path check ${normalized} mode=${encryptionMode} hasEncryption=${hasEncryption}`);
+                }
+                if (encryptionMode === 'plain' || hasEncryption) {
+                    if (DEBUG_SESSION_HYDRATE) {
+                        log.log(`[sessionHydrate] fast-path hit ${normalized}`);
+                    }
+                    return true;
+                }
             }
 
             // Sync might not be fully initialized yet (e.g. very early during app bootstrap).
             const credentials = this.credentials;
-            if (!credentials) return;
+            if (!credentials) {
+                if (DEBUG_SESSION_HYDRATE) {
+                    log.log(`[sessionHydrate] missing credentials for ${normalized}`);
+                }
+                return false;
+            }
 
             const existing = this.sessionByIdHydrationInFlight.get(normalized);
             if (existing) {
-                await existing;
-                return;
+                if (DEBUG_SESSION_HYDRATE) {
+                    log.log(`[sessionHydrate] awaiting in-flight hydration for ${normalized}`);
+                }
+                return await existing;
             }
 
             const inFlight = (async () => {
                 try {
-                    const result = await fetchAndApplySessionById({
+                    if (DEBUG_SESSION_HYDRATE) {
+                        log.log(`[sessionHydrate] fetching session by id ${normalized}`);
+                    }
+                    const result = await fetchSessionByIdWithServerScope({
                         sessionId: normalized,
-                        credentials,
-                        encryption: this.encryption,
+                        serverId: resolvePreferredServerIdForSessionId(normalized),
+                        activeCredentials: credentials,
+                        activeEncryption: this.encryption,
                         sessionDataKeys: this.sessionDataKeys,
-                        request: (path, init) => apiSocket.request(path, init),
+                        activeRequest: (path, init) => apiSocket.request(path, init),
+                        getExistingSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
                         applySessions: (sessions) => this.applySessions(sessions),
                         log,
                     });
-                    if (!result.ok) return false;
+                    if (!result.ok) {
+                        const code = typeof result.errorCode === 'string' ? result.errorCode : '';
+                        // Terminal errors should not spin forever in route hydration. Let the route render and fail closed.
+                        if (code === 'not_found' || code === 'unauthorized' || code === 'forbidden') {
+                            return true;
+                        }
+                        return false;
+                    }
+
+                    // Ensure the *current* encryption instance is initialized for this session.
+                    // During app bootstrap / key restoration, the sync encryption instance can change while
+                    // the session-by-id hydration request is in-flight. Re-initializing here ensures
+                    // subsequent message fetches can proceed immediately.
+                    const sessionDataKey = this.sessionDataKeys.get(normalized) ?? null;
+                    await this.encryption.initializeSessions(new Map([[normalized, sessionDataKey]]));
+
                     this.activeServerSessionIds.add(normalized);
+                    if (DEBUG_SESSION_HYDRATE) {
+                        const hasEncryption = Boolean(this.encryption.getSessionEncryption(normalized));
+                        log.log(`[sessionHydrate] hydration ok ${normalized} hasEncryption=${hasEncryption}`);
+                    }
                     return true;
                 } catch (err) {
                     log.log(`⚠️ ensureSessionVisibleForMessageRoute failed for ${normalized}: ${err instanceof Error ? err.message : 'unknown error'}`);
@@ -621,10 +790,17 @@ class Sync {
             if (ok) {
                 this.getOrCreateMessagesSync(normalized).invalidateCoalesced();
             }
+            return ok;
         }
 
 
-    async sendMessage(sessionId: string, text: string, displayText?: string, metaOverrides?: Record<string, unknown>) {
+    async sendMessage(
+        sessionId: string,
+        text: string,
+        displayText?: string,
+        metaOverrides?: Record<string, unknown>,
+        options?: Readonly<{ profileId?: string | null }>
+    ) {
         storage.getState().markSessionOptimisticThinking(sessionId);
 
         // Get session data from storage
@@ -638,6 +814,36 @@ class Sync {
         const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 
         try {
+            const publishNextPromptPermissionModeIfNeeded = async (): Promise<void> => {
+                const settingsApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming ?? 'immediate';
+                if (settingsApplyTiming !== 'next_prompt') {
+                    return;
+                }
+
+                const latestSession = storage.getState().sessions[sessionId] ?? null;
+                const localUpdatedAt = latestSession?.permissionModeUpdatedAt ?? null;
+                const metadataUpdatedAtRaw = latestSession?.metadata?.permissionModeUpdatedAt ?? null;
+                const metadataUpdatedAt =
+                    typeof metadataUpdatedAtRaw === 'number' && Number.isFinite(metadataUpdatedAtRaw)
+                        ? metadataUpdatedAtRaw
+                        : 0;
+
+                if (!(typeof localUpdatedAt === 'number' && Number.isFinite(localUpdatedAt) && localUpdatedAt > metadataUpdatedAt)) {
+                    return;
+                }
+
+                const modeToPublish = (latestSession?.permissionMode ?? 'default') as PermissionMode;
+                try {
+                    await this.publishSessionPermissionModeToMetadata({
+                        sessionId,
+                        permissionMode: modeToPublish,
+                        permissionModeUpdatedAt: localUpdatedAt,
+                    });
+                } catch {
+                    // Best-effort only: sending messages must not fail due to metadata publish failures.
+                }
+            };
+
             // Read permission mode from session state
             const permissionMode = session.permissionMode || 'default';
             
@@ -650,8 +856,6 @@ class Sync {
             const localId = randomUUID();
 
             const sentFrom = resolveSentFrom();
-            const appendSystemPrompt = buildSessionAppendSystemPrompt({ settings: storage.getState().settings });
-
             const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
             // Create user message content with metadata
             const content: RawRecord = {
@@ -664,7 +868,6 @@ class Sync {
                     sentFrom,
                     permissionMode: permissionMode || 'default',
                     model,
-                    appendSystemPrompt,
                     displayText,
                     agentId,
                     settings: storage.getState().settings,
@@ -703,6 +906,32 @@ class Sync {
                 log.log(`Session ${sessionId} not ready after timeout, sending anyway`);
             }
 
+            if (session.active === true) {
+                try {
+                    await apiSocket.sessionRPC<{ ok: true }, {
+                        text: string;
+                        localId: string;
+                        meta: Record<string, unknown>;
+                    }>(
+                        sessionId,
+                        SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+                        {
+                            text,
+                            localId,
+                            meta: content.meta ?? {},
+                        },
+                        { timeoutMs: 7_500 },
+                    );
+                    await publishNextPromptPermissionModeIfNeeded();
+                    return;
+                } catch (error) {
+                    if (!isFallbackSafeSessionUserMessageRpcError(error)) {
+                        storage.getState().removePendingMessage(sessionId, localId);
+                        throw error;
+                    }
+                }
+            }
+
             const payload = {
                 sid: sessionId,
                 message: messagePayload,
@@ -721,7 +950,10 @@ class Sync {
                 onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
             });
 
-            if (!rawAck) return;
+            if (!rawAck) {
+                storage.getState().clearSessionOptimisticThinking(sessionId);
+                return;
+            }
 
             const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
             if (!parsedAck.success) {
@@ -763,6 +995,130 @@ class Sync {
             // immediately when the user toggles the picker. Instead, once the user actually sends a message,
             // we publish the newer local selection as the session-wide permission mode so it propagates
             // across devices.
+            await publishNextPromptPermissionModeIfNeeded();
+
+            // Server ACK means the user message is committed (or idempotently confirmed).
+            // Do NOT clear optimistic thinking here: the agent can still be mid-turn (streaming / tool calls).
+            // We clear optimistic thinking only when we see a terminal lifecycle marker (task_complete / turn_aborted),
+            // when the session enters a permission/action-required gate, when the session is marked thinking by live
+            // activity updates, or when the optimistic timeout expires.
+        } catch (e) {
+            storage.getState().clearSessionOptimisticThinking(sessionId);
+            throw e;
+        }
+    }
+
+    async sendPendingMessageNow(sessionId: string, pending: {
+        localId: string;
+        createdAt: number;
+        rawRecord: unknown;
+        text: string;
+        displayText?: string;
+    }): Promise<void> {
+        storage.getState().markSessionOptimisticThinking(sessionId);
+
+        const session = storage.getState().sessions[sessionId];
+        if (!session) {
+            storage.getState().clearSessionOptimisticThinking(sessionId);
+            throw new Error(`Session ${sessionId} not found in storage`);
+        }
+
+        const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+        const sessionEncryption = sessionEncryptionMode === 'plain' ? null : this.encryption.getSessionEncryption(sessionId);
+        if (sessionEncryptionMode === 'e2ee' && !sessionEncryption) {
+            storage.getState().clearSessionOptimisticThinking(sessionId);
+            throw new Error(`Session ${sessionId} encryption not found`);
+        }
+
+        try {
+            const permissionMode = session.permissionMode || 'default';
+
+            const parsed = RawRecordSchema.safeParse(pending.rawRecord);
+            const content: RawRecord = parsed.success ? parsed.data : await (async () => {
+                const flavor = session.metadata?.flavor;
+                const agentId = resolveAgentIdFromFlavor(flavor);
+                const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
+                const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
+                const state = storage.getState();
+                return {
+                    role: 'user',
+                    content: { type: 'text', text: pending.text },
+                    meta: buildSendMessageMeta({
+                        sentFrom: resolveSentFrom(),
+                        permissionMode: permissionMode || 'default',
+                        model,
+                        displayText: pending.displayText,
+                        agentId,
+                        settings: storage.getState().settings,
+                        session,
+                    }),
+                };
+            })();
+
+            const messagePayload =
+                sessionEncryptionMode === 'plain'
+                    ? { t: 'plain' as const, v: content }
+                    : await sessionEncryption!.encryptRawRecord(content);
+
+            const ready = await this.waitForAgentReady(sessionId);
+            if (!ready) {
+                log.log(`Session ${sessionId} not ready after timeout, sending anyway`);
+            }
+
+            const localId = pending.localId;
+            const payload = {
+                sid: sessionId,
+                message: messagePayload,
+                localId,
+                sentFrom: 'pending_send_now',
+                permissionMode: permissionMode || 'default',
+            };
+
+            const rawAck = await socketEmitWithAckFallback<MessageAckResponse>({
+                emitWithAck: (event, payload, opts) =>
+                    this.messageTransport.emitWithAck<MessageAckResponse>(event, payload, opts),
+                send: (event, payload) => this.messageTransport.send(event, payload),
+                event: 'message',
+                payload,
+                timeoutMs: 7_500,
+                onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
+            });
+
+            if (!rawAck) {
+                storage.getState().clearSessionOptimisticThinking(sessionId);
+                return;
+            }
+
+            const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
+            if (!parsedAck.success) {
+                this.schedulePendingMessageCommitRetry({ sessionId, localId });
+                return;
+            }
+
+            const ack = parsedAck.data;
+
+            if (ack.ok !== true) {
+                storage.getState().removePendingMessage(sessionId, pending.localId);
+                throw new Error(ack.error || 'Message send rejected');
+            }
+
+            const committed = normalizeRawMessage(ack.id, localId, pending.createdAt, content, { seq: ack.seq });
+            if (committed) {
+                this.applyMessages(sessionId, [committed]);
+            }
+            this.markSessionMaterializedMaxSeq(sessionId, ack.seq);
+
+            const currentSession = storage.getState().sessions[sessionId];
+            if (currentSession) {
+                this.applySessions([
+                    {
+                        ...currentSession,
+                        updatedAt: nowServerMs(),
+                        seq: Math.max(currentSession.seq ?? 0, ack.seq),
+                    }
+                ]);
+            }
+
             const settingsApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming ?? 'immediate';
             if (settingsApplyTiming === 'next_prompt') {
                 const latestSession = storage.getState().sessions[sessionId] ?? null;
@@ -782,14 +1138,12 @@ class Sync {
                             permissionModeUpdatedAt: localUpdatedAt,
                         });
                     } catch {
-                        // Best-effort only: sending messages must not fail due to metadata publish failures.
+                        // Best-effort only.
                     }
                 }
             }
 
-            // Server ACK means the transcript write is committed (or idempotently confirmed).
-            // Clear optimistic thinking so we don't rely solely on the timeout to reset UI state.
-            storage.getState().clearSessionOptimisticThinking(sessionId);
+            // Same policy as sendMessage(): keep optimistic thinking until lifecycle clears.
         } catch (e) {
             storage.getState().clearSessionOptimisticThinking(sessionId);
             throw e;
@@ -922,8 +1276,12 @@ class Sync {
     }
 
     async abortSession(sessionId: string): Promise<void> {
-        await apiSocket.sessionRPC(sessionId, 'abort', {
+        await sessionRpcWithPreferredSessionScope<void, { reason: string }>({
+            sessionId,
+            method: 'abort',
+            payload: {
             reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`
+            },
         });
     }
 
@@ -961,7 +1319,20 @@ class Sync {
                 return { metadataVersion: s.metadataVersion, metadata: s.metadata };
             },
             refreshSessions: async () => {
-                await this.refreshSessions();
+                if (!this.credentials) {
+                    throw new Error('Sync credentials not available');
+                }
+                await fetchSessionByIdWithServerScope({
+                    sessionId,
+                    serverId: resolvePreferredServerIdForSessionId(sessionId),
+                    activeCredentials: this.credentials,
+                    activeEncryption: this.encryption,
+                    sessionDataKeys: this.sessionDataKeys,
+                    activeRequest: (path, init) => apiSocket.request(path, init),
+                    applySessions: (sessions) => this.applySessions(sessions),
+                    getExistingSession: (targetSessionId) => storage.getState().sessions[targetSessionId] ?? null,
+                    log,
+                });
             },
             encryptMetadata: async (metadata) => {
                 if (sessionEncryptionMode === 'plain') {
@@ -981,7 +1352,11 @@ class Sync {
                     return null;
                 }
             },
-            emitUpdateMetadata: async (payload) => apiSocket.emitWithAck<UpdateMetadataAck>('update-metadata', payload),
+            emitUpdateMetadata: async (payload) => await emitSessionMetadataUpdateWithServerScope({
+                sessionId,
+                expectedVersion: payload.expectedVersion,
+                metadata: payload.metadata,
+            }),
             applySessionMetadata: ({ metadataVersion, metadata }) => {
                 const currentSession = storage.getState().sessions[sessionId];
                 if (!currentSession) return;
@@ -1010,14 +1385,19 @@ class Sync {
 
     async markSessionViewed(sessionId: string, opts?: { sessionSeq?: number; pendingActivityAt?: number }): Promise<void> {
         const session = storage.getState().sessions[sessionId];
-        if (!session?.metadata) return;
+        if (!session) return;
 
         const sessionSeq = opts?.sessionSeq ?? session.seq ?? 0;
         // Pending queue does not affect unread; keep pendingActivityAt at 0 for backwards compatibility.
         const pendingActivityAt = 0;
-        const existing = session.metadata.readStateV1;
+        const existing = session.metadata?.readStateV1;
         const existingSeq = existing?.sessionSeq ?? 0;
         const needsRepair = existingSeq > sessionSeq;
+        const existingAuthoritativeSeq =
+            typeof session.lastViewedSessionSeq === 'number' && Number.isFinite(session.lastViewedSessionSeq)
+                ? Math.max(0, Math.trunc(session.lastViewedSessionSeq))
+                : 0;
+        const nextAuthoritativeSeq = Math.max(existingAuthoritativeSeq, sessionSeq);
 
         const early = computeNextReadStateV1({
             prev: existing,
@@ -1025,7 +1405,34 @@ class Sync {
             pendingActivityAt,
             now: nowServerMs(),
         });
-        if (!needsRepair && !early.didChange) return;
+
+        const shouldPublishReadCursor = nextAuthoritativeSeq > existingAuthoritativeSeq;
+        if (!needsRepair && !early.didChange && !shouldPublishReadCursor) return;
+
+        if (shouldPublishReadCursor) {
+            const result = await apiSocket.emitWithAck<{
+                result: 'success' | 'forbidden' | 'error';
+                lastViewedSessionSeq?: number;
+            }>('update-read-cursor', {
+                sid: sessionId,
+                lastViewedSessionSeq: nextAuthoritativeSeq,
+            });
+
+            if (result.result === 'success') {
+                const acknowledgedSeq =
+                    typeof result.lastViewedSessionSeq === 'number' && Number.isFinite(result.lastViewedSessionSeq)
+                        ? Math.max(0, Math.trunc(result.lastViewedSessionSeq))
+                        : nextAuthoritativeSeq;
+                storage.getState().applySessions([{
+                    ...session,
+                    lastViewedSessionSeq: acknowledgedSeq,
+                }]);
+            }
+        }
+
+        if (!session.metadata) {
+            return;
+        }
 
         await this.updateSessionMetadataWithRetry(sessionId, (metadata) => {
             const result = computeNextReadStateV1({
@@ -1094,39 +1501,47 @@ class Sync {
     }
 
     async fetchPendingMessages(sessionId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await fetchAndApplyPendingMessagesV2({
             sessionId,
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
     async enqueuePendingMessage(sessionId: string, text: string, displayText?: string, metaOverrides?: Record<string, unknown>): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await enqueuePendingMessageV2({
             sessionId,
             text,
             displayText,
             metaOverrides,
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            fetchArtifactWithBody: (artifactId) => this.fetchArtifactWithBody(artifactId),
+            updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
+            request,
         });
     }
 
     async updatePendingMessage(sessionId: string, pendingId: string, text: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await updatePendingMessageV2({
             sessionId,
             pendingId,
             text,
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            fetchArtifactWithBody: (artifactId) => this.fetchArtifactWithBody(artifactId),
+            updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
+            request,
         });
     }
 
     async deletePendingMessage(sessionId: string, pendingId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await deletePendingMessageV2({
             sessionId,
             pendingId,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
@@ -1135,43 +1550,47 @@ class Sync {
         pendingId: string,
         opts?: { reason?: 'switch_to_local' | 'manual' }
     ): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await discardPendingMessageV2({
             sessionId,
             pendingId,
             reason: opts?.reason ?? 'manual',
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
     async restoreDiscardedPendingMessage(sessionId: string, pendingId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await restoreDiscardedPendingMessageV2({
             sessionId,
             pendingId,
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
     async deleteDiscardedPendingMessage(sessionId: string, pendingId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await deleteDiscardedPendingMessageV2({
             sessionId,
             pendingId,
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
     async reorderPendingMessages(sessionId: string, orderedLocalIds: string[]): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await reorderPendingMessagesV2({
             sessionId,
             orderedLocalIds,
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
-    applySettings = (delta: Partial<Settings>) => {
+    applySettings = (delta: Partial<Settings>, options?: { source?: SettingsAnalyticsSource }) => {
         applySettingsLocalDelta({
             delta,
             settingsSecretsKey: this.settingsSecretsKey,
@@ -1180,6 +1599,7 @@ class Sync {
                 this.pendingSettings = next;
             },
             schedulePendingSettingsFlush: () => this.schedulePendingSettingsFlush(),
+            source: options?.source,
         });
     }
 
@@ -1266,15 +1686,53 @@ class Sync {
     // Private
     //
 
+    private getPrioritizedSessionHydrationIds = (): string[] => {
+        const prioritizedByViewport = Array.from(this.sessionViewport.entries())
+            .sort((left, right) => right[1].lastUpdatedAt - left[1].lastUpdatedAt)
+            .map(([sessionId]) => sessionId);
+
+        const eagerListCount = Math.max(0, Math.trunc(this.syncTuning.sessionListEagerHydrationCount ?? 0));
+        if (eagerListCount <= 0) {
+            return prioritizedByViewport;
+        }
+
+        const eagerListIds: string[] = [];
+        for (const item of storage.getState().sessionListViewData ?? []) {
+            if (item.type !== 'session') continue;
+            eagerListIds.push(item.session.id);
+            if (eagerListIds.length >= eagerListCount) break;
+        }
+
+        return Array.from(new Set([...prioritizedByViewport, ...eagerListIds]));
+    }
+
     private fetchSessions = async () => {
         if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        const shouldContinue = () => this.serverScopeGeneration === generation;
+        const cachedSessionListEntries = buildSessionListCacheEntriesFromRenderables(storage.getState().sessionListRenderables);
         await fetchAndApplySessions({
+            serverId: String(getActiveServerSnapshot().serverId ?? '').trim() || null,
             credentials: this.credentials,
             encryption: this.encryption,
             sessionDataKeys: this.sessionDataKeys,
-            applySessions: (sessions) => {
-                this.activeServerSessionIds = new Set(sessions.map((session) => session.id));
+            getExistingSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
+            cachedSessionListEntries,
+            shouldContinue,
+            applySessionListRenderables: (sessions) => {
+                if (!shouldContinue()) return;
+                storage.getState().replaceSessionListRenderables(sessions);
+            },
+            onSnapshotFetched: (sessionIds) => {
+                if (!shouldContinue()) return;
+                this.activeServerSessionIds = new Set(sessionIds);
                 this.hasFetchedSessionsSnapshotForActiveServer = true;
+            },
+            prioritizeSessionIds: this.getPrioritizedSessionHydrationIds(),
+            sessionListEagerHydrationCount: this.syncTuning.sessionListEagerHydrationCount,
+            sessionListHydrationConcurrencyLimit: this.syncTuning.sessionListHydrationConcurrencyLimit,
+            applySessions: (sessions) => {
+                if (!shouldContinue()) return;
                 this.applySessions(sessions);
             },
             repairInvalidReadStateV1: (params) => this.repairInvalidReadStateV1(params),
@@ -1292,6 +1750,28 @@ class Sync {
         }
 
         return false;
+    }
+
+    private isSessionKnownOnResolvedOwnerServer = (sessionId: string): boolean => {
+        if (this.isSessionKnownOnActiveServer(sessionId)) {
+            return true;
+        }
+
+        const preferredServerId = resolvePreferredServerIdForSessionId(sessionId);
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        return Boolean(preferredServerId && preferredServerId !== activeServerId);
+    }
+
+    private createSessionRequest = (sessionId: string): ((path: string, init?: RequestInit) => Promise<Response>) => {
+        return createSessionRequestWithServerScope({
+            serverId: resolvePreferredServerIdForSessionId(sessionId),
+            activeRequest: (path, init) => apiSocket.request(path, init),
+        });
+    }
+
+    private createSessionMessagesRequest = (sessionId: string): ((path: string) => Promise<Response>) => {
+        const request = this.createSessionRequest(sessionId);
+        return (path: string) => request(path, { method: 'GET' });
     }
 
     /**
@@ -1375,6 +1855,19 @@ class Sync {
                       syncUnit.invalidateCoalesced();
                       await syncUnit.awaitQueue({ timeoutMs });
                   };
+
+                  // Activity/presence updates are delivered via ephemerals and are not guaranteed to be recovered
+                  // across socket reconnects. When we reconnect without socket.io recovery, refresh the core
+                  // snapshots so session.active and machine online state can't get stuck.
+                  if (reason === 'socket-reconnect') {
+                      await runTasksWithLimit(
+                          [
+                              () => invalidateBounded(this.sessionsSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
+                              () => invalidateBounded(this.machinesSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
+                          ],
+                          this.syncTuning.resumeConcurrencyLimit
+                      );
+                  }
 
                     await runTasksWithLimit(
                         [
@@ -1667,6 +2160,21 @@ class Sync {
         });
     }
 
+    public async createArtifactWithHeader(header: ArtifactHeader, body: string | null): Promise<string> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+
+        return await createArtifactWithHeaderViaApi({
+            credentials: this.credentials,
+            header,
+            body,
+            encryption: this.encryption,
+            artifactDataKeys: this.artifactDataKeys,
+            addArtifact: (artifact) => storage.getState().addArtifact(artifact),
+        });
+    }
+
     public async updateArtifact(
         artifactId: string, 
         title: string | null, 
@@ -1692,14 +2200,45 @@ class Sync {
         });
     }
 
+    public async updateArtifactWithHeader(artifactId: string, header: ArtifactHeader, body: string | null): Promise<void> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+
+        await updateArtifactWithHeaderViaApi({
+            credentials: this.credentials,
+            artifactId,
+            header,
+            body,
+            encryption: this.encryption,
+            artifactDataKeys: this.artifactDataKeys,
+            getArtifact: (id) => storage.getState().artifacts[id],
+            updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
+        });
+    }
+
     private fetchMachines = async () => {
         if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        const shouldContinue = () => this.serverScopeGeneration === generation;
+        const cachedMachineDisplayEntries = buildMachineDisplayCacheEntriesFromRenderables(storage.getState().machineDisplayById);
 
         await fetchAndApplyMachines({
             credentials: this.credentials,
             encryption: this.encryption,
             machineDataKeys: this.machineDataKeys,
-            applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+            getExistingMachine: (machineId) => storage.getState().machines[machineId] ?? null,
+            cachedMachineDisplayEntries,
+            shouldContinue,
+            applyMachineDisplayEntries: (machines) => {
+                if (!shouldContinue()) return;
+                storage.getState().replaceMachineDisplays(machines);
+            },
+            machineDisplayHydrationConcurrencyLimit: this.syncTuning.machineDisplayHydrationConcurrencyLimit,
+            applyMachines: (machines, replace) => {
+                if (!shouldContinue()) return;
+                storage.getState().applyMachines(machines, replace);
+            },
             replace: false,
         });
     }
@@ -1735,6 +2274,8 @@ class Sync {
         await fetchAndApplyAutomations({
             credentials: this.credentials,
             applyAutomations: (automations) => storage.getState().applyAutomations(automations),
+            loadedAutomationRunIds: Object.keys(storage.getState().automationRunsByAutomationId),
+            setAutomationRuns: (automationId, runs) => storage.getState().setAutomationRuns(automationId, runs),
         });
     }
 
@@ -1762,16 +2303,18 @@ class Sync {
 
     private syncSettings = async () => {
         if (!this.credentials) return;
-        await syncSettingsEngine({
+        const settingsSyncParams: SyncSettingsParams = {
             credentials: this.credentials,
             encryption: this.encryption,
             pendingSettings: this.pendingSettings,
             settingsSecretsKey: this.settingsSecretsKey,
+            settingsSecretsReadKeys: this.settingsSecretsReadKeys,
             clearPendingSettings: () => {
                 this.pendingSettings = {};
                 savePendingSettings({});
             },
-        });
+        };
+        await syncSettingsEngine(settingsSyncParams);
     }
 
     private fetchProfile = async () => {
@@ -1900,10 +2443,10 @@ class Sync {
     }
 
     private fetchMessages = async (sessionId: string) => {
-        if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnActiveServer(sessionId)) {
-            // Do not fetch messages for sessions that are not known to the current active server snapshot.
-            // This avoids cross-server message fetches (wrong token/encryption) while keeping the UI state
-            // non-destructive during server-switch races.
+        if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(sessionId)) {
+            // Do not fetch messages when we cannot resolve the session to either the active server
+            // or a locally known owner server. This avoids cross-server message fetches while keeping
+            // the UI state non-destructive during server-switch races.
             if (storage.getState().sessionMessages[sessionId]?.isLoaded !== true) {
                 storage.getState().applyMessagesLoaded(sessionId);
             }
@@ -1911,6 +2454,7 @@ class Sync {
         }
 
           const session = storage.getState().sessions[sessionId] ?? null;
+          const directSessionLink = readDirectSessionLink(session?.metadata);
           const hasLoadedMessages = storage.getState().sessionMessages[sessionId]?.isLoaded === true;
           // IMPORTANT: `session.seq` is a "latest known session message seq" hint (often coming from `/sessions`),
           // not necessarily the last message seq that *this device has materialized*. Using it here can cause gaps.
@@ -1919,20 +2463,31 @@ class Sync {
           const viewport = this.sessionViewport.get(sessionId) ?? null;
           const isPinned = viewport?.isPinned ?? true;
           const offlineForMs = this.lastSocketDisconnectedAtMs ? (Date.now() - this.lastSocketDisconnectedAtMs) : 0;
+          const requestMessages = this.createSessionMessagesRequest(sessionId);
+
+          if (directSessionLink) {
+              if (!hasLoadedMessages) {
+                  await this.fetchDirectSessionMessages(sessionId, directSessionLink);
+                  return;
+              }
+
+              await this.catchUpDirectSessionMessages(sessionId, directSessionLink);
+              return;
+          }
 
           if (!hasLoadedMessages) {
               this.deferredForwardLoadingSessions.delete(sessionId);
               await fetchAndApplyMessages({
                   sessionId,
                   getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                  isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                  request: (path) => apiSocket.request(path),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
                   sessionReceivedMessages: this.sessionReceivedMessages,
                   applyMessages: (sid, messages) => this.applyMessages(sid, messages),
                   onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
                   markMessagesLoaded: (sid) => storage.getState().applyMessagesLoaded(sid),
                   onMessagesPage: (page) => {
-                      this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
+                      this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true });
                   },
                   log,
               });
@@ -1963,14 +2518,14 @@ class Sync {
                       afterSeq: cursor,
                       limit: SESSION_MESSAGES_PAGE_SIZE,
                       getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                      isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                      request: (path) => apiSocket.request(path),
+                      isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                      request: requestMessages,
                       sessionReceivedMessages: this.sessionReceivedMessages,
                       applyMessages: (sid, messages) => this.applyMessages(sid, messages),
                       onNormalizedMessages: (messages) => ingestWorkspaceMutationMessages(sessionId, messages),
                       onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
                       onMessagesPage: (page) => {
-                          this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
+                          this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true, direction: 'newer' });
                       },
                       log,
                   });
@@ -1984,14 +2539,14 @@ class Sync {
                   await fetchAndApplyMessages({
                       sessionId,
                       getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                      isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                      request: (path) => apiSocket.request(path),
+                      isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                      request: requestMessages,
                       sessionReceivedMessages: this.sessionReceivedMessages,
                       applyMessages: (sid, messages) => this.applyMessages(sid, messages),
                       onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
                       markMessagesLoaded: (sid) => storage.getState().applyMessagesLoaded(sid),
                       onMessagesPage: (page) => {
-                          this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
+                          this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true });
                       },
                       log,
                   });
@@ -2008,132 +2563,418 @@ class Sync {
           });
       }
 
+      private buildSessionMessagesPaginationKey(params: Readonly<{
+          sessionId: string;
+          scope: SessionMessagesScope;
+          sidechainId?: string | null;
+      }>): string {
+          const sessionId = params.sessionId;
+          if (params.scope === 'main') return `${sessionId}:main`;
+          const sidechainId = typeof params.sidechainId === 'string' ? params.sidechainId.trim() : '';
+          if (!sidechainId) {
+              throw new Error('sidechainId is required for sidechain transcript paging');
+          }
+          return `${sessionId}:sidechain:${sidechainId}`;
+      }
+
+      private deleteSessionMessagesPaginationStateForSession(sessionId: string): void {
+          const prefix = `${sessionId}:`;
+          for (const key of this.sessionMessagesBeforeSeqByKey.keys()) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesBeforeSeqByKey.delete(key);
+              }
+          }
+          for (const key of this.sessionMessagesHasMoreOlderByKey.keys()) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesHasMoreOlderByKey.delete(key);
+              }
+          }
+          for (const key of this.sessionMessagesPaginationSupportedByKey.keys()) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesPaginationSupportedByKey.delete(key);
+              }
+          }
+          for (const key of [...this.sessionMessagesFetchLatestInFlightByKey]) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesFetchLatestInFlightByKey.delete(key);
+              }
+          }
+          for (const key of [...this.sessionMessagesFetchedLatestByKey]) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesFetchedLatestByKey.delete(key);
+              }
+          }
+          for (const key of [...this.sessionMessagesLoadingOlderByKey]) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesLoadingOlderByKey.delete(key);
+              }
+          }
+          for (const key of [...this.sessionMessagesLoadingNewerByKey]) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesLoadingNewerByKey.delete(key);
+              }
+          }
+          this.directSessionOlderCursorBySessionId.delete(sessionId);
+          this.directSessionHasMoreOlderBySessionId.delete(sessionId);
+          this.directSessionTailCursorBySessionId.delete(sessionId);
+      }
+
+      private getDirectSessionServerScope(sessionId: string): string | undefined {
+          return resolvePreferredServerIdForSessionId(sessionId);
+      }
+
+      private createServerScopeGuard(): () => boolean {
+          const generation = this.serverScopeGeneration;
+          return () => this.serverScopeGeneration === generation;
+      }
+
+      private async fetchDirectSessionMessages(
+          sessionId: string,
+          directSessionLink: ReturnType<typeof readDirectSessionLink> extends infer T ? Exclude<T, null> : never,
+      ): Promise<void> {
+          const shouldContinue = this.createServerScopeGuard();
+          const page = await machineDirectSessionTranscriptPage({
+              machineId: directSessionLink.machineId,
+              providerId: directSessionLink.providerId,
+              remoteSessionId: directSessionLink.remoteSessionId,
+              source: directSessionLink.source,
+              direction: 'older',
+          }, { serverId: this.getDirectSessionServerScope(sessionId) });
+          if (!shouldContinue()) return;
+
+          if (!page.ok) {
+              throw new Error(page.error);
+          }
+
+          const normalizedMessages = normalizeDirectTranscriptMessages(page.items);
+          if (normalizedMessages.length > 0) {
+              this.applyMessages(sessionId, normalizedMessages, { notifyVoice: false });
+          }
+
+          this.directSessionOlderCursorBySessionId.set(sessionId, page.nextCursor ?? null);
+          this.directSessionHasMoreOlderBySessionId.set(sessionId, page.hasMore === true);
+          storage.getState().applyMessagesLoaded(sessionId);
+
+          if (typeof page.tailCursor === 'string' && page.tailCursor.trim().length > 0) {
+              this.directSessionTailCursorBySessionId.set(sessionId, page.tailCursor);
+              return;
+          }
+
+          const tail = await machineDirectSessionTranscriptReadAfter({
+              machineId: directSessionLink.machineId,
+              providerId: directSessionLink.providerId,
+              remoteSessionId: directSessionLink.remoteSessionId,
+              source: directSessionLink.source,
+              cursor: 'tail',
+          }, { serverId: this.getDirectSessionServerScope(sessionId) });
+          if (!shouldContinue()) return;
+
+          if (!tail.ok) {
+              throw new Error(tail.error);
+          }
+
+          this.directSessionTailCursorBySessionId.set(sessionId, tail.nextCursor ?? null);
+      }
+
+      private async catchUpDirectSessionMessages(
+          sessionId: string,
+          directSessionLink: ReturnType<typeof readDirectSessionLink> extends infer T ? Exclude<T, null> : never,
+      ): Promise<void> {
+          const shouldContinue = this.createServerScopeGuard();
+          const cursor = this.directSessionTailCursorBySessionId.get(sessionId) ?? 'tail';
+          const tail = await machineDirectSessionTranscriptReadAfter({
+              machineId: directSessionLink.machineId,
+              providerId: directSessionLink.providerId,
+              remoteSessionId: directSessionLink.remoteSessionId,
+              source: directSessionLink.source,
+              cursor,
+          }, { serverId: this.getDirectSessionServerScope(sessionId) });
+          if (!shouldContinue()) return;
+
+          if (!tail.ok) {
+              throw new Error(tail.error);
+          }
+
+          if (tail.truncated === true) {
+              this.resetSessionTranscriptState(sessionId);
+              await this.fetchDirectSessionMessages(sessionId, directSessionLink);
+              return;
+          }
+
+          const normalizedMessages = normalizeDirectTranscriptMessages(tail.items);
+          if (normalizedMessages.length > 0) {
+              this.applyMessages(sessionId, normalizedMessages, { notifyVoice: false });
+          }
+          this.directSessionTailCursorBySessionId.set(sessionId, tail.nextCursor ?? null);
+      }
+
+      private async loadOlderMessagesForChain(params: Readonly<{
+          sessionId: string;
+          scope: SessionMessagesScope;
+          sidechainId?: string | null;
+          beforeSeqOverride?: number;
+      }>): Promise<{
+          loaded: number;
+          hasMore: boolean;
+          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+      }> {
+          if (params.scope === 'main') {
+              const session = storage.getState().sessions[params.sessionId] ?? null;
+              const directSessionLink = readDirectSessionLink(session?.metadata);
+              if (directSessionLink) {
+                  const loadingKey = `${params.sessionId}:direct`;
+                  if (this.sessionMessagesLoadingOlderByKey.has(loadingKey)) {
+                      return {
+                          loaded: 0,
+                          hasMore: this.directSessionHasMoreOlderBySessionId.get(params.sessionId) ?? true,
+                          status: 'in_flight',
+                      };
+                  }
+
+                  const knownHasMore = this.directSessionHasMoreOlderBySessionId.get(params.sessionId);
+                  if (knownHasMore === false) {
+                      return { loaded: 0, hasMore: false, status: 'no_more' };
+                  }
+
+                  const cursor = this.directSessionOlderCursorBySessionId.get(params.sessionId) ?? null;
+                  if (!cursor) {
+                      return { loaded: 0, hasMore: knownHasMore ?? false, status: 'not_ready' };
+                  }
+
+                  this.sessionMessagesLoadingOlderByKey.add(loadingKey);
+                  try {
+                      const shouldContinue = this.createServerScopeGuard();
+                      const page = await machineDirectSessionTranscriptPage({
+                          machineId: directSessionLink.machineId,
+                          providerId: directSessionLink.providerId,
+                          remoteSessionId: directSessionLink.remoteSessionId,
+                          source: directSessionLink.source,
+                          direction: 'older',
+                          cursor,
+                      }, { serverId: this.getDirectSessionServerScope(params.sessionId) });
+                      if (!shouldContinue()) {
+                          return { loaded: 0, hasMore: knownHasMore ?? true, status: 'not_ready' };
+                      }
+
+                      if (!page.ok) {
+                          throw new Error(page.error);
+                      }
+
+                      const normalizedMessages = normalizeDirectTranscriptMessages(page.items);
+                      if (normalizedMessages.length > 0) {
+                          this.applyMessages(params.sessionId, normalizedMessages, { notifyVoice: false });
+                      }
+
+                      this.directSessionOlderCursorBySessionId.set(params.sessionId, page.nextCursor ?? null);
+                      this.directSessionHasMoreOlderBySessionId.set(params.sessionId, page.hasMore === true);
+
+                      return {
+                          loaded: normalizedMessages.length,
+                          hasMore: page.hasMore === true,
+                          status: page.hasMore === true ? 'loaded' : 'no_more',
+                      };
+                  } catch (error) {
+                      console.error('Failed to load older direct session messages:', error);
+                      return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
+                  } finally {
+                      this.sessionMessagesLoadingOlderByKey.delete(loadingKey);
+                  }
+              }
+          }
+
+          const pagingKey = this.buildSessionMessagesPaginationKey({
+              sessionId: params.sessionId,
+              scope: params.scope,
+              sidechainId: params.sidechainId,
+          });
+
+          if (this.sessionMessagesLoadingOlderByKey.has(pagingKey)) {
+              return {
+                  loaded: 0,
+                  hasMore: this.sessionMessagesHasMoreOlderByKey.get(pagingKey) ?? true,
+                  status: 'in_flight',
+              };
+          }
+
+          const knownHasMore = this.sessionMessagesHasMoreOlderByKey.get(pagingKey);
+          if (knownHasMore === false) {
+              return { loaded: 0, hasMore: false, status: 'no_more' };
+          }
+
+          const supported = this.sessionMessagesPaginationSupportedByKey.get(pagingKey);
+          if (supported === false) {
+              return { loaded: 0, hasMore: false, status: 'no_more' };
+          }
+
+          const normalizedBeforeSeqOverride =
+              typeof params.beforeSeqOverride === 'number' && Number.isFinite(params.beforeSeqOverride)
+                  ? Math.max(1, Math.trunc(params.beforeSeqOverride))
+                  : null;
+
+          const beforeSeq = normalizedBeforeSeqOverride ?? this.sessionMessagesBeforeSeqByKey.get(pagingKey) ?? null;
+          if (!beforeSeq) {
+              // Pagination state is initialized during the initial `/messages` fetch. If we haven't
+              // seen it yet, don't permanently disable pagination on the UI side.
+              return { loaded: 0, hasMore: knownHasMore ?? true, status: 'not_ready' };
+          }
+
+          this.sessionMessagesLoadingOlderByKey.add(pagingKey);
+          const requestMessages = this.createSessionMessagesRequest(params.sessionId);
+          try {
+              const result = await fetchAndApplyOlderMessages({
+                  sessionId: params.sessionId,
+                  beforeSeq,
+                  limit: SESSION_MESSAGES_PAGE_SIZE,
+                  scope: params.scope,
+                  sidechainId: params.sidechainId ?? null,
+                  getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
+                  sessionReceivedMessages: this.sessionReceivedMessages,
+                  applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                  log,
+              });
+
+              if (result.page.messages.length === 0) {
+                  this.sessionMessagesHasMoreOlderByKey.set(pagingKey, false);
+                  return { loaded: 0, hasMore: false, status: 'no_more' };
+              }
+
+              this.updateSessionMessagesPaginationFromPage(
+                  params.sessionId,
+                  { scope: params.scope, sidechainId: params.sidechainId ?? null },
+                  result.page,
+                  { allowHasMoreInference: true },
+              );
+
+              const hasMore = this.sessionMessagesHasMoreOlderByKey.get(pagingKey) ?? false;
+              if (hasMore === false) {
+                  return { loaded: result.applied, hasMore: false, status: 'no_more' };
+              }
+
+              return { loaded: result.applied, hasMore, status: 'loaded' };
+          } catch (error) {
+              console.error('Failed to load older messages:', error);
+              return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
+          } finally {
+              this.sessionMessagesLoadingOlderByKey.delete(pagingKey);
+          }
+      }
+
       public async loadOlderMessages(sessionId: string): Promise<{
           loaded: number;
           hasMore: boolean;
           status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
       }> {
-        if (this.sessionMessagesLoadingOlder.has(sessionId)) {
-            return {
-                loaded: 0,
-                hasMore: this.sessionMessagesHasMoreOlder.get(sessionId) ?? true,
-                status: 'in_flight',
-            };
-        }
+          return this.loadOlderMessagesForChain({ sessionId, scope: 'main' });
+      }
 
-        const knownHasMore = this.sessionMessagesHasMoreOlder.get(sessionId);
-        if (knownHasMore === false) {
-            return { loaded: 0, hasMore: false, status: 'no_more' };
-        }
+      public async loadOlderMessagesFromCursor(sessionId: string, beforeSeq: number): Promise<{
+          loaded: number;
+          hasMore: boolean;
+          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+      }> {
+          return this.loadOlderMessagesForChain({ sessionId, scope: 'main', beforeSeqOverride: beforeSeq });
+      }
 
-        const supported = this.sessionMessagesPaginationSupported.get(sessionId);
-        if (supported === false) {
-            return { loaded: 0, hasMore: false, status: 'no_more' };
-        }
+      public async ensureSidechainMessagesLoaded(sessionId: string, sidechainId: string): Promise<'loaded' | 'not_ready' | 'in_flight'> {
+          const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+          const normalizedSidechainId = typeof sidechainId === 'string' ? sidechainId.trim() : '';
+          if (!normalizedSessionId || !normalizedSidechainId) return 'not_ready';
 
-        const beforeSeq = this.sessionMessagesBeforeSeq.get(sessionId);
-        if (!beforeSeq) {
-            // Pagination state is initialized during the initial `/messages` fetch. If we haven't
-            // seen it yet, don't permanently disable pagination on the UI side.
-            return { loaded: 0, hasMore: knownHasMore ?? true, status: 'not_ready' };
-        }
+          const pagingKey = this.buildSessionMessagesPaginationKey({
+              sessionId: normalizedSessionId,
+              scope: 'sidechain',
+              sidechainId: normalizedSidechainId,
+          });
 
-        this.sessionMessagesLoadingOlder.add(sessionId);
-        try {
-            const result = await fetchAndApplyOlderMessages({
-                sessionId,
-                beforeSeq,
-                limit: SESSION_MESSAGES_PAGE_SIZE,
-                getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                request: (path) => apiSocket.request(path),
-                sessionReceivedMessages: this.sessionReceivedMessages,
-                applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
-                log,
-            });
+          // If we already have any pagination state (or have explicitly recorded a successful "latest" fetch),
+          // treat the sidechain as initialized. This prevents re-fetch storms for empty/short sidechains where
+          // `beforeSeq` may legitimately remain unset.
+          if (
+              this.sessionMessagesFetchedLatestByKey.has(pagingKey)
+              || this.sessionMessagesBeforeSeqByKey.has(pagingKey)
+              || this.sessionMessagesHasMoreOlderByKey.has(pagingKey)
+              || this.sessionMessagesPaginationSupportedByKey.has(pagingKey)
+          ) {
+              return 'loaded';
+          }
 
-            if (result.page.messages.length === 0) {
-                this.sessionMessagesHasMoreOlder.set(sessionId, false);
-                return { loaded: 0, hasMore: false, status: 'no_more' };
-            }
+          if (this.sessionMessagesFetchLatestInFlightByKey.has(pagingKey)) {
+              return 'in_flight';
+          }
 
-            this.updateSessionMessagesPaginationFromPage(sessionId, result.page, { allowHasMoreInference: true });
-
-            const hasMore = this.sessionMessagesHasMoreOlder.get(sessionId) ?? false;
-            if (hasMore === false) {
-                return { loaded: result.applied, hasMore: false, status: 'no_more' };
-            }
-
-            return { loaded: result.applied, hasMore, status: 'loaded' };
-        } catch (error) {
-            console.error('Failed to load older messages:', error);
-            return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
+          this.sessionMessagesFetchLatestInFlightByKey.add(pagingKey);
+          const requestMessages = this.createSessionMessagesRequest(normalizedSessionId);
+          try {
+              await fetchAndApplyMessages({
+                  sessionId: normalizedSessionId,
+                  scope: 'sidechain',
+                  sidechainId: normalizedSidechainId,
+                  getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
+                  sessionReceivedMessages: this.sessionReceivedMessages,
+                  applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                  markMessagesLoaded: () => {},
+                  onMessagesPage: (page) => {
+                      this.updateSessionMessagesPaginationFromPage(
+                          normalizedSessionId,
+                          { scope: 'sidechain', sidechainId: normalizedSidechainId },
+                          page,
+                          { allowHasMoreInference: true },
+                      );
+                  },
+                  log,
+              });
+              this.sessionMessagesFetchedLatestByKey.add(pagingKey);
+              return 'loaded';
+          } catch (error) {
+              console.error('Failed to fetch sidechain messages:', error);
+              return 'not_ready';
           } finally {
-              this.sessionMessagesLoadingOlder.delete(sessionId);
+              this.sessionMessagesFetchLatestInFlightByKey.delete(pagingKey);
           }
       }
 
-        public async loadOlderMessagesFromCursor(sessionId: string, beforeSeq: number): Promise<{
-            loaded: number;
-            hasMore: boolean;
-            status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
-        }> {
-            if (this.sessionMessagesLoadingOlder.has(sessionId)) {
-                return {
-                    loaded: 0,
-                    hasMore: this.sessionMessagesHasMoreOlder.get(sessionId) ?? true,
-                    status: 'in_flight',
-                };
-            }
+      public async loadOlderSidechainMessages(sessionId: string, sidechainId: string): Promise<{
+          loaded: number;
+          hasMore: boolean;
+          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+      }> {
+          const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+          const normalizedSidechainId = typeof sidechainId === 'string' ? sidechainId.trim() : '';
+          if (!normalizedSessionId || !normalizedSidechainId) {
+              return { loaded: 0, hasMore: true, status: 'not_ready' };
+          }
 
-            const knownHasMore = this.sessionMessagesHasMoreOlder.get(sessionId);
-            if (knownHasMore === false) {
-                return { loaded: 0, hasMore: false, status: 'no_more' };
-            }
+          const pagingKey = this.buildSessionMessagesPaginationKey({
+              sessionId: normalizedSessionId,
+              scope: 'sidechain',
+              sidechainId: normalizedSidechainId,
+          });
 
-            const supported = this.sessionMessagesPaginationSupported.get(sessionId);
-            if (supported === false) {
-                return { loaded: 0, hasMore: false, status: 'no_more' };
-            }
+          if (
+              !this.sessionMessagesFetchedLatestByKey.has(pagingKey)
+              && !this.sessionMessagesBeforeSeqByKey.has(pagingKey)
+              && !this.sessionMessagesHasMoreOlderByKey.has(pagingKey)
+              && !this.sessionMessagesPaginationSupportedByKey.has(pagingKey)
+          ) {
+              const init = await this.ensureSidechainMessagesLoaded(normalizedSessionId, normalizedSidechainId);
+              if (init === 'in_flight') {
+                  return { loaded: 0, hasMore: true, status: 'in_flight' };
+              }
+              if (init !== 'loaded') {
+                  return { loaded: 0, hasMore: true, status: 'not_ready' };
+              }
+          }
 
-            const normalizedBeforeSeq =
-                typeof beforeSeq === 'number' && Number.isFinite(beforeSeq) ? Math.max(1, Math.trunc(beforeSeq)) : 0;
-            if (normalizedBeforeSeq <= 0) {
-                return { loaded: 0, hasMore: knownHasMore ?? true, status: 'not_ready' };
-            }
-
-            this.sessionMessagesLoadingOlder.add(sessionId);
-            try {
-                const result = await fetchAndApplyOlderMessages({
-                    sessionId,
-                    beforeSeq: normalizedBeforeSeq,
-                    limit: SESSION_MESSAGES_PAGE_SIZE,
-                    getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                    isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                    request: (path) => apiSocket.request(path),
-                    sessionReceivedMessages: this.sessionReceivedMessages,
-                    applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
-                    log,
-                });
-
-                if (result.page.messages.length === 0) {
-                    this.sessionMessagesHasMoreOlder.set(sessionId, false);
-                    return { loaded: 0, hasMore: false, status: 'no_more' };
-                }
-
-                this.updateSessionMessagesPaginationFromPage(sessionId, result.page, { allowHasMoreInference: true });
-                const hasMore = this.sessionMessagesHasMoreOlder.get(sessionId) ?? false;
-                if (hasMore === false) {
-                    return { loaded: result.applied, hasMore: false, status: 'no_more' };
-                }
-                return { loaded: result.applied, hasMore, status: 'loaded' };
-            } catch (error) {
-                console.error('Failed to load older messages from cursor:', error);
-                return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
-            } finally {
-                this.sessionMessagesLoadingOlder.delete(sessionId);
-            }
-        }
+          return this.loadOlderMessagesForChain({
+              sessionId: normalizedSessionId,
+              scope: 'sidechain',
+              sidechainId: normalizedSidechainId,
+          });
+      }
 
         public async loadOlderMessagesForkAware(childSessionId: string): Promise<{
             loaded: number;
@@ -2145,8 +2986,14 @@ class Sync {
 
             const request = resolveNextForkedTranscriptLoadOlderRequest({
                 fork,
-                getHasMoreOlder: (id) => this.sessionMessagesHasMoreOlder.get(id),
-                getBeforeSeqCursor: (id) => this.sessionMessagesBeforeSeq.get(id),
+                getHasMoreOlder: (id) => {
+                    const key = this.buildSessionMessagesPaginationKey({ sessionId: id, scope: 'main' });
+                    return this.sessionMessagesHasMoreOlderByKey.get(key);
+                },
+                getBeforeSeqCursor: (id) => {
+                    const key = this.buildSessionMessagesPaginationKey({ sessionId: id, scope: 'main' });
+                    return this.sessionMessagesBeforeSeqByKey.get(key);
+                },
             });
             if (!request) {
                 return { loaded: 0, hasMore: false, status: 'no_more' };
@@ -2159,13 +3006,21 @@ class Sync {
 
             const overallHasMore = computeForkedTranscriptHasMoreOlder({
                 fork,
-                getHasMoreOlder: (id) => this.sessionMessagesHasMoreOlder.get(id),
+                getHasMoreOlder: (id) => {
+                    const key = this.buildSessionMessagesPaginationKey({ sessionId: id, scope: 'main' });
+                    return this.sessionMessagesHasMoreOlderByKey.get(key);
+                },
             });
 
             if (overallHasMore === false) {
                 return { ...result, hasMore: false, status: 'no_more' };
             }
-            return { ...result, hasMore: true };
+            // A forked transcript can page multiple segments (child first, then ancestors). If the selected
+            // segment is exhausted (`status: no_more`) but older context remains in another segment, treat the
+            // overall forked transcript as still having more. This avoids UI/FlashList consumers prematurely
+            // terminating paging based on the segment-local status.
+            const normalizedStatus = result.status === 'no_more' ? 'loaded' : result.status;
+            return { ...result, hasMore: true, status: normalizedStatus };
         }
 
         /**
@@ -2209,11 +3064,12 @@ class Sync {
           hasMore: boolean;
           status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
       }> {
-          if (this.sessionMessagesLoadingNewer.has(sessionId)) {
+          const pagingKey = this.buildSessionMessagesPaginationKey({ sessionId, scope: 'main' });
+          if (this.sessionMessagesLoadingNewerByKey.has(pagingKey)) {
               return { loaded: 0, hasMore: true, status: 'in_flight' };
           }
 
-          const supported = this.sessionMessagesPaginationSupported.get(sessionId);
+          const supported = this.sessionMessagesPaginationSupportedByKey.get(pagingKey);
           if (supported === false) {
               return { loaded: 0, hasMore: false, status: 'no_more' };
           }
@@ -2223,21 +3079,22 @@ class Sync {
               return { loaded: 0, hasMore: true, status: 'not_ready' };
           }
 
-          this.sessionMessagesLoadingNewer.add(sessionId);
+          this.sessionMessagesLoadingNewerByKey.add(pagingKey);
+          const requestMessages = this.createSessionMessagesRequest(sessionId);
           try {
               const result = await fetchAndApplyNewerMessages({
                   sessionId,
                   afterSeq,
                   limit: SESSION_MESSAGES_PAGE_SIZE,
                   getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                  isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                  request: (path) => apiSocket.request(path),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
                   sessionReceivedMessages: this.sessionReceivedMessages,
                   applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
                   onNormalizedMessages: (messages) => ingestWorkspaceMutationMessages(sessionId, messages),
                   onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
                   onMessagesPage: (page) => {
-                      this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
+                      this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true, direction: 'newer' });
                   },
                   log,
               });
@@ -2258,7 +3115,7 @@ class Sync {
               console.error('Failed to load newer messages:', error);
               return { loaded: 0, hasMore: true, status: 'loaded' };
           } finally {
-              this.sessionMessagesLoadingNewer.delete(sessionId);
+              this.sessionMessagesLoadingNewerByKey.delete(pagingKey);
           }
       }
 
@@ -2296,11 +3153,7 @@ class Sync {
           storage.getState().resetSessionMessages(sessionId);
 
           this.sessionReceivedMessages.delete(sessionId);
-          this.sessionMessagesBeforeSeq.delete(sessionId);
-          this.sessionMessagesHasMoreOlder.delete(sessionId);
-          this.sessionMessagesPaginationSupported.delete(sessionId);
-          this.sessionMessagesLoadingOlder.delete(sessionId);
-          this.sessionMessagesLoadingNewer.delete(sessionId);
+          this.deleteSessionMessagesPaginationStateForSession(sessionId);
           this.deferredForwardLoadingSessions.delete(sessionId);
 
           if ((this.sessionMaterializedMaxSeqById[sessionId] ?? 0) !== 0) {
@@ -2437,6 +3290,7 @@ class Sync {
             invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),
             invalidateFeed: () => this.feedSync.invalidate(),
             invalidateAutomations: () => this.automationsSync.invalidate(),
+            invalidateAutomationsCoalesced: () => this.automationsSync.invalidateCoalesced(),
             invalidateTodos: () => this.todosSync.invalidate(),
             onTaskLifecycleEvent: (sessionId, event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
             log,
@@ -2451,6 +3305,50 @@ class Sync {
         flushMachineActivityUpdatesEngine({ updates, applyMachines: (machines) => storage.getState().applyMachines(machines) });
     }
 
+    private handleTranscriptDraftEphemeralUpdate = async (updateData: {
+        sessionId: string;
+        localId: string;
+        segmentKind: 'assistant' | 'thinking';
+        sidechainId?: string | null;
+        delta: any;
+        createdAt: number;
+    }): Promise<void> => {
+        const sessionId = typeof updateData.sessionId === 'string' ? updateData.sessionId : '';
+        const localId = typeof updateData.localId === 'string' ? updateData.localId.trim() : '';
+        if (!sessionId || !localId) return;
+
+        const sessionEncryption = this.encryption.getSessionEncryption(sessionId);
+        const record = await readStoredSessionRawRecord({
+            content: updateData.delta,
+            decryptEncrypted: sessionEncryption ? (ciphertext) => sessionEncryption.decryptRaw(ciphertext) : undefined,
+        });
+        if (!record) return;
+
+        const deltaText = (() => {
+            if (record.role !== 'agent') return null;
+            const content: any = (record as any).content;
+            if (!content || content.type !== 'acp') return null;
+            const data: any = content.data;
+            if (!data || typeof data !== 'object') return null;
+            if (updateData.segmentKind === 'assistant' && data.type === 'message' && typeof data.message === 'string') {
+                return data.message;
+            }
+            if (updateData.segmentKind === 'thinking' && data.type === 'thinking' && typeof data.text === 'string') {
+                return data.text;
+            }
+            return null;
+        })();
+        if (!deltaText) return;
+
+        storage.getState().applyTranscriptDraftDelta(sessionId, {
+            localId,
+            segmentKind: updateData.segmentKind,
+            sidechainId: typeof updateData.sidechainId === 'string' && updateData.sidechainId.trim() ? updateData.sidechainId.trim() : null,
+            deltaText,
+            createdAtMs: updateData.createdAt,
+        });
+    }
+
     private handleEphemeralUpdate = (update: unknown) => {
         handleEphemeralSocketUpdate({
             update,
@@ -2459,6 +3357,12 @@ class Sync {
             },
             addMachineActivityUpdate: (machineUpdate) => {
                 this.machineActivityAccumulator.addUpdate(machineUpdate);
+            },
+            onTranscriptDraftUpdate: (draftUpdate) => {
+                fireAndForget(
+                    this.handleTranscriptDraftEphemeralUpdate(draftUpdate as any),
+                    { tag: 'Sync.handleEphemeralUpdate.transcriptDraft' },
+                );
             },
         });
     }
@@ -2486,57 +3390,65 @@ class Sync {
                 voiceHooks.onMessages(sessionId, m);
             }
             if (result.hasReadyEvent) {
-                voiceHooks.onReady(sessionId);
+                voiceHooks.onReady(sessionId, m);
+                notifyActivityReady(sessionId, m);
             }
         }
     }
 
     private updateSessionMessagesPaginationFromPage(
         sessionId: string,
-        page: { messages: Array<{ seq: number }>; hasMore?: boolean; nextBeforeSeq?: number | null },
-        options?: { allowHasMoreInference?: boolean }
-    ) {
-        if (!Array.isArray(page.messages) || page.messages.length === 0) {
-            return;
+        chain: { scope: SessionMessagesScope; sidechainId?: string | null },
+        page: {
+            messages: Array<{ seq: number }>;
+            hasMore?: boolean;
+            nextBeforeSeq?: number | null;
+            nextAfterSeq?: number | null;
+        },
+        options?: { allowHasMoreInference?: boolean; direction?: 'older' | 'newer' },
+    ): void {
+        const pagingKey = this.buildSessionMessagesPaginationKey({
+            sessionId,
+            scope: chain.scope,
+            sidechainId: chain.sidechainId,
+        });
+
+        const prev: SessionMessagesPaginationState = {
+            beforeSeq: this.sessionMessagesBeforeSeqByKey.get(pagingKey) ?? null,
+            hasMoreOlder: this.sessionMessagesHasMoreOlderByKey.has(pagingKey)
+                ? (this.sessionMessagesHasMoreOlderByKey.get(pagingKey) as boolean)
+                : null,
+            paginationSupported: this.sessionMessagesPaginationSupportedByKey.has(pagingKey)
+                ? (this.sessionMessagesPaginationSupportedByKey.get(pagingKey) as boolean)
+                : null,
+        };
+
+        const update = computeSessionMessagesPaginationUpdateFromPage({
+            prev,
+            page,
+            pageSize: SESSION_MESSAGES_PAGE_SIZE,
+            allowHasMoreInference: options?.allowHasMoreInference === true,
+            direction: options?.direction ?? 'older',
+        });
+
+        if (chain.scope === 'main' && typeof update.maxSeq === 'number') {
+            this.markSessionMaterializedMaxSeq(sessionId, update.maxSeq);
         }
 
-        const maxSeq = Math.max(...page.messages.map((m) => m.seq));
-        if (Number.isFinite(maxSeq)) {
-            this.markSessionMaterializedMaxSeq(sessionId, maxSeq);
+        if (typeof update.next.beforeSeq === 'number') {
+            this.sessionMessagesBeforeSeqByKey.set(pagingKey, update.next.beforeSeq);
         }
 
-        const supportsPagination = page.hasMore !== undefined || page.nextBeforeSeq !== undefined;
-        if (supportsPagination) {
-            this.sessionMessagesPaginationSupported.set(sessionId, true);
-        } else if (!this.sessionMessagesPaginationSupported.has(sessionId)) {
-            this.sessionMessagesPaginationSupported.set(sessionId, false);
+        if (update.next.hasMoreOlder == null) {
+            this.sessionMessagesHasMoreOlderByKey.delete(pagingKey);
+        } else {
+            this.sessionMessagesHasMoreOlderByKey.set(pagingKey, update.next.hasMoreOlder);
         }
 
-        const prevCursor = this.sessionMessagesBeforeSeq.get(sessionId);
-        const minSeq = Math.min(...page.messages.map((m) => m.seq));
-        const nextCursorCandidate =
-            typeof page.nextBeforeSeq === 'number' ? page.nextBeforeSeq : minSeq;
-        const nextCursor = prevCursor === undefined ? nextCursorCandidate : Math.min(prevCursor, nextCursorCandidate);
-        this.sessionMessagesBeforeSeq.set(sessionId, nextCursor);
-
-        const prevHasMore = this.sessionMessagesHasMoreOlder.get(sessionId);
-        if (typeof page.hasMore === 'boolean') {
-            this.sessionMessagesHasMoreOlder.set(sessionId, page.hasMore);
-            return;
-        }
-        if (prevHasMore === false) {
-            return;
-        }
-        if (options?.allowHasMoreInference) {
-            const inferredHasMore = page.messages.length >= SESSION_MESSAGES_PAGE_SIZE;
-            // If the server doesn't send `hasMore`, treat a short page as a definitive "no more".
-            if (!inferredHasMore) {
-                this.sessionMessagesHasMoreOlder.set(sessionId, false);
-                return;
-            }
-            if (prevHasMore === undefined) {
-                this.sessionMessagesHasMoreOlder.set(sessionId, true);
-            }
+        if (update.next.paginationSupported == null) {
+            this.sessionMessagesPaginationSupportedByKey.delete(pagingKey);
+        } else {
+            this.sessionMessagesPaginationSupportedByKey.set(pagingKey, update.next.paginationSupported);
         }
     }
 

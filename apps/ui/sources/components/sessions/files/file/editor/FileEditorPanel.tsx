@@ -2,13 +2,15 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
+import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-export function FileEditorPanel(props: Readonly<{
+function FileEditorPanelImpl(props: Readonly<{
     theme: any;
     resetKey: string;
+    editorRef: Readonly<React.MutableRefObject<CodeEditorHandle | null>>;
     value: string;
     language: string | null;
     onChange: (next: string) => void;
@@ -21,10 +23,12 @@ export function FileEditorPanel(props: Readonly<{
     return (
         <View style={{ flex: 1, paddingHorizontal: 16, paddingVertical: 12 }}>
             <CodeEditor
+                ref={props.editorRef}
                 resetKey={props.resetKey}
                 value={props.value}
                 language={props.language}
                 onChange={props.onChange}
+                testID="file-details-editor"
                 wrapLines={props.wrapLines}
                 showLineNumbers={props.showLineNumbers}
                 readOnly={props.readOnly}
@@ -37,3 +41,5 @@ export function FileEditorPanel(props: Readonly<{
         </View>
     );
 }
+
+export const FileEditorPanel = React.memo(FileEditorPanelImpl);

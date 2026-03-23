@@ -1,5 +1,4 @@
 import { sessionEphemeralTaskRun } from '@/sync/ops/sessionEphemeralTasks';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 
 export type ScmCommitMessageGeneratorResult =
     | { ok: true; message: string }
@@ -20,7 +19,6 @@ export async function generateScmCommitMessage(params: Readonly<{
         .map((v) => (typeof v === 'string' ? v.trim() : ''))
         .filter((v) => v.length > 0);
 
-    const serverId = resolveServerIdForSessionIdFromLocalCache(params.sessionId);
     const res = await sessionEphemeralTaskRun(
         params.sessionId,
         {
@@ -36,7 +34,6 @@ export async function generateScmCommitMessage(params: Readonly<{
             // Hard-safety: commit generation must not be tool-capable by default.
             permissionMode: 'no_tools',
         },
-        { serverId },
     );
 
     if (!res.ok) {

@@ -1,3 +1,5 @@
+import { looksLikeCodexApprovalRequestUserInput } from './codexRequestUserInputQuestions';
+
 type LoggerSubset = {
   debug: (message: string, ...args: unknown[]) => void;
 };
@@ -40,20 +42,12 @@ function decisionToToolApprovalChoice(decision: PermissionDecision): string {
   }
 }
 
-function looksLikeMcpToolCallApprovalPrompt(questions: unknown): boolean {
-  if (!Array.isArray(questions) || questions.length === 0) return false;
-  return questions.some((q) => {
-    const id = (q as any)?.id;
-    return typeof id === 'string' && id.startsWith('mcp_tool_call_approval_');
-  });
-}
-
 function resolveToolApprovalQuestionOptions(questions: unknown): string[] {
   if (!Array.isArray(questions)) return [];
   const approvalQuestion = questions.find((q) => {
     const id = (q as any)?.id;
     return typeof id === 'string' && id.startsWith('mcp_tool_call_approval_');
-  }) as any;
+  }) as any ?? questions.find((q) => Array.isArray((q as any)?.options)) as any;
   const options = approvalQuestion?.options;
   if (!Array.isArray(options)) return [];
   return options
@@ -62,7 +56,7 @@ function resolveToolApprovalQuestionOptions(questions: unknown): string[] {
     .filter((label) => label.length > 0);
 }
 
-function resolveApprovalChoiceLabel(params: { decision: PermissionDecision; questions: unknown; logger: LoggerSubset }): string | null {
+export function resolveApprovalChoiceLabel(params: { decision: PermissionDecision; questions: unknown; logger: LoggerSubset }): string | null {
   const options = resolveToolApprovalQuestionOptions(params.questions);
   if (options.length === 0) return null;
 
@@ -125,7 +119,9 @@ export function createCodexRequestUserInputBridge(opts: {
       const callId = message.call_id;
       if (typeof callId !== 'string' || callId.length === 0) return;
       const questions = message.questions;
-      if (!looksLikeMcpToolCallApprovalPrompt(questions)) return;
+      const context = toolContextByCallId.get(callId) ?? null;
+      const toolName = context?.toolName ?? 'mcp_tool_call';
+      if (!looksLikeCodexApprovalRequestUserInput({ toolName, questions })) return;
       if (inFlightToolApprovals.has(callId)) return;
 
       if (!opts.permissionHandler) {
@@ -134,8 +130,6 @@ export function createCodexRequestUserInputBridge(opts: {
       }
       const permissionHandler = opts.permissionHandler;
 
-      const context = toolContextByCallId.get(callId) ?? null;
-      const toolName = context?.toolName ?? 'mcp_tool_call';
       const toolInputBase =
         context?.toolInput && typeof context.toolInput === 'object' && !Array.isArray(context.toolInput)
           ? context.toolInput

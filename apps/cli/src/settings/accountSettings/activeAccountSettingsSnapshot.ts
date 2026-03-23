@@ -5,6 +5,7 @@ export type ActiveAccountSettingsSnapshot = Readonly<{
   settings: AccountSettings;
   settingsVersion: number;
   loadedAtMs: number;
+  settingsSecretsReadKeys: readonly Uint8Array[];
 }>;
 
 let active: ActiveAccountSettingsSnapshot | null = null;
@@ -16,4 +17,3 @@ export function setActiveAccountSettingsSnapshot(next: ActiveAccountSettingsSnap
 export function getActiveAccountSettingsSnapshot(): ActiveAccountSettingsSnapshot | null {
   return active;
 }
-

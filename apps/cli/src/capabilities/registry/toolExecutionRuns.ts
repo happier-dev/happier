@@ -5,6 +5,8 @@ import { constants as fsConstants } from 'node:fs';
 import { join, delimiter as PATH_DELIMITER } from 'node:path';
 import { getVendorResumeSupport } from '@/backends/catalog';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
+import { CODEX_PROVIDER_SETTINGS_DEFAULTS } from '@happier-dev/agents';
+import { resolveProviderSpawnExtrasForRuntime } from '@/settings/providerSettings';
 
 function isCliAvailable(context: any, agentId: string): boolean {
   const entry = context?.cliSnapshot?.clis?.[agentId];
@@ -64,17 +66,23 @@ export const executionRunsCapability: Capability = {
       ? true
       : Boolean(await resolveCommandOnPath('coderabbit', mergedPath || null));
 
+    const codexDefaultVendorResumeParams = resolveProviderSpawnExtrasForRuntime({
+      agentId: 'codex',
+      settings: CODEX_PROVIDER_SETTINGS_DEFAULTS,
+      processEnv: process.env,
+    });
+
     const resolveSupportsVendorResume = async (backendId: string): Promise<boolean> => {
       try {
         const fn = await getVendorResumeSupport(backendId as any);
-        return fn({});
+        return backendId === 'codex' ? fn(codexDefaultVendorResumeParams) : fn({});
       } catch {
         return false;
       }
     };
     const supportsVendorResumeByBackend = Object.fromEntries(
       await Promise.all(
-        ['claude', 'codex', 'gemini', 'opencode', 'auggie', 'qwen', 'kimi', 'kilo', 'pi'].map(async (id) => [
+        ['claude', 'codex', 'gemini', 'opencode', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'customAcp', 'pi', 'copilot'].map(async (id) => [
           id,
           await resolveSupportsVendorResume(id),
         ]),
@@ -127,10 +135,25 @@ export const executionRunsCapability: Capability = {
           intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
           supportsVendorResume: supportsVendorResumeByBackend.kilo === true,
         },
+        kiro: {
+          available: isCliAvailable(context, 'kiro'),
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.kiro === true,
+        },
+        customAcp: {
+          available: true,
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.customAcp === true,
+        },
         pi: {
           available: isCliAvailable(context, 'pi'),
           intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
           supportsVendorResume: supportsVendorResumeByBackend.pi === true,
+        },
+        copilot: {
+          available: isCliAvailable(context, 'copilot'),
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.copilot === true,
         },
         coderabbit: {
           available: coderabbitOnPath,

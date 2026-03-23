@@ -1,17 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import { randomBytes, createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import tweetnacl from 'tweetnacl';
 
-import { installAxiosFastifyAdapter } from '@/ui/testkit/axiosFastifyAdapter.testkit';
-import {
-  captureConsoleLogAndMuteStdout,
-  createEnvKeyScope,
-  setStdioTtyForTest,
-} from '@/ui/testkit/authNonInteractiveGlobals.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { setStdioTtyForTest } from '@/testkit/process/stdio';
 
 function sha256Base64Url(input: Buffer): string {
   return createHash('sha256').update(input).digest('base64url');
@@ -53,7 +49,7 @@ describe('authAndSetupMachineIfNeeded (non-TTY) (status+claim)', () => {
   beforeEach(async () => {
     vi.useRealTimers();
     envScope = createEnvKeyScope(envKeys);
-    homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-auth-nontty-'));
+    homeDir = await createTempDir('happier-cli-auth-nontty-');
     envScope.patch({
       HAPPIER_HOME_DIR: homeDir,
       HAPPIER_NO_BROWSER_OPEN: '1',
@@ -71,7 +67,7 @@ describe('authAndSetupMachineIfNeeded (non-TTY) (status+claim)', () => {
     envScope.restore();
     vi.resetModules();
     vi.unstubAllGlobals();
-    await rm(homeDir, { recursive: true, force: true });
+    await removeTempDir(homeDir);
   });
 
   it('completes web auth without Ink by polling status and claiming once authorized', async () => {

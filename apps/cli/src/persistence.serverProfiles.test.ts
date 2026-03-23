@@ -5,11 +5,14 @@ import { join } from 'node:path';
 
 describe('server profile persistence', () => {
   const previousHomeDir = process.env.HAPPIER_HOME_DIR;
+  const previousActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
   const tempDirs: string[] = [];
 
   afterEach(() => {
     if (previousHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
     else process.env.HAPPIER_HOME_DIR = previousHomeDir;
+    if (previousActiveServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+    else process.env.HAPPIER_ACTIVE_SERVER_ID = previousActiveServerId;
     delete process.env.HAPPIER_SERVER_URL;
     delete process.env.HAPPIER_WEBAPP_URL;
     vi.resetModules();
@@ -25,6 +28,7 @@ describe('server profile persistence', () => {
     process.env.HAPPIER_HOME_DIR = homeDir;
     delete process.env.HAPPIER_SERVER_URL;
     delete process.env.HAPPIER_WEBAPP_URL;
+    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
 
     writeFileSync(
       join(homeDir, 'settings.json'),
@@ -65,6 +69,7 @@ describe('server profile persistence', () => {
     process.env.HAPPIER_HOME_DIR = homeDir;
     delete process.env.HAPPIER_SERVER_URL;
     delete process.env.HAPPIER_WEBAPP_URL;
+    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
 
     writeFileSync(
       join(homeDir, 'settings.json'),

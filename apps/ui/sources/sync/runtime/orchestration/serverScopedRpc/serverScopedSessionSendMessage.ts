@@ -3,18 +3,19 @@ import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
 import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
-import { buildSessionAppendSystemPrompt } from '@/agents/prompt/buildSessionAppendSystemPrompt';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import type { RawRecord } from '@/sync/typesRaw';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { resolveScopedSessionDataKey } from '@/sync/runtime/orchestration/serverScopedRpc/resolveScopedSessionDataKey';
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
 import { randomUUID } from '@/platform/randomUUID';
+import { socketEmitWithAckFallback } from '@/sync/engine/socket/socketEmitWithAckFallback';
 
 import type { ResolvedServerSessionRpcContext } from './resolveServerScopedSessionContext';
 
 type ScopedSocketClientLike = Readonly<{
   timeout: (ms: number) => { emitWithAck: (event: string, payload: any) => Promise<unknown> };
+  emit: (event: string, payload: any) => void;
   disconnect: () => void;
 }>;
 
@@ -34,7 +35,12 @@ type Deps = Readonly<{
     context: Awaited<ReturnType<typeof resolveServerScopedSessionContext>>;
     sessionId: string;
   }>) => Promise<ScopedSessionEncryptionLike>;
-  sendMessageActive: (sessionId: string, message: string) => Promise<void>;
+  sendMessageActive: (
+    sessionId: string,
+    message: string,
+    displayText?: string,
+    metaOverrides?: Record<string, unknown>,
+  ) => Promise<void>;
 }>;
 
 function normalizeId(raw: unknown): string {
@@ -73,6 +79,9 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
     message: string;
     serverId?: string | null;
     timeoutMs?: number;
+    displayText?: string | null;
+    metaOverrides?: Record<string, unknown> | null;
+    profileId?: string | null;
   }>) => Promise<ServerScopedSessionSendMessageResult>;
 }> {
   const d: Deps = {
@@ -82,9 +91,9 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
     getScopedSessionEncryption: deps?.getScopedSessionEncryption ?? defaultGetScopedSessionEncryption,
     sendMessageActive:
       deps?.sendMessageActive ??
-      (async (sessionId, message) => {
+      (async (sessionId, message, displayText, metaOverrides) => {
         const { sync } = await import('@/sync/sync');
-        await sync.sendMessage(sessionId, message);
+        await sync.sendMessage(sessionId, message, displayText, metaOverrides);
       }),
   };
 
@@ -93,9 +102,18 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
     message: string;
     serverId?: string | null;
     timeoutMs?: number;
+    displayText?: string | null;
+    metaOverrides?: Record<string, unknown> | null;
+    profileId?: string | null;
   }>): Promise<ServerScopedSessionSendMessageResult> => {
     const sessionId = normalizeId(args.sessionId);
     const message = String(args.message ?? '');
+    const profileId = normalizeId(args.profileId);
+    const displayText = typeof args.displayText === 'string' ? args.displayText : undefined;
+    const metaOverrides = {
+      ...(args.metaOverrides ?? {}),
+      ...(profileId ? { profileId } : {}),
+    };
     if (!sessionId || !message.trim()) {
       return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     }
@@ -104,7 +122,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
     const context = await d.resolveContext({ serverId: args.serverId, timeoutMs });
 
     if (context.scope === 'active') {
-      await d.sendMessageActive(sessionId, message);
+      await d.sendMessageActive(sessionId, message, displayText, Object.keys(metaOverrides).length > 0 ? metaOverrides : undefined);
       return { ok: true, ack: { ok: true } };
     }
 
@@ -124,18 +142,15 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
       agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
 
     const sentFrom = resolveSentFrom();
-    const appendSystemPrompt = buildSessionAppendSystemPrompt({ settings: state?.settings });
-
     const meta = buildSendMessageMeta({
       sentFrom,
       permissionMode: permissionMode || 'default',
       model,
-      appendSystemPrompt,
-      displayText: undefined,
+      displayText,
       agentId: agentId ?? null,
       settings: state?.settings ?? {},
       session,
-      metaOverrides: undefined,
+      metaOverrides: Object.keys(metaOverrides).length > 0 ? metaOverrides : undefined,
     });
 
     const record: RawRecord = {
@@ -163,7 +178,22 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
 
     const socket = await d.createSocket({ serverUrl: context.targetServerUrl, token: context.token, timeoutMs: context.timeoutMs });
     try {
-      const rawAck = await socket.timeout(context.timeoutMs).emitWithAck('message', payload);
+      const rawAck = await socketEmitWithAckFallback({
+        emitWithAck: async (event, payload, opts) => {
+          const timeoutMs = typeof opts?.timeoutMs === 'number' && opts.timeoutMs > 0 ? opts.timeoutMs : context.timeoutMs;
+          return await socket.timeout(timeoutMs).emitWithAck(event, payload);
+        },
+        send: (event, payload) => {
+          socket.emit(event, payload);
+        },
+        event: 'message',
+        payload,
+        timeoutMs: context.timeoutMs,
+        onNoAck: () => {},
+      });
+      if (!rawAck) {
+        return { ok: true, ack: { ok: false, state: 'ack_unknown', localId } };
+      }
       const parsed = MessageAckResponseSchema.safeParse(rawAck);
       if (!parsed.success) {
         return { ok: false, errorCode: 'send_failed', error: 'send_failed' };

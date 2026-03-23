@@ -4,6 +4,7 @@ import { ApiClient } from '@/api/api';
 import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_ENV } from '@/backends/gemini/constants';
 import { readGeminiLocalConfig, saveGeminiModelToConfig, saveGoogleCloudProjectToConfig } from '@/backends/gemini/utils/config';
+import { buildGeminiWorkspaceProjectGuidanceLines } from '@/backends/gemini/utils/buildGeminiWorkspaceProjectGuidance';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -114,11 +115,9 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
       } else {
         console.log('No Google Cloud Project configured.');
         console.log('');
-        console.log('If you see "Authentication required" error, you may need to set a project:');
-        console.log('  happier gemini project set <your-project-id>');
-        console.log('');
-        console.log('This is required for Google Workspace accounts.');
-        console.log('Guide: https://goo.gle/gemini-cli-auth-docs#workspace-gca');
+        for (const line of buildGeminiWorkspaceProjectGuidanceLines()) {
+          console.log(line);
+        }
       }
       process.exit(0);
       return;
@@ -136,10 +135,9 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
     console.log('  set <project-id>   Set Google Cloud Project ID');
     console.log('  get                Show current Google Cloud Project ID');
     console.log('');
-    console.log('Google Workspace accounts require a Google Cloud Project.');
-    console.log('If you see "Authentication required" error, set your project ID.');
-    console.log('');
-    console.log('Guide: https://goo.gle/gemini-cli-auth-docs#workspace-gca');
+    for (const line of buildGeminiWorkspaceProjectGuidanceLines()) {
+      console.log(line);
+    }
     process.exit(0);
     return;
   }

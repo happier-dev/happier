@@ -11,7 +11,7 @@ import { Metadata } from "@/sync/domains/state/storageTypes";
 import { layout } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
-import { AgentEvent } from "@/sync/typesRaw";
+import { resolveMessageRouteIdForDisplay } from '@/sync/domains/messages/messageRouteIds';
 import { sync } from '@/sync/sync';
 import { Option } from '@/components/markdown/MarkdownView';
 import { isCommittedMessageDiscarded } from "@/utils/sessions/discardedCommittedMessages";
@@ -20,29 +20,50 @@ import { renderStructuredMessage, StructuredMessageBlock } from '@/components/se
 import { useRouter } from 'expo-router';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { storage, useSession, useSetting } from '@/sync/domains/state/storage';
+import { storage, useSession, useSessionMessagesById, useSessionMessagesReducerState, useSetting } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
 import { extractWorkspaceFileMentions } from '@/components/sessions/linkedFiles/extractWorkspaceFileMentions';
 import { LinkedWorkspaceFilesRow } from '@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow';
 import { useTranscriptMotion } from '@/components/sessions/transcript/motion/TranscriptMotionContext';
 import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/ThinkingTimelineRow';
+import { TranscriptEventRow } from '@/components/sessions/transcript/events/TranscriptEventRow';
 import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
 import { AttachmentsMessageMetaV1Schema } from '@/sync/domains/attachments/attachmentsMessageMeta';
 import { AttachmentsMessageRow } from '@/components/sessions/attachments/messages/AttachmentsMessageRow';
+import { AttachmentsInlineImages } from '@/components/sessions/attachments/messages/AttachmentsInlineImages';
 import { forkSession } from '@/sync/ops';
 import { canForkFromMessage } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveForkFromMessageSemantics } from '@/sync/domains/sessionFork/forkFromMessageSemantics';
+import { writeForkInitialPromptV1 } from '@/sync/domains/sessionFork/forkInitialPromptV1';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
+import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
+import { TranscriptRollbackActionButton } from '@/components/sessions/transcript/TranscriptRollbackActionButton';
+import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 
+function shouldHideVoiceAgentTurnMessage(message: Message): boolean {
+    if (message.kind !== 'user-text' && message.kind !== 'agent-text') return false;
+    if (message.kind === 'user-text' && message.displayText !== undefined) return false;
+    const envelope = parseHappierMetaEnvelope(message.meta);
+    if (envelope?.kind !== 'voice_agent_turn.v1') return false;
+    const normalizedText = normalizeVoiceAgentTurnTranscriptText(message.text);
+    return normalizedText == null || normalizedText.trim().length === 0;
+}
 
 export const MessageView = (props: {
   message: Message;
   metadata: Metadata | null;
   sessionId: string;
+  layoutContext?: 'transcript' | 'tool_calls_group';
+  forcePermissionPromptsInTranscript?: boolean;
   activeThinkingMessageId?: string | null;
   thinkingExpanded?: boolean;
   onThinkingExpandedChange?: (next: boolean) => void;
   getMessageById?: (id: string) => Message | null;
+  rollbackAction?: TranscriptRollbackAction | null;
+  historical?: boolean;
   interaction?: {
     canSendMessages: boolean;
     canApprovePermissions: boolean;
@@ -50,6 +71,7 @@ export const MessageView = (props: {
     disableToolNavigation?: boolean;
   };
 }) => {
+  if (shouldHideVoiceAgentTurnMessage(props.message)) return null;
   return (
     <View style={styles.messageContainer} renderToHardwareTextureAndroid={true}>
       <View style={styles.messageContent}>
@@ -57,10 +79,14 @@ export const MessageView = (props: {
           message={props.message}
           metadata={props.metadata}
           sessionId={props.sessionId}
+          layoutContext={props.layoutContext ?? 'transcript'}
+          forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           activeThinkingMessageId={props.activeThinkingMessageId ?? null}
           thinkingExpanded={props.thinkingExpanded}
           onThinkingExpandedChange={props.onThinkingExpandedChange}
           getMessageById={props.getMessageById}
+          rollbackAction={props.rollbackAction}
+          historical={props.historical}
           interaction={props.interaction}
         />
       </View>
@@ -73,6 +99,8 @@ function RenderBlock(props: {
   message: Message;
   metadata: Metadata | null;
   sessionId: string;
+  layoutContext: 'transcript' | 'tool_calls_group';
+  forcePermissionPromptsInTranscript?: boolean;
   activeThinkingMessageId: string | null;
   thinkingExpanded?: boolean;
   onThinkingExpandedChange?: (next: boolean) => void;
@@ -83,10 +111,21 @@ function RenderBlock(props: {
     permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     disableToolNavigation?: boolean;
   };
-}): React.ReactElement {
+  rollbackAction?: TranscriptRollbackAction | null;
+  historical?: boolean;
+}): React.ReactElement | null {
   switch (props.message.kind) {
     case 'user-text':
-      return <UserTextBlock message={props.message} metadata={props.metadata} sessionId={props.sessionId} canSendMessages={props.interaction?.canSendMessages ?? true} />;
+      return (
+        <UserTextBlock
+          message={props.message}
+          metadata={props.metadata}
+          sessionId={props.sessionId}
+          canSendMessages={props.interaction?.canSendMessages ?? true}
+          rollbackAction={props.rollbackAction}
+          historical={props.historical}
+        />
+      );
 
     case 'agent-text':
       return (
@@ -98,6 +137,8 @@ function RenderBlock(props: {
           activeThinkingMessageId={props.activeThinkingMessageId}
           thinkingExpanded={props.thinkingExpanded}
           onThinkingExpandedChange={props.onThinkingExpandedChange}
+          rollbackAction={props.rollbackAction}
+          historical={props.historical}
         />
       );
 
@@ -106,13 +147,17 @@ function RenderBlock(props: {
         message={props.message}
         metadata={props.metadata}
         sessionId={props.sessionId}
+        layoutContext={props.layoutContext}
+        forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
         activeThinkingMessageId={props.activeThinkingMessageId}
         getMessageById={props.getMessageById}
         interaction={props.interaction}
+        rollbackAction={props.rollbackAction}
+        historical={props.historical}
       />;
 
     case 'agent-event':
-      return <AgentEventBlock event={props.message.event} metadata={props.metadata} />;
+      return <TranscriptEventRow event={props.message.event} />;
 
 
     default:
@@ -127,12 +172,19 @@ function UserTextBlock(props: {
   metadata: Metadata | null;
   sessionId: string;
   canSendMessages: boolean;
+  rollbackAction?: TranscriptRollbackAction | null;
+  historical?: boolean;
 }) {
   const [isMessageHovered, setIsMessageHovered] = React.useState(false);
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
   const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
+
+  const isVoiceAgentTurn = React.useMemo(() => {
+    const envelope = parseHappierMetaEnvelope(props.message.meta);
+    return envelope?.kind === 'voice_agent_turn.v1';
+  }, [props.message.meta]);
 
   const structuredNode = renderStructuredMessage({
     message: props.message,
@@ -156,6 +208,14 @@ function UserTextBlock(props: {
     if (parsed.data.attachments.length === 0) return null;
     return parsed.data;
   }, [props.message.meta]);
+
+  const nonImageAttachments = React.useMemo(() => {
+    if (!attachmentsMeta) return [];
+    return attachmentsMeta.attachments.filter((a) => {
+      if (a.mimeType && a.mimeType.startsWith('image/')) return false;
+      return getImageMimeTypeFromPath(a.path) == null;
+    });
+  }, [attachmentsMeta]);
 
   const stripAttachmentsBlock = React.useCallback((text: string): string => {
     const startTag = '[attachments]';
@@ -182,14 +242,18 @@ function UserTextBlock(props: {
   }, []);
 
   const markdownText = React.useMemo(() => {
+    if (isVoiceAgentTurn && props.message.displayText === undefined) {
+      return normalizeVoiceAgentTurnTranscriptText(props.message.text);
+    }
     if (props.message.displayText !== undefined) return props.message.displayText;
     if (attachmentsMeta) return stripAttachmentsBlock(props.message.text);
     return props.message.text;
-  }, [attachmentsMeta, props.message.displayText, props.message.text, stripAttachmentsBlock]);
+  }, [attachmentsMeta, isVoiceAgentTurn, props.message.displayText, props.message.text, stripAttachmentsBlock]);
+  const renderedMarkdownText = markdownText ?? props.message.displayText ?? props.message.text;
 
   const linkedWorkspaceFiles = React.useMemo(
-    () => extractWorkspaceFileMentions(markdownText),
-    [markdownText],
+    () => extractWorkspaceFileMentions(renderedMarkdownText),
+    [renderedMarkdownText],
   );
 
   const handleOptionPress = React.useCallback((option: Option) => {
@@ -207,7 +271,7 @@ function UserTextBlock(props: {
   }, [props.canSendMessages, props.sessionId]);
 
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
-  const copyText = isStructuredOnly ? props.message.text : (props.message.displayText || props.message.text);
+  const copyText = isStructuredOnly ? props.message.text : (markdownText ?? props.message.displayText ?? props.message.text);
   const actionPointerEvents = resolveMessageActionPointerEvents({ isWeb, showCopyButton });
   const sessionReplayEnabled = useSetting('sessionReplayEnabled');
   const session = useSession(props.sessionId);
@@ -221,12 +285,16 @@ function UserTextBlock(props: {
     return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
   }, [props.message, seq]);
 
+  if (isVoiceAgentTurn && (markdownText == null || markdownText.trim().length === 0)) {
+    return null;
+  }
+
   // Structured user messages should render as standalone blocks (tool-card style),
   // not inside a chat bubble background, and without echoing displayText fallback.
   if (isStructuredOnly) {
     return (
       <View
-        style={styles.structuredUserMessageContainer}
+        style={[styles.structuredUserMessageContainer, props.historical ? styles.historicalMessageContainer : null]}
         {...(isWeb
           ? {
               onPointerEnter: () => setIsMessageHovered(true),
@@ -250,6 +318,18 @@ function UserTextBlock(props: {
             isWeb ? { pointerEvents: actionPointerEvents } : null,
           ]}
         >
+          {props.rollbackAction ? (
+            <TranscriptRollbackActionButton
+              sessionId={props.sessionId}
+              target={props.rollbackAction.target}
+              restoredDraftText={props.rollbackAction.restoredDraftText}
+              testID={`transcript-message-rollback:${props.message.id}`}
+              onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
+              onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+              style={[styles.rollbackMessageButton, Platform.OS === 'web' ? styles.webActionButton : null]}
+              pressedStyle={styles.copyMessageButtonPressed}
+            />
+          ) : null}
           {showForkButton ? (
             <ForkMessageButton
               sessionId={props.sessionId}
@@ -273,7 +353,7 @@ function UserTextBlock(props: {
 
   return (
     <View
-      style={styles.userMessageContainer}
+      style={[styles.userMessageContainer, props.historical ? styles.historicalMessageContainer : null]}
       {...(isWeb
         ? {
             onPointerEnter: () => setIsMessageHovered(true),
@@ -298,10 +378,19 @@ function UserTextBlock(props: {
               }));
             }}
           />
-          <MarkdownView markdown={markdownText} onOptionPress={handleOptionPress} textStyle={styles.transcriptMarkdownText} />
+          <MarkdownView markdown={renderedMarkdownText} onOptionPress={handleOptionPress} textStyle={styles.transcriptMarkdownText} />
           {attachmentsMeta ? (
-            <AttachmentsMessageRow
+            <AttachmentsInlineImages
+              sessionId={props.sessionId}
               attachments={attachmentsMeta.attachments}
+              onOpenPath={(filePath) => {
+                router.push(buildSessionFileDeepLink({ sessionId: props.sessionId, filePath }) as any);
+              }}
+            />
+          ) : null}
+          {nonImageAttachments.length > 0 ? (
+            <AttachmentsMessageRow
+              attachments={nonImageAttachments}
               onOpenPath={(filePath) => {
                 router.push(buildSessionFileDeepLink({ sessionId: props.sessionId, filePath }) as any);
               }}
@@ -327,6 +416,18 @@ function UserTextBlock(props: {
             isWeb ? { pointerEvents: actionPointerEvents } : null,
           ]}
         >
+          {props.rollbackAction ? (
+            <TranscriptRollbackActionButton
+              sessionId={props.sessionId}
+              target={props.rollbackAction.target}
+              restoredDraftText={props.rollbackAction.restoredDraftText}
+              testID={`transcript-message-rollback:${props.message.id}`}
+              onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
+              onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+              style={[styles.rollbackMessageButton, Platform.OS === 'web' ? styles.webActionButton : null]}
+              pressedStyle={styles.copyMessageButtonPressed}
+            />
+          ) : null}
           {showForkButton ? (
             <ForkMessageButton
               sessionId={props.sessionId}
@@ -339,6 +440,7 @@ function UserTextBlock(props: {
           ) : null}
           <CopyMessageButton
             markdown={copyText}
+            testID={`transcript-message-copy:${props.message.id ?? props.message.localId}`}
             onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
             onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
           />
@@ -356,11 +458,17 @@ function AgentTextBlock(props: {
   activeThinkingMessageId: string | null;
   thinkingExpanded?: boolean;
   onThinkingExpandedChange?: (next: boolean) => void;
+  rollbackAction?: TranscriptRollbackAction | null;
+  historical?: boolean;
 }) {
   const [isMessageHovered, setIsMessageHovered] = React.useState(false);
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
+  const isVoiceAgentTurn = React.useMemo(() => {
+    const envelope = parseHappierMetaEnvelope(props.message.meta);
+    return envelope?.kind === 'voice_agent_turn.v1';
+  }, [props.message.meta]);
   const sessionThinkingDisplayMode = useSetting('sessionThinkingDisplayMode');
   const sessionThinkingInlinePresentation = useSetting('sessionThinkingInlinePresentation');
   const sessionThinkingInlineChrome = useSetting('sessionThinkingInlineChrome');
@@ -388,7 +496,14 @@ function AgentTextBlock(props: {
     const match = text.match(/^\*Thinking\.\.\.\*\n\n\*([\s\S]*)\*$/);
     return match ? match[1] : text;
   };
-  const markdown = props.message.isThinking ? unwrapLegacyThinkingWrapper(props.message.text) : props.message.text;
+  const baseMarkdownText = isVoiceAgentTurn
+    ? normalizeVoiceAgentTurnTranscriptText(props.message.text)
+    : props.message.text;
+  if (isVoiceAgentTurn && baseMarkdownText == null) {
+    return null;
+  }
+  const markdownSource = baseMarkdownText ?? props.message.text;
+  const markdown = props.message.isThinking ? unwrapLegacyThinkingWrapper(markdownSource) : markdownSource;
   const deriveThinkingSummary = (text: string) => {
     const trimmed = String(text ?? '').trim();
     if (!trimmed) return '';
@@ -452,7 +567,11 @@ function AgentTextBlock(props: {
 
   return (
     <View
-      style={[styles.agentMessageContainer, props.message.isThinking === true ? styles.agentMessageContainerThinking : null]}
+      style={[
+        styles.agentMessageContainer,
+        props.message.isThinking === true ? styles.agentMessageContainerThinking : null,
+        props.historical ? styles.historicalMessageContainer : null,
+      ]}
       {...(isWeb ? {} : { pointerEvents: 'box-none' as const })}
       onPointerEnter={handleHoverIn}
       onPointerLeave={handleHoverOut}
@@ -519,6 +638,18 @@ function AgentTextBlock(props: {
           isWeb ? { pointerEvents: actionPointerEvents } : null,
         ]}
       >
+        {props.rollbackAction ? (
+          <TranscriptRollbackActionButton
+            sessionId={props.sessionId}
+            target={props.rollbackAction.target}
+            restoredDraftText={props.rollbackAction.restoredDraftText}
+            testID={`transcript-message-rollback:${props.message.id}`}
+            onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
+            onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+            style={[styles.rollbackMessageButton, Platform.OS === 'web' ? styles.webActionButton : null]}
+            pressedStyle={styles.copyMessageButtonPressed}
+          />
+        ) : null}
         {showForkButton ? (
           <ForkMessageButton
             sessionId={props.sessionId}
@@ -557,6 +688,7 @@ function ForkMessageButton(props: {
   const sessionReplayStrategy = useSetting('sessionReplayStrategy');
   const sessionReplaySummaryRunner = useSetting('sessionReplaySummaryRunnerV1');
   const sessionReplayMaxSeedChars = useSetting('sessionReplayMaxSeedChars');
+  const reachableMachineTarget = React.useMemo(() => readMachineTargetForSession(props.sessionId), [props.sessionId, session?.updatedAt, session?.metadata]);
 
   const handlePress = React.useCallback(async () => {
     if (isForking) return;
@@ -567,7 +699,8 @@ function ForkMessageButton(props: {
           ? sessionReplaySummaryRunner
           : undefined;
       const result = await forkSession({
-        machineId: session?.metadata?.machineId,
+        machineId: reachableMachineTarget?.machineId ?? session?.metadata?.machineId,
+        serverId: resolveServerIdForSessionIdFromLocalCache(props.sessionId),
         parentSessionId: props.sessionId,
         forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
         ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
@@ -591,16 +724,26 @@ function ForkMessageButton(props: {
       fireAndForget((async () => {
         try {
           await (sync as any).ensureSessionVisibleForMessageRoute?.(result.childSessionId);
+          if (restored && restored.trim().length > 0) {
+            await sync.patchSessionMetadataWithRetry(result.childSessionId, (metadata) =>
+              writeForkInitialPromptV1({
+                metadata: metadata as any,
+                text: restored,
+                createdAtMs: Date.now(),
+                sourceMessageId: props.messageId,
+              }) as any,
+            );
+          }
         } catch {
           // best-effort
         }
-      })(), { tag: 'ForkMessageButton.ensureChildVisible' });
+      })(), { tag: 'ForkMessageButton.ensureChildVisibleAndPersistForkInitialPromptV1' });
     } catch (e) {
       Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToForkSession'));
     } finally {
       setIsForking(false);
     }
-  }, [isForking, executionRunsEnabled, props.restoredDraftText, props.sessionId, props.upToSeqInclusive, router, session?.metadata?.machineId, sessionReplayMaxSeedChars, sessionReplayStrategy, sessionReplaySummaryRunner]);
+  }, [executionRunsEnabled, isForking, props.messageId, props.restoredDraftText, props.sessionId, props.upToSeqInclusive, reachableMachineTarget?.machineId, router, session?.metadata?.machineId, sessionReplayMaxSeedChars, sessionReplayStrategy, sessionReplaySummaryRunner]);
 
   if (!session) return null;
 
@@ -702,53 +845,12 @@ function resolveMessageActionPointerEvents(params: { isWeb: boolean; showCopyBut
   return showCopyButton ? ('auto' as const) : ('none' as const);
 }
 
-function AgentEventBlock(props: {
-  event: AgentEvent;
-  metadata: Metadata | null;
-}) {
-  if (props.event.type === 'switch') {
-    return (
-      <View style={styles.agentEventContainer}>
-        <Text selectable style={styles.agentEventText}>{t('message.switchedToMode', { mode: props.event.mode })}</Text>
-      </View>
-    );
-  }
-  if (props.event.type === 'message') {
-    return (
-      <View style={styles.agentEventContainer}>
-        <Text selectable style={styles.agentEventText}>{props.event.message}</Text>
-      </View>
-    );
-  }
-  if (props.event.type === 'limit-reached') {
-    const formatTime = (timestamp: number): string => {
-      try {
-        const date = new Date(timestamp * 1000); // Convert from Unix timestamp
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      } catch {
-        return t('message.unknownTime');
-      }
-    };
-
-    return (
-      <View style={styles.agentEventContainer}>
-        <Text selectable style={styles.agentEventText}>
-          {t('message.usageLimitUntil', { time: formatTime(props.event.endsAt) })}
-        </Text>
-      </View>
-    );
-  }
-  return (
-    <View style={styles.agentEventContainer}>
-      <Text selectable style={styles.agentEventText}>{t('message.unknownEvent')}</Text>
-    </View>
-  );
-}
-
 function ToolCallBlock(props: {
   message: ToolCallMessage;
   metadata: Metadata | null;
   sessionId: string;
+  layoutContext: 'transcript' | 'tool_calls_group';
+  forcePermissionPromptsInTranscript?: boolean;
   activeThinkingMessageId: string | null;
   getMessageById?: (id: string) => Message | null;
 	  interaction?: {
@@ -757,38 +859,55 @@ function ToolCallBlock(props: {
 	    permissionDisabledReason?: 'public' | 'readOnly' | 'inactive' | 'notGranted';
 	    disableToolNavigation?: boolean;
 	  };
+	  rollbackAction?: TranscriptRollbackAction | null;
+	  historical?: boolean;
 	}) {
   const router = useRouter();
   const toolViewTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
+  const messagesById = useSessionMessagesById(props.sessionId);
+  const reducerState = useSessionMessagesReducerState(props.sessionId);
   if (!props.message.tool) {
     return null;
   }
+  const structuredNode = renderStructuredMessage({
+    message: props.message,
+    sessionId: props.sessionId,
+    onJumpToAnchor: (target) => {
+      router.push(buildSessionFileDeepLink({
+        sessionId: props.sessionId,
+        filePath: target.filePath,
+        source: target.source,
+        anchor: target.anchor,
+      }));
+    },
+  });
+  const shouldRenderToolChrome = !(toolViewTimelineChromeMode === 'activity_feed' && structuredNode != null);
+  const toolRouteMessageId = props.interaction?.disableToolNavigation
+    ? undefined
+    : resolveMessageRouteIdForDisplay({
+        message: props.message,
+        messagesById,
+        reducerState,
+      });
   return (
     <View
       style={[
         styles.toolContainer,
-        toolViewTimelineChromeMode === 'activity_feed' ? styles.toolContainerFeed : styles.toolContainerCards,
+        props.layoutContext === 'tool_calls_group' ? styles.toolContainerEmbedded : null,
+        toolViewTimelineChromeMode === 'activity_feed'
+          ? (props.layoutContext === 'tool_calls_group' ? styles.toolContainerFeedEmbedded : styles.toolContainerFeed)
+          : styles.toolContainerCards,
       ]}
     >
-        <StructuredMessageBlock
-          message={props.message as any}
-          sessionId={props.sessionId}
-          onJumpToAnchor={(target) => {
-            router.push(buildSessionFileDeepLink({
-              sessionId: props.sessionId,
-              filePath: target.filePath,
-              source: target.source,
-              anchor: target.anchor,
-            }));
-          }}
-        />
-      {toolViewTimelineChromeMode === 'activity_feed' ? (
+      {structuredNode}
+      {shouldRenderToolChrome ? (toolViewTimelineChromeMode === 'activity_feed' ? (
         <ToolTimelineRow
           tool={props.message.tool}
           metadata={props.metadata}
           messages={props.message.children}
           sessionId={props.sessionId}
-          messageId={props.interaction?.disableToolNavigation ? undefined : props.message.id}
+          messageId={toolRouteMessageId}
+          forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           interaction={props.interaction}
         />
       ) : (
@@ -797,10 +916,11 @@ function ToolCallBlock(props: {
           metadata={props.metadata}
           messages={props.message.children}
           sessionId={props.sessionId}
-          messageId={props.interaction?.disableToolNavigation ? undefined : props.message.id}
+          messageId={toolRouteMessageId}
+          forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           interaction={props.interaction}
         />
-      )}
+      )) : null}
     </View>
   );
 }
@@ -853,6 +973,9 @@ const styles = StyleSheet.create((theme) => ({
   userMessageBubbleDiscarded: {
     opacity: 0.65,
   },
+  historicalMessageContainer: {
+    opacity: 0.55,
+  },
   discardedCommittedMessageLabel: {
     marginTop: 6,
     fontSize: 12,
@@ -869,23 +992,24 @@ const styles = StyleSheet.create((theme) => ({
   agentMessageContainerThinking: {
     alignSelf: 'stretch',
   },
-  agentEventContainer: {
-    marginHorizontal: 8,
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  agentEventText: {
-    color: theme.colors.agentEventText,
-    fontSize: 14,
-  },
   toolContainer: {
     marginHorizontal: 16,
+  },
+  toolContainerEmbedded: {
+    marginHorizontal: 0,
+  },
+  toolActionContainer: {
+    alignItems: 'flex-end',
+    paddingBottom: 6,
   },
   toolContainerCards: {
     paddingBottom: 0,
   },
   toolContainerFeed: {
     paddingBottom: 22,
+  },
+  toolContainerFeedEmbedded: {
+    paddingBottom: 0,
   },
   messageActionContainer: {
     position: 'absolute',
@@ -901,6 +1025,13 @@ const styles = StyleSheet.create((theme) => ({
     padding: 6,
   },
   forkMessageButton: {
+    padding: 2,
+    borderRadius: 6,
+    opacity: 0.6,
+    cursor: 'pointer',
+    marginRight: 6,
+  },
+  rollbackMessageButton: {
     padding: 2,
     borderRadius: 6,
     opacity: 0.6,

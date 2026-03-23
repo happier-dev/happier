@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UpdateMetadataAckResponseSchema, UpdateStateAckResponseSchema } from "@happier-dev/protocol/updates";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
@@ -27,9 +27,12 @@ vi.mock("@/app/monitoring/metrics2", () => ({
 vi.mock("@/app/presence/sessionCache", () => ({
     activityCache: { isSessionValid: vi.fn(async () => true), queueSessionUpdate: vi.fn() },
 }));
-vi.mock("@/storage/db", () => ({ db: {} }));
 
 describe("sessionUpdateHandler version-mismatch responses", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
     it("returns current metadata (not the attempted value) on version-mismatch", async () => {
         updateSessionMetadata.mockResolvedValueOnce({
             ok: false,

@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import type { Credentials } from '@/persistence';
+import { resolveSessionAttachBaseDir } from '@/agent/runtime/sessionAttachPaths';
+import { configuration } from '@/configuration';
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void };
 
@@ -10,6 +14,16 @@ function createDeferred<T>(): Deferred<T> {
     resolveFn = resolve;
   });
   return { promise, resolve: (value: T) => resolveFn?.(value) };
+}
+
+function createLegacyCredentials(): Credentials {
+  return {
+    token: 'test',
+    encryption: {
+      type: 'legacy',
+      secret: new Uint8Array(32).fill(7),
+    },
+  };
 }
 
 async function waitFor<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -30,15 +44,35 @@ let loopStarted: Deferred<void> = createDeferred<void>();
 let loopExit: Deferred<number> = createDeferred<number>();
 let lastLoopOpts: any = null;
 let autoSessionReady = true;
+let readSettingsCalls = 0;
+let initializeBackendApiContextCalls = 0;
+const startHappyServerSpy = vi.fn(async (_client: any) => ({
+  url: 'http://127.0.0.1:1234',
+  toolNames: [],
+  stop: vi.fn(),
+}));
+const persistTerminalAttachmentInfoIfNeededSpy = vi.fn<(info: { sessionId: string }) => Promise<void>>(async () => {});
+const reportSessionToDaemonIfRunningSpy = vi.fn(async () => {});
+
+vi.mock('@/persistence', () => ({
+  readSettings: vi.fn(async () => {
+    readSettingsCalls += 1;
+    return { machineId: 'machine_1' };
+  }),
+}));
 
 vi.mock('@/backends/claude/loop', () => ({
   loop: vi.fn(async (opts: any) => {
+    loopCalls += 1;
     lastLoopOpts = opts;
     loopStarted.resolve();
     if (autoSessionReady) {
       opts?.onSessionReady?.({
         cleanup: vi.fn(),
         setPushSender: vi.fn(),
+        client: {
+          getMetadataSnapshot: vi.fn(() => ({})),
+        },
         getOrCreatePermissionRpcRouter: () => ({ registerConsumer: vi.fn() }),
       });
     }
@@ -50,6 +84,11 @@ let initResolved = false;
 let backendInitDelayMs = 200;
 const getOrCreateSessionSpy = vi.fn(async () => ({ id: 'sess_1', metadataVersion: 1 }));
 const sendSessionEventSpy = vi.fn();
+let startHookServerCalls = 0;
+let generateHookSettingsCalls = 0;
+let resolveRunnerMcpServersCalls = 0;
+let resolveEffectiveCodingPromptCalls = 0;
+let loopCalls = 0;
 const sessionSyncClientSpy = vi.fn((resp: any) => ({
   sessionId: resp?.id ?? 'sess_1',
   rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn() },
@@ -65,6 +104,7 @@ const sessionSyncClientSpy = vi.fn((resp: any) => ({
 }));
 vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
   initializeBackendApiContext: vi.fn(async () => {
+    initializeBackendApiContextCalls += 1;
     await new Promise<void>((resolve) => setTimeout(resolve, backendInitDelayMs));
     initResolved = true;
     return {
@@ -94,20 +134,62 @@ vi.mock('@/ui/doctor', () => ({
 }));
 
 vi.mock('@/mcp/startHappyServer', () => ({
-  startHappyServer: vi.fn(async () => ({
-    url: 'http://127.0.0.1:1234',
-    toolNames: [],
-    stop: vi.fn(),
-  })),
+  startHappyServer: startHappyServerSpy,
 }));
 
 vi.mock('@/backends/claude/utils/startHookServer', () => ({
-  startHookServer: vi.fn(async () => ({ port: 12345, stop: vi.fn() })),
+  startHookServer: vi.fn(async () => {
+    startHookServerCalls += 1;
+    return { port: 12345, stop: vi.fn() };
+  }),
 }));
 
 vi.mock('@/backends/claude/utils/generateHookSettings', () => ({
   generateHookSettingsFile: vi.fn(() => '/tmp/happier-hooks.json'),
   cleanupHookSettingsFile: vi.fn(),
+}));
+
+vi.mock('@/backends/claude/utils/generateHookSettingsFileWithEnsuredRuntime', () => ({
+  generateHookSettingsFileWithEnsuredRuntime: vi.fn(async () => {
+    generateHookSettingsCalls += 1;
+    return '/tmp/happier-hooks.json';
+  }),
+}));
+
+vi.mock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+  ensureJavaScriptRuntimeExecutable: vi.fn(async () => '/managed/js-runtime'),
+}));
+
+vi.mock('@/mcp/runtime/resolveRunnerMcpServers', () => ({
+  resolveRunnerMcpServers: vi.fn(async () => {
+    resolveRunnerMcpServersCalls += 1;
+    const happierMcpServer = await startHappyServerSpy({
+      sessionId: 'sess_1',
+      rpcHandlerManager: { registerHandler: vi.fn() } as any,
+      sendClaudeSessionMessage: vi.fn(),
+    } as any);
+    return {
+      mcpServers: {
+        happier: {
+          command: '/managed/js-runtime',
+          args: ['--mcp'],
+          env: {},
+        },
+      },
+      happierMcpServer,
+    };
+  }),
+}));
+
+vi.mock('@/agent/prompting/coding/resolveEffectiveCodingPrompt', () => ({
+  resolveEffectiveCodingPromptText: vi.fn(async () => {
+    resolveEffectiveCodingPromptCalls += 1;
+    return '';
+  }),
+}));
+
+vi.mock('@/features/featureDecisionService', () => ({
+  resolveCliFeatureDecision: vi.fn(() => ({ state: 'disabled' })),
 }));
 
 vi.mock('@/integrations/caffeinate', () => ({
@@ -121,8 +203,8 @@ vi.mock('@/rpc/handlers/killSession', () => ({
 
 vi.mock('@/agent/runtime/startupSideEffects', () => ({
   primeAgentStateForUi: vi.fn(),
-  persistTerminalAttachmentInfoIfNeeded: vi.fn(async () => {}),
-  reportSessionToDaemonIfRunning: vi.fn(async () => {}),
+  persistTerminalAttachmentInfoIfNeeded: persistTerminalAttachmentInfoIfNeededSpy,
+  reportSessionToDaemonIfRunning: reportSessionToDaemonIfRunningSpy,
   sendTerminalFallbackMessageIfNeeded: vi.fn(),
 }));
 
@@ -161,7 +243,7 @@ const startOfflineReconnectionSpy = vi.fn((config: OfflineReconnectionConfig<any
   return { cancel: vi.fn(), getSession: () => null, isReconnected: () => false };
 });
 vi.mock('@/api/offline/serverConnectionErrors', () => ({
-  connectionState: { setBackend: vi.fn(), notifyOffline: vi.fn() },
+  connectionState: { setBackend: vi.fn(), notifyOffline: vi.fn(), recover: vi.fn() },
   startOfflineReconnection: startOfflineReconnectionSpy,
 }));
 
@@ -179,6 +261,7 @@ vi.mock('@/api/session/sessionWritesBestEffort', () => ({
 }));
 
 describe('runClaude fast-start', () => {
+  const loopStartWaitMs = 30_000;
   const prevTiming = process.env.HAPPIER_STARTUP_TIMING_ENABLED;
   const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     void code;
@@ -212,25 +295,86 @@ describe('runClaude fast-start', () => {
 
     const { runClaude } = await import('./runClaude');
 
-    const credentials = { token: 'test' } as Credentials;
+    const credentials = createLegacyCredentials();
 
     let testError: unknown = null;
     const runPromise = runClaude(credentials, { startedBy: 'terminal', startingMode: 'local' }).catch((e) => {
       testError = e;
     });
 
-	    try {
-	      await expect(waitFor(loopStarted.promise, 75)).resolves.toBeUndefined();
+	  try {
+	      await expect(waitFor(loopStarted.promise, loopStartWaitMs)).resolves.toBeUndefined();
 	      expect(initResolved).toBe(false);
-	      expect(lastLoopOpts?.mcpServers).toBeUndefined();
+	      expect(lastLoopOpts?.precomputedMcpBridge?.mcpServers).toBeTruthy();
+	      expect(Object.keys(lastLoopOpts?.precomputedMcpBridge?.mcpServers ?? {})).toContain('happier');
 
 	      const { startHappyServer } = await import('@/mcp/startHappyServer');
-	      expect(startHappyServer).not.toHaveBeenCalled();
+	      expect(startHappyServer).toHaveBeenCalled();
 	    } catch (e) {
-	      testError = e;
+	      testError = new Error(
+	        `${e instanceof Error ? e.message : String(e)} | calls: readSettings=${readSettingsCalls}, initializeBackendApiContext=${initializeBackendApiContextCalls}, startHookServer=${startHookServerCalls}, generateHookSettings=${generateHookSettingsCalls}, resolveRunnerMcpServers=${resolveRunnerMcpServersCalls}, resolveEffectiveCodingPrompt=${resolveEffectiveCodingPromptCalls}, loop=${loopCalls}, initResolved=${initResolved}`,
+	      );
 	    } finally {
       loopExit.resolve(0);
       await runPromise;
+    }
+
+    if (testError) {
+      throw testError;
+    }
+  });
+
+  it('uses fast-start attach when permission intent is inferred from Claude CLI args', async () => {
+    vi.resetModules();
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    autoSessionReady = true;
+    initResolved = false;
+    backendInitDelayMs = 200;
+    getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_attach', metadataVersion: 1 }));
+
+    const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
+    const attachBaseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir);
+    await mkdir(attachBaseDir, { recursive: true });
+    const attachPath = join(attachBaseDir, 'fast-start-attach.json');
+    await writeFile(
+      attachPath,
+      JSON.stringify({
+        v: 1,
+        encryptionKeyBase64: Buffer.from(new Uint8Array(32).fill(7)).toString('base64'),
+        encryptionVariant: 'legacy',
+      }),
+      'utf8',
+    );
+    await chmod(attachPath, 0o600);
+    process.env.HAPPIER_SESSION_ATTACH_FILE = attachPath;
+
+    const { runClaude } = await import('./runClaude');
+    const credentials = createLegacyCredentials();
+
+    let testError: unknown = null;
+    const runPromise = runClaude(credentials, {
+      startedBy: 'terminal',
+      startingMode: 'local',
+      existingSessionId: 'sess_attach',
+      claudeArgs: ['--dangerously-skip-permissions'],
+    }).catch((e) => {
+      testError = e;
+    });
+
+    try {
+      await expect(waitFor(loopStarted.promise, loopStartWaitMs)).resolves.toBeUndefined();
+      expect(lastLoopOpts?.claudeArgs).toEqual(['--dangerously-skip-permissions']);
+    } catch (e) {
+      testError = new Error(
+        `${e instanceof Error ? e.message : String(e)} | calls: startHookServer=${startHookServerCalls}, generateHookSettings=${generateHookSettingsCalls}, resolveRunnerMcpServers=${resolveRunnerMcpServersCalls}, resolveEffectiveCodingPrompt=${resolveEffectiveCodingPromptCalls}, loop=${loopCalls}`,
+      );
+    } finally {
+      loopExit.resolve(0);
+      await runPromise;
+      if (previousAttachFile === undefined) delete process.env.HAPPIER_SESSION_ATTACH_FILE;
+      else process.env.HAPPIER_SESSION_ATTACH_FILE = previousAttachFile;
     }
 
     if (testError) {
@@ -260,7 +404,7 @@ describe('runClaude fast-start', () => {
 
     const { runClaude } = await import('./runClaude');
     const { persistTerminalAttachmentInfoIfNeeded } = await import('@/agent/runtime/startupSideEffects');
-    const credentials = { token: 'test' } as Credentials;
+    const credentials = createLegacyCredentials();
 
     let testError: unknown = null;
     const runPromise = runClaude(credentials, { startedBy: 'terminal', startingMode: 'local', terminalRuntime: { mode: 'tmux' } }).catch((e) => {
@@ -268,7 +412,7 @@ describe('runClaude fast-start', () => {
     });
 
     try {
-      await expect(waitFor(loopStarted.promise, 150)).resolves.toBeUndefined();
+      await expect(waitFor(loopStarted.promise, loopStartWaitMs)).resolves.toBeUndefined();
 
       // Wait for offline reconnection to be scheduled.
       await expect(
@@ -303,7 +447,9 @@ describe('runClaude fast-start', () => {
         expect.objectContaining({ sessionId: 'sess_2' }),
       );
     } catch (e) {
-      testError = e;
+      testError = new Error(
+        `${e instanceof Error ? e.message : String(e)} | calls: startHookServer=${startHookServerCalls}, generateHookSettings=${generateHookSettingsCalls}, resolveRunnerMcpServers=${resolveRunnerMcpServersCalls}, resolveEffectiveCodingPrompt=${resolveEffectiveCodingPromptCalls}, loop=${loopCalls}`,
+      );
     } finally {
       loopExit.resolve(0);
       await runPromise;
@@ -329,7 +475,7 @@ describe('runClaude fast-start', () => {
 
     const { runClaude } = await import('./runClaude');
     const { logger } = await import('@/ui/logger');
-    const credentials = { token: 'test' } as Credentials;
+    const credentials = createLegacyCredentials();
 
     let testError: unknown = null;
     const runPromise = runClaude(credentials, { startedBy: 'terminal', startingMode: 'local' }).catch((e) => {
@@ -337,7 +483,7 @@ describe('runClaude fast-start', () => {
     });
 
     try {
-      await expect(waitFor(loopStarted.promise, 150)).resolves.toBeUndefined();
+      await expect(waitFor(loopStarted.promise, loopStartWaitMs)).resolves.toBeUndefined();
       await expect(
         waitFor(
           new Promise<void>((resolve, reject) => {
@@ -388,7 +534,7 @@ describe('runClaude fast-start', () => {
     lastOfflineReconnectionConfig = null;
 
     const { runClaude } = await import('./runClaude');
-    const credentials = { token: 'test' } as Credentials;
+    const credentials = createLegacyCredentials();
 
     let testError: unknown = null;
     const runPromise = runClaude(credentials, { startedBy: 'terminal', startingMode: 'local' }).catch((e) => {
@@ -398,11 +544,14 @@ describe('runClaude fast-start', () => {
     const sessionReady = {
       cleanup: vi.fn(),
       setPushSender: vi.fn(),
+      client: {
+        getMetadataSnapshot: vi.fn(() => ({})),
+      },
       getOrCreatePermissionRpcRouter: () => ({ registerConsumer: vi.fn() }),
     };
 
     try {
-      await expect(waitFor(loopStarted.promise, 150)).resolves.toBeUndefined();
+      await expect(waitFor(loopStarted.promise, loopStartWaitMs)).resolves.toBeUndefined();
 
       await expect(
         waitFor(
@@ -436,4 +585,5 @@ describe('runClaude fast-start', () => {
       throw testError;
     }
   });
+
 });

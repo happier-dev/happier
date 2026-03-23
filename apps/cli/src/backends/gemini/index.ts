@@ -10,6 +10,7 @@ export const agent = {
   getCliCommandHandler: async () => (await import('@/backends/gemini/cli/command')).handleGeminiCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/gemini/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/gemini/cli/detect')).cliDetect,
+  getCliAuthSpec: async () => (await import('@/backends/gemini/cli/auth/geminiCliAuthSpec')).geminiCliAuthSpec,
   getCloudConnectTarget: async () => (await import('@/backends/gemini/cloud/connect')).geminiCloudConnect,
   getDaemonSpawnHooks: async () => geminiDaemonSpawnHooks,
   vendorResumeSupport: AGENTS_CORE.gemini.resume.vendorResume,

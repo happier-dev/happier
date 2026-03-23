@@ -19,6 +19,13 @@ describe('formatErrorForUi', () => {
     expect(formatErrorForUi(123)).toBe('123');
   });
 
+  it('formats plain objects using JSON when possible', () => {
+    const out = formatErrorForUi({ code: 'E_FAIL', message: 'boom' });
+    expect(out).toContain('E_FAIL');
+    expect(out).toContain('boom');
+    expect(out).not.toBe('[object Object]');
+  });
+
   it('truncates long output with a suffix', () => {
     const input = 'x'.repeat(1201);
     const out = formatErrorForUi(input, { maxChars: 1000 });

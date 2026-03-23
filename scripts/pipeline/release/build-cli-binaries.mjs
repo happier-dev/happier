@@ -8,29 +8,21 @@ import { randomUUID } from 'node:crypto';
 
 import {
   CLI_STACK_TARGETS,
-  commandExists,
-  compileBunBinary,
-  ensureFileExists,
-  execOrThrow,
   normalizeChannel,
-  packageTargetBinary,
+  packagePreparedTargetBinary,
   parseArgs,
   parseCsv,
   readVersionFromPackageJson,
-  resolveYarnCommand,
   resolveRepoRoot,
   resolveTargets,
   maybeSignFile,
   writeChecksumsFile,
 } from './lib/binary-release.mjs';
+import { buildCliBinaryArtifactPayload } from '@happier-dev/cli-common/componentArtifacts';
 
 async function main() {
   const repoRoot = resolveRepoRoot();
   const { kv } = parseArgs(process.argv.slice(2));
-
-  if (!commandExists('bun')) {
-    throw new Error('[release] bun is required to build binaries');
-  }
 
   const channel = normalizeChannel(kv.get('--channel'));
   const version = String(kv.get('--version') ?? '').trim()
@@ -40,16 +32,11 @@ async function main() {
   // Never share a single temp directory across invocations, or concurrent builds will race on rm/mkdir.
   const tempBaseDir = join(repoRoot, 'dist', 'release-assets', '.tmp-cli-binaries');
   const tempDir = join(tempBaseDir, `build-${process.pid}-${randomUUID()}`);
-  const entrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
   const externals = parseCsv(kv.get('--externals') ?? process.env.HAPPIER_CLI_BUN_EXTERNALS ?? '');
   const targets = resolveTargets({
     availableTargets: CLI_STACK_TARGETS,
     requested: kv.get('--targets'),
   });
-
-  const yarn = resolveYarnCommand();
-  execOrThrow(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build'], { cwd: repoRoot });
-  await ensureFileExists(entrypoint);
   await mkdir(tempBaseDir, { recursive: true });
   await rm(tempDir, { recursive: true, force: true });
   await mkdir(tempDir, { recursive: true });
@@ -57,22 +44,19 @@ async function main() {
 
   const artifacts = [];
   for (const target of targets) {
-    const compiledPath = join(tempDir, `happier-${target.os}-${target.arch}${target.exeExt}`);
-    await compileBunBinary({
-      entrypoint,
-      bunTarget: target.bunTarget,
-      outfile: compiledPath,
-      cwd: repoRoot,
+    const stageDir = join(tempDir, `happier-v${version}-${target.os}-${target.arch}`);
+    await buildCliBinaryArtifactPayload({
+      repoRoot,
+      payloadDir: stageDir,
+      target,
       externals,
     });
-    const artifact = await packageTargetBinary({
+    const artifact = await packagePreparedTargetBinary({
       product: 'happier',
       version,
       target,
-      executableName: 'happier',
-      buildTempDir: tempDir,
+      stageDir,
       outDir,
-      compiledPath,
     });
     artifacts.push(artifact);
   }

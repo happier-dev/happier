@@ -8,6 +8,8 @@ import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction
 import { Session } from './session';
 import type { EnhancedMode } from './loop';
 import { readFile } from 'node:fs/promises';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
   createHappierMcpBridge: vi.fn(async () => ({
@@ -53,19 +55,28 @@ vi.mock('./utils/sdkToLogConverter', () => ({
   })),
 }));
 
+vi.mock('@/integrations/watcher/startFileWatcher', () => ({
+  startFileWatcher: (_file: string, onFileChange: (file: string) => void) => {
+    // Match the real watcher contract ("watch + read once" consumers are race-free)
+    // without spawning long-lived FS watchers in integration tests.
+    onFileChange(_file);
+    return () => {};
+  },
+}));
+
 vi.mock('@/ui/logger', () => ({
   logger: {
-    debug: vi.fn(),
-    debugLargeJson: vi.fn(),
-    warn: vi.fn(),
+    debug: () => undefined,
+    debugLargeJson: () => undefined,
+    warn: () => undefined,
   },
 }));
 
 vi.mock('@/lib', () => ({
   logger: {
-    debug: vi.fn(),
-    debugLargeJson: vi.fn(),
-    warn: vi.fn(),
+    debug: () => undefined,
+    debugLargeJson: () => undefined,
+    warn: () => undefined,
   },
 }));
 
@@ -79,6 +90,7 @@ type SessionClientStub = SessionClientPort & {
 type RemoteHarness = {
   session: Session;
   client: SessionClientStub;
+  sendToAllDevices: ReturnType<typeof vi.fn>;
   sendClaudeSessionMessage: ReturnType<typeof vi.fn>;
   switchHandlerReady: Promise<RpcHandler>;
 };
@@ -160,6 +172,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
   return {
     session,
     client,
+    sendToAllDevices,
     sendClaudeSessionMessage,
     switchHandlerReady: switchDeferred.promise,
   };
@@ -167,10 +180,22 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
 
 describe.sequential('claudeRemoteLauncher', () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
+    setActiveAccountSettingsSnapshot({
+      source: 'none',
+      settings: accountSettingsParse({}),
+      settingsVersion: 0,
+      loadedAtMs: 0,
+      settingsSecretsReadKeys: [],
+    });
     mockConvert.mockReturnValue(null);
     mockConvertSidechainUserMessage.mockReturnValue(null);
     mockGenerateInterruptedToolResult.mockReturnValue(null);
+    mockClaudeRemoteDispatch.mockImplementation(async (opts: unknown) => {
+      const dispatchOpts = opts as RemoteDispatchMockOptions;
+      await waitForAbort(dispatchOpts.signal);
+    });
   });
 
   afterEach(() => {
@@ -242,8 +267,15 @@ describe.sequential('claudeRemoteLauncher', () => {
         await waitForAbort(dispatchOpts.signal);
       });
 
+      const { claudeRemoteDispatch } = await import('./remote/claudeRemoteDispatch');
+      expect(claudeRemoteDispatch).toBe(mockClaudeRemoteDispatch);
+
       const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
       const launcherPromise = claudeRemoteLauncher(session);
+
+      await vi.waitFor(() => {
+        expect(mockClaudeRemoteDispatch).toHaveBeenCalled();
+      }, { timeout: 2000 });
 
       const switchHandler = await switchHandlerReady;
       await dispatchStarted.promise;
@@ -438,7 +470,7 @@ describe.sequential('claudeRemoteLauncher', () => {
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
-  it('includes Claude Code debug/stderr tails and exits on exit code 1 (no tight retries)', async () => {
+  it('includes Claude Code debug/stderr tails and keeps the launcher alive on exit code 1 (no tight retries)', async () => {
     const tmpRoot = await mkdtemp(join(tmpdir(), 'happy-claude-exit1-'));
     try {
       const debugFilePath = join(tmpRoot, 'claude-code-debug.log');
@@ -454,10 +486,21 @@ describe.sequential('claudeRemoteLauncher', () => {
 
       mockClaudeRemoteDispatch.mockRejectedValueOnce(exitError);
 
-      const { session } = createRemoteHarness({ sessionId: 'sess_0' });
+      const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
       const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
 
-      await expect(claudeRemoteLauncher(session)).resolves.toBe('exit');
+      const launcherPromise = claudeRemoteLauncher(session);
+
+      const deadlineMs = Date.now() + 1500;
+      while (Date.now() < deadlineMs) {
+        const sent = (session.client.sendSessionEvent as any).mock.calls
+          .map((call: any[]) => call?.[0]?.message)
+          .filter((value: unknown) => typeof value === 'string')
+          .join('\n');
+        if (sent.includes('Claude Code process exited with code 1')) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
       expect(mockClaudeRemoteDispatch).toHaveBeenCalledTimes(1);
 
       const sent = (session.client.sendSessionEvent as any).mock.calls
@@ -468,9 +511,55 @@ describe.sequential('claudeRemoteLauncher', () => {
       expect(sent).toContain('Claude Code process exited with code 1');
       expect(sent).toContain('debug tail');
       expect(sent).toContain('stderr tail');
+
+      const switchHandler = await switchHandlerReady;
+      expect(await switchHandler({ to: 'local' })).toBe(true);
+      await expect(launcherPromise).resolves.toBe('switch');
     } finally {
       await rm(tmpRoot, { recursive: true, force: true });
     }
+  }, 30_000);
+
+  it('retries after exit code 1 and still delivers subsequent queued prompts', async () => {
+    const exitError = new Error('Claude Code process exited with code 1');
+    const firstProcessed = createDeferred<void>();
+    const restartedFirstSeen = createDeferred<any>();
+    const restartedSecondSeen = createDeferred<any>();
+
+    mockClaudeRemoteDispatch
+      .mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as any;
+        await dispatchOpts.nextMessage?.();
+        firstProcessed.resolve(undefined);
+        throw exitError;
+      })
+      .mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as any;
+        restartedFirstSeen.resolve(await dispatchOpts.nextMessage?.());
+        restartedSecondSeen.resolve(await dispatchOpts.nextMessage?.());
+        await waitForAbort(dispatchOpts.signal);
+      });
+
+    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+    session.queue.push('hello', { permissionMode: 'default' } satisfies EnhancedMode);
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    await firstProcessed.promise;
+    session.queue.push('again', { permissionMode: 'default' } satisfies EnhancedMode);
+
+    const restartedFirst = await restartedFirstSeen.promise;
+    expect(restartedFirst?.message).toContain('again');
+
+    session.queue.push('third', { permissionMode: 'default' } satisfies EnhancedMode);
+
+    const restartedSecond = await restartedSecondSeen.promise;
+    expect(restartedSecond?.message).toContain('third');
+
+    const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
   it('persists the last assistant uuid into session metadata when observed in remote messages', async () => {
@@ -537,6 +626,58 @@ describe.sequential('claudeRemoteLauncher', () => {
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
+  it('uses Claude session account settings for ready webhook dispatch when no active snapshot is available', async () => {
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 202,
+    }));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { session, sendToAllDevices, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+    session.accountSettings = accountSettingsParse({
+      notificationChannelsV1: [
+        {
+          v: 1,
+          id: 'webhook-ready',
+          kind: 'webhook',
+          enabled: true,
+          url: 'https://hooks.example.test/ready',
+          topics: {
+            ready: true,
+            permissionRequest: false,
+            userActionRequest: false,
+          },
+          readyIncludeMessageText: false,
+        },
+      ],
+    });
+
+    const dispatchStarted = createDeferred<void>();
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as any;
+      dispatchStarted.resolve(undefined);
+      await dispatchOpts.onReady?.();
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    const switchHandler = await switchHandlerReady;
+    await dispatchStarted.promise;
+
+    await vi.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(sendToAllDevices).not.toHaveBeenCalled();
+
+    const url = fetchSpy.mock.calls.at(0)?.at(0);
+    expect(url).toBe('https://hooks.example.test/ready');
+
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
+
   it('does not mount Ink UI for daemon-started sessions even when a TTY is available', async () => {
     const originalStdoutIsTTY = process.stdout.isTTY;
     const originalStdinIsTTY = process.stdin.isTTY;
@@ -587,7 +728,7 @@ describe.sequential('claudeRemoteLauncher', () => {
     const launcherPromise = claudeRemoteLauncher(session);
     const switchHandler = await switchHandlerReady;
 
-    expect(await switchHandler({ to: 'remote' })).toBe(false);
+    expect(await switchHandler({ to: 'remote' })).toBe(true);
     expect(await switchHandler({ to: 'local' })).toBe(true);
     await expect(launcherPromise).resolves.toBe('switch');
   });
@@ -666,7 +807,7 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(mockResetParentChain).toHaveBeenCalledTimes(1);
   });
 
-      it('replaces TaskOutput tool_result transcript payloads with an empty string (content is streamed via sidechain)', async () => {
+  it('replaces TaskOutput tool_result transcript payloads with an empty string (content is streamed via sidechain)', async () => {
         const { session, sendClaudeSessionMessage, switchHandlerReady } = createRemoteHarness();
 
     const taskOutputToolUseId = 'tool_taskoutput_1';
@@ -743,6 +884,127 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(String(toolResult?.content)).not.toContain('TaskOutput');
     expect(String(toolResult?.content)).not.toContain('imported=');
     expect(String(toolResult?.content)).not.toContain('buffered=');
+
+    const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
+
+  it('imports TaskOutput JSONL records into the Task sidechain with claude-taskoutput metadata', async () => {
+    const { session, sendClaudeSessionMessage, switchHandlerReady } = createRemoteHarness();
+
+    const taskToolUseId = 'tool_task_1';
+    const taskOutputToolUseId = 'tool_taskoutput_1';
+    const agentId = 'agent_1';
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as RemoteDispatchMockOptions & { onMessage?: (m: unknown) => void };
+
+      dispatchOpts.onMessage?.({
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: taskToolUseId,
+              name: 'Task',
+              input: { prompt: 'do work' },
+            },
+            {
+              type: 'tool_use',
+              id: taskOutputToolUseId,
+              name: 'TaskOutput',
+              input: { task_id: agentId, block: true, timeout: 2000 },
+            },
+          ],
+        },
+      });
+
+      dispatchOpts.onMessage?.({
+        type: 'user',
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: taskToolUseId, content: `agentId: ${agentId}` }],
+        },
+      });
+
+      dispatchOpts.onMessage?.({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: taskOutputToolUseId,
+              content: `${JSON.stringify({
+                type: 'assistant',
+                uuid: 'uuid_1',
+                parentUuid: null,
+                timestamp: new Date().toISOString(),
+                sessionId: 'sess_1',
+                userType: 'external',
+                cwd: '/tmp',
+                version: '0.0.0',
+                gitBranch: 'main',
+                isSidechain: true,
+                agentId,
+                message: { role: 'assistant', content: [{ type: 'text', text: 'SUBTASK_OK' }] },
+              })}\n`,
+            },
+          ],
+        },
+      });
+
+      dispatchOpts.onMessage?.({
+        type: 'result',
+        subtype: 'success',
+        result: 'DONE_1',
+        num_turns: 1,
+        total_cost_usd: 0,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        is_error: false,
+      });
+
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    mockConvert.mockImplementation((message: any) => {
+      if (message?.type !== 'assistant' && message?.type !== 'user') return null;
+      const content = Array.isArray(message?.message?.content)
+        ? message.message.content.map((item: any) => ({ ...item }))
+        : message?.message?.content;
+      return {
+        type: message.type,
+        uuid: `happy_${message.type}_${Math.random().toString(36).slice(2)}`,
+        message: { role: message?.message?.role ?? message.type, content },
+      };
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    await vi.waitFor(() => {
+      const imported = sendClaudeSessionMessage.mock.calls.find(
+        (c: any[]) => c?.[1]?.importedFrom === 'claude-taskoutput' && c?.[0]?.sidechainId === taskToolUseId,
+      );
+      expect(imported).toBeTruthy();
+    });
+
+    const importedCall = sendClaudeSessionMessage.mock.calls.find(
+      (c: any[]) => c?.[1]?.importedFrom === 'claude-taskoutput' && c?.[0]?.sidechainId === taskToolUseId,
+    );
+    expect(importedCall?.[1]).toMatchObject({
+      importedFrom: 'claude-taskoutput',
+      claudeTaskOutputToolUseId: taskOutputToolUseId,
+      claudeTaskId: agentId,
+      claudeAgentId: agentId,
+      claudeRemoteSessionId: 'sess_1',
+    });
+    expect(importedCall?.[0]).toMatchObject({
+      type: 'assistant',
+      isSidechain: true,
+      sidechainId: taskToolUseId,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'SUBTASK_OK' }] },
+    });
 
     const switchHandler = await switchHandlerReady;
     expect(await switchHandler({ to: 'local' })).toBe(true);
@@ -840,6 +1102,109 @@ describe.sequential('claudeRemoteLauncher', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  }, 30_000);
+
+  it('emits a canonical Diff transcript tool after a successful write-like turn', async () => {
+    const { session, client, switchHandlerReady } = createRemoteHarness();
+
+    mockConvert.mockImplementation((message: any) => {
+      if (message?.type === 'assistant') {
+        const content = Array.isArray(message?.message?.content) ? message.message.content : [];
+        return {
+          type: 'assistant',
+          uuid: `assistant-${content[0]?.id ?? 'msg'}`,
+          isSidechain: false,
+          message: { role: 'assistant', content },
+        };
+      }
+      if (message?.type === 'user') {
+        const content = Array.isArray(message?.message?.content) ? message.message.content : [];
+        return {
+          type: 'user',
+          uuid: `user-${content[0]?.tool_use_id ?? 'msg'}`,
+          isSidechain: false,
+          message: { role: 'user', content },
+        };
+      }
+      return null;
+    });
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as RemoteDispatchMockOptions & { onMessage?: (m: unknown) => void };
+
+      dispatchOpts.onMessage?.({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool_edit_1',
+              name: 'Edit',
+              input: { file_path: 'src/app.ts', old_string: 'old', new_string: 'new' },
+            },
+          ],
+        },
+      });
+
+      dispatchOpts.onMessage?.({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool_edit_1',
+              content: 'OK',
+              is_error: false,
+            },
+          ],
+        },
+      });
+
+      dispatchOpts.onMessage?.({
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess_1',
+      });
+
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+    const sendClaudeSessionMessageMock = client.sendClaudeSessionMessage as ReturnType<typeof vi.fn>;
+
+    await vi.waitFor(() => {
+      const diffCall = sendClaudeSessionMessageMock.mock.calls.find((call: any[]) => {
+        const content = Array.isArray(call?.[0]?.message?.content) ? call[0].message.content : [];
+        return content.some((block: any) => block?.type === 'tool_use' && block?.name === 'Diff');
+      });
+      expect(diffCall).toBeTruthy();
+    });
+
+    const diffCall = sendClaudeSessionMessageMock.mock.calls.find((call: any[]) => {
+      const content = Array.isArray(call?.[0]?.message?.content) ? call[0].message.content : [];
+      return content.some((block: any) => block?.type === 'tool_use' && block?.name === 'Diff');
+    });
+    const diffCallBlock = diffCall?.[0]?.message?.content?.find((block: any) => block?.type === 'tool_use' && block?.name === 'Diff');
+    expect(diffCallBlock?.input?._happier).toMatchObject({
+      protocol: 'claude',
+      provider: 'claude',
+      canonicalToolName: 'Diff',
+      sessionChangeScope: 'turn',
+      source: 'provider_tool',
+    });
+
+    const diffResult = sendClaudeSessionMessageMock.mock.calls.find((call: any[]) => {
+      const content = Array.isArray(call?.[0]?.message?.content) ? call[0].message.content : [];
+      return content.some((block: any) => block?.type === 'tool_result' && typeof block?.tool_use_id === 'string');
+    });
+    expect(diffResult).toBeTruthy();
+
+    const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
   it('inserts a synthetic sidechain prompt root for Agent tool uses (Claude Agent Teams)', async () => {

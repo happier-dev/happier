@@ -162,3 +162,20 @@ Use Conventional Commits for all commits (and for squash messages):
 ```
 
 Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`, `perf`, `revert`
+
+---
+
+## Stack testing rules
+
+- Keep stack on native `node --test`. Do not migrate stack tests to Vitest or Playwright conventions.
+- Canonical stack runner/discovery helpers live under `scripts/utils/test/**`.
+- Canonical stack-local testkit primitives live under `scripts/testkit/core/**`.
+- Prefer reusing those helpers over adding new ad hoc tempdir/env/spawn wrappers in test files or domain testkits.
+- Unit tests use `*.test.mjs`.
+- Integration tests use `*.integration.test.mjs` and remain serial.
+- Real integration tests use `*.real.integration.test.mjs`, remain serial, and must stay opt-in behind `HAPPIER_STACK_RUN_REAL_INTEGRATION_TESTS=1`.
+- Exclude vendored/generated artifacts from stack test discovery and migration inventories.
+- Use the package lanes when validating stack test infrastructure:
+  - `yarn --cwd apps/stack test:unit`
+  - `yarn --cwd apps/stack test:integration`
+  - If `yarn` is not on PATH in the current environment, use `corepack yarn ...`.

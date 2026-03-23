@@ -1,28 +1,43 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let mockFeatureEnabled: (featureId: string) => boolean = (featureId: string) => featureId === 'execution.runs';
+const automationsSupportState = {
+    enabled: false,
+    discoverable: false,
+    blockedBy: 'server' as string | null,
+};
 
 const routerPushSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Dimensions: {
-        get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
-    Linking: { canOpenURL: async () => false, openURL: async () => {} },
-    Text: 'Text',
-    ActivityIndicator: 'ActivityIndicator',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Pressable: 'Pressable',
+                            Dimensions: {
+                                get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+                            },
+                            useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+                            Platform: {
+                                OS: 'web',
+                                select: (options: any) => (options && 'default' in options ? options.default : undefined),
+                            },
+                            Linking: {
+                                canOpenURL: async () => false,
+                                openURL: async () => {},
+                            },
+                            Text: 'Text',
+                            ActivityIndicator: 'ActivityIndicator',
+                        }
+    );
+});
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
@@ -33,9 +48,13 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -76,7 +95,9 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: null }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useEntitlement: () => false,
     useLocalSettingMutable: () => [false, vi.fn()],
     useSetting: (key: string) => {
@@ -93,7 +114,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useMachineListByServerId: () => ({}),
     useMachineListStatusByServerId: () => ({}),
     useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -108,13 +130,16 @@ vi.mock('@/track', () => ({
     trackWhatsNewClicked: vi.fn(),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => false),
-        prompt: vi.fn(async () => null),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(async () => false),
+            prompt: vi.fn(async () => null),
+        },
+    }).module;
+});
 
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
@@ -142,9 +167,10 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
     MachineCliGlyphs: 'MachineCliGlyphs',
@@ -168,7 +194,11 @@ vi.mock('@/utils/system/bugReportActionTrail', () => ({
 }));
 
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
-    useAutomationsSupport: () => ({ enabled: false }),
+    useAutomationsSupport: () => ({
+        enabled: automationsSupportState.enabled,
+        discoverable: automationsSupportState.discoverable,
+        blockedBy: automationsSupportState.blockedBy,
+    }),
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -182,6 +212,9 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 afterEach(() => {
     routerPushSpy.mockClear();
+    automationsSupportState.enabled = false;
+    automationsSupportState.discoverable = false;
+    automationsSupportState.blockedBy = 'server';
 });
 
 describe('SettingsView (runs entry)', () => {
@@ -189,45 +222,107 @@ describe('SettingsView (runs entry)', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-        });
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
 
-        const items = tree.root.findAllByType('Item' as any);
+        const items = tree.findAllByType('Item' as any);
         const runsItem = items.find((item: any) => item?.props?.title === 'runs.title');
         expect(runsItem).toBeTruthy();
 
         await act(async () => {
-            runsItem!.props.onPress();
+            await pressTestInstanceAsync(runsItem!);
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/runs');
     });
 
-    it('does not include a Sub-agent entry (it is located under Session settings)', async () => {
+    it('includes a Transcript entry that routes to /settings/session/transcript', async () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
+
+        const items = tree.findAllByType('Item' as any);
+        const transcriptItem = items.find((item: any) => item?.props?.title === 'settings.transcript');
+        expect(transcriptItem).toBeTruthy();
+
         await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
+            await pressTestInstanceAsync(transcriptItem!);
         });
 
-        const items = tree.root.findAllByType('Item' as any);
-        const subAgentItem = items.find((item: any) => item?.props?.title === 'Sub-agent');
-        expect(subAgentItem).toBeFalsy();
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/transcript');
     });
 
-    it('does not include an Actions entry (it is located under Session settings)', async () => {
+    it('keeps the automations entry discoverable when only local feature flags are off and routes to Features', async () => {
+        automationsSupportState.enabled = false;
+        automationsSupportState.discoverable = true;
+        automationsSupportState.blockedBy = 'local_policy';
+
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
+
+        const items = tree.findAllByType('Item' as any);
+        const automationsItem = items.find((item: any) => item?.props?.title === 'settings.automations');
+        expect(automationsItem).toBeTruthy();
+        expect(automationsItem?.props?.subtitle).toBe('settingsFeatures.expAutomationsSubtitle');
+
         await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
+            await pressTestInstanceAsync(automationsItem!);
         });
 
-        const items = tree.root.findAllByType('Item' as any);
-        const actionsItem = items.find((item: any) => item?.props?.title === 'Actions');
-        expect(actionsItem).toBeFalsy();
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
+    });
+
+    it('includes a Permissions entry that routes to /settings/session/permissions', async () => {
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
+
+        const items = tree.findAllByType('Item' as any);
+        const permissionsItem = items.find((item: any) => item?.props?.title === 'settings.permissions');
+        expect(permissionsItem).toBeTruthy();
+
+        await act(async () => {
+            await pressTestInstanceAsync(permissionsItem!);
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/permissions');
+    });
+
+    it('includes a Subagents entry that routes to /settings/sub-agent', async () => {
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
+
+        const items = tree.findAllByType('Item' as any);
+        const subAgentItem = items.find((item: any) => item?.props?.title === 'subAgentGuidance.settings.groupTitle');
+        expect(subAgentItem).toBeTruthy();
+
+        await act(async () => {
+            await pressTestInstanceAsync(subAgentItem!);
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/sub-agent');
+    });
+
+    it('includes an Actions entry that routes to /settings/actions', async () => {
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
+
+        const items = tree.findAllByType('Item' as any);
+        const actionsItem = items.find((item: any) => item?.props?.title === 'common.actions');
+        expect(actionsItem).toBeTruthy();
+
+        await act(async () => {
+            await pressTestInstanceAsync(actionsItem!);
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/actions');
     });
 
     it("omits the What's New entry when changelog UI is disabled by build policy", async () => {
@@ -239,11 +334,9 @@ describe('SettingsView (runs entry)', () => {
             const { SettingsView } = await import('./SettingsView');
 
             let tree!: ReactTestRenderer;
-            await act(async () => {
-                tree = renderer.create(React.createElement(SettingsView));
-            });
+            tree = (await renderScreen(React.createElement(SettingsView))).tree;
 
-            const items = tree.root.findAllByType('Item' as any);
+            const items = tree.findAllByType('Item' as any);
             const whatsNewItem = items.find((item: any) => item?.props?.title === 'settings.whatsNew');
             expect(whatsNewItem).toBeFalsy();
         } finally {
@@ -257,13 +350,11 @@ describe('SettingsView (runs entry)', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-        });
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
 
-        const items = tree.root.findAllByType('Item' as any);
+        const items = tree.findAllByType('Item' as any);
         const voiceItem = items.find((item: any) => item?.props?.title === 'settings.voiceAssistant');
-        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.sourceControl');
+        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.filesSourceControl');
         const memorySearchItem = items.find((item: any) => item?.props?.title === 'settings.memorySearch');
 
         expect(voiceItem).toBeFalsy();
@@ -277,13 +368,11 @@ describe('SettingsView (runs entry)', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-        });
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
 
-        const items = tree.root.findAllByType('Item' as any);
+        const items = tree.findAllByType('Item' as any);
         const voiceItem = items.find((item: any) => item?.props?.title === 'settings.voiceAssistant');
-        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.sourceControl');
+        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.filesSourceControl');
         const memorySearchItem = items.find((item: any) => item?.props?.title === 'settings.memorySearch');
 
         expect(voiceItem).toBeTruthy();

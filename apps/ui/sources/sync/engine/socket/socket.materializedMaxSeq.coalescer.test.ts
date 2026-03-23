@@ -133,4 +133,113 @@ describe('socket new-message + coalescer: materialized max seq', () => {
             vi.useRealTimers();
         }
     });
+
+    it('does not let a queued new-message overwrite a newer immediate message-updated payload', async () => {
+        vi.useFakeTimers();
+        try {
+            storage.setState((prev) => ({
+                ...prev,
+                sessions: {
+                    ...prev.sessions,
+                    s1: { ...buildSession('s1'), encryptionMode: 'plain' },
+                },
+                settings: {
+                    ...prev.settings,
+                    transcriptStreamingCoalesceEnabled: true,
+                    transcriptStreamingCoalesceWindowMs: 50,
+                    transcriptStreamingCoalesceMaxBatchSize: 1_000,
+                },
+            }));
+
+            const appliedTexts = new Map<string, string>();
+            const applyMessages = vi.fn((_sessionId: string, messages: Array<{ id: string; content: { type: 'text'; text: string } }>) => {
+                for (const message of messages) {
+                    appliedTexts.set(message.id, message.content.text);
+                }
+            });
+
+            const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
+                encryption: {
+                    getSessionEncryption: () => null,
+                    getMachineEncryption: () => null,
+                    removeSessionEncryption: () => {},
+                    decryptEncryptionKey: async () => null as Uint8Array | null,
+                    initializeMachines: async () => {},
+                } as any,
+                artifactDataKeys: new Map<string, Uint8Array>(),
+                applySessions: vi.fn(),
+                fetchSessions: vi.fn(),
+                applyMessages: applyMessages as any,
+                onSessionVisible: vi.fn(),
+                isSessionMessagesLoaded: vi.fn(() => true),
+                getSessionMaterializedMaxSeq: vi.fn(() => 1),
+                markSessionMaterializedMaxSeq: vi.fn(),
+                onMessageGapDetected: vi.fn(),
+                assumeUsers: vi.fn(async () => {}),
+                applyTodoSocketUpdates: vi.fn(async () => {}),
+                invalidateMachines: vi.fn(),
+                invalidateSessions: vi.fn(),
+                invalidateArtifacts: vi.fn(),
+                invalidateFriends: vi.fn(),
+                invalidateFriendRequests: vi.fn(),
+                invalidateFeed: vi.fn(),
+                invalidateAutomations: vi.fn(),
+                invalidateTodos: vi.fn(),
+                log: { log: vi.fn() },
+            };
+
+            await handleUpdateContainer({
+                ...baseParams,
+                updateData: {
+                    id: 'u_new',
+                    seq: 102,
+                    createdAt: 1_002,
+                    body: {
+                        t: 'new-message',
+                        sid: 's1',
+                        message: {
+                            id: 'm2',
+                            seq: 2,
+                            localId: null,
+                            createdAt: 1_002,
+                            updatedAt: 1_002,
+                            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'stale text' } } },
+                        },
+                    },
+                } as ApiUpdateContainer,
+            });
+
+            expect(applyMessages).not.toHaveBeenCalled();
+
+            await handleUpdateContainer({
+                ...baseParams,
+                updateData: {
+                    id: 'u_updated',
+                    seq: 103,
+                    createdAt: 1_003,
+                    body: {
+                        t: 'message-updated',
+                        sid: 's1',
+                        message: {
+                            id: 'm2',
+                            seq: 2,
+                            localId: null,
+                            sidechainId: null,
+                            createdAt: 1_002,
+                            updatedAt: 1_003,
+                            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'fresh text' } } },
+                        },
+                    },
+                } as ApiUpdateContainer,
+            });
+
+            expect(appliedTexts.get('m2')).toBe('fresh text');
+
+            await vi.runAllTimersAsync();
+
+            expect(appliedTexts.get('m2')).toBe('fresh text');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });

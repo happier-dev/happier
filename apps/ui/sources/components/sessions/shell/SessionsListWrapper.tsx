@@ -3,6 +3,8 @@ import { View, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
+import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
+import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsListStorageChrome';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -37,12 +39,21 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 export const SessionsListWrapper = React.memo(() => {
     const { theme } = useUnistyles();
-    const sessionListViewData = useVisibleSessionListViewData();
+    const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const sessionListViewData = useVisibleSessionListViewData(storageKind);
     const styles = stylesheet;
+    const storageChrome = (
+        <SessionsListStorageChrome
+            directSessionsEnabled={directSessionsEnabled}
+            storageKind={storageKind}
+            onSelectStorageKind={setStorageKind}
+        />
+    );
 
     if (sessionListViewData === null) {
         return (
             <View style={styles.container}>
+                {storageChrome}
                 <View style={styles.loadingContainerWrapper}>
                     <View style={styles.loadingContainer}>
                         <ActivityIndicator size="small" color={theme.colors.textSecondary} />
@@ -55,6 +66,7 @@ export const SessionsListWrapper = React.memo(() => {
     if (sessionListViewData.length === 0) {
         return (
             <View style={styles.container}>
+                {storageChrome}
                 <View style={styles.emptyStateContainer}>
                     <View style={styles.emptyStateContentContainer}>
                         <SessionGettingStartedGuidance variant="phone" />
@@ -66,7 +78,8 @@ export const SessionsListWrapper = React.memo(() => {
 
     return (
         <View style={styles.container}>
-            <SessionsList />
+            {storageChrome}
+            <SessionsList storageKind={storageKind} />
         </View>
     );
 });

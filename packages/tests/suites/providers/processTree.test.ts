@@ -1,10 +1,11 @@
-import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 
 import { describe, expect, it } from 'vitest';
 
 import { isProcessAlive, terminateProcessTreeByPid } from '../../scripts/processTree.mjs';
+import { spawnDetachedTestProcess } from '../../src/testkit/process/testSpawn';
 
-function waitForStdoutLine(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<string> {
+function waitForStdoutLine(child: ChildProcess, timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`Timed out waiting for child stdout line after ${timeoutMs}ms`));
@@ -28,7 +29,7 @@ function waitForStdoutLine(child: ReturnType<typeof spawn>, timeoutMs: number): 
 
 describe('providers: process tree termination', () => {
   it('kills parent and spawned child process tree', async () => {
-    const child = spawn(
+    const child = spawnDetachedTestProcess(
       process.execPath,
       [
         '-e',
@@ -41,7 +42,6 @@ describe('providers: process tree termination', () => {
       ],
       {
         stdio: ['ignore', 'pipe', 'ignore'],
-        detached: process.platform !== 'win32',
       },
     );
 
@@ -57,9 +57,8 @@ describe('providers: process tree termination', () => {
   });
 
   it('is safe to call when process already exited', async () => {
-    const child = spawn(process.execPath, ['-e', 'process.exit(0)'], {
+    const child = spawnDetachedTestProcess(process.execPath, ['-e', 'process.exit(0)'], {
       stdio: 'ignore',
-      detached: process.platform !== 'win32',
     });
 
     await new Promise<void>((resolve) => {
@@ -68,5 +67,45 @@ describe('providers: process tree termination', () => {
 
     await expect(terminateProcessTreeByPid(child.pid!, { graceMs: 200, pollMs: 20 })).resolves.toBeUndefined();
   });
-});
 
+  it('kills tracked additional pids even when the root process already exited', async () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const child = spawnDetachedTestProcess(
+      process.execPath,
+      [
+        '-e',
+        [
+          "const { spawn } = require('node:child_process');",
+          "const worker = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });",
+          'worker.unref();',
+          'process.stdout.write(String(worker.pid) + "\\n");',
+          'setTimeout(() => process.exit(0), 50);',
+        ].join(''),
+      ],
+      {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    );
+
+    const workerPidText = await waitForStdoutLine(child, 10_000);
+    const workerPid = Number.parseInt(workerPidText, 10);
+    expect(Number.isFinite(workerPid)).toBe(true);
+
+    await new Promise<void>((resolve) => {
+      child.once('exit', () => resolve());
+    });
+
+    expect(isProcessAlive(workerPid)).toBe(true);
+
+    await terminateProcessTreeByPid(child.pid!, {
+      graceMs: 2_000,
+      pollMs: 50,
+      additionalPids: [workerPid],
+    });
+
+    expect(isProcessAlive(workerPid)).toBe(false);
+  });
+});

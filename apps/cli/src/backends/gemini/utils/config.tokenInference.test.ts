@@ -33,4 +33,32 @@ describe('readGeminiLocalConfig token inference', () => {
       expect(cfg.token).toBeNull();
     });
   });
+
+  it('prefers GEMINI_CLI_HOME over HOME when reading local config', () => {
+    const prevHome = process.env.HOME;
+    const prevGeminiCliHome = process.env.GEMINI_CLI_HOME;
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-gemini-home-default-'));
+    const cliHomeDir = mkdtempSync(join(tmpdir(), 'happier-gemini-home-override-'));
+
+    process.env.HOME = homeDir;
+    process.env.GEMINI_CLI_HOME = cliHomeDir;
+
+    try {
+      mkdirSync(join(homeDir, '.gemini'), { recursive: true });
+      writeFileSync(join(homeDir, '.gemini', 'config.json'), JSON.stringify({ model: 'home-model' }), 'utf8');
+
+      mkdirSync(join(cliHomeDir, '.gemini'), { recursive: true });
+      writeFileSync(join(cliHomeDir, '.gemini', 'config.json'), JSON.stringify({ model: 'override-model' }), 'utf8');
+
+      const cfg = readGeminiLocalConfig();
+      expect(cfg.model).toBe('override-model');
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevGeminiCliHome === undefined) delete process.env.GEMINI_CLI_HOME;
+      else process.env.GEMINI_CLI_HOME = prevGeminiCliHome;
+      rmSync(homeDir, { recursive: true, force: true });
+      rmSync(cliHomeDir, { recursive: true, force: true });
+    }
+  });
 });

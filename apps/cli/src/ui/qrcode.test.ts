@@ -3,6 +3,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 
 vi.mock('qrcode-terminal', () => ({
   default: {
@@ -20,35 +21,40 @@ describe('QR Code Utility', () => {
   });
 
   it('renders an optional title banner and indented qr lines', () => {
-    const logs: string[] = [];
-    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      logs.push(args.map((arg) => String(arg)).join(' '));
-    });
+    const output = captureConsoleLogAndMuteStdout();
 
-    vi.mocked(qrcode.generate).mockImplementation((_url, _opts, callback) => {
-      callback?.('line-1\nline-2');
-    });
+    try {
+      vi.mocked(qrcode.generate).mockImplementation((_url, _opts, callback) => {
+        callback?.('line-1\nline-2');
+      });
 
-    displayQRCode('handy://test', { title: 'Scan this QR code:' } as any);
+      displayQRCode('handy://test', { title: 'Scan this QR code:' } as any);
 
-    expect(vi.mocked(qrcode.generate)).toHaveBeenCalledWith(
-      'handy://test',
-      { small: true },
-      expect.any(Function),
-    );
-    expect(logs).toContain('=========='.repeat(8));
-    expect(logs).toContain('Scan this QR code:');
-    expect(logs).not.toContain('📱 To authenticate, scan this QR code with your mobile device:');
-    expect(logs).toContain('          line-1');
-    expect(logs).toContain('          line-2');
+      expect(vi.mocked(qrcode.generate)).toHaveBeenCalledWith(
+        'handy://test',
+        { small: true },
+        expect.any(Function),
+      );
+      expect(output.logs).toContain('=========='.repeat(8));
+      expect(output.logs).toContain('Scan this QR code:');
+      expect(output.logs).not.toContain('📱 To authenticate, scan this QR code with your mobile device:');
+      expect(output.logs).toContain('          line-1');
+      expect(output.logs).toContain('          line-2');
+    } finally {
+      output.restore();
+    }
   });
 
   it('does not throw when qr payload is empty', () => {
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.mocked(qrcode.generate).mockImplementation((_url, _opts, callback) => {
-      callback?.('');
-    });
+    const output = captureConsoleLogAndMuteStdout();
+    try {
+      vi.mocked(qrcode.generate).mockImplementation((_url, _opts, callback) => {
+        callback?.('');
+      });
 
-    expect(() => displayQRCode('handy://empty')).not.toThrow();
+      expect(() => displayQRCode('handy://empty')).not.toThrow();
+    } finally {
+      output.restore();
+    }
   });
 });

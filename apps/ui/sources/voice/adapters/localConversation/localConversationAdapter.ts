@@ -1,14 +1,18 @@
 import {
   appendLocalVoiceAgentContextUpdate,
+  abortLocalVoiceTurn,
   getLocalVoiceState,
   subscribeLocalVoiceState,
   stopLocalVoiceSession,
   toggleLocalVoiceTurn,
 } from '@/voice/local/localVoiceEngine';
+import { sendVoiceTextTurn } from '@/voice/local/sendVoiceTextTurn';
 import { storage } from '@/sync/domains/state/storage';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { voiceAgentSessions } from '@/voice/agent/voiceAgentSessions';
 import type { VoiceAdapterController, VoiceSessionMode, VoiceSessionSnapshot, VoiceSessionStatus } from '@/voice/session/types';
-import { ensureVoiceCarrierSessionForSessionRoot, ensureVoiceCarrierSessionForVoiceHome } from '@/voice/agent/voiceCarrierSession';
+import { voiceSessionBindingManager } from '@/voice/sessionBinding/voiceSessionBindingRuntime';
+import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
 
 function mapLocalStatus(status: any): { status: VoiceSessionStatus; mode: VoiceSessionMode } {
   switch (status) {
@@ -59,19 +63,16 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
   const toggle = async (opts: Readonly<{ sessionId: string }>) => {
     const settings: any = storage.getState().settings;
     const mode = settings?.voice?.adapters?.local_conversation?.conversationMode ?? 'direct_session';
-    const agentCfg = settings?.voice?.adapters?.local_conversation?.agent ?? {};
     const startSessionId = String(opts.sessionId ?? '').trim();
 
-    if (mode === 'agent') {
-      const stayInVoiceHome = agentCfg?.stayInVoiceHome === true;
-      if (!stayInVoiceHome && startSessionId) {
-        await ensureVoiceCarrierSessionForSessionRoot({ sessionId: startSessionId }).catch(() => {});
-      } else {
-        await ensureVoiceCarrierSessionForVoiceHome().catch(() => {});
-      }
-    }
-
     const resolvedSessionId = mode === 'agent' ? VOICE_AGENT_GLOBAL_SESSION_ID : opts.sessionId;
+    if (mode === 'agent') {
+      await voiceSessionBindingManager.ensureBound({
+        adapterId: id,
+        controlSessionId: resolvedSessionId,
+        requestedTargetSessionId: startSessionId || null,
+      });
+    }
     const snap = getSnapshot();
     if (snap.sessionId && snap.sessionId !== resolvedSessionId && snap.status !== 'disconnected') {
       await stopLocalVoiceSession();
@@ -89,12 +90,28 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
     await stopLocalVoiceSession();
   };
 
-  const interrupt = async (_opts: Readonly<{ sessionId: string }>) => {
-    await stopLocalVoiceSession();
+  const interrupt = async (opts: Readonly<{ sessionId: string }>) => {
+    await abortLocalVoiceTurn(resolveConversationSessionId(opts.sessionId));
   };
 
   const sendContextUpdate = (opts: Readonly<{ sessionId: string; update: string }>) => {
     appendLocalVoiceAgentContextUpdate(resolveConversationSessionId(opts.sessionId), opts.update);
+  };
+
+  const sendTextTurn = async (opts: Readonly<{ controlSessionId: string; conversationSessionId: string; text: string }>) => {
+    const settings: any = storage.getState().settings;
+    const config = settings?.voice?.adapters?.local_conversation ?? {};
+    if ((config?.conversationMode ?? 'direct_session') !== 'agent') {
+      throw new Error('voice_session_native_send_only');
+    }
+
+    await sendVoiceTextTurn({
+      sessionId: opts.controlSessionId,
+      settings,
+      userText: opts.text,
+      playbackController: createVoicePlaybackController(),
+      voiceAgentSessions,
+    });
   };
 
   return {
@@ -104,6 +121,7 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
     toggle,
     interrupt,
     sendContextUpdate,
+    sendTextTurn,
     getSnapshot,
     subscribe: (listener) => subscribeLocalVoiceState(listener),
   };

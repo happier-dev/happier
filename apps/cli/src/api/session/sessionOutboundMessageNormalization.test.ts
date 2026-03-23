@@ -73,4 +73,53 @@ describe('normalizeAcpSessionMessageBody', () => {
       }),
     });
   });
+
+  it('marks bash tool results as errors when the normalized exit code is non-zero', () => {
+    const toolCallCanonicalNameByProviderAndId = new Map<string, { rawToolName: string; canonicalToolName: string }>();
+    const permissionToolCallRawInputByProviderAndId = new Map<string, unknown>();
+    const toolCallInputByProviderAndId = new Map<string, unknown>();
+
+    normalizeAcpSessionMessageBody({
+      provider: 'copilot',
+      body: {
+        type: 'tool-call',
+        callId: 'call_1',
+        name: 'bash',
+        input: {
+          command: `happier tools call --source happier --tool change_title --args-json '{"title":"QA"}' --json`,
+        },
+        id: 'msg_1',
+      } as any,
+      toolCallCanonicalNameByProviderAndId,
+      permissionToolCallRawInputByProviderAndId,
+      toolCallInputByProviderAndId,
+    });
+
+    const normalized = normalizeAcpSessionMessageBody({
+      provider: 'copilot',
+      body: {
+        type: 'tool-result',
+        callId: 'call_1',
+        output: {
+          stdout: 'SyntaxError: missing export\n<exited with exit code 1>',
+          exit_code: 1,
+        },
+        id: 'msg_2',
+      } as any,
+      toolCallCanonicalNameByProviderAndId,
+      permissionToolCallRawInputByProviderAndId,
+      toolCallInputByProviderAndId,
+    });
+
+    expect(normalized.type).toBe('tool-result');
+    if (normalized.type !== 'tool-result') throw new Error('expected tool-result');
+    expect(normalized.isError).toBe(true);
+    expect(normalized.output).toMatchObject({
+      exit_code: 1,
+      errorMessage: 'SyntaxError: missing export\n<exited with exit code 1>',
+      _happier: expect.objectContaining({
+        canonicalToolName: 'change_title',
+      }),
+    });
+  });
 });

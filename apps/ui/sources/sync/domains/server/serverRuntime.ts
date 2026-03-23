@@ -27,12 +27,14 @@ export function upsertAndActivateServer(
         name?: string;
         source?: ServerProfile['source'];
         scope?: 'device' | 'tab';
+        replaceEquivalentStoredUrl?: boolean;
     }>,
 ): ServerProfile {
     const profile = upsertServerProfile({
         serverUrl: params.serverUrl,
         name: params.name,
         source: params.source,
+        replaceEquivalentStoredUrl: params.replaceEquivalentStoredUrl,
     });
     setActiveServerId(profile.id, { scope: params.scope ?? 'device' });
     return profile;

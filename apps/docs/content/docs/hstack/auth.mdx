@@ -120,7 +120,12 @@ In a TTY, `hstack auth login` is **local-first**:
 - it guides you through opening the stack’s web UI and connecting your terminal
 - if the stack isn’t running, it can start it in the background for you
 
-By default, this uses the **Expo web UI** for the approval flow. The first web build can take a few minutes (this is normal).
+By default, this uses the **stack’s local UI** for the approval flow:
+
+- for source-backed stacks, that usually means the **Expo web UI**
+- for named stacks with an active runtime snapshot, it prefers the **runtime-backed server UI**
+
+The first Expo web build can take a few minutes (this is normal).
 
 Basic:
 
@@ -147,6 +152,26 @@ hstack auth login --force
 hstack stack auth <stack> login --force
 ```
 
+`--force` is the right repair tool when a stack was seeded from older credentials and now behaves inconsistently.
+
+In current builds, `login --force` does a real stack-scoped cleanup before reauth:
+
+- it clears stale stack-scoped server aliases for that stack
+- it keeps unrelated credentials outside that stack alone
+- it avoids reviving old legacy auth files during the next daemon start
+
+Use it when you see symptoms such as:
+
+- the stack UI says you are logged out even though auth was seeded
+- the daemon reports an auth failure or `401`
+- a fresh temporary home can log in, but the stack’s default `cli/` home cannot
+
+If you are repairing a named stack, prefer the stack-scoped form:
+
+```bash
+hstack stack auth <stack> login --force
+```
+
 ### Web app targeting
 
 Control what UI origin is used for the login browser flow:
@@ -159,7 +184,7 @@ hstack auth login --webapp-url=http://localhost:8081
 Notes:
 
 - `auto` (default): guided local-first in TTY contexts
-- `stack`: force using your stack’s web UI origin (env override → running Expo → stack server)
+- `stack`: force using your stack’s web UI origin (env override → runtime/server UI when active → running Expo → stack server)
 - `expo`: use a running Expo dev server’s web UI (fails if no Expo web app is running)
 - `public`: use the stack’s public/server URL
 - `hosted`: use the hosted web app (`https://app.happier.dev`) for the approval UI (most reliable when your stack isn’t serving a web UI)

@@ -3,6 +3,11 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
+import {
+    readSessionConfigOptionsState,
+    readSessionModelsState,
+    readSessionModesState,
+} from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import { normalizePermissionModeForAgent, parsePermissionIntentAlias } from '@happier-dev/agents';
 
 export type EffectivePermissionModeDescription = Readonly<{
@@ -56,9 +61,9 @@ export function describeEffectivePermissionMode(_params: {
     const core = getAgentCore(agentId);
     const group = core.permissions.modeGroup;
     const hasAcpSessionMetadata = Boolean(
-        _params.metadata?.acpSessionModesV1 ||
-        _params.metadata?.acpSessionModelsV1 ||
-        _params.metadata?.acpConfigOptionsV1,
+        readSessionModesState(_params.metadata) ||
+        readSessionModelsState(_params.metadata) ||
+        readSessionConfigOptionsState(_params.metadata),
     );
 
     const selected = (parsePermissionIntentAlias(_params.selectedMode) ?? 'default') as PermissionMode;

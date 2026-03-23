@@ -9,6 +9,10 @@ export type CodexRolloutAction =
     | { type: 'assistant-text'; text: string }
     | { type: 'tool-call'; callId: string; name: string; input: unknown }
     | { type: 'tool-result'; callId: string; output: unknown }
+    | { type: 'collaboration-tool-call'; callId: string; name: 'spawn_agent' | 'wait_agent' | 'close_agent'; prompt: string | null; nickname: string | null; role: string | null }
+    | { type: 'collaboration-tool-result'; callId: string; threadId: string | null; nickname: string | null }
+    | { type: 'subagent-spawn'; threadId: string; prompt: string | null; nickname: string | null; role: string | null }
+    | { type: 'subagent-complete'; threadId: string; status: 'completed' | 'interrupted'; summaryText: string | null }
     | { type: 'debug'; message: string; value?: unknown };
 
 type RolloutEnvelope = { timestamp?: string; type?: string; payload?: any };
@@ -40,6 +44,7 @@ function shouldFilterHarnessBlob(text: string): boolean {
         '<environment_context>',
         '<turn_aborted>',
         '<INSTRUCTIONS>',
+        '<subagent_notification>',
         'You are GPT-',
         'Codex CLI is an open source project',
     ];
@@ -52,6 +57,25 @@ function safeJsonParse(value: string): unknown | null {
     } catch {
         return null;
     }
+}
+
+function parseSubagentNotification(text: string): Extract<CodexRolloutAction, { type: 'subagent-complete' }> | null {
+    const match = text.match(/<subagent_notification>\s*([\s\S]*?)\s*<\/subagent_notification>/);
+    if (!match?.[1]) return null;
+    const parsed = safeJsonParse(match[1]);
+    const record = asRecord(parsed);
+    if (!record) return null;
+
+    const threadId = readStringField(record, 'agent_id');
+    const status = readCollaborationStatus(record.status);
+    if (!threadId || !status) return null;
+
+    return {
+        type: 'subagent-complete',
+        threadId,
+        status: status.status,
+        summaryText: status.summaryText,
+    };
 }
 
 function withLocalControlMeta(input: unknown): unknown {
@@ -67,6 +91,51 @@ function withLocalControlMeta(input: unknown): unknown {
     return { _raw: input, _happier: { sessionMode: 'local_control' } };
 }
 
+function readStringField(record: Record<string, unknown>, key: string): string | null {
+    const value = record[key];
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readCollaborationStatus(statusValue: unknown): { status: 'completed' | 'interrupted'; summaryText: string | null } | null {
+    const statusRecord = asRecord(statusValue);
+    if (!statusRecord) return null;
+
+    const completedText = readStringField(statusRecord, 'completed');
+    if (completedText) {
+        return { status: 'completed', summaryText: completedText };
+    }
+
+    const interruptedText =
+        readStringField(statusRecord, 'interrupted')
+        ?? readStringField(statusRecord, 'failed')
+        ?? readStringField(statusRecord, 'error')
+        ?? readStringField(statusRecord, 'cancelled');
+    if (interruptedText) {
+        return { status: 'interrupted', summaryText: interruptedText };
+    }
+
+    return null;
+}
+
+function readWaitingEndSubagentCompletions(payload: Record<string, unknown>): CodexRolloutAction[] {
+    const actions: CodexRolloutAction[] = [];
+    const agentStatuses = Array.isArray(payload.agent_statuses) ? payload.agent_statuses : [];
+    for (const entry of agentStatuses) {
+        const record = asRecord(entry);
+        if (!record) continue;
+        const threadId = readStringField(record, 'thread_id');
+        const status = readCollaborationStatus(record.status);
+        if (!threadId || !status) continue;
+        actions.push({
+            type: 'subagent-complete',
+            threadId,
+            status: status.status,
+            summaryText: status.summaryText,
+        });
+    }
+    return actions;
+}
+
 export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boolean }): CodexRolloutAction[] {
     const env = asRecord(event) as RolloutEnvelope | null;
     if (!env || typeof env.type !== 'string') return [];
@@ -76,6 +145,41 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
         const id = payload && typeof payload.id === 'string' ? payload.id : null;
         if (!id) return [];
         return [{ type: 'codex-session-id', id }];
+    }
+
+    if (env.type === 'event_msg') {
+        const payload = asRecord(env.payload) ?? {};
+        const payloadType = typeof payload.type === 'string' ? String(payload.type) : '';
+
+        if (payloadType === 'collab_agent_spawn_end') {
+            const threadId = readStringField(payload, 'new_thread_id');
+            if (!threadId) return [];
+            return [{
+                type: 'subagent-spawn',
+                threadId,
+                prompt: readStringField(payload, 'prompt'),
+                nickname: readStringField(payload, 'new_agent_nickname'),
+                role: readStringField(payload, 'new_agent_role'),
+            }];
+        }
+
+        if (payloadType === 'collab_waiting_end') {
+            return readWaitingEndSubagentCompletions(payload);
+        }
+
+        if (payloadType === 'collab_close_end') {
+            const threadId = readStringField(payload, 'receiver_thread_id');
+            const status = readCollaborationStatus(payload.status);
+            if (!threadId || !status) return [];
+            return [{
+                type: 'subagent-complete',
+                threadId,
+                status: status.status,
+                summaryText: status.summaryText,
+            }];
+        }
+
+        return opts.debug ? [{ type: 'debug', message: `unhandled rollout event type: ${payloadType}`, value: payload }] : [];
     }
 
     if (env.type !== 'response_item') return [];
@@ -92,7 +196,9 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
         }
 
         if (role === 'user') {
-            if (!opts.debug && shouldFilterHarnessBlob(content)) return [];
+            const notification = parseSubagentNotification(content);
+            if (notification) return [notification];
+            if (shouldFilterHarnessBlob(content)) return [];
             return [{ type: 'user-text', text: content }];
         }
 
@@ -104,6 +210,30 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
         const name = typeof (payload as any).name === 'string' ? String((payload as any).name) : '';
         const callId = typeof (payload as any).call_id === 'string' ? String((payload as any).call_id) : '';
         if (!name || !callId) return [];
+
+        if (name === 'spawn_agent' || name === 'wait_agent' || name === 'close_agent') {
+            const rawArgs = (payload as any).arguments;
+            const parsedArgs =
+                typeof rawArgs === 'string'
+                    ? safeJsonParse(rawArgs) ?? rawArgs
+                    : rawArgs;
+            const argsRecord = asRecord(parsedArgs);
+            return [{
+                type: 'collaboration-tool-call',
+                callId,
+                name,
+                prompt:
+                    readStringField(argsRecord ?? {}, 'message')
+                    ?? readStringField(argsRecord ?? {}, 'prompt'),
+                nickname:
+                    readStringField(argsRecord ?? {}, 'agent_nickname')
+                    ?? readStringField(argsRecord ?? {}, 'nickname'),
+                role:
+                    readStringField(argsRecord ?? {}, 'agent_role')
+                    ?? readStringField(argsRecord ?? {}, 'agent_type')
+                    ?? readStringField(argsRecord ?? {}, 'role'),
+            }];
+        }
 
         const { canonicalToolName, visibility } = canonicalizeCodexRolloutToolName(name);
         if (visibility === 'ignore') return [];
@@ -124,6 +254,16 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
         if (!callId) return [];
         const outputRaw = (payload as any).output;
         const output = typeof outputRaw === 'string' ? safeJsonParse(outputRaw) ?? outputRaw : outputRaw;
+        const outputRecord = asRecord(output);
+        const spawnedThreadId = readStringField(outputRecord ?? {}, 'agent_id');
+        if (spawnedThreadId) {
+            return [{
+                type: 'collaboration-tool-result',
+                callId,
+                threadId: spawnedThreadId,
+                nickname: readStringField(outputRecord ?? {}, 'nickname'),
+            }];
+        }
         return [{ type: 'tool-result', callId, output }];
     }
 

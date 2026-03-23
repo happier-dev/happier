@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import {
   deriveBoxPublicKeyFromSeed,
   sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 const { mockIo } = vi.hoisted(() => ({
   mockIo: vi.fn(),
@@ -18,16 +19,23 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('happier session wait (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
   let server: Server | null = null;
   let happyHomeDir = '';
+  let envScope = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR']);
+  let sessionId = 'sess_integration_wait_123';
+  let initialAgentStateCiphertext = '';
+  let idleAgentStateCiphertext = '';
+  let transcriptMessages: Array<Record<string, unknown>> = [];
+  let transcriptFetchCount = 0;
+  let socketOnConnect: ((socket: ReturnType<typeof createApiSessionSocketStub>) => void) | null = null;
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-wait-'));
+    envScope = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR']);
+    happyHomeDir = await createTempDir('happier-cli-session-wait-');
 
-    const sessionId = 'sess_integration_wait_123';
+    sessionId = 'sess_integration_wait_123';
+    transcriptMessages = [];
+    transcriptFetchCount = 0;
     const dek = new Uint8Array(32).fill(3);
     const machineKeySeed = new Uint8Array(32).fill(8);
     const recipientPublicKey = deriveBoxPublicKeyFromSeed(machineKeySeed);
@@ -46,10 +54,11 @@ describe('happier session wait (integration)', () => {
       encryptWithDataKey({ controlledByUser: false, requests: { r1: { createdAt: 1 } } }, dek),
       'base64',
     );
-    const idleAgentStateCiphertext = encodeBase64Session(
+    idleAgentStateCiphertext = encodeBase64Session(
       encryptWithDataKey({ controlledByUser: false, requests: {} }, dek),
       'base64',
     );
+    initialAgentStateCiphertext = busyAgentStateCiphertext;
     const dataEncryptionKeyBase64 = encodeBase64Session(envelope, 'base64');
 
     server = createServer((req, res) => {
@@ -68,7 +77,7 @@ describe('happier session wait (integration)', () => {
               activeAt: 0,
               metadata: metadataCiphertext,
               metadataVersion: 0,
-              agentState: busyAgentStateCiphertext,
+              agentState: initialAgentStateCiphertext,
               agentStateVersion: 0,
               pendingCount: 0,
               pendingVersion: 0,
@@ -80,6 +89,14 @@ describe('happier session wait (integration)', () => {
         return;
       }
 
+      if (req.method === 'GET' && url.pathname === `/v1/sessions/${sessionId}/messages`) {
+        transcriptFetchCount += 1;
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ messages: transcriptMessages }));
+        return;
+      }
+
       res.statusCode = 404;
       res.end();
     });
@@ -88,52 +105,36 @@ describe('happier session wait (integration)', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Failed to resolve integration server address');
 
-    process.env.HAPPIER_SERVER_URL = `http://127.0.0.1:${address.port}`;
-    process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
-    process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    envScope.patch({
+      HAPPIER_SERVER_URL: `http://127.0.0.1:${address.port}`,
+      HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
+      HAPPIER_HOME_DIR: happyHomeDir,
+    });
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
-    mockIo.mockReset();
-
-    mockIo.mockImplementation(() => {
-      const handlers = new Map<string, Array<(...args: any[]) => void>>();
-      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        list.push(cb);
-        handlers.set(event, list);
-      });
-      const off = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        handlers.set(event, list.filter((v) => v !== cb));
-      });
-      const connect = vi.fn(() => {
-        // After connect, emit an update-session with idle agentState.
-        setTimeout(() => {
-          const list = handlers.get('update') ?? [];
-          for (const cb of list) {
-            cb({
-              id: 'u1',
-              seq: 2,
-              createdAt: Date.now(),
-              body: {
-                t: 'update-session',
-                id: sessionId,
-                agentState: { value: idleAgentStateCiphertext, version: 1 },
-              },
-            });
-          }
-        }, 10);
-      });
-      return {
-        on,
-        off,
-        connect,
-        disconnect: vi.fn(),
-        close: vi.fn(),
-      };
+    const socket = createApiSessionSocketStub({
+      onConnect(currentSocket) {
+        socketOnConnect?.(currentSocket);
+      },
     });
+    bindApiSessionSocketMock(mockIo, socket);
+
+    socketOnConnect = (currentSocket) => {
+      setTimeout(() => {
+        currentSocket.trigger('update', {
+          id: 'u1',
+          seq: 2,
+          createdAt: Date.now(),
+          body: {
+            t: 'update-session',
+            id: sessionId,
+            agentState: { value: idleAgentStateCiphertext, version: 1 },
+          },
+        });
+      }, 10);
+    };
   });
 
   afterEach(async () => {
@@ -141,14 +142,8 @@ describe('happier session wait (integration)', () => {
       await new Promise<void>((resolve, reject) => server!.close((e) => (e ? reject(e) : resolve())));
     }
     server = null;
-    if (happyHomeDir) await rm(happyHomeDir, { recursive: true, force: true });
-
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    if (happyHomeDir) await removeTempDir(happyHomeDir);
+    envScope.restore();
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -156,9 +151,7 @@ describe('happier session wait (integration)', () => {
 
   it('waits for idle and returns a session_wait JSON envelope', async () => {
     const { handleSessionCommand } = await import('./index');
-
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const output = captureConsoleJsonOutput();
 
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
@@ -173,15 +166,592 @@ describe('happier session wait (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_wait');
       expect(parsed.data?.sessionId).toBe('sess_integration_wait_123');
       expect(parsed.data?.idle).toBe(true);
       expect(typeof parsed.data?.observedAt).toBe('number');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
+    }
+  });
+
+  it('does not resolve from an initially idle snapshot before a fresh busy update settles back to idle', async () => {
+    initialAgentStateCiphertext = idleAgentStateCiphertext;
+    socketOnConnect = (currentSocket) => {
+      setTimeout(() => {
+        currentSocket.trigger('update', {
+          id: 'u_busy',
+          seq: 2,
+          createdAt: Date.now(),
+          body: {
+            t: 'update-session',
+            id: sessionId,
+            agentState: { value: initialAgentStateCiphertext, version: 1 },
+          },
+        });
+      }, 10);
+      setTimeout(() => {
+        currentSocket.trigger('update', {
+          id: 'u_idle',
+          seq: 3,
+          createdAt: Date.now(),
+          body: {
+            t: 'update-session',
+            id: sessionId,
+            agentState: { value: idleAgentStateCiphertext, version: 2 },
+          },
+        });
+      }, 60);
+    };
+
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+    const machineKeySeed = new Uint8Array(32).fill(8);
+
+    try {
+      const waitPromise = handleSessionCommand(['wait', sessionId, '--timeout', '1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      let settled = false;
+      void waitPromise.finally(() => {
+        settled = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(settled).toBe(false);
+
+      await waitPromise;
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_wait');
+      expect(parsed.data?.sessionId).toBe(sessionId);
+      expect(parsed.data?.idle).toBe(true);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('does not resolve from an initially idle active session while transcript activity still shows an in-flight task', async () => {
+    initialAgentStateCiphertext = idleAgentStateCiphertext;
+    transcriptMessages = [
+      {
+        id: 'm2',
+        seq: 2,
+        createdAt: 2,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'agent',
+            content: {
+              type: 'acp',
+              provider: 'claude',
+              data: { type: 'task_started', id: 'task_wait_1' },
+            },
+          },
+        },
+      },
+      {
+        id: 'm1',
+        seq: 1,
+        createdAt: 1,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'user',
+            content: { type: 'text', text: 'hello' },
+          },
+        },
+      },
+    ];
+
+    socketOnConnect = (currentSocket) => {
+      setTimeout(() => {
+        currentSocket.trigger('update', {
+          id: 'u_task_complete',
+          seq: 3,
+          createdAt: Date.now(),
+          body: {
+            t: 'new-message',
+            sid: sessionId,
+            message: {
+              id: 'm3',
+              seq: 3,
+              localId: null,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: {
+                    type: 'acp',
+                    provider: 'claude',
+                    data: { type: 'task_complete', id: 'task_wait_1' },
+                  },
+                },
+              },
+            },
+          },
+        });
+      }, 450);
+    };
+
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+    const machineKeySeed = new Uint8Array(32).fill(8);
+
+    try {
+      const waitPromise = handleSessionCommand(['wait', sessionId, '--timeout', '1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      let settled = false;
+      void waitPromise.finally(() => {
+        settled = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(settled).toBe(false);
+
+      await waitPromise;
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_wait');
+      expect(parsed.data?.sessionId).toBe(sessionId);
+      expect(parsed.data?.idle).toBe(true);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('treats a session ready event as completion for a pending user turn without ACP lifecycle events', async () => {
+    initialAgentStateCiphertext = idleAgentStateCiphertext;
+    transcriptMessages = [
+      {
+        id: 'm1',
+        seq: 1,
+        createdAt: 1,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'user',
+            content: { type: 'text', text: 'hello' },
+          },
+        },
+      },
+    ];
+
+    socketOnConnect = (currentSocket) => {
+      setTimeout(() => {
+        currentSocket.trigger('update', {
+          id: 'u_ready',
+          seq: 2,
+          createdAt: Date.now(),
+          body: {
+            t: 'new-message',
+            sid: sessionId,
+            message: {
+              id: 'm2',
+              seq: 2,
+              localId: null,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: {
+                    id: 'ready_evt_1',
+                    type: 'event',
+                    data: { type: 'ready' },
+                  },
+                },
+              },
+            },
+          },
+        });
+      }, 450);
+    };
+
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+    const machineKeySeed = new Uint8Array(32).fill(8);
+
+    try {
+      const waitPromise = handleSessionCommand(['wait', sessionId, '--timeout', '1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      let settled = false;
+      void waitPromise.finally(() => {
+        settled = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(settled).toBe(false);
+
+      await waitPromise;
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_wait');
+      expect(parsed.data?.sessionId).toBe(sessionId);
+      expect(parsed.data?.idle).toBe(true);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('treats a transcript ready event as completion for a settled pending user turn before the socket connects', async () => {
+    initialAgentStateCiphertext = idleAgentStateCiphertext;
+    transcriptMessages = [
+      {
+        id: 'm2',
+        seq: 2,
+        createdAt: 2,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'agent',
+            content: {
+              id: 'ready_evt_existing',
+              type: 'event',
+              data: { type: 'ready' },
+            },
+          },
+        },
+      },
+      {
+        id: 'm1',
+        seq: 1,
+        createdAt: 1,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'user',
+            content: { type: 'text', text: 'already done' },
+          },
+        },
+      },
+    ];
+
+    socketOnConnect = () => {
+      // No fresh lifecycle updates arrive after wait attaches; the initial transcript must be enough.
+    };
+
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+    const machineKeySeed = new Uint8Array(32).fill(8);
+
+    try {
+      await handleSessionCommand(['wait', sessionId, '--timeout', '1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_wait');
+      expect(parsed.data?.sessionId).toBe(sessionId);
+      expect(parsed.data?.idle).toBe(true);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('does not resolve when a turn starts after the initial transcript snapshot but before the socket observes completion', async () => {
+    initialAgentStateCiphertext = idleAgentStateCiphertext;
+    transcriptMessages = [];
+
+    socketOnConnect = (currentSocket) => {
+      setTimeout(() => {
+        currentSocket.trigger('update', {
+          id: 'u_task_complete_race',
+          seq: 4,
+          createdAt: Date.now(),
+          body: {
+            t: 'new-message',
+            sid: sessionId,
+            message: {
+              id: 'm4',
+              seq: 4,
+              localId: null,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: {
+                    type: 'acp',
+                    provider: 'claude',
+                    data: { type: 'task_complete', id: 'task_wait_race_1' },
+                  },
+                },
+              },
+            },
+          },
+        });
+      }, 450);
+    };
+
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+    const machineKeySeed = new Uint8Array(32).fill(8);
+
+    try {
+      const waitPromise = handleSessionCommand(['wait', sessionId, '--timeout', '1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(transcriptFetchCount).toBeGreaterThan(0);
+
+      transcriptMessages = [
+        {
+          id: 'm2',
+          seq: 2,
+          createdAt: 2,
+          content: {
+            t: 'plain',
+            v: {
+              role: 'user',
+              content: { type: 'text', text: 'hello after snapshot' },
+            },
+          },
+        },
+        {
+          id: 'm3',
+          seq: 3,
+          createdAt: 3,
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                provider: 'claude',
+                data: { type: 'task_started', id: 'task_wait_race_1' },
+              },
+            },
+          },
+        },
+      ];
+
+      let settled = false;
+      void waitPromise.finally(() => {
+        settled = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(settled).toBe(false);
+
+      await waitPromise;
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_wait');
+      expect(parsed.data?.sessionId).toBe(sessionId);
+      expect(parsed.data?.idle).toBe(true);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('treats a follow-up user turn as still in flight even if the previous task_complete lands after that user message', async () => {
+    initialAgentStateCiphertext = idleAgentStateCiphertext;
+    transcriptMessages = [
+      {
+        id: 'm1',
+        seq: 1,
+        createdAt: 1,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'user',
+            content: { type: 'text', text: 'initial prompt' },
+          },
+        },
+      },
+      {
+        id: 'm2',
+        seq: 2,
+        createdAt: 2,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'agent',
+            content: {
+              type: 'acp',
+              provider: 'claude',
+              data: { type: 'task_started', id: 'task_old' },
+            },
+          },
+        },
+      },
+      {
+        id: 'm3',
+        seq: 3,
+        createdAt: 3,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'user',
+            content: { type: 'text', text: 'follow-up prompt' },
+          },
+        },
+      },
+      {
+        id: 'm4',
+        seq: 4,
+        createdAt: 4,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'agent',
+            content: {
+              type: 'acp',
+              provider: 'claude',
+              data: { type: 'task_complete', id: 'task_old' },
+            },
+          },
+        },
+      },
+    ];
+
+    socketOnConnect = (currentSocket) => {
+      setTimeout(() => {
+        currentSocket.trigger('update', {
+          id: 'u_task_started_followup',
+          seq: 5,
+          createdAt: Date.now(),
+          body: {
+            t: 'new-message',
+            sid: sessionId,
+            message: {
+              id: 'm5',
+              seq: 5,
+              localId: null,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: {
+                    type: 'acp',
+                    provider: 'claude',
+                    data: { type: 'task_started', id: 'task_followup' },
+                  },
+                },
+              },
+            },
+          },
+        });
+      }, 700);
+      setTimeout(() => {
+        currentSocket.trigger('update', {
+          id: 'u_task_complete_followup',
+          seq: 6,
+          createdAt: Date.now(),
+          body: {
+            t: 'new-message',
+            sid: sessionId,
+            message: {
+              id: 'm6',
+              seq: 6,
+              localId: null,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: {
+                    type: 'acp',
+                    provider: 'claude',
+                    data: { type: 'task_complete', id: 'task_followup' },
+                  },
+                },
+              },
+            },
+          },
+        });
+      }, 950);
+    };
+
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+    const machineKeySeed = new Uint8Array(32).fill(8);
+
+    try {
+      const waitPromise = handleSessionCommand(['wait', sessionId, '--timeout', '1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      let settled = false;
+      void waitPromise.finally(() => {
+        settled = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(settled).toBe(false);
+
+      await waitPromise;
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_wait');
+      expect(parsed.data?.sessionId).toBe(sessionId);
+      expect(parsed.data?.idle).toBe(true);
+    } finally {
+      output.restore();
     }
   });
 });
-

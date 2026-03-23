@@ -97,4 +97,31 @@ describe('nodeToWebStreams', () => {
         await expect(writer.write(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
         writer.releaseLock();
     });
+
+    it('reuses a stable outer writer across repeated getWriter calls', async () => {
+        const writes: number[][] = [];
+        const stdin = new FakeStdin((chunk, cb) => {
+            writes.push(Array.from(chunk));
+            queueMicrotask(() => cb(null));
+            return true;
+        });
+        const stdout = new Readable({ read() { } });
+
+        const { writable } = nodeToWebStreams(stdin as any, stdout);
+        const writer = writable.getWriter();
+
+        await writer.write(new Uint8Array([1, 2, 3]));
+        writer.releaseLock();
+
+        const nextWriter = writable.getWriter();
+
+        expect(nextWriter).toBe(writer);
+
+        await nextWriter.write(new Uint8Array([4, 5, 6]));
+
+        expect(writes).toEqual([
+            [1, 2, 3],
+            [4, 5, 6],
+        ]);
+    });
 });

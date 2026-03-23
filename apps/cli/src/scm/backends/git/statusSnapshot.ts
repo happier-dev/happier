@@ -1,10 +1,12 @@
 import {
+    type ScmWorktree,
     createGitScmCapabilities,
     type ScmWorkingEntry,
     type ScmWorkingSnapshot,
 } from '@happier-dev/protocol';
 
 import { parseGitStatusPorcelainV2Z, parseNumStatZ } from './statusParser';
+import { parseGitWorktreeListPorcelain } from './worktreeListParser';
 
 function detectEntryKind(includeStatus: string, pendingStatus: string): ScmWorkingEntry['kind'] {
     if (includeStatus === 'U' || pendingStatus === 'U') return 'conflicted';
@@ -28,10 +30,13 @@ export function buildGitSnapshot(input: {
     projectKey: string;
     fetchedAt: number;
     rootPath: string | null;
+    currentWorktreePath?: string | null;
+    mainWorktreePath?: string | null;
     statusOutput: string;
     includedNumStatOutput: string;
     pendingNumStatOutput: string;
     untrackedStatsByPath?: Record<string, { pendingAdded: number; isBinary: boolean }>;
+    worktreesOutput?: string;
 }): ScmWorkingSnapshot {
     const parsedStatus = parseGitStatusPorcelainV2Z(input.statusOutput);
     const includedSummary = parseNumStatZ(input.includedNumStatOutput);
@@ -116,6 +121,13 @@ export function buildGitSnapshot(input: {
         headRaw === '(unknown)' ||
         headRaw === '(no branch)' ||
         headRaw.startsWith('(detached');
+    const worktrees: ScmWorktree[] = input.worktreesOutput
+        ? [...parseGitWorktreeListPorcelain({
+            worktreesOutput: input.worktreesOutput,
+            currentWorktreePath: input.currentWorktreePath ?? input.rootPath,
+            mainWorktreePath: input.mainWorktreePath ?? input.rootPath,
+        })]
+        : [];
 
     return {
         projectKey: input.projectKey,
@@ -125,6 +137,7 @@ export function buildGitSnapshot(input: {
             rootPath: input.rootPath,
             backendId: 'git',
             mode: '.git',
+            worktrees,
         },
         capabilities: createGitCapabilities(),
         branch: {

@@ -1,6 +1,8 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -20,30 +22,44 @@ vi.mock('expo-camera', () => ({
 }));
 
 const pushSpy = vi.fn();
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: vi.fn(), push: pushSpy, replace: vi.fn() }),
-    useLocalSearchParams: () => ({
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: vi.fn(), push: pushSpy, replace: vi.fn() },
+        params: {
         provider: 'github',
         reason: 'provider_already_linked',
-    }),
-}));
+    },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({ state: 'enabled' }),
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Dimensions: {
-        get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
-    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Text: 'Text',
+                                    ScrollView: 'ScrollView',
+                                    ActivityIndicator: 'ActivityIndicator',
+                                    Dimensions: {
+                                        get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+                                    },
+                                    useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+                                    },
+                                    AppState: {
+                                        addEventListener: () => ({ remove: () => {} }),
+                                    },
+                                }
+    );
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ login: vi.fn(async () => {}) }),
@@ -85,11 +101,10 @@ vi.mock('@/components/qr/QRCode', () => ({
     QRCode: 'QRCode',
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(async () => {}),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: vi.fn(async () => null),
@@ -101,22 +116,15 @@ vi.mock('@/utils/system/fireAndForget', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: { create: (styles: any) => styles },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -136,9 +144,7 @@ describe('/restore', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
+            tree = (await renderScreen(<Screen />)).tree;
             if (!tree) throw new Error('Expected renderer');
 
             const texts = tree.root.findAll((node) => (node.type as unknown) === 'Text');

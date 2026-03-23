@@ -40,5 +40,9 @@ describe('sessionMessageCatchUp (plaintext envelopes)', () => {
     expect(updates).toHaveLength(1);
     expect(updates[0]?.body?.t).toBe('new-message');
     expect(updates[0]?.body?.message?.content?.t).toBe('plain');
+    expect(updates[0]?.body?.message?.localId).toBe('l1');
+    expect(updates[0]?.body?.message?.sidechainId).toBeNull();
+    expect(updates[0]?.body?.message?.createdAt).toBe(123);
+    expect(updates[0]?.body?.message?.updatedAt).toBe(123);
   });
 });

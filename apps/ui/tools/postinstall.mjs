@@ -217,3 +217,18 @@ if (wants('vendor-codemirror-webview-bundle')) {
         // Best-effort: CodeMirror editor has a runtime fallback when the embedded bundle is missing.
     }
 }
+
+// Bundle Xterm for the native terminal WebView. We embed the resulting bundle as a JS string to avoid
+// runtime CDN imports (offline + deterministic). Kept best-effort: the terminal can still render an
+// error state when the embedded bundle is missing.
+if (wants('vendor-xterm-webview-bundle')) {
+    try {
+        runCommandBestEffort({
+            command: process.execPath,
+            args: [path.resolve(expoAppDir, 'tools', 'xterm', 'buildXtermWebViewBundle.mjs')],
+            options: { cwd: expoAppDir },
+        });
+    } catch (e) {
+        // Best-effort: Xterm is optional and should not break installs.
+    }
+}

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 
 import { isPidAlive } from './pids.mjs';
 import { terminateProcessGroup } from './terminate.mjs';
+import { spawnDetachedTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 
 async function waitForPidExit(pid, timeoutMs) {
   const end = Date.now() + Math.max(0, Number(timeoutMs) || 0);
@@ -21,7 +21,7 @@ test('terminateProcessGroup escalates to SIGKILL when child ignores SIGINT/SIGTE
     return;
   }
 
-  const child = spawn(
+  const child = spawnDetachedTestProcess(
     process.execPath,
     [
       '-e',
@@ -31,9 +31,8 @@ test('terminateProcessGroup escalates to SIGKILL when child ignores SIGINT/SIGTE
         'setInterval(() => {}, 1000);',
       ].join(' '),
     ],
-    { stdio: 'ignore', detached: true }
+    { stdio: 'ignore' }
   );
-  child.unref();
   try {
     assert.ok(child.pid && child.pid > 1, 'expected child pid');
     assert.ok(isPidAlive(child.pid), 'expected child to be alive');

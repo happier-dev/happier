@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,53 +11,62 @@ const alertSpy = vi.fn();
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-    TextInput: ({ children, ...props }: any) => React.createElement('TextInput', props, children),
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
-    Platform: {
-        OS: 'web',
-        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+            Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+            TextInput: ({ children, ...props }: any) => React.createElement('TextInput', props, children),
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
+            Platform: {
+                OS: 'web',
+                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+            },
+        }
+    );
+});
 
 vi.mock('expo-clipboard', () => ({
     setStringAsync: (text: string) => setStringAsyncSpy(text),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: (...args: any[]) => alertSpy(...args) },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: (...args: any[]) => alertSpy(...args),
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { divider: '#ddd', surfaceHigh: '#fff', surfaceHighest: '#f7f7f7', textSecondary: '#666' } } }),
-    StyleSheet: { create: (v: any) => (typeof v === 'function' ? v() : v) },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: { colors: { divider: '#ddd', surfaceHigh: '#fff', surfaceHighest: '#f7f7f7', textSecondary: '#666' } },
+    });
+});
 
 describe('CodeBlockViewFrame', () => {
     it('enables nested horizontal scrolling when wrap is false', async () => {
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeBlockViewFrame code={'x'} language={null} wrap={false} showCopyButton={false}>
+        tree = (await renderScreen(<CodeBlockViewFrame code={'x'} language={null} wrap={false} showCopyButton={false}>
                     <React.Fragment>child</React.Fragment>
-                </CodeBlockViewFrame>,
-            );
-        });
+                </CodeBlockViewFrame>)).tree;
 
-        const scrollView = tree.root.findByType('ScrollView');
+        const scrollView = tree.findByType('ScrollView');
         expect(scrollView.props.horizontal).toBe(true);
         expect(scrollView.props.nestedScrollEnabled).toBe(true);
     });
@@ -64,15 +75,11 @@ describe('CodeBlockViewFrame', () => {
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeBlockViewFrame code={'x'} language={null} wrap={true} showCopyButton={true}>
+        tree = (await renderScreen(<CodeBlockViewFrame code={'x'} language={null} wrap={true} showCopyButton={true}>
                     <React.Fragment>child</React.Fragment>
-                </CodeBlockViewFrame>,
-            );
-        });
+                </CodeBlockViewFrame>)).tree;
 
-        const pressable = tree.root.findByType('Pressable');
+        const pressable = tree.findByProps({ accessibilityLabel: 'common.copy' });
         const flattened = Array.isArray(pressable.props.style) ? pressable.props.style.flat() : [pressable.props.style];
         expect(flattened.some((s: any) => s?.position === 'absolute')).toBe(true);
     });
@@ -81,15 +88,11 @@ describe('CodeBlockViewFrame', () => {
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeBlockViewFrame code={'x'} language={'typescript'} wrap={true} showCopyButton={true}>
+        tree = (await renderScreen(<CodeBlockViewFrame code={'x'} language={'typescript'} wrap={true} showCopyButton={true}>
                     <React.Fragment>child</React.Fragment>
-                </CodeBlockViewFrame>,
-            );
-        });
+                </CodeBlockViewFrame>)).tree;
 
-        const pressable = tree.root.findByType('Pressable');
+        const pressable = tree.findByProps({ accessibilityLabel: 'common.copy' });
         const flattened = Array.isArray(pressable.props.style) ? pressable.props.style.flat() : [pressable.props.style];
         expect(flattened.some((s: any) => s?.position === 'absolute')).toBe(false);
     });
@@ -101,26 +104,20 @@ describe('CodeBlockViewFrame', () => {
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeBlockViewFrame code={'hello'} language={null} wrap={true} showCopyButton={true}>
+        tree = (await renderScreen(<CodeBlockViewFrame code={'hello'} language={null} wrap={true} showCopyButton={true}>
                     <React.Fragment>child</React.Fragment>
-                </CodeBlockViewFrame>,
-            );
-        });
+                </CodeBlockViewFrame>)).tree;
 
-        const iconBefore = tree.root.findByType('Ionicons') as any;
+        const iconBefore = tree.findByType('Ionicons') as any;
         expect(iconBefore.props.name).toBe('copy-outline');
 
-        const pressable = tree.root.findByType('Pressable');
-        await renderer.act(async () => {
-            await pressable.props.onPress();
-        });
+        const pressable = tree.findByProps({ accessibilityLabel: 'common.copy' });
+        await pressTestInstanceAsync(pressable, 'common.copy');
 
         expect(setStringAsyncSpy).toHaveBeenCalledWith('hello');
         expect(alertSpy).toHaveBeenCalledTimes(0);
 
-        const iconAfter = tree.root.findByType('Ionicons') as any;
+        const iconAfter = tree.findByType('Ionicons') as any;
         expect(iconAfter.props.name).toBe('checkmark-outline');
     });
 });

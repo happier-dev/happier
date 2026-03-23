@@ -1,10 +1,8 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { updateSessionMetadataWithRetry } from '@/sessionControl/updateSessionMetadataWithRetry';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { setSessionTitle } from '@/session/services/setSessionTitle';
 
 export async function cmdSessionSetTitle(
   argv: string[],
@@ -27,41 +25,22 @@ export async function cmdSessionSetTitle(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const result = await setSessionTitle({ credentials, idOrPrefix, title });
+  if (!result.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_set_title',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(result.code);
   }
-  const sessionId = resolved.sessionId;
-
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_set_title', error: { code: 'session_not_found', sessionId } });
-      return;
-    }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
-  }
-
-  await updateSessionMetadataWithRetry({
-    token: credentials.token,
-    credentials,
-    sessionId,
-    rawSession,
-    updater: (metadata) => ({ ...metadata, summary: { text: title, updatedAt: Date.now() } }),
-  });
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_set_title', data: { sessionId, title } });
+    printJsonEnvelope({ ok: true, kind: 'session_set_title', data: { sessionId: result.sessionId, title } });
     return;
   }
-  console.log(chalk.green('✓'), `title set for ${sessionId}`);
+  console.log(chalk.green('✓'), `title set for ${result.sessionId}`);
 }

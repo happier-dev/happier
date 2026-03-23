@@ -27,7 +27,12 @@ describe('SessionForkRpcParamsSchema', () => {
       v: 1,
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
-      replaySummaryRunner: { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' },
+      replaySummaryRunner: {
+        v: 1,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        modelId: 'default',
+        permissionMode: 'no_tools',
+      },
     });
     expect(parsed.success).toBe(true);
   });

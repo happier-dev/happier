@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -41,22 +43,22 @@ vi.mock('@shopify/flash-list', () => ({
     },
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-    const ReactMod = await import('react');
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        Platform: {
-            OS: 'web',
-            select: (values: any) => values?.web ?? values?.default,
-        },
-        View: (props: any) => ReactMod.createElement('View', props, props.children),
-        ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
-        FlatList: (_props: any) => {
-            renderedFlatListCount++;
-            return ReactMod.createElement('FlatList');
-        },
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                                select: (values: any) => values?.web ?? values?.default,
+                            },
+                            View: (props: any) => React.createElement('View', props, props.children),
+                            ActivityIndicator: () => React.createElement('ActivityIndicator'),
+                            FlatList: (_props: any) => {
+                                    renderedFlatListCount++;
+                                    return React.createElement('FlatList');
+                                },
+                        }
+    );
 });
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -67,9 +69,12 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => (key === 'transcriptListImplementation' ? transcriptListImplementationSetting : undefined),
-}));
+});
+});
 
 vi.mock('./MessageView', () => ({
     MessageView: () => React.createElement('MessageView'),
@@ -88,16 +93,12 @@ describe('TranscriptList (FlashList v2)', () => {
 
     it('renders FlashList with startRenderingFromBottom enabled when selected', async () => {
         const { TranscriptList } = await import('./TranscriptList');
-        await act(async () => {
-            renderer.create(
-                <TranscriptList
+        await renderScreen(<TranscriptList
                     sessionId="s1"
                     metadata={null}
                     messages={[{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' } as any]}
                     interaction={{ canSendMessages: true, canApprovePermissions: true }}
-                />,
-            );
-        });
+                />);
 
         expect(renderedFlatListCount).toBe(0);
         expect(capturedFlashListProps).not.toBeNull();

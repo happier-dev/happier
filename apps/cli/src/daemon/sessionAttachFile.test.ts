@@ -60,6 +60,8 @@ describe('createSessionAttachFile', () => {
     });
 
     if (process.platform !== 'win32') {
+      const dirStat = await stat(baseDir);
+      expect(dirStat.mode & 0o777).toBe(0o700);
       const s = await stat(filePath);
       expect(s.mode & 0o077).toBe(0);
     }

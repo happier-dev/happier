@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { resolveMachineTransferFeature } from "../machineTransferFeature";
+import { resolveSessionHandoffFeature } from "../sessionHandoffFeature";
+import { resolveTerminalFeature } from "../terminalFeature";
 import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
 import { resolveServerFeatureBuildPolicy } from "./serverFeatureBuildPolicy";
 import type { ServerFeatureResolver } from "./serverFeatureRegistry";
-import type { FeaturesPayloadDelta } from "@/app/features/types";
+import type { FeaturesPayloadDelta } from "../types";
 import { evaluateFeatureBuildPolicy } from "@happier-dev/protocol";
 
 function fromPartial(partial: FeaturesPayloadDelta): ServerFeatureResolver {
@@ -11,6 +14,10 @@ function fromPartial(partial: FeaturesPayloadDelta): ServerFeatureResolver {
 }
 
 describe("resolveServerFeaturePayload", () => {
+    it("throws when resolvers list is empty", () => {
+        expect(() => resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [])).toThrow(/resolvers/i);
+    });
+
     it("forces server feature gates disabled when build policy denies a represented feature", () => {
         const env = {
             HAPPIER_BUILD_FEATURES_DENY: "connectedServices",
@@ -103,4 +110,84 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.features.voice.happierVoice.enabled).toBe(false);
         expect(payload.capabilities.voice.disabledByBuildPolicy).toBe(true);
     });
+
+    it("enables terminal embedded PTY by default so the UI toggle can appear", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveTerminalFeature]);
+        expect(payload.features.terminal.embeddedPty.enabled).toBe(true);
+    });
+
+    it("enables session handoff and server-routed transfer by default", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+        expect(payload.features.sessions.handoff.enabled).toBe(true);
+        expect(payload.features.machines.transfer.serverRouted.enabled).toBe(true);
+        expect(payload.features.machines.transfer.directPeer.enabled).toBe(true);
+        expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBeNull();
+    });
+
+    it("disables only generic server-routed transfer when the env toggle is off", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED: "0",
+        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+
+        expect(payload.features.sessions.handoff.enabled).toBe(true);
+        expect(payload.features.machines.transfer.serverRouted.enabled).toBe(false);
+        expect(payload.features.machines.transfer.directPeer.enabled).toBe(true);
+    });
+
+    it("exposes server-routed transfer max-bytes capability when configured", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES: "16384",
+        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+
+        expect(payload.features.machines.transfer.serverRouted.enabled).toBe(true);
+        expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(16384);
+    });
+
+    it("merges sibling capabilities.server fields from different resolvers", () => {
+        const payload = resolveServerFeaturePayload(
+            {
+                HAPPIER_PUBLIC_SERVER_URL: "https://stack.example.test/",
+            } as NodeJS.ProcessEnv,
+            [
+                fromPartial({
+                    capabilities: {
+                        server: {
+                            canonicalServerUrl: "https://stack.example.test",
+                        },
+                    },
+                }),
+                fromPartial({
+                    capabilities: {
+                        server: {
+                            retention: {
+                                enabled: true,
+                                policyVersion: 1,
+                                sessions: {
+                                    mode: "delete_inactive",
+                                    inactivityDays: 30,
+                                    requires: ["updatedAt", "lastActiveAt"],
+                                },
+                                accountChanges: { mode: "delete_older_than", days: 30 },
+                                voiceSessionLeases: { mode: "keep_forever" },
+                                userFeedItems: { mode: "delete_older_than", days: 30 },
+                                sessionShareAccessLogs: { mode: "delete_older_than", days: 30 },
+                                publicShareAccessLogs: { mode: "delete_older_than", days: 30 },
+                                terminalAuthRequests: { mode: "delete_older_than", days: 7 },
+                                accountAuthRequests: { mode: "delete_older_than", days: 7 },
+                                authPairingSessions: { mode: "delete_older_than", days: 7 },
+                                repeatKeys: { mode: "delete_older_than", days: 7 },
+                                globalLocks: { mode: "delete_older_than", days: 7 },
+                                automationRuns: { mode: "delete_older_than", days: 30 },
+                                automationRunEvents: { mode: "delete_older_than", days: 30 },
+                            },
+                        },
+                    },
+                }),
+            ],
+        );
+
+        expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
+        expect(payload.capabilities.server.retention?.enabled).toBe(true);
+    });
+
 });

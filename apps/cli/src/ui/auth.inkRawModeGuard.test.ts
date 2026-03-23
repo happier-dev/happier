@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { setStdioTtyForTest } from '@/ui/testkit/authNonInteractiveGlobals.testkit';
+import { setStdioTtyForTest } from '@/testkit/process/stdio';
 
 const renderMock = vi.fn((element: any) => {
   // If Ink render is invoked, immediately select a method so doAuth doesn't hang on the selector.

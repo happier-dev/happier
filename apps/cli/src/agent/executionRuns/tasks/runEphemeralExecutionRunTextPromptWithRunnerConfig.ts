@@ -1,4 +1,5 @@
 import { runEphemeralExecutionRunTextPrompt, type EphemeralExecutionRunTextPromptBackendFactory } from '../runtime/runEphemeralExecutionRunTextPrompt';
+import { createExecutionRunTextPromptBackendForTarget } from './createExecutionRunTextPromptBackendForTarget';
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -10,7 +11,13 @@ export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params:
   cwd: string;
   sessionId: string;
   runner: Readonly<{
-    backendId: string;
+    backendTarget: {
+      kind: 'builtInAgent';
+      agentId: string;
+    } | {
+      kind: 'configuredAcpBackend';
+      backendId: string;
+    };
     modelId?: string;
     permissionMode?: string;
   }>;
@@ -19,20 +26,47 @@ export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params:
   createBackend?: EphemeralExecutionRunTextPromptBackendFactory;
   timeoutMs?: number | null;
 }>): Promise<string> {
-  const backendId = normalizeNonEmptyString(params.runner?.backendId) ?? '';
-  if (!backendId) return '';
+  const backendTarget = params.runner?.backendTarget;
+  if (!backendTarget) return '';
   const modelId = normalizeNonEmptyString(params.runner?.modelId) ?? undefined;
   const permissionMode = normalizeNonEmptyString(params.runner?.permissionMode) ?? 'no_tools';
+  const resolved = params.createBackend
+    ? {
+        backendId: backendTarget.kind === 'builtInAgent' ? backendTarget.agentId : 'customAcp',
+        backend: params.createBackend({
+          cwd: params.cwd,
+          runId: `${params.intent}_${Date.now()}`,
+          backendId: backendTarget.kind === 'builtInAgent' ? backendTarget.agentId : 'customAcp',
+          backendTarget,
+          modelId,
+          permissionMode,
+          start: {
+            sessionId: params.sessionId,
+            intent: params.intent,
+            retentionPolicy: 'ephemeral' as const,
+          },
+        }),
+      }
+    : await createExecutionRunTextPromptBackendForTarget({
+        cwd: params.cwd,
+        sessionId: params.sessionId,
+        backendTarget,
+        modelId,
+        permissionMode,
+        intent: params.intent,
+      });
 
   return await runEphemeralExecutionRunTextPrompt({
     cwd: params.cwd,
     sessionId: params.sessionId,
-    backendId,
+    backendId: resolved.backendId,
+    backendTarget,
     modelId,
     permissionMode,
     intent: params.intent,
     prompt: params.prompt,
-    createBackend: params.createBackend,
+    createBackend: () => resolved.backend,
+    configureSession: resolved.configureSession,
     timeoutMs: params.timeoutMs,
   });
 }

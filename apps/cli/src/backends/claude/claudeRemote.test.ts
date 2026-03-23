@@ -3,6 +3,8 @@ import type { SDKMessage } from '@/backends/claude/sdk';
 import type { EnhancedMode } from './loop';
 
 const mockQuery = vi.fn();
+const ensureJavaScriptRuntimeExecutableMock = vi.fn(async () => '/managed/js-runtime');
+const resolveClaudeCliPathMock = vi.fn(() => '/resolved/claude-cli.js');
 
 vi.mock('@/backends/claude/sdk', () => ({
   query: mockQuery,
@@ -34,6 +36,14 @@ vi.mock('./utils/remoteSystemPrompt', () => ({
   getClaudeRemoteSystemPrompt: () => 'REMOTE_PROMPT',
 }));
 
+vi.mock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
+  ensureJavaScriptRuntimeExecutable: ensureJavaScriptRuntimeExecutableMock,
+}));
+
+vi.mock('./utils/resolveClaudeCliPath', () => ({
+  resolveClaudeCliPath: resolveClaudeCliPathMock,
+}));
+
 type RemoteOptions = Parameters<(typeof import('./claudeRemote'))['claudeRemote']>[0];
 type QueryCall = Readonly<{
   options?: Readonly<{
@@ -43,6 +53,7 @@ type QueryCall = Readonly<{
     env?: Readonly<Record<string, string>>;
     customSystemPrompt?: string;
     appendSystemPrompt?: string;
+    executable?: string;
   }>;
 }>;
 
@@ -87,6 +98,10 @@ function createBaseOptions(overrides?: Partial<RemoteOptions>): RemoteOptions {
 describe('claudeRemote', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    ensureJavaScriptRuntimeExecutableMock.mockReset();
+    ensureJavaScriptRuntimeExecutableMock.mockResolvedValue('/managed/js-runtime');
+    resolveClaudeCliPathMock.mockReset();
+    resolveClaudeCliPathMock.mockReturnValue('/resolved/claude-cli.js');
   });
 
   it('keeps resume sessionId even if claudeCheckSession returns false (avoid false-negative context loss)', async () => {
@@ -103,6 +118,29 @@ describe('claudeRemote', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
     expect(call?.options?.resume).toBe('sess_should_resume');
+  });
+
+  it('bootstraps the managed JavaScript runtime before starting the SDK query', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    await claudeRemote(createBaseOptions());
+
+    expect(ensureJavaScriptRuntimeExecutableMock).toHaveBeenCalled();
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.executable).toBe('/managed/js-runtime');
+  });
+
+  it('passes the resolved Claude CLI path into the remote launcher env so it does not rediscover it', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    await claudeRemote(createBaseOptions());
+
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.env?.HAPPIER_CLAUDE_PATH).toBe('/resolved/claude-cli.js');
   });
 
   it('honors --continue in remote mode by passing continue=true to the SDK', async () => {

@@ -1,24 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createEnvPatcher } from "@/testkit/env";
+
 const xadd = vi.fn(async () => "0-0");
 const getRedisClient = vi.fn(() => ({ xadd }));
 
 vi.mock("@/storage/redis/redis", () => ({ getRedisClient }));
 
 describe("presenceRedisQueue", () => {
-    const originalStreamMaxLen = process.env.HAPPY_PRESENCE_STREAM_MAXLEN;
+    const env = createEnvPatcher(["HAPPY_PRESENCE_STREAM_MAXLEN"]);
 
     beforeEach(() => {
         vi.clearAllMocks();
-        delete process.env.HAPPY_PRESENCE_STREAM_MAXLEN;
+        env.restore();
     });
 
     afterEach(() => {
-        if (originalStreamMaxLen == null) {
-            delete process.env.HAPPY_PRESENCE_STREAM_MAXLEN;
-        } else {
-            process.env.HAPPY_PRESENCE_STREAM_MAXLEN = originalStreamMaxLen;
-        }
+        env.restore();
     });
 
     it("adds MAXLEN trimming by default", async () => {
@@ -44,7 +42,7 @@ describe("presenceRedisQueue", () => {
     });
 
     it("uses configured maxlen when provided", async () => {
-        process.env.HAPPY_PRESENCE_STREAM_MAXLEN = "123";
+        env.set("HAPPY_PRESENCE_STREAM_MAXLEN", "123");
 
         const { publishMachineAlive } = await import("./presenceRedisQueue");
         await publishMachineAlive({ accountId: "u1", machineId: "m1", timestamp: 9 });
@@ -67,7 +65,7 @@ describe("presenceRedisQueue", () => {
     });
 
     it("disables trimming when maxlen is 0", async () => {
-        process.env.HAPPY_PRESENCE_STREAM_MAXLEN = "0";
+        env.set("HAPPY_PRESENCE_STREAM_MAXLEN", "0");
 
         const { publishSessionAlive } = await import("./presenceRedisQueue");
         await publishSessionAlive({ sessionId: "s1", timestamp: 1, accountId: "u1" });

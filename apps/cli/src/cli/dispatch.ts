@@ -2,7 +2,10 @@ import chalk from 'chalk';
 import { logger } from '@/ui/logger';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { commandRegistry } from '@/cli/commandRegistry';
-import { AGENTS } from '@/backends/catalog';
+import { buildRootHelpText } from '@/cli/buildRootHelpText';
+import { maybePassthroughProviderCliInfoRequest } from '@/cli/providerCliPassthrough';
+import { readStartedByArg } from '@/cli/readStartedByArg';
+import { requireCatalogEntry, resolveCatalogAgentIdForCliSubcommand } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
 import { applyDaemonAutostartEnvForInvocation, shouldEnsureDaemonForInvocation } from '@/daemon/ensureDaemon';
 import { applyEphemeralServerSelectionFromPrefixArgs } from '@/server/serverSelection';
@@ -21,6 +24,10 @@ export async function dispatchCli(params: Readonly<{
     console.log(packageJson.version);
     return;
   }
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
+    console.log(buildRootHelpText());
+    return;
+  }
 
   // If --version is passed - do not log, its likely daemon inquiring about our version
   if (!args.includes('--version')) {
@@ -36,6 +43,18 @@ export async function dispatchCli(params: Readonly<{
 
   // Check if first argument is a subcommand
   const subcommand = args[0];
+
+  // Codex should prefer local TUI when invoked directly in a real terminal.
+  // The daemon always forces `--started-by daemon`, so this only affects direct `happier codex` usage.
+  if (subcommand === 'codex') {
+    const current = (process.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim();
+    const startedBy = readStartedByArg(args);
+    const startedByDaemon = startedBy.value === 'daemon';
+    const shouldLeaveDefaults = startedBy.present && startedBy.value === null;
+    if (!current && !startedByDaemon && !shouldLeaveDefaults && process.stdin.isTTY && process.stdout.isTTY) {
+      process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '0';
+    }
+  }
 
   applyDaemonAutostartEnvForInvocation({ args, env: process.env });
 
@@ -67,11 +86,18 @@ export async function dispatchCli(params: Readonly<{
   }
   const commandHandler = (subcommand ? commandRegistry[subcommand] : undefined);
   if (commandHandler) {
+    const catalogAgentId =
+      typeof subcommand === 'string' && subcommand.length > 0
+        ? resolveCatalogAgentIdForCliSubcommand(subcommand)
+        : null;
+    if (catalogAgentId && maybePassthroughProviderCliInfoRequest({ agentId: catalogAgentId, args })) {
+      return;
+    }
     await commandHandler({ args, rawArgv, terminalRuntime });
     return;
   }
 
-  const defaultEntry = AGENTS[DEFAULT_CATALOG_AGENT_ID];
+  const defaultEntry = requireCatalogEntry(DEFAULT_CATALOG_AGENT_ID);
   if (!defaultEntry.getCliCommandHandler) {
     throw new Error(`Default agent '${DEFAULT_CATALOG_AGENT_ID}' has no CLI command handler registered`);
   }

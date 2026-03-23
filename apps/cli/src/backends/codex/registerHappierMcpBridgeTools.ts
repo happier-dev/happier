@@ -1,4 +1,4 @@
-import { HAPPIER_MCP_TOOLS } from '@/mcp/happierMcpToolCatalog';
+import { listBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 
 type ToolRegistrar = Readonly<{
   registerTool: (name: string, definition: any, handler: (args: any) => Promise<any>) => void;
@@ -23,7 +23,7 @@ export function registerHappierMcpBridgeTools(
     }
   };
 
-  for (const tool of HAPPIER_MCP_TOOLS) {
+  for (const tool of listBuiltInHappierTools()) {
     server.registerTool(
       tool.name,
       {

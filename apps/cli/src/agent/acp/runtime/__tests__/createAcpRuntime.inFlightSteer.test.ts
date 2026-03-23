@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createAcpRuntime } from '../createAcpRuntime';
-import { createApprovedPermissionHandler, createBasicSessionClient, createFakeAcpRuntimeBackend } from '../createAcpRuntime.testkit';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClient } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (in-flight steer)', () => {
   it('exposes turn-in-flight state and steerPrompt when enabled', async () => {
@@ -35,7 +37,7 @@ describe('createAcpRuntime (in-flight steer)', () => {
 
     expect(backend.sendSteerPrompt).toHaveBeenCalledWith('sess_1', 'steer text');
 
-    runtime.flushTurn();
+    await runtime.flushTurn();
     expect((runtime as any).isTurnInFlight()).toBe(false);
   });
 
@@ -83,7 +85,7 @@ describe('createAcpRuntime (in-flight steer)', () => {
       { timeout: 250 },
     );
 
-    runtime.flushTurn();
+    await runtime.flushTurn();
     await vi.waitFor(() => {
       expect(activeMetadataWaits).toBe(0);
     });
@@ -113,6 +115,6 @@ describe('createAcpRuntime (in-flight steer)', () => {
 
     expect(backend.sendPrompt).not.toHaveBeenCalled();
 
-    runtime.flushTurn();
+    await runtime.flushTurn();
   });
 });

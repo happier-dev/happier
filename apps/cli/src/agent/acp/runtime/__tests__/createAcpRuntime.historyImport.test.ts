@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { createAcpRuntime } from '../createAcpRuntime';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { createDeferred, createFakeAcpRuntimeBackend, createSessionClientWithMetadata } from '../createAcpRuntime.testkit';
+import { createDeferred } from '@/testkit/async/deferred';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

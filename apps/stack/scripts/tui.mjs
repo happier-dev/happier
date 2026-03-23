@@ -39,6 +39,8 @@ import { reconcileDaemonPaneAfterDaemonStarts } from './utils/tui/daemon_pane_re
 import { buildScriptPtyArgs } from './utils/tui/script_pty_command.mjs';
 import { resolveTuiChildTerminationPlan } from './utils/tui/child_termination_plan.mjs';
 import { installTuiStdinErrorGuard } from './utils/tui/stdin_error_guard.mjs';
+import { checkDaemonState } from './daemon.mjs';
+import { getObservedStackDaemon } from './utils/stack/runtime_daemon_state.mjs';
 
 function nowTs() {
   const d = new Date();
@@ -340,6 +342,14 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
     ? hasStackCredentials({ cliHomeDir, serverUrl: internalServerUrl, env: authScopeEnv })
     : hasStackCredentials({ cliHomeDir, serverUrl: '', env: authScopeEnv });
   const startDaemon = parseStartDaemonFlagFromEnv(env);
+  const observedDaemon = getObservedStackDaemon({
+    cliHomeDir,
+    internalServerUrl,
+    runtimeDaemonPid: processes?.daemonPid ?? null,
+    env: authScopeEnv,
+  }, {
+    checkDaemonStateImpl: checkDaemonState,
+  });
 
   const lines = [];
   lines.push(`stack: ${stackName}`);
@@ -355,7 +365,8 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const notice = buildDaemonAuthNotice({
     stackName,
     internalServerUrl,
-    daemonPid: processes?.daemonPid ?? null,
+    daemonPid: observedDaemon.pid,
+    daemonRunning: observedDaemon.running,
     authed,
     startDaemon,
   });
@@ -382,7 +393,7 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   lines.push('pids:');
   if (processes?.serverPid) lines.push(`  serverPid: ${processes.serverPid}`);
   if (processes?.expoPid) lines.push(`  expoPid: ${processes.expoPid}`);
-  if (processes?.daemonPid) lines.push(`  daemonPid: ${processes.daemonPid}`);
+  if (observedDaemon.pid) lines.push(`  daemonPid: ${observedDaemon.pid}`);
   if (processes?.uiGatewayPid) lines.push(`  uiGatewayPid: ${processes.uiGatewayPid}`);
 
   lines.push('');
@@ -639,30 +650,38 @@ async function main() {
 	    // and clear stale guidance once the daemon starts.
 	    try {
 	      const daemonIdx = paneIndexById.get('daemon');
-	      if (stackName) {
-	        const runtimePath = getStackRuntimeStatePath(stackName);
-	        const runtime = await readStackRuntimeStateFile(runtimePath);
-	        const daemonPid = Number(runtime?.processes?.daemonPid);
+		      if (stackName) {
+		        const runtimePath = getStackRuntimeStatePath(stackName);
+		        const runtime = await readStackRuntimeStateFile(runtimePath);
 
-	        const { baseDir } = resolveStackEnvPath(stackName);
-	        const serverPort = Number(runtime?.ports?.server);
-	        const internalServerUrl =
-	          Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
+		        const { baseDir } = resolveStackEnvPath(stackName);
+		        const serverPort = Number(runtime?.ports?.server);
+		        const internalServerUrl =
+		          Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
 	        const cliHomeDir = join(baseDir, 'cli');
 
 	        const scopedEnv = applyTuiStackAuthScopeEnv({ env: process.env, stackName });
-	        const authed = internalServerUrl
-	          ? hasStackCredentials({ cliHomeDir, serverUrl: internalServerUrl, env: scopedEnv })
-	          : hasStackCredentials({ cliHomeDir, serverUrl: '', env: scopedEnv });
+		        const authed = internalServerUrl
+		          ? hasStackCredentials({ cliHomeDir, serverUrl: internalServerUrl, env: scopedEnv })
+		          : hasStackCredentials({ cliHomeDir, serverUrl: '', env: scopedEnv });
+		        const observedDaemon = getObservedStackDaemon({
+		          cliHomeDir,
+		          internalServerUrl,
+		          runtimeDaemonPid: runtime?.processes?.daemonPid ?? null,
+		          env: scopedEnv,
+		        }, {
+		          checkDaemonStateImpl: checkDaemonState,
+		        });
 
-	        const startDaemon = parseStartDaemonFlagFromEnv(process.env);
-	        const notice = buildDaemonAuthNotice({
-	          stackName,
-	          internalServerUrl,
-	          daemonPid: Number.isFinite(daemonPid) && daemonPid > 1 ? daemonPid : null,
-	          authed,
-	          startDaemon,
-	        });
+		        const startDaemon = parseStartDaemonFlagFromEnv(process.env);
+		        const notice = buildDaemonAuthNotice({
+		          stackName,
+		          internalServerUrl,
+		          daemonPid: observedDaemon.pid,
+		          daemonRunning: observedDaemon.running,
+		          authed,
+		          startDaemon,
+		        });
 
 	        if (notice.show) {
 	          panes[daemonIdx].visible = true;
@@ -680,13 +699,14 @@ async function main() {
 	            }
 	          }
 	        } else {
-	          const reconciled = reconcileDaemonPaneAfterDaemonStarts({
-	            title: panes[daemonIdx].title,
-	            lines: panes[daemonIdx].lines,
-	            daemonPid,
-	          });
-	          panes[daemonIdx].title = reconciled.title;
-	          panes[daemonIdx].lines = reconciled.lines;
+		          const reconciled = reconcileDaemonPaneAfterDaemonStarts({
+		            title: panes[daemonIdx].title,
+		            lines: panes[daemonIdx].lines,
+		            daemonPid: observedDaemon.pid,
+		            daemonRunning: observedDaemon.running,
+		          });
+		          panes[daemonIdx].title = reconciled.title;
+		          panes[daemonIdx].lines = reconciled.lines;
 	        }
 
 	        const isStartLike = isTuiStartLikeForwardedArgs(forwarded);
@@ -695,13 +715,14 @@ async function main() {
 	        const shouldAutostart = shouldAttemptTuiDaemonAutostart({
 	          stackName,
 	          isStartLike,
-	          startDaemon,
-	          internalServerUrl,
-	          authed,
-	          daemonPid: Number.isFinite(daemonPid) && daemonPid > 1 ? daemonPid : null,
-	          inProgress: daemonAutostartInProgress,
-	          lastAttemptAtMs: daemonAutostartLastAttemptAtMs,
-	          nowMs: Date.now(),
+		          startDaemon,
+		          internalServerUrl,
+		          authed,
+		          daemonPid: observedDaemon.pid,
+		          daemonRunning: observedDaemon.running,
+		          inProgress: daemonAutostartInProgress,
+		          lastAttemptAtMs: daemonAutostartLastAttemptAtMs,
+		          nowMs: Date.now(),
 	          minIntervalMs,
 	        });
 
@@ -896,8 +917,15 @@ async function main() {
 
         if (startDaemon) {
           const runtime = await readStackRuntimeStateFile(runtimePath);
-          const daemonPid = Number(runtime?.processes?.daemonPid);
-          const daemonRunning = Number.isFinite(daemonPid) && daemonPid > 1;
+          const observedDaemon = getObservedStackDaemon({
+            cliHomeDir: join(resolveStackEnvPath(stackName).baseDir, 'cli'),
+            internalServerUrl,
+            runtimeDaemonPid: runtime?.processes?.daemonPid ?? null,
+            env: { ...process.env, ...envFromFile },
+          }, {
+            checkDaemonStateImpl: checkDaemonState,
+          });
+          const daemonRunning = observedDaemon.running;
           if (!daemonRunning) {
             process.stdout.write(`\n[daemon] starting...\n`);
             const daemonArgs = buildTuiDaemonStartArgs({ happysBin, stackName });

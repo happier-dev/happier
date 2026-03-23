@@ -7,11 +7,13 @@ function buildApiMessage(id: string, seq: number): ApiMessage {
     id,
     seq,
     localId: null,
+    sidechainId: null,
     content: {
       t: 'encrypted',
       c: `encrypted-${id}`,
     },
     createdAt: 1_000 + seq,
+    updatedAt: 2_000 + seq,
   };
 }
 
@@ -52,7 +54,7 @@ describe('fetchAndApplyOlderMessages', () => {
       limit: 150,
       getSessionEncryption: () => ({ decryptMessages }),
       request,
-      sessionReceivedMessages: new Map(),
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
       applyMessages,
       onTaskLifecycleEvent,
       log: { log: () => {} },
@@ -61,5 +63,50 @@ describe('fetchAndApplyOlderMessages', () => {
     expect(onTaskLifecycleEvent).not.toHaveBeenCalled();
     expect(applyMessages).toHaveBeenCalledWith('s1', []);
   });
-});
 
+  it('marks scope=sidechain older-page messages when the API response omits sidechainId', async () => {
+    const applyMessages = vi.fn();
+    const request = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          messages: [buildApiMessage('m1', 2)],
+          hasMore: false,
+          nextBeforeSeq: null,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const decryptMessages = vi.fn(async () => [
+      {
+        id: 'm1',
+        seq: 2,
+        localId: null,
+        createdAt: 1_002,
+        content: {
+          role: 'user',
+          content: { type: 'text', text: 'hello' },
+        },
+      },
+    ]);
+
+    await fetchAndApplyOlderMessages({
+      sessionId: 's1',
+      beforeSeq: 10,
+      limit: 150,
+      scope: 'sidechain',
+      sidechainId: 'tool_task_1',
+      getSessionEncryption: () => ({ decryptMessages }),
+      request,
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
+      applyMessages,
+      log: { log: () => {} },
+    });
+
+    expect(applyMessages).toHaveBeenCalledWith('s1', [expect.objectContaining({
+      id: 'm1',
+      isSidechain: true,
+      sidechainId: 'tool_task_1',
+    })]);
+  });
+});

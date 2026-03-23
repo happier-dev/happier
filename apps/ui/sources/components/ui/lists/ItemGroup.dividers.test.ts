@@ -41,10 +41,23 @@ function collectShowDividers(node: React.ReactNode): Array<boolean | undefined> 
 }
 
 describe('withItemGroupDividers', () => {
-    it('returns empty-like input unchanged when there are no element rows', () => {
+    it('drops primitive children that would become invalid View text nodes', () => {
         expect(withItemGroupDividers(null)).toBe(null);
-        expect(withItemGroupDividers(undefined)).toBe(undefined);
-        expect(withItemGroupDividers('text-only')).toBe('text-only');
+        expect(withItemGroupDividers(undefined)).toBe(null);
+        expect(withItemGroupDividers('text-only')).toBe(null);
+
+        const children = React.createElement(
+            React.Fragment,
+            null,
+            '\n    ',
+            React.createElement(TestItem, { id: 'a' }),
+            ' ',
+            React.createElement(TestItem, { id: 'b' }),
+            0,
+        );
+
+        const processed = withItemGroupDividers(children);
+        expect(collectShowDividers(processed)).toEqual([true, false]);
     });
 
     it('treats fragment children as part of the divider sequence', () => {

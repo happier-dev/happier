@@ -30,6 +30,7 @@ import { daemonStartGate, formatDaemonAuthRequiredError } from './utils/auth/dae
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { cmd, sectionTitle } from './utils/ui/layout.mjs';
 import { renderTerminalUsageInstructions } from './utils/stack/terminal_usage_instructions.mjs';
+import { resolveStackActiveServerId } from './utils/auth/stable_scope_id.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
 import { isSandboxed } from './utils/env/sandbox.mjs';
 import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
@@ -47,6 +48,9 @@ async function main() {
   const argv = process.argv.slice(2);
   const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
+  if (flags.has('--runtime') || flags.has('--source')) {
+    throw new Error('[dev] hstack dev does not support runtime mode flags. Use hstack start for runtime snapshots.');
+  }
   if (wantsHelp(argv, { flags })) {
     printResult({
       json,
@@ -238,7 +242,9 @@ async function main() {
   const serverAlreadyRunning = startServer
     ? await isHappierServerRunning(localInternalServerUrl)
     : false;
-  const daemonAlreadyRunning = startDaemon ? isDaemonRunning(cliHomeDir) : false;
+  const daemonAlreadyRunning = startDaemon
+    ? isDaemonRunning(cliHomeDir, { serverUrl: internalServerUrl, env: baseEnv })
+    : false;
 
   // Expo dev server state (worktree-scoped): single Expo process per stack/worktree.
   const startExpo = startUi || startMobile;
@@ -304,7 +310,15 @@ async function main() {
   } else {
     console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);
   }
-  console.log(renderTerminalUsageInstructions({ internalServerUrl, cliHomeDir, publicServerUrl }).join('\n'));
+  console.log(
+    renderTerminalUsageInstructions({
+      internalServerUrl,
+      cliHomeDir,
+      publicServerUrl,
+      activeServerId: resolveStackActiveServerId({ env: baseEnv, stackName }),
+      stackName,
+    }).join('\n'),
+  );
 
   // Reliability before daemon start:
   // - Ensure schema exists (server-light: prisma migrate deploy; happier-server: migrate deploy if tables missing)
@@ -419,6 +433,7 @@ async function main() {
         cliHomeDir,
         internalServerUrl,
         publicServerUrl,
+        runtimeStatePath,
         restart,
         isShuttingDown: () => shuttingDown,
         env: baseEnv,
@@ -436,6 +451,7 @@ async function main() {
     cliHomeDir,
     internalServerUrl,
     publicServerUrl,
+    runtimeStatePath,
     isShuttingDown: () => shuttingDown,
     env: baseEnv,
     stackName,
@@ -547,7 +563,7 @@ async function main() {
     }
 
     if (startDaemon) {
-      await stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir });
+      await stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir, runtimeStatePath });
     }
 
     for (const child of children) {

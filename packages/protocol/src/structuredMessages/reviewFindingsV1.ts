@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ReviewFindingSchema } from '../reviews/ReviewFinding.js';
+import { ExecutionRunStructuredRunRefSchema } from './executionRunStructuredRunRef.js';
 
 export const ReviewTriageStatusSchema = z.enum([
   'accept',
@@ -20,11 +21,7 @@ export const ReviewTriageOverlaySchema = z.object({
 export type ReviewTriageOverlay = z.infer<typeof ReviewTriageOverlaySchema>;
 
 export const ReviewFindingsV1Schema = z.object({
-  runRef: z.object({
-    runId: z.string().min(1),
-    callId: z.string().min(1),
-    backendId: z.string().min(1),
-  }).passthrough(),
+  runRef: ExecutionRunStructuredRunRefSchema,
   summary: z.string().min(1),
   findings: z.array(ReviewFindingSchema),
   triage: ReviewTriageOverlaySchema.optional(),
@@ -42,4 +39,3 @@ export function parseReviewFindingsV1(payload: unknown): ReviewFindingsV1 | null
   if (!parsed.success) return null;
   return parsed.data;
 }
-

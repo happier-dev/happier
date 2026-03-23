@@ -1,19 +1,29 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastProps: any = null;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    View: 'View',
-    useWindowDimensions: () => ({ width: 1800, height: 900 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'web',
+                        select: (value: Record<string, unknown>) => value.web ?? value.default,
+                    },
+                    View: 'View',
+                    useWindowDimensions: () => ({ width: 1800, height: 900 }),
+                }
+    );
+});
 
-vi.mock('@/components/ui/panels/MultiPaneHost', () => ({
-    MultiPaneHost: (props: any) => {
+vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
+    MultiPaneHostWithBottom: (props: any) => {
         lastProps = props;
         return React.createElement('MultiPaneHostStub');
     },
@@ -23,7 +33,9 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return true;
         if (key === 'editorFocusModeEnabled') return true;
@@ -31,10 +43,13 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'rightPaneWidthBasisPx') return 1800;
         if (key === 'detailsPaneWidthPx') return 520;
         if (key === 'detailsPaneWidthBasisPx') return 1800;
+        if (key === 'bottomPaneHeightPx') return 320;
+        if (key === 'bottomPaneHeightBasisPx') return 900;
         return null;
     },
     useLocalSettingMutable: () => [null, vi.fn()],
-}));
+});
+});
 
 vi.mock('./AppPaneProvider', () => ({
     useAppPaneContext: () => ({
@@ -57,16 +72,12 @@ describe('AppPaneScopeHost (focus mode uncapped)', () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         lastProps = null;
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
+        await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
                     rightPane={<div />}
                     detailsPane={<div />}
-                />
-            );
-        });
+                />);
 
         expect(lastProps).not.toBeNull();
         expect(lastProps.layout.right).toBe('docked');

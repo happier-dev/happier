@@ -44,4 +44,25 @@ describe('providers harness: fatal agent error extraction', () => {
 
     expect(out).toBeNull();
   });
+
+  it('extracts explicit errors from serialized transcript wrapper values', () => {
+    const out = extractFatalAgentErrorMessage([
+      {
+        __happierSerializedJsonValueV1: true,
+        type: 'json',
+        value: {
+          role: 'agent',
+          content: {
+            type: 'acp',
+            data: {
+              type: 'message',
+              message: 'Error: Authentication required\\n\\nOpenCode appears not configured.',
+            },
+          },
+        },
+      },
+    ]);
+
+    expect(out).toContain('Authentication required');
+  });
 });

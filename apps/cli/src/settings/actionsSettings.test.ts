@@ -26,11 +26,11 @@ describe('actionsSettings (env)', () => {
       v: 1,
       actions: {
         'review.start': { enabled: true, disabledSurfaces: ['voice_tool'], disabledPlacements: [] },
-        'plan.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] },
+        'subagents.plan.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] },
       },
     });
     try {
-      expect(listDisabledActionIdsForSurfaceFromEnv('voice_tool')).toEqual(['plan.start', 'review.start']);
+      expect(listDisabledActionIdsForSurfaceFromEnv('voice_tool')).toEqual(['review.start', 'subagents.plan.start']);
     } finally {
       if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;

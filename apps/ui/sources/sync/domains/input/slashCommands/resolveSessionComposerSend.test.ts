@@ -29,8 +29,74 @@ describe('resolveSessionComposerSend', () => {
         });
     });
 
+    it('intercepts configured template tokens', () => {
+        const resolved = resolveSessionComposerSend({
+            input: '/foo bar',
+            executionRunsEnabled: true,
+            promptInvocationsV1: {
+                v: 1,
+                entries: [
+                    {
+                        id: 't1',
+                        token: '/foo',
+                        title: 'Foo template',
+                        target: { kind: 'doc', artifactId: 'a1' },
+                        behavior: 'insert',
+                        allowArgs: true,
+                        availableIn: 'global',
+                    },
+                ],
+            },
+        });
+
+        expect(resolved).toEqual({
+            kind: 'template',
+            invocationId: 't1',
+            token: '/foo',
+            title: 'Foo template',
+            targetArtifactId: 'a1',
+            behavior: 'insert',
+            allowArgs: true,
+            rest: 'bar',
+        });
+    });
+
+    it('does not intercept templates with args when allowArgs=false', () => {
+        const resolved = resolveSessionComposerSend({
+            input: '/foo bar',
+            executionRunsEnabled: true,
+            promptInvocationsV1: {
+                v: 1,
+                entries: [
+                    {
+                        id: 't1',
+                        token: '/foo',
+                        title: 'Foo template',
+                        target: { kind: 'doc', artifactId: 'a1' },
+                        behavior: 'insert',
+                        allowArgs: false,
+                        availableIn: 'global',
+                    },
+                ],
+            },
+        });
+
+        expect(resolved).toEqual({
+            kind: 'send',
+            text: '/foo bar',
+        });
+    });
+
     it('intercepts /h.review into a review.start action when enabled', () => {
         expect(resolveSessionComposerSend({ input: '/h.review review this', executionRunsEnabled: true })).toEqual({
+            kind: 'action',
+            actionId: 'review.start',
+            rest: 'review this',
+        });
+    });
+
+    it('intercepts /review into a review.start action when enabled', () => {
+        expect(resolveSessionComposerSend({ input: '/review review this', executionRunsEnabled: true })).toEqual({
             kind: 'action',
             actionId: 'review.start',
             rest: 'review this',
@@ -57,6 +123,13 @@ describe('resolveSessionComposerSend', () => {
         expect(resolveSessionComposerSend({ input: '/h.review review this', executionRunsEnabled: false })).toEqual({
             kind: 'send',
             text: '/h.review review this',
+        });
+    });
+
+    it('does not intercept /review when disabled (passes through as a normal message)', () => {
+        expect(resolveSessionComposerSend({ input: '/review review this', executionRunsEnabled: false })).toEqual({
+            kind: 'send',
+            text: '/review review this',
         });
     });
 });

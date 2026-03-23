@@ -1,8 +1,10 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { MachineSelector } from './MachineSelector';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,9 +17,9 @@ const captured = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        rt: { themeName: 'light' },
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: false,
             colors: {
@@ -26,16 +28,18 @@ vi.mock('react-native-unistyles', () => ({
                 button: { primary: { background: '#00f' } },
             },
         },
-    }),
-}));
+        rt: { themeName: 'light' },
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/forms/SearchableListSelector', () => ({
     SearchableListSelector: (props: any) => {
@@ -58,17 +62,13 @@ describe('MachineSelector (disable offline)', () => {
             { id: 'm-offline', active: false, activeAt: 0, metadata: { displayName: 'Offline' } },
         ];
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(MachineSelector as any, {
+        await renderScreen(React.createElement(MachineSelector as any, {
                     machines,
                     selectedMachine: null,
                     onSelect: vi.fn(),
                     showCliGlyphs: false,
                     disableOfflineMachines: true,
-                }),
-            );
-        });
+                }));
 
         expect(captured.lastConfig).toBeTruthy();
         expect(typeof captured.lastConfig.isItemDisabled).toBe('function');
@@ -84,16 +84,12 @@ describe('MachineSelector (disable offline)', () => {
             { id: 'm-revoked', active: false, activeAt: 0, revokedAt: Date.now(), metadata: { displayName: 'Revoked' } },
         ];
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(MachineSelector as any, {
+        await renderScreen(React.createElement(MachineSelector as any, {
                     machines,
                     selectedMachine: null,
                     onSelect: vi.fn(),
                     showCliGlyphs: false,
-                }),
-            );
-        });
+                }));
 
         expect(Array.isArray(captured.lastItems)).toBe(true);
         expect((captured.lastItems as any[]).map((m) => m.id)).toEqual(['m-ok']);

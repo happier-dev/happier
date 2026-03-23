@@ -1,7 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -30,9 +32,12 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 describe('BashView', () => {
     it('tails long stdout by default', async () => {
@@ -49,9 +54,7 @@ describe('BashView', () => {
         });
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(BashView, makeToolViewProps(tool)));
-        });
+        tree = (await renderScreen(React.createElement(BashView, makeToolViewProps(tool)))).tree;
 
         expect(tree.root.findAllByType('CommandView' as any)).toHaveLength(1);
         expect(commandViewSpy).toHaveBeenCalledWith(
@@ -79,9 +82,7 @@ describe('BashView', () => {
         });
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })));
-        });
+        tree = (await renderScreen(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })))).tree;
 
         expect(tree.root.findAllByType('CommandView' as any)).toHaveLength(1);
         expect(commandViewSpy).toHaveBeenCalledWith(
@@ -111,9 +112,7 @@ describe('BashView', () => {
             },
         });
 
-        await act(async () => {
-            renderer.create(React.createElement(BashView, makeToolViewProps(tool)));
-        });
+        await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
 
         const lastCallProps = commandViewSpy.mock.calls.at(-1)?.[0] as { stdout?: unknown; stderr?: unknown };
         expect(lastCallProps.stdout == null || lastCallProps.stdout === '').toBe(true);
@@ -132,9 +131,7 @@ describe('BashView', () => {
             result: { stdout: '', stderr: '' },
         });
 
-        await act(async () => {
-            renderer.create(React.createElement(BashView, makeToolViewProps(tool)));
-        });
+        await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
 
         expect(commandViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -157,9 +154,7 @@ describe('BashView', () => {
         });
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })));
-        });
+        tree = (await renderScreen(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })))).tree;
 
         // The main command line stays clean.
         expect(commandViewSpy).toHaveBeenCalledWith(expect.objectContaining({ command: 'rm -rf /tmp/x' }));

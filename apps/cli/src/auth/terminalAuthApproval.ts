@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { readCredentials } from '@/persistence';
@@ -34,18 +35,25 @@ function encryptForTerminal(recipientPublicKey: Uint8Array, plaintext: Uint8Arra
   return bundle.toString('base64');
 }
 
+function buildApprovalPayload(creds: NonNullable<Awaited<ReturnType<typeof readCredentials>>>): Uint8Array {
+  const machineKey =
+    creds.encryption.type === 'legacy'
+      ? deriveAccountMachineKeyFromRecoverySecret(creds.encryption.secret)
+      : creds.encryption.machineKey;
+
+  const plaintext = new Uint8Array(33);
+  plaintext[0] = 0;
+  plaintext.set(machineKey, 1);
+  return plaintext;
+}
+
 export async function approveTerminalAuthRequest(params: Readonly<{ publicKey: string }>): Promise<void> {
   const recipientPk = decodePublicKey(params.publicKey);
   const creds = await readCredentials();
   if (!creds) {
     throw new Error('Not authenticated. Run `happier auth login` first.');
   }
-
-  const machineKey = new Uint8Array(randomBytes(32));
-  const plaintext = new Uint8Array(33);
-  plaintext[0] = 0;
-  plaintext.set(machineKey, 1);
-  const response = encryptForTerminal(recipientPk, plaintext);
+  const response = encryptForTerminal(recipientPk, buildApprovalPayload(creds));
 
   await axios.post(
     `${configuration.serverUrl}/v1/auth/response`,
@@ -53,4 +61,3 @@ export async function approveTerminalAuthRequest(params: Readonly<{ publicKey: s
     { headers: { Authorization: `Bearer ${creds.token}` } },
   );
 }
-

@@ -1,12 +1,9 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { readIntFlagValue } from '@/sessionControl/argvFlags';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
-import { waitForIdleViaSocket } from '@/sessionControl/sessionSocketAgentState';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { waitForSessionIdle } from '@/session/services/waitForSessionIdle';
 
 export async function cmdSessionWait(
   argv: string[],
@@ -34,55 +31,27 @@ export async function cmdSessionWait(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const result = await waitForSessionIdle({
+    credentials,
+    idOrPrefix,
+    timeoutMs: timeoutSeconds * 1000,
+  });
+  if (!result.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_wait',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
-  }
-  const sessionId = resolved.sessionId;
-
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_wait', error: { code: 'session_not_found', sessionId } });
-      return;
-    }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
+    throw new Error(result.code);
   }
 
-  const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-  const storedMode = resolveSessionStoredContentEncryptionMode(rawSession as any);
-  const agentStateCiphertext =
-    typeof (rawSession as any).agentState === 'string' ? String((rawSession as any).agentState).trim() : null;
-
-  try {
-    const res = await waitForIdleViaSocket({
-      token: credentials.token,
-      sessionId,
-      ctx,
-      sessionEncryptionMode: storedMode,
-      timeoutMs: timeoutSeconds * 1000,
-      initialAgentStateCiphertextBase64: agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,
-    });
-    if (json) {
-      printJsonEnvelope({ ok: true, kind: 'session_wait', data: { sessionId, ...res } });
-      return;
-    }
-    console.log(chalk.green('✓'), 'session idle');
-    console.log(JSON.stringify({ sessionId, ...res }, null, 2));
-  } catch (error) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_wait', error: { code: 'timeout' } });
-      return;
-    }
-    throw error;
+  if (json) {
+    printJsonEnvelope({ ok: true, kind: 'session_wait', data: { sessionId: result.sessionId, idle: true, observedAt: result.observedAt } });
+    return;
   }
+  console.log(chalk.green('✓'), 'session idle');
+  console.log(JSON.stringify({ sessionId: result.sessionId, idle: true, observedAt: result.observedAt }, null, 2));
 }

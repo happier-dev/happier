@@ -2,7 +2,7 @@ import { type Fastify } from "../../types";
 import { db } from "@/storage/db";
 import { z } from "zod";
 import { canManageSharing, canManagePermissionDelegation, areFriends } from "@/app/share/accessControl";
-import { ShareAccessLevel } from "@prisma/client";
+import { ShareAccessLevel } from "@/storage/prisma";
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 import { eventRouter, buildSessionSharedUpdate, buildSessionShareUpdatedUpdate, buildSessionShareRevokedUpdate } from "@/app/events/eventRouter";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";

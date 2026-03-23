@@ -1,7 +1,6 @@
 import { Header } from '@/components/navigation/Header';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Typography } from '@/constants/Typography';
-import { useSocketStatus } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { Image } from 'expo-image';
@@ -11,6 +10,7 @@ import { View, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Text } from '@/components/ui/text/Text';
+import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
 
 
 export const ZenHeader = React.memo(() => {
@@ -42,50 +42,7 @@ function HeaderTitleTablet() {
 
 function HeaderTitle() {
     const { theme } = useUnistyles();
-    const socketStatus = useSocketStatus();
-
-    const getConnectionStatus = () => {
-        const { status } = socketStatus;
-        switch (status) {
-            case 'connected':
-                return {
-                    color: theme.colors.status.connected,
-                    isPulsing: false,
-                    text: t('status.connected'),
-                    textColor: theme.colors.status.connected
-                };
-            case 'connecting':
-                return {
-                    color: theme.colors.status.connecting,
-                    isPulsing: true,
-                    text: t('status.connecting'),
-                    textColor: theme.colors.status.connecting
-                };
-            case 'disconnected':
-                return {
-                    color: theme.colors.status.disconnected,
-                    isPulsing: false,
-                    text: t('status.disconnected'),
-                    textColor: theme.colors.status.disconnected
-                };
-            case 'error':
-                return {
-                    color: theme.colors.status.error,
-                    isPulsing: false,
-                    text: t('status.error'),
-                    textColor: theme.colors.status.error
-                };
-            default:
-                return {
-                    color: theme.colors.status.default,
-                    isPulsing: false,
-                    text: '',
-                    textColor: theme.colors.status.default
-                };
-        }
-    };
-
-    const connectionStatus = getConnectionStatus();
+    const connectionHealth = useConnectionHealth();
 
     return (
         <View style={{ flex: 1, alignItems: 'center' }}>
@@ -97,15 +54,15 @@ function HeaderTitle() {
             }}>
                 {t('zen.title')}
             </Text>
-            {connectionStatus.text && (
+            {connectionHealth.statusLabelKey ? (
                 <View style={{
                     flexDirection: 'row',
                     alignItems: 'center',
                     marginTop: -2,
                 }}>
                     <StatusDot
-                        color={connectionStatus.color}
-                        isPulsing={connectionStatus.isPulsing}
+                        color={connectionHealth.color}
+                        isPulsing={connectionHealth.isPulsing}
                         size={6}
                         style={{ marginRight: 4 }}
                     />
@@ -113,13 +70,13 @@ function HeaderTitle() {
                         fontSize: 12,
                         fontWeight: '500',
                         lineHeight: 16,
-                        color: connectionStatus.textColor,
+                        color: connectionHealth.color,
                         ...Typography.default(),
                     }}>
-                        {connectionStatus.text}
+                        {t(connectionHealth.statusLabelKey)}
                     </Text>
                 </View>
-            )}
+            ) : null}
         </View>
     );
 }

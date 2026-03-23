@@ -19,6 +19,18 @@ describe('getProfileSupportedAgentIds', () => {
 
         expect(getProfileSupportedAgentIds(profile)).toEqual(['claude', 'gemini']);
     });
+
+    it('returns supported built-in agent ids from target-keyed compatibility', () => {
+        const profile = {
+            compatibilityByTargetKey: {
+                'agent:claude': true,
+                'agent:gemini': false,
+                'acpBackend:custom-backend': true,
+            },
+        } as any;
+
+        expect(getProfileSupportedAgentIds(profile)).toEqual(['claude']);
+    });
 });
 
 describe('getBuiltInProfileNameKey', () => {

@@ -13,7 +13,7 @@ function stackEnvExplicitlySetsPublicUrl({ env, stackName }) {
       resolveStackEnvPath(stackName).envPath;
     if (!envPath || !existsSync(envPath)) return false;
     const raw = readFileSync(envPath, 'utf-8');
-    return /^HAPPIER_STACK_SERVER_URL=/m.test(raw);
+    return /^HAPPIER_PUBLIC_SERVER_URL=/m.test(raw) || /^HAPPIER_STACK_SERVER_URL=/m.test(raw);
   } catch {
     return false;
   }
@@ -39,7 +39,10 @@ export function getPublicServerUrlEnvOverride({ env = process.env, serverPort, s
     getStackName(env);
   const defaultPublicUrl = `http://localhost:${serverPort}`;
 
-  let envPublicUrl = (env.HAPPIER_STACK_SERVER_URL ?? '').toString().trim() || '';
+  let envPublicUrl =
+    (env.HAPPIER_PUBLIC_SERVER_URL ?? '').toString().trim() ||
+    (env.HAPPIER_STACK_SERVER_URL ?? '').toString().trim() ||
+    '';
   envPublicUrl = normalizeUrlNoTrailingSlash(envPublicUrl);
 
   // Safety: for non-main stacks, ignore a global SERVER_URL unless it was explicitly set in the stack env file.

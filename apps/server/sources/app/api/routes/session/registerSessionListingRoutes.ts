@@ -12,9 +12,63 @@ import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCata
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 import { db } from "@/storage/db";
 import { type Fastify } from "../../types";
+import {
+    createV2SessionListRowSelect,
+    createV2SessionListVisibilityWhere,
+    encodeSessionDataEncryptionKey,
+    mapV2SessionListRow,
+    type V2SessionListRow,
+} from "./v2SessionListRows";
 
-function encodeDataEncryptionKey(value: Uint8Array | null): string | null {
-    return value ? Buffer.from(value).toString("base64") : null;
+const V2_ACTIVE_SESSION_LIST_QUERYSTRING_SCHEMA = z.object({
+    limit: z.coerce.number().int().min(1).max(500).default(150),
+}).optional();
+
+const V2_PAGED_SESSION_LIST_QUERYSTRING_SCHEMA = z.object({
+    cursor: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+}).optional();
+
+const ACTIVE_SESSION_WINDOW_MS = 1000 * 60 * 15;
+
+async function findV2SessionListRows(params: Readonly<{
+    userId: string;
+    orderBy: Prisma.SessionOrderByWithRelationInput;
+    take: number;
+    where?: Prisma.SessionWhereInput;
+}>): Promise<V2SessionListRow[]> {
+    const { userId, orderBy, take, where } = params;
+
+    return await db.session.findMany({
+        where: {
+            ...createV2SessionListVisibilityWhere({ userId }),
+            ...(where ?? {}),
+        },
+        orderBy,
+        take,
+        select: createV2SessionListRowSelect({ userId }),
+    });
+}
+
+function mapV2SessionListRows(params: Readonly<{ rows: ReadonlyArray<V2SessionListRow>; userId: string }>) {
+    return params.rows.map((row) => mapV2SessionListRow({ row, userId: params.userId }));
+}
+
+function createV2SessionListPage(params: Readonly<{
+    rows: ReadonlyArray<V2SessionListRow>;
+    userId: string;
+    limit: number;
+}>) {
+    const { rows, userId, limit } = params;
+    const hasNext = rows.length > limit;
+    const resultRows = hasNext ? rows.slice(0, limit) : rows;
+    const lastRow = resultRows[resultRows.length - 1] ?? null;
+
+    return {
+        sessions: mapV2SessionListRows({ rows: resultRows, userId }),
+        nextCursor: hasNext && lastRow ? encodeV2SessionListCursorV1(lastRow.id) : null,
+        hasNext,
+    };
 }
 
 export function registerSessionListingRoutes(app: Fastify) {
@@ -42,6 +96,9 @@ export function registerSessionListingRoutes(app: Fastify) {
                     metadataVersion: true,
                     agentState: true,
                     agentStateVersion: true,
+                    lastViewedSessionSeq: true,
+                    pendingPermissionRequestCount: true,
+                    pendingUserActionRequestCount: true,
                     dataEncryptionKey: true,
                     pendingCount: true,
                     pendingVersion: true,
@@ -71,6 +128,9 @@ export function registerSessionListingRoutes(app: Fastify) {
                             metadataVersion: true,
                             agentState: true,
                             agentStateVersion: true,
+                            lastViewedSessionSeq: true,
+                            pendingPermissionRequestCount: true,
+                            pendingUserActionRequestCount: true,
                             pendingCount: true,
                             pendingVersion: true,
                             active: true,
@@ -95,9 +155,12 @@ export function registerSessionListingRoutes(app: Fastify) {
                 metadataVersion: v.metadataVersion,
                 agentState: v.agentState,
                 agentStateVersion: v.agentStateVersion,
+                lastViewedSessionSeq: v.lastViewedSessionSeq ?? null,
+                pendingPermissionRequestCount: v.pendingPermissionRequestCount,
+                pendingUserActionRequestCount: v.pendingUserActionRequestCount,
                 pendingCount: v.pendingCount,
                 pendingVersion: v.pendingVersion,
-                dataEncryptionKey: encodeDataEncryptionKey(v.dataEncryptionKey),
+                dataEncryptionKey: encodeSessionDataEncryptionKey(v.dataEncryptionKey),
                 lastMessage: null,
             })),
             ...shares.map((share) => {
@@ -115,6 +178,9 @@ export function registerSessionListingRoutes(app: Fastify) {
                     metadataVersion: v.metadataVersion,
                     agentState: v.agentState,
                     agentStateVersion: v.agentStateVersion,
+                    lastViewedSessionSeq: v.lastViewedSessionSeq ?? null,
+                    pendingPermissionRequestCount: v.pendingPermissionRequestCount,
+                    pendingUserActionRequestCount: v.pendingUserActionRequestCount,
                     pendingCount: v.pendingCount,
                     pendingVersion: v.pendingVersion,
                     dataEncryptionKey:
@@ -141,55 +207,24 @@ export function registerSessionListingRoutes(app: Fastify) {
             response: {
                 200: V2SessionListResponseSchema,
             },
-            querystring: z.object({
-                limit: z.coerce.number().int().min(1).max(500).default(150)
-            }).optional()
-        }
+            querystring: V2_ACTIVE_SESSION_LIST_QUERYSTRING_SCHEMA,
+        },
     }, async (request, reply) => {
         const userId = request.userId;
         const limit = request.query?.limit || 150;
 
-        const sessions = await db.session.findMany({
+        const sessions = await findV2SessionListRows({
+            userId,
             where: {
-                accountId: userId,
                 active: true,
-                lastActiveAt: { gt: new Date(Date.now() - 1000 * 60 * 15) },
+                lastActiveAt: { gt: new Date(Date.now() - ACTIVE_SESSION_WINDOW_MS) },
             },
             orderBy: { lastActiveAt: 'desc' },
             take: limit,
-            select: {
-                id: true,
-                seq: true,
-                createdAt: true,
-                updatedAt: true,
-                archivedAt: true,
-                encryptionMode: true,
-                metadata: true,
-                metadataVersion: true,
-                agentState: true,
-                agentStateVersion: true,
-                dataEncryptionKey: true,
-                active: true,
-                lastActiveAt: true,
-            }
         });
 
         return reply.send({
-            sessions: sessions.map((v) => ({
-                id: v.id,
-                seq: v.seq,
-                createdAt: v.createdAt.getTime(),
-                updatedAt: v.updatedAt.getTime(),
-                active: v.active,
-                activeAt: v.lastActiveAt.getTime(),
-                archivedAt: v.archivedAt?.getTime() ?? null,
-                encryptionMode: v.encryptionMode === "plain" ? "plain" : "e2ee",
-                metadata: v.metadata,
-                metadataVersion: v.metadataVersion,
-                agentState: v.agentState,
-                agentStateVersion: v.agentStateVersion,
-                dataEncryptionKey: encodeDataEncryptionKey(v.dataEncryptionKey),
-            }))
+            sessions: mapV2SessionListRows({ rows: sessions, userId }),
         });
     });
 
@@ -200,10 +235,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 200: V2SessionListResponseSchema,
                 400: z.object({ error: z.literal('Invalid cursor format') }),
             },
-            querystring: z.object({
-                cursor: z.string().optional(),
-                limit: z.coerce.number().int().min(1).max(200).default(50),
-            }).optional()
+            querystring: V2_PAGED_SESSION_LIST_QUERYSTRING_SCHEMA,
         },
         config: {
             rateLimit: resolveApiHotEndpointRateLimit(process.env, "sessions.list"),
@@ -221,87 +253,19 @@ export function registerSessionListingRoutes(app: Fastify) {
             cursorSessionId = decoded;
         }
 
-        const where: Prisma.SessionWhereInput = {
-            OR: [
-                { accountId: userId },
-                { shares: { some: { sharedWithUserId: userId } } },
-            ]
-        };
+        const where: Prisma.SessionWhereInput = {};
         if (cursorSessionId) {
             where.id = { lt: cursorSessionId };
         }
 
-        const sessions = await db.session.findMany({
+        const sessions = await findV2SessionListRows({
+            userId,
             where,
             orderBy: { id: 'desc' as const },
             take: limit + 1,
-            select: {
-                id: true,
-                seq: true,
-                accountId: true,
-                createdAt: true,
-                updatedAt: true,
-                archivedAt: true,
-                encryptionMode: true,
-                metadata: true,
-                metadataVersion: true,
-                agentState: true,
-                agentStateVersion: true,
-                dataEncryptionKey: true,
-                pendingCount: true,
-                pendingVersion: true,
-                active: true,
-                lastActiveAt: true,
-                shares: {
-                    where: { sharedWithUserId: userId },
-                    select: {
-                        encryptedDataKey: true,
-                        accessLevel: true,
-                        canApprovePermissions: true,
-                    }
-                }
-            }
         });
 
-        const hasNext = sessions.length > limit;
-        const resultSessions = hasNext ? sessions.slice(0, limit) : sessions;
-        let nextCursor: string | null = null;
-        if (hasNext && resultSessions.length > 0) {
-            const lastSession = resultSessions[resultSessions.length - 1];
-            nextCursor = encodeV2SessionListCursorV1(lastSession.id);
-        }
-
-        return reply.send({
-            sessions: resultSessions.map((v) => ({
-                id: v.id,
-                seq: v.seq,
-                createdAt: v.createdAt.getTime(),
-                updatedAt: v.updatedAt.getTime(),
-                active: v.active,
-                activeAt: v.lastActiveAt.getTime(),
-                archivedAt: v.archivedAt?.getTime() ?? null,
-                encryptionMode: v.encryptionMode === "plain" ? "plain" : "e2ee",
-                metadata: v.metadata,
-                metadataVersion: v.metadataVersion,
-                agentState: v.agentState,
-                agentStateVersion: v.agentStateVersion,
-                pendingCount: v.pendingCount,
-                pendingVersion: v.pendingVersion,
-                dataEncryptionKey: v.accountId === userId
-                    ? encodeDataEncryptionKey(v.dataEncryptionKey)
-                    : (v.shares[0]?.encryptedDataKey ? Buffer.from(v.shares[0].encryptedDataKey).toString('base64') : null),
-                share: v.accountId === userId
-                    ? null
-                    : (v.shares[0]
-                        ? {
-                            accessLevel: v.shares[0].accessLevel,
-                            canApprovePermissions: v.shares[0].canApprovePermissions,
-                        }
-                        : null),
-            })),
-            nextCursor,
-            hasNext
-        });
+        return reply.send(createV2SessionListPage({ rows: sessions, userId, limit }));
     });
 
     app.get('/v2/sessions/archived', {
@@ -311,10 +275,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 200: V2SessionListResponseSchema,
                 400: z.object({ error: z.literal('Invalid cursor format') }),
             },
-            querystring: z.object({
-                cursor: z.string().optional(),
-                limit: z.coerce.number().int().min(1).max(200).default(50),
-            }).optional(),
+            querystring: V2_PAGED_SESSION_LIST_QUERYSTRING_SCHEMA,
         },
     }, async (request, reply) => {
         const userId = request.userId;
@@ -331,86 +292,19 @@ export function registerSessionListingRoutes(app: Fastify) {
 
         const where: Prisma.SessionWhereInput = {
             archivedAt: { not: null },
-            OR: [
-                { accountId: userId },
-                { shares: { some: { sharedWithUserId: userId } } },
-            ],
         };
         if (cursorSessionId) {
             where.id = { lt: cursorSessionId };
         }
 
-        const sessions = await db.session.findMany({
+        const sessions = await findV2SessionListRows({
+            userId,
             where,
             orderBy: { id: 'desc' as const },
             take: limit + 1,
-            select: {
-                id: true,
-                seq: true,
-                accountId: true,
-                createdAt: true,
-                updatedAt: true,
-                archivedAt: true,
-                encryptionMode: true,
-                metadata: true,
-                metadataVersion: true,
-                agentState: true,
-                agentStateVersion: true,
-                dataEncryptionKey: true,
-                pendingCount: true,
-                pendingVersion: true,
-                active: true,
-                lastActiveAt: true,
-                shares: {
-                    where: { sharedWithUserId: userId },
-                    select: {
-                        encryptedDataKey: true,
-                        accessLevel: true,
-                        canApprovePermissions: true,
-                    },
-                },
-            },
         });
 
-        const hasNext = sessions.length > limit;
-        const resultSessions = hasNext ? sessions.slice(0, limit) : sessions;
-        let nextCursor: string | null = null;
-        if (hasNext && resultSessions.length > 0) {
-            const lastSession = resultSessions[resultSessions.length - 1];
-            nextCursor = encodeV2SessionListCursorV1(lastSession.id);
-        }
-
-        return reply.send({
-            sessions: resultSessions.map((v) => ({
-                id: v.id,
-                seq: v.seq,
-                createdAt: v.createdAt.getTime(),
-                updatedAt: v.updatedAt.getTime(),
-                active: v.active,
-                activeAt: v.lastActiveAt.getTime(),
-                archivedAt: v.archivedAt?.getTime() ?? null,
-                encryptionMode: v.encryptionMode === "plain" ? "plain" : "e2ee",
-                metadata: v.metadata,
-                metadataVersion: v.metadataVersion,
-                agentState: v.agentState,
-                agentStateVersion: v.agentStateVersion,
-                pendingCount: v.pendingCount,
-                pendingVersion: v.pendingVersion,
-                dataEncryptionKey: v.accountId === userId
-                    ? encodeDataEncryptionKey(v.dataEncryptionKey)
-                    : (v.shares[0]?.encryptedDataKey ? Buffer.from(v.shares[0].encryptedDataKey).toString('base64') : null),
-                share: v.accountId === userId
-                    ? null
-                    : (v.shares[0]
-                        ? {
-                            accessLevel: v.shares[0].accessLevel,
-                            canApprovePermissions: v.shares[0].canApprovePermissions,
-                        }
-                        : null),
-            })),
-            nextCursor,
-            hasNext,
-        });
+        return reply.send(createV2SessionListPage({ rows: sessions, userId, limit }));
     });
 
     app.get('/v2/sessions/:sessionId', {
@@ -448,6 +342,9 @@ export function registerSessionListingRoutes(app: Fastify) {
                 metadataVersion: true,
                 agentState: true,
                 agentStateVersion: true,
+                lastViewedSessionSeq: true,
+                pendingPermissionRequestCount: true,
+                pendingUserActionRequestCount: true,
                 dataEncryptionKey: true,
                 pendingCount: true,
                 pendingVersion: true,
@@ -482,10 +379,13 @@ export function registerSessionListingRoutes(app: Fastify) {
                 metadataVersion: session.metadataVersion,
                 agentState: session.agentState,
                 agentStateVersion: session.agentStateVersion,
+                lastViewedSessionSeq: session.lastViewedSessionSeq ?? null,
+                pendingPermissionRequestCount: session.pendingPermissionRequestCount,
+                pendingUserActionRequestCount: session.pendingUserActionRequestCount,
                 pendingCount: session.pendingCount,
                 pendingVersion: session.pendingVersion,
                 dataEncryptionKey: session.accountId === userId
-                    ? encodeDataEncryptionKey(session.dataEncryptionKey)
+                    ? encodeSessionDataEncryptionKey(session.dataEncryptionKey)
                     : (session.shares[0]?.encryptedDataKey ? Buffer.from(session.shares[0].encryptedDataKey).toString('base64') : null),
                 share: session.accountId === userId
                     ? null

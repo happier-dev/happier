@@ -54,8 +54,8 @@ describe('canonicalizeToolNameV2 mappings', () => {
     expect(canonicalize('find')).toBe('Glob');
   });
 
-  it.each(['TaskCreate', 'TaskList', 'TaskUpdate', 'task'])('normalizes `%s` to Task', (toolName) => {
-    expect(canonicalize(toolName)).toBe('Task');
+  it.each(['TaskCreate', 'TaskList', 'TaskUpdate', 'task', 'Agent', 'SubAgent'])('normalizes `%s` to SubAgent', (toolName) => {
+    expect(canonicalize(toolName)).toBe('SubAgent');
   });
 
   it.each([
@@ -103,6 +103,15 @@ describe('canonicalizeToolNameV2 mappings', () => {
     { input: { query: 'who is the president' }, expected: 'WebSearch' },
   ])('normalizes fetch input to `$expected`', ({ input, expected }) => {
     expect(canonicalize('fetch', input)).toBe(expected);
+  });
+
+  it.each([
+    { toolName: 'read', input: { title: 'web_fetch', url: 'https://kiro.dev/docs/cli/acp/' }, expected: 'WebFetch' },
+    { toolName: 'read', input: { _acp: { title: 'web_fetch' }, url: 'https://kiro.dev/docs/cli/acp/' }, expected: 'WebFetch' },
+    { toolName: 'search', input: { title: 'web_search', query: 'Agent Client Protocol ACP Kiro docs' }, expected: 'WebSearch' },
+    { toolName: 'fetch', input: { _acp: { title: 'web_search' }, query: 'Agent Client Protocol ACP Kiro docs' }, expected: 'WebSearch' },
+  ])('prefers ACP web wrapper title hints for `$toolName`', ({ toolName, input, expected }) => {
+    expect(canonicalize(toolName, input)).toBe(expected);
   });
 
   it('detects Workspace Indexing Permission prompts emitted as Unknown tool', () => {

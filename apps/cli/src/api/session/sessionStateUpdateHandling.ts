@@ -1,10 +1,39 @@
 import { decodeBase64, decrypt } from '../encryption';
 import type { AgentState, Metadata, Update } from '../types';
+import { tryParseJsonObject } from '@/utils/tryParseJsonRecord';
+
+function tryDecodeSessionStateValue<T>(params: {
+    rawValue: unknown;
+    sessionEncryptionMode: 'e2ee' | 'plain';
+    encryptionKey: Uint8Array;
+    encryptionVariant: 'legacy' | 'dataKey';
+}): { ok: true; value: T | null } | { ok: false } {
+    if (params.rawValue === null) {
+        return { ok: true, value: null };
+    }
+
+    if (typeof params.rawValue !== 'string') {
+        return { ok: false };
+    }
+
+    if (params.sessionEncryptionMode === 'plain') {
+        const parsed = tryParseJsonObject(params.rawValue);
+        return parsed ? { ok: true, value: parsed as T } : { ok: false };
+    }
+
+    try {
+        const decrypted = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(params.rawValue));
+        return decrypted !== null ? { ok: true, value: decrypted as T } : { ok: false };
+    } catch {
+        return { ok: false };
+    }
+}
 
 export function handleSessionStateUpdate(params: {
     update: Update;
     updateSource: 'session-scoped' | 'user-scoped';
     sessionId: string;
+    sessionEncryptionMode: 'e2ee' | 'plain';
     metadata: Metadata | null;
     metadataVersion: number;
     agentState: AgentState | null;
@@ -66,20 +95,30 @@ export function handleSessionStateUpdate(params: {
         let agentStateVersion = params.agentStateVersion;
 
         if (body.metadata && body.metadata.version > metadataVersion) {
-            const nextMetadata = body.metadata.value;
-            metadata =
-                typeof nextMetadata === 'string'
-                    ? decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(nextMetadata))
-                    : null;
-            metadataVersion = body.metadata.version;
-            params.onMetadataUpdated();
+            const decodedMetadata = tryDecodeSessionStateValue<Metadata>({
+                rawValue: body.metadata.value,
+                sessionEncryptionMode: params.sessionEncryptionMode,
+                encryptionKey: params.encryptionKey,
+                encryptionVariant: params.encryptionVariant,
+            });
+            if (decodedMetadata.ok) {
+                metadata = decodedMetadata.value;
+                metadataVersion = body.metadata.version;
+                params.onMetadataUpdated();
+            }
         }
 
         if (body.agentState && body.agentState.version > agentStateVersion) {
-            agentState = body.agentState.value
-                ? decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(body.agentState.value))
-                : null;
-            agentStateVersion = body.agentState.version;
+            const decodedAgentState = tryDecodeSessionStateValue<AgentState>({
+                rawValue: body.agentState.value,
+                sessionEncryptionMode: params.sessionEncryptionMode,
+                encryptionKey: params.encryptionKey,
+                encryptionVariant: params.encryptionVariant,
+            });
+            if (decodedAgentState.ok) {
+                agentState = decodedAgentState.value;
+                agentStateVersion = body.agentState.version;
+            }
         }
 
         return {

@@ -6,11 +6,11 @@
  */
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import { kiloTransport } from '@/backends/kilo/acp/transport';
 import type { PermissionMode } from '@/api/types';
-import { buildOpenCodeFamilyPermissionEnv } from '@/backends/opencode/utils/opencodeFamilyPermissionEnv';
+import { buildOpenCodeFamilyPermissionEnv } from '@/backends/openCodeFamily/permission/openCodeFamilyPermissionEnv';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
 export interface KiloBackendOptions extends AgentFactoryOptions {
   mcpServers?: Record<string, McpServerConfig>;
@@ -19,11 +19,12 @@ export interface KiloBackendOptions extends AgentFactoryOptions {
 }
 
 export function createKiloBackend(options: KiloBackendOptions): AgentBackend {
+  const launch = requireProviderCliLaunchSpec('kilo', { processEnv: { ...process.env, ...options.env } });
   const backendOptions: AcpBackendOptions = {
     agentName: 'kilo',
     cwd: options.cwd,
-    command: resolveCliPathOverride({ agentId: 'kilo' }) ?? 'kilo',
-    args: ['acp'],
+    command: launch.command,
+    args: [...launch.args, 'acp'],
     env: {
       ...options.env,
       ...buildOpenCodeFamilyPermissionEnv(options.permissionMode),

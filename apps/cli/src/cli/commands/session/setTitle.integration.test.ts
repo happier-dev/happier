@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 const { mockIo } = vi.hoisted(() => ({
   mockIo: vi.fn(),
@@ -13,16 +14,15 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('happier session set-title (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
 
   const sessionId = 'sess_integration_set_title_123';
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-set-title-'));
+    happyHomeDir = await createTempDir('happier-cli-session-set-title-');
 
     const secret = new Uint8Array(32).fill(7);
     const { encodeBase64, encryptLegacy } = await import('@/api/encryption');
@@ -74,41 +74,19 @@ describe('happier session set-title (integration)', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
-    mockIo.mockReset();
-    mockIo.mockImplementation(() => {
-      const handlers = new Map<string, Array<(...args: any[]) => void>>();
-      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        list.push(cb);
-        handlers.set(event, list);
-      });
-      const off = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        handlers.set(event, list.filter((v) => v !== cb));
-      });
-      const connect = vi.fn(() => {
-        const list = handlers.get('connect') ?? [];
-        for (const cb of list) cb();
-      });
-      const emit = vi.fn(async (event: string, ...args: any[]) => {
+    const socket = createApiSessionSocketStub({
+      emit: async (event: string, args: unknown[]) => {
         if (event !== 'update-metadata') return;
-        const [data, callback] = args;
+        const [data, callback] = args as [any, ((value: unknown) => void) | undefined];
         const { decodeBase64, decryptLegacy } = await import('@/api/encryption');
         const decrypted = decryptLegacy(decodeBase64(String(data?.metadata ?? ''), 'base64'), secret);
         expect(decrypted?.summary?.text).toBe('New Title');
         if (typeof callback === 'function') {
           callback({ result: 'success', version: 1, metadata: data.metadata });
         }
-      });
-      return {
-        on,
-        off,
-        connect,
-        emit,
-        disconnect: vi.fn(),
-        close: vi.fn(),
-      };
+      },
     });
+    bindApiSessionSocketMock(mockIo, socket);
   });
 
   afterEach(async () => {
@@ -116,14 +94,13 @@ describe('happier session set-title (integration)', () => {
       await new Promise<void>((resolve, reject) => server!.close((e) => (e ? reject(e) : resolve())));
     }
     server = null;
-    if (happyHomeDir) await rm(happyHomeDir, { recursive: true, force: true });
+    if (happyHomeDir) {
+      await removeTempDir(happyHomeDir);
+      happyHomeDir = '';
+    }
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -132,8 +109,7 @@ describe('happier session set-title (integration)', () => {
   it('updates session metadata title via update-metadata socket event', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(['set-title', sessionId, 'New Title', '--json'], {
@@ -143,14 +119,13 @@ describe('happier session set-title (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_set_title');
       expect(parsed.data?.sessionId).toBe(sessionId);
       expect(parsed.data?.title).toBe('New Title');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });
-

@@ -192,12 +192,20 @@ export async function fetchMessagesPage(params: {
   sessionId: string;
   afterSeq: number;
   limit?: number;
+  scope?: 'main' | 'sidechain' | 'all';
+  sidechainId?: string;
 }): Promise<{ messages: SessionMessageRow[]; nextAfterSeq: number | null }> {
   const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) ? params.limit : 500;
   const endpoint = `${params.baseUrl}/v1/sessions/${params.sessionId}/messages`;
   const url = new URL(endpoint);
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('afterSeq', String(params.afterSeq));
+  if (params.scope) {
+    url.searchParams.set('scope', params.scope);
+  }
+  if (params.sidechainId) {
+    url.searchParams.set('sidechainId', params.sidechainId);
+  }
 
   const res = await fetchJson<SessionMessagesPageResponse>(url.toString(), {
     headers: { Authorization: `Bearer ${params.token}` },
@@ -235,6 +243,27 @@ export async function fetchAllMessages(baseUrl: string, token: string, sessionId
   return await paginateMessages({
     startAfterSeq: 0,
     fetchPage: async (afterSeq) => await fetchMessagesPage({ baseUrl, token, sessionId, afterSeq, limit: 500 }),
+  });
+}
+
+export async function fetchAllSidechainMessages(params: {
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  sidechainId: string;
+}): Promise<SessionMessageRow[]> {
+  return await paginateMessages({
+    startAfterSeq: 0,
+    fetchPage: async (afterSeq) =>
+      await fetchMessagesPage({
+        baseUrl: params.baseUrl,
+        token: params.token,
+        sessionId: params.sessionId,
+        afterSeq,
+        limit: 500,
+        scope: 'sidechain',
+        sidechainId: params.sidechainId,
+      }),
   });
 }
 

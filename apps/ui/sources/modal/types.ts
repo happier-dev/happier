@@ -66,6 +66,7 @@ export interface ModalContextValue {
     showModal: (config: Omit<ModalConfig, 'id'>) => string;
     hideModal: (id: string) => void;
     hideAllModals: () => void;
+    updateCustomModalProps: (id: string, props: Record<string, unknown>) => void;
 }
 
 export interface IModal {
@@ -87,6 +88,10 @@ export interface IModal {
         component: ComponentType<P>;
         props?: Omit<P, keyof CustomModalInjectedProps>;
     }): string;
+    update<P extends CustomModalInjectedProps>(
+        id: string,
+        props: Partial<Omit<P, keyof CustomModalInjectedProps>>,
+    ): void;
     hide(id: string): void;
     hideAll(): void;
 }

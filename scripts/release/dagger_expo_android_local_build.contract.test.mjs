@@ -10,9 +10,11 @@ test('Dagger module exposes expo-android-local-build function', () => {
   assert.match(src, /\bexpoAndroidLocalBuild\b/);
   assert.match(
     src,
-    /container\(\{\s*platform:\s*"linux\/amd64"\s*}\)[\s\S]*?from\("ghcr\.io\/cirruslabs\/android-sdk:34"\)/,
-    'expected Android build container to run as linux/amd64 (Android SDK CMake binaries are not arm64)',
+    /containerPlatform:\s*string\s*=\s*"linux\/amd64"/,
+    'expected expoAndroidLocalBuild to default the Android build container to linux/amd64 (Android SDK CMake binaries are not arm64)',
   );
+  assert.match(src, /dag\.container\(\{\s*platform:\s*containerPlatform\s*}\)/);
+  assert.match(src, /from\("ghcr\.io\/cirruslabs\/android-sdk:34"\)/);
   assert.doesNotMatch(
     src,
     /\bexpoAndroidLocalBuild\b[\s\S]*?\.export\(/,

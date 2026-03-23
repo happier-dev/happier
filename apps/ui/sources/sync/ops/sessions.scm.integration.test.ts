@@ -65,7 +65,7 @@ describe('session scm ops integration (git backend)', () => {
                     writeRemoteFetch: false,
                     writeRemotePull: false,
                     writeRemotePush: false,
-                    workspaceWorktreeCreate: false,
+                    worktreeCreate: false,
                     changeSetModel: 'working-copy',
                     supportedDiffAreas: ['pending'],
                 },

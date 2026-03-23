@@ -316,15 +316,16 @@ async function main() {
   }
 
   // Convenience:
-  // `yarn mobile:install` should install a Release iOS build for the repo-local stack without requiring users
+  // `yarn mobile:install` should install a local iOS build for the repo-local stack without requiring users
   // to know the generated stack name, and should run the full stack install flow (prebuild, identity, etc).
   if (subcommand === 'mobile:install') {
     const forwarded = argv.slice(1);
+    const isDevelopmentInstall = forwarded.some((a) => String(a ?? '').trim() === '--app-env=development');
     const hasName = forwarded.some((a) => {
       const s = String(a ?? '').trim();
       return s === '--name' || s.startsWith('--name=') || s === '--app-name' || s.startsWith('--app-name=');
     });
-    const defaultNameArg = hasName ? [] : ['--name=Happier (Local)'];
+    const defaultNameArg = hasName ? [] : [isDevelopmentInstall ? '--name=Happier Dev (Local)' : '--name=Happier (Local)'];
     argv = ['stack', 'mobile:install', stacklessName, ...defaultNameArg, ...forwarded];
   }
 

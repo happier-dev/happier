@@ -1,4 +1,4 @@
-import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
 
 import { runEphemeralExecutionRunTextPromptWithRunnerConfig } from '@/agent/executionRuns/tasks/runEphemeralExecutionRunTextPromptWithRunnerConfig';
 
@@ -7,7 +7,7 @@ import type { HappierReplayDialogItem } from '../types';
 export type ReplaySummaryTextPromptRunner = (params: Readonly<{
   cwd: string;
   sessionId: string;
-  backendId: string;
+  backendTarget: BackendTargetRefV1;
   modelId?: string;
   permissionMode: string;
   intent: string;
@@ -23,6 +23,8 @@ function buildReplaySummaryPrompt(params: Readonly<{
   lines.push('Generate a concise, information-dense summary of the conversation so far.');
   lines.push('This summary will be used to resume/fork a session when vendor resume is unavailable.');
   lines.push('Return plain text only (no markdown code fences).');
+  lines.push('Preserve exact identifiers, codes, names, numbers, paths, and user constraints when they matter.');
+  lines.push('Do not drop older facts just because later turns are shorter or more repetitive.');
   lines.push('');
   lines.push('Use this exact template:');
   lines.push('---');
@@ -66,8 +68,8 @@ export async function runReplaySummaryForDialog(params: Readonly<{
     runTextPrompt?: ReplaySummaryTextPromptRunner;
   }>;
 }>): Promise<string> {
-  const backendId = String(params.runner?.backendId ?? '').trim();
-  if (!backendId) return '';
+  const backendTarget = params.runner?.backendTarget;
+  if (!backendTarget) return '';
   const modelId = typeof params.runner.modelId === 'string' && params.runner.modelId.trim().length > 0 ? params.runner.modelId.trim() : undefined;
   const permissionMode =
     typeof params.runner.permissionMode === 'string' && params.runner.permissionMode.trim().length > 0
@@ -83,12 +85,20 @@ export async function runReplaySummaryForDialog(params: Readonly<{
     return await runEphemeralExecutionRunTextPromptWithRunnerConfig({
       cwd: p.cwd,
       sessionId: p.sessionId,
-      runner: { backendId: p.backendId, modelId: p.modelId, permissionMode: p.permissionMode },
+      runner: { backendTarget: p.backendTarget, modelId: p.modelId, permissionMode: p.permissionMode },
       intent: p.intent,
       prompt: p.prompt,
     });
   });
-  const out = await runTextPrompt({ cwd: params.cwd, sessionId: params.parentSessionId, backendId, modelId, permissionMode, intent: 'replay_summary', prompt });
+  const out = await runTextPrompt({
+    cwd: params.cwd,
+    sessionId: params.parentSessionId,
+    backendTarget,
+    modelId,
+    permissionMode,
+    intent: 'replay_summary',
+    prompt,
+  });
 
   return String(out ?? '').trim();
 }

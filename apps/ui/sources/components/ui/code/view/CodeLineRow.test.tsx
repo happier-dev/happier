@@ -1,58 +1,37 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+            Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        colors: {
-            textSecondary: '#666',
-            syntaxKeyword: '#b00',
-            syntaxString: '#070',
-            syntaxNumber: '#00b',
-            syntaxFunction: '#850',
-            syntaxDefault: '#111',
-            syntaxComment: '#777',
-            syntaxBracket1: '#a00',
-            syntaxBracket2: '#0a0',
-            syntaxBracket3: '#00a',
-            syntaxBracket4: '#aa0',
-            syntaxBracket5: '#0aa',
-            surfaceHigh: '#eee',
-            diff: {
-                addedBg: '#e6ffed',
-                removedBg: '#ffeef0',
-                hunkHeaderBg: '#f6f8fa',
-                addedText: '#22863a',
-                removedText: '#b31d28',
-                hunkHeaderText: '#111',
-                contextText: '#24292e',
-                inlineAddedBg: '#acfaa6',
-                inlineAddedText: '#0a3f0a',
-                inlineRemovedBg: '#ffcecb',
-                inlineRemovedText: '#5a0a05',
-            },
-            shadow: { color: '#000', opacity: 0.2 },
-        },
-    };
-
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: { create: (v: any) => (typeof v === 'function' ? v(theme) : v) },
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 describe('CodeLineRow', () => {
@@ -60,9 +39,7 @@ describe('CodeLineRow', () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <CodeLineRow
+        tree = (await renderScreen(<CodeLineRow
                     line={{
                         id: '1',
                         sourceIndex: 0,
@@ -76,9 +53,7 @@ describe('CodeLineRow', () => {
                     }}
                     selected={false}
                     onPressLine={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         const serialized = JSON.stringify(tree!.toJSON());
         expect(serialized).toContain('+');
@@ -89,9 +64,7 @@ describe('CodeLineRow', () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <CodeLineRow
+        tree = (await renderScreen(<CodeLineRow
                     line={{
                         id: '1',
                         sourceIndex: 0,
@@ -109,11 +82,9 @@ describe('CodeLineRow', () => {
                         language: 'typescript',
                         maxLineLength: 10_000,
                     }}
-                />,
-            );
-        });
+                />)).tree;
 
-        const keywordNodes = tree!.root.findAll((node) => {
+        const keywordNodes = tree!.findAll((node) => {
             if ((node as any).type !== 'Text') return false;
             return (node.children || []).join('') === 'const';
         });
@@ -121,7 +92,8 @@ describe('CodeLineRow', () => {
         expect(keywordNodes.length).toBeGreaterThan(0);
         const keywordStyle = keywordNodes[0]!.props.style;
         const flattened = Array.isArray(keywordStyle) ? keywordStyle.flat() : [keywordStyle];
-        expect(flattened.some((s: any) => s?.color === '#b00')).toBe(true);
+        const theme = createThemeFixture() as any;
+        expect(flattened.some((s: any) => s?.color === theme.colors.syntaxKeyword)).toBe(true);
         expect(flattened.some((s: any) => s?.fontWeight === '600' || s?.fontWeight === 600)).toBe(true);
     });
 
@@ -129,9 +101,7 @@ describe('CodeLineRow', () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <CodeLineRow
+        tree = (await renderScreen(<CodeLineRow
                     line={{
                         id: '1',
                         sourceIndex: 0,
@@ -150,11 +120,9 @@ describe('CodeLineRow', () => {
                         language: 'typescript',
                         maxLineLength: 10_000,
                     }}
-                />,
-            );
-        });
+                />)).tree;
 
-        const keywordNodes = tree!.root.findAll((node) => {
+        const keywordNodes = tree!.findAll((node) => {
             if ((node as any).type !== 'Text') return false;
             return (node.children || []).join('') === 'const';
         });
@@ -162,7 +130,8 @@ describe('CodeLineRow', () => {
         expect(keywordNodes.length).toBeGreaterThan(0);
         const keywordStyle = keywordNodes[0]!.props.style;
         const flattened = Array.isArray(keywordStyle) ? keywordStyle.flat() : [keywordStyle];
-        expect(flattened.some((s: any) => s?.color === '#b00')).toBe(true);
+        const theme = createThemeFixture() as any;
+        expect(flattened.some((s: any) => s?.color === theme.colors.syntaxKeyword)).toBe(true);
         expect(flattened.some((s: any) => s?.fontWeight === '600' || s?.fontWeight === 600)).toBe(true);
     });
 
@@ -170,9 +139,7 @@ describe('CodeLineRow', () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <CodeLineRow
+        tree = (await renderScreen(<CodeLineRow
                     line={{
                         id: '1',
                         sourceIndex: 0,
@@ -187,16 +154,14 @@ describe('CodeLineRow', () => {
                     selected={false}
                     onPressAddComment={() => {}}
                     commentActive
-                />,
-            );
-        });
+                />)).tree;
 
-        const rowPressable = tree!.root.findAllByType('Pressable' as any)[0]!;
+        const rowPressable = tree!.findAllByType('Pressable' as any)[0]!;
         act(() => {
             rowPressable.props.onHoverIn();
         });
 
-        const buttons = tree!.root.findAll((node) => (node as any).type === 'Pressable' && (node as any).props.accessibilityRole === 'button');
+        const buttons = tree!.findAll((node) => (node as any).type === 'Pressable' && (node as any).props.accessibilityRole === 'button');
         expect(buttons.map((b) => b.props.accessibilityLabel)).toContain('Close comment');
     });
 
@@ -218,22 +183,18 @@ describe('CodeLineRow', () => {
         };
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <CodeLineRow
+        tree = (await renderScreen(<CodeLineRow
                     line={line}
                     selected={false}
                     onPressAddComment={onPressAddComment}
-                />,
-            );
-        });
+                />)).tree;
 
-        const rowPressable = tree!.root.findAllByType('Pressable' as any)[0]!;
+        const rowPressable = tree!.findAllByType('Pressable' as any)[0]!;
         act(() => {
             rowPressable.props.onHoverIn();
         });
 
-        const buttons = tree!.root.findAll((node) => (node as any).type === 'Pressable' && (node as any).props.accessibilityRole === 'button');
+        const buttons = tree!.findAll((node) => (node as any).type === 'Pressable' && (node as any).props.accessibilityRole === 'button');
         expect(buttons).toHaveLength(1);
 
         act(() => {
@@ -248,9 +209,7 @@ describe('CodeLineRow', () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <CodeLineRow
+        tree = (await renderScreen(<CodeLineRow
                     line={{
                         id: 'f:120',
                         sourceIndex: 0,
@@ -263,11 +222,9 @@ describe('CodeLineRow', () => {
                         selectable: false,
                     }}
                     selected={false}
-                />,
-            );
-        });
+                />)).tree;
 
-        const rootView = tree!.root.findAllByType('View' as any)[0]!;
+        const rootView = tree!.findAllByType('View' as any)[0]!;
         expect(rootView.props.nativeID).toBe('f:120');
     });
 
@@ -275,9 +232,7 @@ describe('CodeLineRow', () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <CodeLineRow
+        tree = (await renderScreen(<CodeLineRow
                     line={{
                         id: '1',
                         sourceIndex: 0,
@@ -290,11 +245,9 @@ describe('CodeLineRow', () => {
                         selectable: false,
                     }}
                     selected={false}
-                />,
-            );
-        });
+                />)).tree;
 
-        const codeNode = tree!.root.findAll((node) => {
+        const codeNode = tree!.findAll((node) => {
             if ((node as any).type !== 'Text') return false;
             return (node.children || []).join('') === '    if (x) {';
         })[0]!;
@@ -308,9 +261,7 @@ describe('CodeLineRow', () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <CodeLineRow
+        tree = (await renderScreen(<CodeLineRow
                     line={{
                         id: '1',
                         sourceIndex: 0,
@@ -333,16 +284,15 @@ describe('CodeLineRow', () => {
                         language: 'typescript',
                         maxLineLength: 10_000,
                     }}
-                />,
-            );
-        });
+                />)).tree;
 
-        const addedNodes = tree!.root.findAll((node) => {
+        const addedNodes = tree!.findAll((node) => {
             if ((node as any).type !== 'Text') return false;
             const style = node.props?.style;
             if (!style) return false;
             const flattened = Array.isArray(style) ? style.flat() : [style];
-            return flattened.some((s: any) => s?.backgroundColor === '#acfaa6');
+            const theme = createThemeFixture() as any;
+            return flattened.some((s: any) => s?.backgroundColor === theme.colors.diff.inlineAddedBg);
         });
 
         expect(addedNodes.length).toBeGreaterThan(0);

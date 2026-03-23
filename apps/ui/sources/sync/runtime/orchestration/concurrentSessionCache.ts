@@ -1,4 +1,3 @@
-import { io, Socket } from 'socket.io-client';
 import { TokenStorage, type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
@@ -14,7 +13,16 @@ import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
-import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
+import {
+    createManagedConnectionSupervisor,
+    DEFAULT_MANAGED_CONNECTION_POLICY,
+    type ManagedConnectionSupervisor,
+} from '@happier-dev/connection-supervisor';
+import { createSyncSocketReadinessProbe } from '@/sync/api/session/connection/createSyncSocketReadinessProbe';
+import {
+    createConcurrentServerSocketTransport,
+    type ConcurrentServerSocket,
+} from './concurrentServerConnections/createConcurrentServerSocketTransport';
 
 type ConcurrentTarget = Readonly<{
     id: string;
@@ -34,11 +42,12 @@ type ManagedConcurrentServer = {
     serverUrl: string;
     serverName: string;
     credentials: AuthCredentials;
-    socket: Socket;
+    socket: ConcurrentServerSocket | null;
     encryption: Encryption | null;
     refreshQueued: boolean;
     refreshInFlight: Promise<void> | null;
     refreshTimer: ReturnType<typeof setTimeout> | null;
+    connectionSupervisor: ManagedConnectionSupervisor;
 };
 
 const REFRESH_DEBOUNCE_MS = 600;
@@ -138,6 +147,7 @@ function updateConcurrentMachineListCache(input: {
     serverId: string;
     machines: Machine[] | null;
     status: 'idle' | 'loading' | 'signedOut' | 'error';
+    authoritative?: boolean;
 }): void {
     storage.setState((state) => ({
         ...state,
@@ -145,6 +155,10 @@ function updateConcurrentMachineListCache(input: {
             ...state.machineListByServerId,
             [input.serverId]: (() => {
                 if (!Array.isArray(input.machines)) {
+                    return input.machines;
+                }
+
+                if (input.authoritative) {
                     return input.machines;
                 }
 
@@ -220,10 +234,12 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
     let machines: Machine[] = [];
 
     await fetchAndApplySessions({
+        serverId: entry.id,
         credentials: entry.credentials,
         encryption,
         sessionDataKeys,
         request,
+        getExistingSession: () => null,
         applySessions: (nextSessions) => {
             sessions = nextSessions as Session[];
         },
@@ -263,6 +279,10 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
             groupInactiveSessionsByProject: Boolean(storage.getState().settings.groupInactiveSessionsByProject),
             activeGroupingV1: storage.getState().settings.sessionListActiveGroupingV1,
             inactiveGroupingV1: storage.getState().settings.sessionListInactiveGroupingV1,
+            sessionTargetState: {
+                sessions: sessionsById,
+                machines: machinesById,
+            },
             serverScope: {
                 serverId: entry.id,
                 serverName: entry.serverName,
@@ -274,6 +294,7 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
         serverId: entry.id,
         machines,
         status: 'idle',
+        authoritative: true,
     });
     updateConcurrentSessionListCache(entry.id, sessionListViewData);
 }
@@ -321,44 +342,55 @@ function stopManagedServer(serverId: string): void {
     if (entry.refreshTimer) {
         clearTimeout(entry.refreshTimer);
     }
-    entry.socket.disconnect();
+    entry.socket = null;
+    void entry.connectionSupervisor.stop();
     managedServers.delete(serverId);
 }
 
 function createManagedServer(target: ConcurrentTarget, credentials: AuthCredentials): ManagedConcurrentServer {
-    const transports = resolveSocketIoTransports();
-    const socket = io(target.serverUrl, {
-        path: '/v1/updates',
-        auth: {
-            token: credentials.token,
-            clientType: 'user-scoped' as const,
-        },
-        ...(transports ? { transports } : null),
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-        reconnectionAttempts: Infinity,
-    });
-
     const entry: ManagedConcurrentServer = {
         id: target.id,
         serverUrl: target.serverUrl,
         serverName: target.serverName,
         credentials,
-        socket,
+        socket: null,
         encryption: null,
         refreshQueued: false,
         refreshInFlight: null,
         refreshTimer: null,
+        connectionSupervisor: createManagedConnectionSupervisor({
+            ...DEFAULT_MANAGED_CONNECTION_POLICY,
+            createTransport: () => {
+                const { socket, transport } = createConcurrentServerSocketTransport({
+                    serverUrl: target.serverUrl,
+                    token: credentials.token,
+                });
+                entry.socket = socket;
+                return transport;
+            },
+            probeReadiness: createSyncSocketReadinessProbe({
+                endpoint: target.serverUrl,
+                token: credentials.token,
+            }),
+            onConnected: async () => {
+                queueRefresh(entry);
+            },
+            onAuthFailed: async () => {
+                if (!isManagedServerActive(entry)) return;
+                updateConcurrentSessionListCache(entry.id, null);
+                updateConcurrentMachineListCache({
+                    serverId: entry.id,
+                    machines: null,
+                    status: 'signedOut',
+                });
+            },
+        }),
     };
-
-    socket.on('connect', () => {
-        queueRefresh(entry);
-    });
     // NOTE: Do not refresh full snapshots on user-scoped socket `update` events.
     // Those events can be high-frequency (presence/activity), and full refresh loops are
     // expensive + noisy. Periodic refresh handles eventual consistency for non-active servers.
 
+    void entry.connectionSupervisor.start();
     return entry;
 }
 
@@ -400,7 +432,7 @@ async function reconcileConcurrentServers(): Promise<void> {
     }
 
     for (const target of targets) {
-        const credentials = await TokenStorage.getCredentialsForServerUrl(target.serverUrl);
+        const credentials = await TokenStorage.getCredentialsForServerUrl(target.serverUrl, { serverId: target.id });
         if (!credentials) {
             stopManagedServer(target.id);
             updateConcurrentSessionListCache(target.id, null);

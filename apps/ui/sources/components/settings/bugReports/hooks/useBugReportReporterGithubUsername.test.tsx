@@ -3,13 +3,20 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Profile } from '@/sync/domains/profiles/profile';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 // Minimal RN mocks for hook tests.
-vi.mock('react-native', () => ({
-    Text: 'Text',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Text: 'Text',
+                                }
+    );
+});
 
 describe('useBugReportReporterGithubUsername', () => {
     it('does not crash when profile is null', async () => {
@@ -46,16 +53,14 @@ describe('useBugReportReporterGithubUsername', () => {
         }
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<TestComponent profile={profile} />);
-        });
+        tree = (await renderScreen(<TestComponent profile={profile} />)).tree;
         for (let i = 0; i < 10; i += 1) {
             await act(async () => {
                 await Promise.resolve();
             });
-            const text = tree!.root.findByType('Text' as any);
+            const text = tree!.findByType('Text' as any);
             if (text.props.value === '@octocat') break;
         }
-        expect(tree!.root.findByType('Text' as any).props.value).toBe('@octocat');
+        expect(tree!.findByType('Text' as any).props.value).toBe('@octocat');
     });
 });

@@ -2,12 +2,15 @@ import { z } from "zod";
 import type { PermissionMode } from "@/constants/PermissionModes";
 import type { ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import { 
+    createAgentRuntimeDescriptorV1Schema,
     createAcpConfigOptionOverridesV1Schema,
     createAcpSessionModeOverrideV1Schema,
     createModelOverrideV1Schema,
     createSessionPermissionModeSchema,
+    createSessionRollbackRangesV1Schema,
     createSessionTerminalMetadataSchema,
     createSessionSystemSessionV1Schema,
+    WindowsRemoteSessionLaunchModeSchema,
 } from "@happier-dev/protocol";
 
 //
@@ -29,9 +32,13 @@ const MetadataObjectSchema = z.object({
     machineId: z.string().optional(),
     claudeSessionId: z.string().optional(), // Claude Code session ID
     codexSessionId: z.string().optional(), // Codex session/conversation ID (uuid)
+    codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
+    agentRuntimeDescriptorV1: createAgentRuntimeDescriptorV1Schema(z).optional(),
     geminiSessionId: z.string().optional(), // Gemini ACP session ID (opaque)
     opencodeSessionId: z.string().optional(), // OpenCode ACP session ID (opaque)
     opencodeBackendMode: z.enum(['server', 'acp']).optional(),
+    opencodeServerBaseUrl: z.string().optional(),
+    opencodeServerBaseUrlExplicit: z.literal(true).optional(),
     auggieSessionId: z.string().optional(), // Auggie ACP session ID (opaque)
     qwenSessionId: z.string().optional(), // Qwen Code ACP session ID (opaque)
     kimiSessionId: z.string().optional(), // Kimi ACP session ID (opaque)
@@ -63,6 +70,17 @@ const MetadataObjectSchema = z.object({
             description: z.string().optional(),
         })),
     }).optional(),
+    sessionModesV1: z.object({
+        v: z.literal(1),
+        provider: z.string(),
+        updatedAt: z.number(),
+        currentModeId: z.string(),
+        availableModes: z.array(z.object({
+            id: z.string(),
+            name: z.string(),
+            description: z.string().optional(),
+        })),
+    }).optional(),
     /**
      * ACP session models (if supported by the provider's ACP agent).
      *
@@ -77,6 +95,41 @@ const MetadataObjectSchema = z.object({
             id: z.string(),
             name: z.string(),
             description: z.string().optional(),
+            modelOptions: z.array(z.object({
+                id: z.string(),
+                name: z.string(),
+                description: z.string().optional(),
+                type: z.string(),
+                currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                options: z.array(z.object({
+                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                    name: z.string(),
+                    description: z.string().optional(),
+                })).optional(),
+            })).optional(),
+        })),
+    }).optional(),
+    sessionModelsV1: z.object({
+        v: z.literal(1),
+        provider: z.string(),
+        updatedAt: z.number(),
+        currentModelId: z.string(),
+        availableModels: z.array(z.object({
+            id: z.string(),
+            name: z.string(),
+            description: z.string().optional(),
+            modelOptions: z.array(z.object({
+                id: z.string(),
+                name: z.string(),
+                description: z.string().optional(),
+                type: z.string(),
+                currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                options: z.array(z.object({
+                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                    name: z.string(),
+                    description: z.string().optional(),
+                })).optional(),
+            })).optional(),
         })),
     }).optional(),
     /**
@@ -99,6 +152,24 @@ const MetadataObjectSchema = z.object({
             })).optional(),
         })),
     }).optional(),
+    sessionConfigOptionsV1: z.object({
+        v: z.literal(1),
+        provider: z.string(),
+        updatedAt: z.number(),
+        configOptions: z.array(z.object({
+            id: z.string(),
+            name: z.string(),
+            description: z.string().optional(),
+            type: z.string(),
+            currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+            options: z.array(z.object({
+                value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                name: z.string(),
+                description: z.string().optional(),
+            })).optional(),
+        })),
+    }).optional(),
+    sessionRollbackRangesV1: createSessionRollbackRangesV1Schema(z).optional(),
     /**
      * Desired ACP session mode override selected by the user (UI/CLI).
      *
@@ -107,10 +178,18 @@ const MetadataObjectSchema = z.object({
      * - `acpSessionModeOverrideV1` is the user's requested mode, applied by the runner when possible.
      */
     acpSessionModeOverrideV1: createAcpSessionModeOverrideV1Schema(z).optional(),
+    sessionModeOverrideV1: createAcpSessionModeOverrideV1Schema(z).optional(),
     /**
      * Desired ACP config option overrides selected by the user (UI/CLI).
      */
     acpConfigOptionOverridesV1: createAcpConfigOptionOverridesV1Schema(z).optional(),
+    sessionConfigOptionOverridesV1: createAcpConfigOptionOverridesV1Schema(z).optional(),
+    acpConfiguredBackendV1: z.object({
+        v: z.literal(1),
+        updatedAt: z.number(),
+        backendId: z.string(),
+        title: z.string(),
+    }).passthrough().optional(),
     homeDir: z.string().optional(), // User's home directory on the machine
     happyHomeDir: z.string().optional(), // Happy configuration directory 
     hostPid: z.number().optional(), // Process ID of the session
@@ -173,6 +252,13 @@ const MetadataObjectSchema = z.object({
         appliedToLocalId: z.string().optional(),
         appliedAtMs: z.number().optional(),
     }).optional(),
+    forkInitialPromptV1: z.object({
+        v: z.literal(1),
+        text: z.string(),
+        createdAtMs: z.number(),
+        sourceMessageId: z.string().optional(),
+        appliedAtMs: z.number().optional(),
+    }).optional(),
 }).passthrough();
 
 export const MetadataSchema = z.preprocess((value) => {
@@ -190,6 +276,13 @@ export type Metadata = z.infer<typeof MetadataSchema>;
 
 export const AgentStateSchema = z.object({
     controlledByUser: z.boolean().nullish(),
+    localControl: z.object({
+        attached: z.boolean().nullish(),
+        topology: z.enum(['exclusive', 'shared']).nullish(),
+        remoteWritable: z.boolean().nullish(),
+        canAttach: z.boolean().nullish(),
+        canDetach: z.boolean().nullish(),
+    }).nullish(),
     requests: z.record(z.string(), z.object({
         tool: z.string(),
         kind: z.string().optional(),
@@ -230,6 +323,7 @@ export type AgentState = z.infer<typeof AgentStateSchema>;
 
 export interface Session {
     id: string,
+    serverId?: string,
     seq: number,
     /**
      * Session content encryption mode. Missing means legacy/unknown and should be treated as `e2ee`.
@@ -250,6 +344,9 @@ export interface Session {
      */
     pendingVersion?: number,
     pendingCount?: number,
+    lastViewedSessionSeq?: number | null,
+    pendingPermissionRequestCount?: number,
+    pendingUserActionRequestCount?: number,
     metadata: Metadata | null,
     metadataVersion: number,
     agentState: AgentState | null,
@@ -258,6 +355,7 @@ export interface Session {
     thinkingAt: number,
     presence: "online" | number, // "online" when active, timestamp when last seen
     optimisticThinkingAt?: number | null; // Local-only timestamp used for immediate "processing" UI feedback after submit
+    thinkingGraceUntil?: number | null; // Local-only timestamp used to debounce thinking indicator and avoid flicker between streaming chunks
     todos?: Array<{
         content: string;
         status: 'pending' | 'in_progress' | 'completed';
@@ -330,6 +428,7 @@ export const MachineMetadataSchema = z.object({
     username: z.string().optional(),
     arch: z.string().optional(),
     displayName: z.string().optional(), // Custom display name for the machine
+    windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
     windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
     // Daemon status fields
     daemonLastKnownStatus: z.enum(['running', 'shutting-down']).optional(),
@@ -418,7 +517,13 @@ export interface ScmCapabilities {
     writeRemoteFetch: boolean;
     writeRemotePull: boolean;
     writeRemotePush: boolean;
-    workspaceWorktreeCreate: boolean;
+    writeRemotePublish?: boolean;
+    readBranches?: boolean;
+    writeBranchCreate?: boolean;
+    writeBranchCheckout?: boolean;
+    readStash?: boolean;
+    writeStash?: boolean;
+    worktreeCreate: boolean;
     changeSetModel?: 'index' | 'working-copy';
     supportedDiffAreas?: Array<'included' | 'pending' | 'both'>;
     operationLabels?: {
@@ -451,6 +556,12 @@ export interface ScmWorkingSnapshot {
         rootPath: string | null;
         backendId?: 'git' | 'sapling' | null;
         mode?: '.git' | '.sl' | null;
+        worktrees?: Array<{
+            path: string;
+            branch: string | null;
+            isCurrent: boolean;
+            isMain?: boolean;
+        }>;
     };
     capabilities?: ScmCapabilities;
     branch: {

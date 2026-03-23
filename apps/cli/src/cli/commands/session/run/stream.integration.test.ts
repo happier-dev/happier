@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -17,14 +18,13 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('happier session run stream-* (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-run-stream-'));
+    happyHomeDir = await createTempDir('happier-cli-session-run-stream-');
 
     const sessionId = 'sess_integration_stream_123';
     const dek = new Uint8Array(32).fill(3);
@@ -115,15 +115,9 @@ describe('happier session run stream-* (integration)', () => {
 
     const { decodeBase64, decrypt, encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
 
-    mockIo.mockImplementation(() => {
-      const handlers = new Map<string, Array<(...args: any[]) => void>>();
-      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        list.push(cb);
-        handlers.set(event, list);
-      });
-
-      const emit = vi.fn((event: string, data: any, cb?: (...args: any[]) => void) => {
+    const socket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
         if (event !== SOCKET_RPC_EVENTS.CALL) return;
         const method = String(data.method ?? '');
         const decodedParams = decodeBase64(String(data.params ?? ''), 'base64');
@@ -148,15 +142,9 @@ describe('happier session run stream-* (integration)', () => {
           cb?.({ ok: true, result: encryptedResult });
           return;
         }
-      });
-
-      const connect = vi.fn(() => {
-        const list = handlers.get('connect') ?? [];
-        for (const fn of list) fn();
-      });
-
-      return { on, emit, connect, disconnect: vi.fn(), close: vi.fn() };
+      },
     });
+    bindApiSessionSocketMock(mockIo, socket);
   });
 
   afterEach(async () => {
@@ -164,14 +152,13 @@ describe('happier session run stream-* (integration)', () => {
       await new Promise<void>((resolve, reject) => server!.close((e) => (e ? reject(e) : resolve())));
     }
     server = null;
-    if (happyHomeDir) await rm(happyHomeDir, { recursive: true, force: true });
+    if (happyHomeDir) {
+      await removeTempDir(happyHomeDir);
+      happyHomeDir = '';
+    }
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -179,8 +166,7 @@ describe('happier session run stream-* (integration)', () => {
 
   it('supports stream-start', async () => {
     const { handleSessionCommand } = await import('../index');
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const output = captureConsoleJsonOutput();
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(['run', 'stream-start', 'sess_integration_stream_123', 'run_1', 'hello', '--json'], {
@@ -194,19 +180,18 @@ describe('happier session run stream-* (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_run_stream_start');
       expect(parsed.data?.streamId).toBe('stream_1');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('supports stream-read', async () => {
     const { handleSessionCommand } = await import('../index');
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const output = captureConsoleJsonOutput();
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(
@@ -223,20 +208,19 @@ describe('happier session run stream-* (integration)', () => {
         },
       );
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_run_stream_read');
       expect(parsed.data?.streamId).toBe('stream_1');
       expect(parsed.data?.events?.[0]?.t).toBe('delta');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('supports stream-cancel', async () => {
     const { handleSessionCommand } = await import('../index');
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const output = captureConsoleJsonOutput();
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(['run', 'stream-cancel', 'sess_integration_stream_123', 'run_1', 'stream_1', '--json'], {
@@ -250,13 +234,13 @@ describe('happier session run stream-* (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_run_stream_cancel');
       expect(parsed.data?.streamId).toBe('stream_1');
       expect(parsed.data?.cancelled).toBe(true);
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });

@@ -1,17 +1,18 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 
-import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 
 export function useRequireFriendsEnabled(): boolean {
     const router = useRouter();
-    const enabled = useFriendsEnabled();
+    const decision = useFeatureDecision('social.friends', { scopeKind: 'runtime' });
+    const enabled = decision?.state === 'enabled';
 
     React.useEffect(() => {
+        if (decision === null) return;
         if (enabled) return;
         router.replace('/');
-    }, [enabled, router]);
+    }, [decision, enabled, router]);
 
     return enabled;
 }
-

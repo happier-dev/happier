@@ -25,12 +25,14 @@ describe('computeNextAcpSessionModeOverrideMetadata', () => {
 
         expect(next).toEqual({
             ...base,
+            sessionModeOverrideV1: { v: 1, updatedAt: 11, modeId: 'plan' },
             acpSessionModeOverrideV1: { v: 1, updatedAt: 11, modeId: 'plan' },
         });
     });
 
     it('applies a monotonic bump when mode changes and updatedAt is not newer', () => {
         const base = buildMetadata({
+            sessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'build' },
             acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'build' },
         });
         const next = computeNextAcpSessionModeOverrideMetadata({
@@ -41,12 +43,14 @@ describe('computeNextAcpSessionModeOverrideMetadata', () => {
 
         expect(next).toEqual({
             ...base,
+            sessionModeOverrideV1: { v: 1, updatedAt: 11, modeId: 'plan' },
             acpSessionModeOverrideV1: { v: 1, updatedAt: 11, modeId: 'plan' },
         });
     });
 
     it('returns metadata unchanged when mode and updatedAt are unchanged', () => {
         const base = buildMetadata({
+            sessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'build' },
             acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'build' },
         });
         const next = computeNextAcpSessionModeOverrideMetadata({
@@ -70,7 +74,26 @@ describe('computeNextAcpSessionModeOverrideMetadata', () => {
 
         expect(next).toEqual({
             ...base,
+            sessionModeOverrideV1: { v: 1, updatedAt: 15, modeId: 'build' },
             acpSessionModeOverrideV1: { v: 1, updatedAt: 15, modeId: 'build' },
+        });
+    });
+
+    it('uses the canonical key as the monotonic source when canonical metadata is newer than the legacy alias', () => {
+        const base = buildMetadata({
+            sessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
+            acpSessionModeOverrideV1: { v: 1, updatedAt: 3, modeId: 'plan' },
+        });
+        const next = computeNextAcpSessionModeOverrideMetadata({
+            metadata: base,
+            modeId: 'build',
+            updatedAt: 5,
+        });
+
+        expect(next).toEqual({
+            ...base,
+            sessionModeOverrideV1: { v: 1, updatedAt: 11, modeId: 'build' },
+            acpSessionModeOverrideV1: { v: 1, updatedAt: 11, modeId: 'build' },
         });
     });
 });
@@ -90,6 +113,7 @@ describe('publishAcpSessionModeOverrideToMetadata', () => {
         });
 
         expect(updates).toHaveLength(1);
+        expect((updates[0] as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 11, modeId: 'plan' });
         expect((updates[0] as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 11, modeId: 'plan' });
     });
 });

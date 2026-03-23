@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { resolvePackedTarball } from './resolvePackedTarball.mjs';
 
 function fail(message) {
   console.error(message);
@@ -110,6 +111,25 @@ function run(opts, cmd, args, extra) {
 function npmPack(pkgDir, opts) {
   if (opts.dryRun) {
     return { filename: 'DRY_RUN.tgz', tgzPath: path.join(pkgDir, 'DRY_RUN.tgz') };
+  }
+
+  if (pkgDir.endsWith(path.join('apps', 'cli'))) {
+    const scriptPath = path.join(pkgDir, 'scripts', 'packTarball.mjs');
+    const raw = execFileSync(process.execPath, [scriptPath, '--dest-dir', pkgDir], {
+      cwd: pkgDir,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+      timeout: 10 * 60_000,
+    }).trim();
+    const { filename, tgzPath } = resolvePackedTarball(raw, {
+      cwd: pkgDir,
+      sourceLabel: 'CLI pack helper',
+    });
+    if (!tgzPath.endsWith('.tgz') || !fs.existsSync(tgzPath) || !fs.statSync(tgzPath).isFile()) {
+      throw new Error(`CLI pack helper did not produce an expected .tgz file (cwd: ${pkgDir}): ${tgzPath}`);
+    }
+    return { filename, tgzPath };
   }
 
   const env = { ...process.env };

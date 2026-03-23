@@ -5,19 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
 
+import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { readStackInfoSnapshot } from './stack/stack_info_snapshot.mjs';
-
-function withStorageDir(storageDir) {
-  const prev = process.env.HAPPIER_STACK_STORAGE_DIR;
-  process.env.HAPPIER_STACK_STORAGE_DIR = storageDir;
-  return () => {
-    if (typeof prev === 'undefined') {
-      delete process.env.HAPPIER_STACK_STORAGE_DIR;
-    } else {
-      process.env.HAPPIER_STACK_STORAGE_DIR = prev;
-    }
-  };
-}
 
 async function withListeningServer() {
   const server = net.createServer();
@@ -42,7 +31,7 @@ async function reserveUnusedPort() {
   return port;
 }
 
-test('readStackInfoSnapshot reports running when owner pid is stale but an infra pid is alive', async () => {
+test('readStackInfoSnapshot reports running when owner pid is stale but an infra pid is alive', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-running-process-'));
   const storageDir = join(tmp, 'storage');
   const stackName = 'dev-auth';
@@ -62,7 +51,7 @@ test('readStackInfoSnapshot reports running when owner pid is stale but an infra
     'utf-8'
   );
 
-  const restore = withStorageDir(storageDir);
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
   try {
     const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
     assert.equal(out.runtime.running, true);
@@ -73,7 +62,7 @@ test('readStackInfoSnapshot reports running when owner pid is stale but an infra
   }
 });
 
-test('readStackInfoSnapshot reports running when owner pid is stale but stack server port is occupied', async () => {
+test('readStackInfoSnapshot reports running when owner pid is stale but stack server port is occupied', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-running-port-'));
   const storageDir = join(tmp, 'storage');
   const stackName = 'dev-auth';
@@ -95,7 +84,7 @@ test('readStackInfoSnapshot reports running when owner pid is stale but stack se
     'utf-8'
   );
 
-  const restore = withStorageDir(storageDir);
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
   try {
     const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
     assert.equal(out.runtime.running, true);
@@ -107,7 +96,7 @@ test('readStackInfoSnapshot reports running when owner pid is stale but stack se
   }
 });
 
-test('readStackInfoSnapshot marks UI as down when expo runtime metadata is stale', async () => {
+test('readStackInfoSnapshot marks UI as down when expo runtime metadata is stale', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-ui-stale-'));
   const storageDir = join(tmp, 'storage');
   const stackName = 'dev-auth';
@@ -131,7 +120,7 @@ test('readStackInfoSnapshot marks UI as down when expo runtime metadata is stale
     'utf-8'
   );
 
-  const restore = withStorageDir(storageDir);
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
   try {
     const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
     assert.equal(out.runtime.running, true);
@@ -146,7 +135,7 @@ test('readStackInfoSnapshot marks UI as down when expo runtime metadata is stale
   }
 });
 
-test('readStackInfoSnapshot requires UI port reachability even when expo pid is alive', async () => {
+test('readStackInfoSnapshot requires UI port reachability even when expo pid is alive', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-ui-unreachable-'));
   const storageDir = join(tmp, 'storage');
   const stackName = 'dev-auth';
@@ -170,7 +159,7 @@ test('readStackInfoSnapshot requires UI port reachability even when expo pid is 
     'utf-8'
   );
 
-  const restore = withStorageDir(storageDir);
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
   try {
     const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
     assert.equal(out.runtime.running, true);
@@ -181,6 +170,42 @@ test('readStackInfoSnapshot requires UI port reachability even when expo pid is 
   } finally {
     restore();
     await serverListener.close();
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('readStackInfoSnapshot refreshes stale runtime daemonPid from daemon.state.json', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-daemon-sync-'));
+  const storageDir = join(tmp, 'storage');
+  const stackName = 'dev-auth';
+  const baseDir = join(storageDir, stackName);
+  const cliServerDir = join(baseDir, 'cli', 'servers', 'stack_dev-auth__id_default');
+
+  await mkdir(cliServerDir, { recursive: true });
+  await writeFile(join(baseDir, 'env'), 'HAPPIER_STACK_SERVER_PORT=3009\n', 'utf-8');
+  await writeFile(
+    join(baseDir, 'stack.runtime.json'),
+    JSON.stringify({
+      version: 1,
+      stackName,
+      ownerPid: 999_999_999,
+      processes: { daemonPid: 111 },
+      ports: { server: 3009 },
+    }) + '\n',
+    'utf-8'
+  );
+  await writeFile(
+    join(cliServerDir, 'daemon.state.json'),
+    JSON.stringify({ pid: process.pid, httpPort: 1, startedAt: Date.now(), startedWithCliVersion: 'test' }) + '\n',
+    'utf-8',
+  );
+
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+  try {
+    const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+    assert.equal(out.runtime.processes?.daemonPid, process.pid);
+  } finally {
+    restore();
     await rm(tmp, { recursive: true, force: true });
   }
 });

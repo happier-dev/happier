@@ -64,11 +64,56 @@ export async function waitForMessagesOrPending<Mode, Message>(opts: {
       // If metadata waiting ended (e.g. disconnect), fall back to waiting for a real message
       // without repeatedly re-arming the race (which can cause a tight loop).
       if (winner.kind === 'meta' && !winner.ok) {
-        const queued = await queueWait;
-        if (!queued.hasMessages) {
+        controller.abort('waitForMessagesOrPending-meta-false');
+
+        // Give any queued microtasks a chance to materialize a message before we fall back to idle polling.
+        await Promise.resolve();
+
+        if (opts.messageQueue.size() > 0) {
+          return await opts.messageQueue.waitForMessagesAndGetAsString(opts.abortSignal);
+        }
+
+        if (idleWakePollIntervalMs <= 0) {
           return null;
         }
-        return await opts.messageQueue.waitForMessagesAndGetAsString(opts.abortSignal);
+
+        await new Promise<void>((resolve) => {
+          let done = false;
+          let timer: ReturnType<typeof setTimeout> | null = null;
+
+          const finish = () => {
+            if (done) return;
+            done = true;
+            if (timer) clearTimeout(timer);
+            opts.abortSignal.removeEventListener('abort', onFallbackAbort);
+            resolve();
+          };
+
+          const onFallbackAbort = () => finish();
+
+          timer = setTimeout(finish, idleWakePollIntervalMs);
+          timer.unref?.();
+          opts.abortSignal.addEventListener('abort', onFallbackAbort, { once: true });
+
+          if (opts.abortSignal.aborted) {
+            finish();
+          }
+        });
+
+        if (opts.abortSignal.aborted) {
+          return null;
+        }
+
+        try {
+          const cb = opts.onMetadataUpdate;
+          if (cb) {
+            await cb();
+          }
+        } catch {
+          // Non-fatal: defensive metadata reconciliation should not break the wait loop.
+        }
+
+        continue;
       }
 
       controller.abort('waitForMessagesOrPending');
@@ -83,6 +128,14 @@ export async function waitForMessagesOrPending<Mode, Message>(opts: {
       }
 
       if (winner.kind === 'idle') {
+        try {
+          const cb = opts.onMetadataUpdate;
+          if (cb) {
+            await cb();
+          }
+        } catch {
+          // Non-fatal: defensive metadata reconciliation should not break the wait loop.
+        }
         // Defensive wake: missed metadata broadcasts and pending-changed updates can otherwise deadlock the agent.
         continue;
       }

@@ -1,35 +1,12 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { io as ioClient } from "socket.io-client";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 
 import { startSocket } from "./socket";
 import type { Fastify as AppFastify } from "./types";
 import { auth } from "@/app/auth/auth";
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
-import { initEncrypt } from "@/modules/encrypt";
-import { createEnvPatcher } from "./socket.env.testHelper";
-
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 type ProviderRequiredErrorPayload = {
     message: string;
@@ -78,61 +55,35 @@ async function waitForConnectionFailure(socket: ReturnType<typeof ioClient>): Pr
 }
 
 describe("startSocket (auth policy enforcement)", () => {
-    const env = createEnvPatcher([
-        "HAPPIER_DB_PROVIDER",
-        "HAPPY_DB_PROVIDER",
-        "DATABASE_URL",
-        "HAPPY_SERVER_LIGHT_DATA_DIR",
-        "HAPPIER_SERVER_LIGHT_DATA_DIR",
-        "HAPPY_SERVER_LIGHT_FILES_DIR",
-        "HAPPIER_SERVER_LIGHT_FILES_DIR",
-        "HAPPY_SERVER_LIGHT_DB_DIR",
-        "HAPPIER_SERVER_LIGHT_DB_DIR",
-        "PUBLIC_URL",
-        "HANDY_MASTER_SECRET",
-        "AUTH_REQUIRED_LOGIN_PROVIDERS",
-    ]);
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-socket-policy-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        env.setMany({
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-            HAPPIER_SERVER_LIGHT_DATA_DIR: baseDir,
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-socket-policy-",
+            initAuth: true,
+            initEncrypt: true,
         });
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        await initEncrypt();
-        await auth.init();
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
     }, 120_000);
 
     afterAll(async () => {
-        await db.$disconnect();
-        env.restore();
-        await rm(baseDir, { recursive: true, force: true });
+        await harness.close();
     });
 
     beforeEach(() => {
         vi.unstubAllGlobals();
-        env.set("AUTH_REQUIRED_LOGIN_PROVIDERS", undefined);
+        harness.resetEnv();
+        harness.resetEnv({ AUTH_REQUIRED_LOGIN_PROVIDERS: undefined });
     });
 
     afterEach(async () => {
+        await db.accessKey.deleteMany();
+        await db.session.deleteMany();
         await db.machine.deleteMany();
         await db.account.deleteMany();
     });
 
     it("disconnects a user-scoped socket when GitHub is required but the account has no GitHub identity", async () => {
-        env.set("AUTH_REQUIRED_LOGIN_PROVIDERS", "github");
+        harness.resetEnv({ AUTH_REQUIRED_LOGIN_PROVIDERS: "github" });
 
         const account = await db.account.create({
             data: { publicKey: `pk-${Date.now()}` },
@@ -227,6 +178,120 @@ describe("startSocket (auth policy enforcement)", () => {
         expect(payload.data).toEqual({
             error: "invalid-machine",
             provider: undefined,
+            statusCode: 403,
+        });
+    }, 30_000);
+
+    it("disconnects a session-scoped socket when machineId is provided without a bound access key", async () => {
+        const account = await db.account.create({
+            data: { publicKey: `pk-${Date.now()}` },
+            select: { id: true },
+        });
+
+        await db.machine.create({
+            data: {
+                id: "m-test",
+                accountId: account.id,
+                metadata: "metadata",
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+                active: false,
+            },
+            select: { id: true },
+        });
+
+        await db.session.create({
+            data: { id: "s-test", tag: `t-${Date.now()}`, accountId: account.id, encryptionMode: "e2ee", metadata: "{}" },
+        });
+
+        const token = await auth.createToken(account.id);
+
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        const port = typeof address === "object" && address ? address.port : null;
+        if (!port) {
+            await app.close();
+            throw new Error("Failed to bind socket server");
+        }
+
+        const socket = ioClient(`http://127.0.0.1:${port}`, {
+            path: "/v1/updates",
+            transports: ["websocket"],
+            reconnection: false,
+            auth: {
+                token,
+                clientType: "session-scoped",
+                sessionId: "s-test",
+                machineId: "m-test",
+            },
+        });
+
+        let payload: ProviderRequiredErrorPayload;
+        try {
+            payload = await waitForConnectionFailure(socket);
+        } finally {
+            socket.close();
+            await app.close();
+        }
+
+        expect(payload.message).toBe("invalid-session-access-key");
+        expect(payload.data).toEqual({
+            error: "invalid-session-access-key",
+            statusCode: 403,
+        });
+    }, 30_000);
+
+    it("disconnects a session-scoped socket when the claimed session does not belong to the authenticated account", async () => {
+        const owner = await db.account.create({
+            data: { publicKey: `pk-owner-${Date.now()}` },
+            select: { id: true },
+        });
+        const otherAccount = await db.account.create({
+            data: { publicKey: `pk-other-${Date.now()}` },
+            select: { id: true },
+        });
+
+        await db.session.create({
+            data: { id: "s-foreign", tag: `t-${Date.now()}`, accountId: owner.id, encryptionMode: "e2ee", metadata: "{}" },
+        });
+
+        const token = await auth.createToken(otherAccount.id);
+
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        const port = typeof address === "object" && address ? address.port : null;
+        if (!port) {
+            await app.close();
+            throw new Error("Failed to bind socket server");
+        }
+
+        const socket = ioClient(`http://127.0.0.1:${port}`, {
+            path: "/v1/updates",
+            transports: ["websocket"],
+            reconnection: false,
+            auth: {
+                token,
+                clientType: "session-scoped",
+                sessionId: "s-foreign",
+            },
+        });
+
+        let payload: ProviderRequiredErrorPayload;
+        try {
+            payload = await waitForConnectionFailure(socket);
+        } finally {
+            socket.close();
+            await app.close();
+        }
+
+        expect(payload.message).toBe("invalid-session");
+        expect(payload.data).toEqual({
+            error: "invalid-session",
             statusCode: 403,
         });
     }, 30_000);

@@ -129,55 +129,32 @@ export async function executeClaimedRun(params: {
     }
 
     const template = parsedTemplate.value;
+    const existingSessionTemplate = {
+      ...template,
+      existingSessionId: template.existingSessionId!,
+    };
+    const newSessionTemplate = {
+      ...template,
+      ...(typeof template.prompt === 'string' && template.prompt.trim().length > 0
+        ? { initialPrompt: template.prompt }
+        : {}),
+    };
 
     const spawnResult = template.targetType === 'existing_session'
       ? await runAutomationAgainstExistingSession({
         spawnSession,
-        template: {
-          directory: template.directory,
-          existingSessionId: template.existingSessionId!,
-          ...(template.sessionEncryptionKeyBase64 ? { sessionEncryptionKeyBase64: template.sessionEncryptionKeyBase64 } : {}),
-          ...(template.sessionEncryptionVariant ? { sessionEncryptionVariant: template.sessionEncryptionVariant } : {}),
-          ...(template.agent ? { agent: template.agent } : {}),
-          ...(template.profileId !== undefined ? { profileId: template.profileId } : {}),
-          ...(template.environmentVariables ? { environmentVariables: template.environmentVariables } : {}),
-          ...(template.resume ? { resume: template.resume } : {}),
-          ...(template.permissionMode ? { permissionMode: template.permissionMode } : {}),
-          ...(typeof template.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: template.permissionModeUpdatedAt } : {}),
-          ...(template.modelId ? { modelId: template.modelId } : {}),
-          ...(typeof template.modelUpdatedAt === 'number' ? { modelUpdatedAt: template.modelUpdatedAt } : {}),
-          ...(template.terminal ? { terminal: template.terminal } : {}),
-          ...(template.windowsRemoteSessionConsole ? { windowsRemoteSessionConsole: template.windowsRemoteSessionConsole } : {}),
-          ...(template.experimentalCodexResume !== undefined ? { experimentalCodexResume: template.experimentalCodexResume } : {}),
-          ...(template.experimentalCodexAcp !== undefined ? { experimentalCodexAcp: template.experimentalCodexAcp } : {}),
-        },
+        template: existingSessionTemplate,
       })
       : await runAutomationAsNewSession({
         spawnSession,
-        template: {
-          directory: template.directory,
-          ...(typeof template.prompt === 'string' && template.prompt.trim().length > 0
-            ? { initialPrompt: template.prompt }
-            : {}),
-          ...(template.agent ? { agent: template.agent } : {}),
-          ...(template.profileId !== undefined ? { profileId: template.profileId } : {}),
-          ...(template.environmentVariables ? { environmentVariables: template.environmentVariables } : {}),
-          ...(template.resume ? { resume: template.resume } : {}),
-          ...(template.permissionMode ? { permissionMode: template.permissionMode } : {}),
-          ...(typeof template.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: template.permissionModeUpdatedAt } : {}),
-          ...(template.modelId ? { modelId: template.modelId } : {}),
-          ...(typeof template.modelUpdatedAt === 'number' ? { modelUpdatedAt: template.modelUpdatedAt } : {}),
-          ...(template.terminal ? { terminal: template.terminal } : {}),
-          ...(template.windowsRemoteSessionConsole ? { windowsRemoteSessionConsole: template.windowsRemoteSessionConsole } : {}),
-          ...(template.experimentalCodexResume !== undefined ? { experimentalCodexResume: template.experimentalCodexResume } : {}),
-          ...(template.experimentalCodexAcp !== undefined ? { experimentalCodexAcp: template.experimentalCodexAcp } : {}),
-        },
+        template: newSessionTemplate,
       });
 
     if (spawnResult.type === 'success') {
       if (template.targetType === 'existing_session' && typeof template.prompt === 'string' && template.prompt.trim().length > 0) {
+        const sessionEncryptionMode = template.sessionEncryptionMode === 'plain' ? 'plain' : 'e2ee';
         const sessionEncryptionKeyBase64 = template.sessionEncryptionKeyBase64?.trim() ?? '';
-        if (!sessionEncryptionKeyBase64) {
+        if (sessionEncryptionMode !== 'plain' && !sessionEncryptionKeyBase64) {
           await claimClient.failRun({
             runId: claimed.run.id,
             machineId,
@@ -193,7 +170,8 @@ export async function executeClaimedRun(params: {
             sessionId: template.existingSessionId!,
             prompt: template.prompt,
             ...(typeof template.displayText === 'string' ? { displayText: template.displayText } : {}),
-            sessionEncryptionKeyBase64,
+            sessionEncryptionMode,
+            ...(sessionEncryptionMode === 'plain' ? {} : { sessionEncryptionKeyBase64 }),
           });
         } catch (error) {
           await claimClient.failRun({

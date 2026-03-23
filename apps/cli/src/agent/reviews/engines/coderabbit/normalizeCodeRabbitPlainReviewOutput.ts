@@ -1,5 +1,7 @@
 import type { ExecutionRunProfileBoundedCompleteResult } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
+import type { BackendTargetRefV1, ExecutionRunRetentionPolicy } from '@happier-dev/protocol';
+import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
 
 type ParsedFinding = {
   filePath?: string;
@@ -9,6 +11,33 @@ type ParsedFinding = {
   comment?: string;
   suggestion?: string;
 };
+
+const SECURITY_TEXT_PATTERNS = [
+  /\bsecurity\b/i,
+  /\bvulnerab/i,
+  /\bcode injection\b/i,
+  /\barbitrary code execution\b/i,
+  /\brce\b/i,
+  /\bpath traversal\b/i,
+  /\bdirectory traversal\b/i,
+  /\bdirectory escape\b/i,
+  /\bcommand injection\b/i,
+  /\bsql injection\b/i,
+  /\bxss\b/i,
+  /\bcsrf\b/i,
+  /\bssrf\b/i,
+];
+
+function joinClassifierText(...parts: Array<string | undefined>): string {
+  return parts
+    .map((part) => String(part ?? '').trim())
+    .filter((part) => part.length > 0)
+    .join('\n');
+}
+
+function hasSecuritySignal(text: string): boolean {
+  return SECURITY_TEXT_PATTERNS.some((pattern) => pattern.test(text));
+}
 
 function isDelimiter(line: string): boolean {
   const t = line.trim();
@@ -33,7 +62,10 @@ function parseLineRange(raw: string): Readonly<{ startLine?: number; endLine?: n
   return {};
 }
 
-function mapSeverity(typeRaw: string | undefined): 'blocker' | 'high' | 'medium' | 'low' | 'nit' {
+function mapSeverity(
+  typeRaw: string | undefined,
+  classifierText: string,
+): 'blocker' | 'high' | 'medium' | 'low' | 'nit' {
   const t = String(typeRaw ?? '').trim().toLowerCase();
   if (t === 'security' || t === 'vulnerability') return 'blocker';
   if (t === 'bug' || t === 'defect') return 'high';
@@ -41,16 +73,26 @@ function mapSeverity(typeRaw: string | undefined): 'blocker' | 'high' | 'medium'
   if (t === 'refactor' || t === 'enhancement') return 'medium';
   if (t === 'docs') return 'low';
   if (t === 'style' || t === 'nit') return 'nit';
+  if (/\b(blocker|critical)\b/i.test(classifierText)) return 'blocker';
+  if (hasSecuritySignal(classifierText)) return 'high';
+  if (/\bhigh\b/i.test(classifierText)) return 'high';
+  if (/\bmedium\b/i.test(classifierText)) return 'medium';
+  if (/\b(low|minor)\b/i.test(classifierText)) return 'low';
+  if (/\bnit\b/i.test(classifierText)) return 'nit';
   return 'low';
 }
 
-function mapCategory(typeRaw: string | undefined): 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs' {
+function mapCategory(
+  typeRaw: string | undefined,
+  classifierText: string,
+): 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs' {
   const t = String(typeRaw ?? '').trim().toLowerCase();
   if (t === 'security' || t === 'vulnerability') return 'security';
   if (t === 'performance') return 'performance';
   if (t === 'docs') return 'docs';
   if (t === 'style' || t === 'nit') return 'style';
   if (t === 'refactor' || t === 'enhancement') return 'maintainability';
+  if (hasSecuritySignal(classifierText)) return 'security';
   return 'correctness';
 }
 
@@ -169,14 +211,17 @@ export function normalizeCodeRabbitPlainReviewOutput(params: Readonly<{
   callId: string;
   sidechainId: string;
   backendId: string;
+  backendTarget: BackendTargetRefV1;
   startedAtMs: number;
   finishedAtMs: number;
   rawText: string;
+  retentionPolicy?: ExecutionRunRetentionPolicy;
 }>): ExecutionRunProfileBoundedCompleteResult {
   const parsed = parseCodeRabbitPlainFindings(params.rawText);
   const findings = parsed.map((f, idx) => {
-    const severity = mapSeverity(f.type);
-    const category = mapCategory(f.type);
+    const classifierText = joinClassifierText(f.type, f.comment, f.suggestion);
+    const severity = mapSeverity(f.type, classifierText);
+    const category = mapCategory(f.type, classifierText);
     const summary = String(f.comment ?? '').trim() || String(f.suggestion ?? '').trim() || 'Finding';
     return {
       id: `coderabbit_${idx + 1}`,
@@ -195,18 +240,18 @@ export function normalizeCodeRabbitPlainReviewOutput(params: Readonly<{
     findings.length === 0 ? 'CodeRabbit review: no findings.' : `CodeRabbit review: ${findings.length} finding(s).`;
 
   const structuredMeta: ExecutionRunStructuredMeta = {
-    kind: 'review_findings.v1',
-    payload: {
+    kind: 'review_findings.v2',
+    payload: buildReviewFindingsV2Payload({
       runId: params.runId,
       callId: params.callId,
-      sidechainId: params.sidechainId,
       backendId: params.backendId,
-      intent: 'review',
-      startedAtMs: params.startedAtMs,
-      finishedAtMs: params.finishedAtMs,
+      backendTarget: params.backendTarget,
+      retentionPolicy: params.retentionPolicy,
       summary,
+      overviewMarkdown: `${summary}\n\nReviewed ${findings.length} finding(s) from CodeRabbit plain output.`,
       findings,
-    },
+      generatedAtMs: params.finishedAtMs,
+    }),
   };
 
   return {

@@ -1,8 +1,6 @@
 import { EnhancedMode } from "./loop";
 import { query, type QueryOptions, type SDKMessage, type SDKSystemMessage, AbortError, SDKUserMessage } from '@/backends/claude/sdk'
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from "./utils/permissionMode";
-import { join, resolve } from 'node:path';
-import { projectPath } from "@/projectPath";
 import { parseSpecialCommand } from "@/cli/parsers/specialCommands";
 import { logger } from "@/lib";
 import { PushableAsyncIterable } from "@/utils/PushableAsyncIterable";
@@ -13,6 +11,9 @@ import { parseClaudeSdkFlagOverridesFromArgs } from "./remote/sdkFlagOverrides";
 import { resolveClaudeRemoteSessionStartPlan } from "./remote/sessionStartPlan";
 import { resolveClaudeConfigDirOverride } from "./utils/resolveClaudeConfigDirOverride";
 import { resolveClaudeCodeExperimentalEnvOverlay } from "./spawn/resolveClaudeCodeExperimentalEnvOverlay";
+import { ensureClaudeJsRuntimeExecutable } from "./utils/ensureClaudeJsRuntimeExecutable";
+import { resolveClaudeCliPath } from "./utils/resolveClaudeCliPath";
+import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
 
 function extractMcpConfigPassthroughArgs(args?: string[]): string[] | undefined {
     const input = args ?? [];
@@ -158,6 +159,14 @@ export async function claudeRemote(opts: {
             ? ['--mcp-config', opts.happierMcpConfigJson.trim()]
             : null;
     const extraArgs = [...(settingSourcesArgs ?? []), ...(passthroughMcpArgs ?? []), ...(injectedMcpArgs ?? [])];
+    const runtimeExecutable = await ensureClaudeJsRuntimeExecutable(opts.jsRuntime);
+    const resolvedClaudeCliPath = resolveClaudeCliPath();
+    const launcherEnv = resolveClaudeCodeExperimentalEnvOverlay({
+        claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
+    });
+    if (!launcherEnv.HAPPIER_CLAUDE_PATH && !launcherEnv.HAPPY_CLAUDE_PATH) {
+        launcherEnv.HAPPIER_CLAUDE_PATH = resolvedClaudeCliPath;
+    }
 
     const sdkOptions: QueryOptions = {
         cwd: opts.path,
@@ -173,14 +182,10 @@ export async function claudeRemote(opts: {
         strictMcpConfig: argOverrides.strictMcpConfig,
         canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) =>
             opts.canCallTool(toolName, input, mode, options),
-        executable: opts.jsRuntime ?? 'node',
+        executable: runtimeExecutable,
         abort: opts.signal,
-        pathToClaudeCodeExecutable: (() => {
-            return resolve(join(projectPath(), 'scripts', 'claude_remote_launcher.cjs'));
-        })(),
-        env: resolveClaudeCodeExperimentalEnvOverlay({
-            claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
-        }),
+        pathToClaudeCodeExecutable: resolveCliRuntimeAssetPath('scripts', 'claude_remote_launcher.cjs'),
+        env: launcherEnv,
         settingsPath: opts.hookSettingsPath,
     }
 

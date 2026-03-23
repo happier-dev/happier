@@ -1,15 +1,27 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ScrollView: 'ScrollView',
-    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? null },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    ScrollView: 'ScrollView',
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: any) => options?.web ?? options?.default ?? null,
+                                    },
+                                    AppState: {
+                                        addEventListener: () => ({ remove: () => {} }),
+                                    },
+                                }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -31,9 +43,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('FileContentPanel (web read-only diff)', () => {
     const theme = { colors: { textSecondary: '#999' } };
@@ -42,9 +55,7 @@ describe('FileContentPanel (web read-only diff)', () => {
         const { FileContentPanel } = await import('./FileContentPanel');
 
         let tree!: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <FileContentPanel
+        tree = (await renderScreen(<FileContentPanel
                     theme={theme as any}
                 displayMode="diff"
                 sessionId="s1"
@@ -55,11 +66,9 @@ describe('FileContentPanel (web read-only diff)', () => {
                 selectedLineKeys={new Set()}
                 lineSelectionEnabled={false}
                 onToggleLine={vi.fn()}
-            />
-        );
-    });
+            />)).tree;
 
-        expect(tree.root.findAllByType('DiffViewer' as any)).toHaveLength(1);
-        expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(0);
+        expect(tree.findAllByType('DiffViewer' as any)).toHaveLength(1);
+        expect(tree.findAllByType('CodeLinesView' as any)).toHaveLength(0);
     });
 });

@@ -1,28 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createContext, runInContext } from 'node:vm';
 
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
+
 describe('logger.debugLargeJson', () => {
-    const originalDebug = process.env.DEBUG;
-    const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+    const envKeys = ['DEBUG', 'HAPPIER_HOME_DIR'] as const;
+    let envScope = createEnvKeyScope(envKeys);
     let tempDir: string;
 
     beforeEach(() => {
-        tempDir = mkdtempSync(join(tmpdir(), 'happier-cli-logger-test-'));
-        process.env.HAPPIER_HOME_DIR = tempDir;
-        delete process.env.DEBUG;
+        envScope = createEnvKeyScope(envKeys);
+        tempDir = createTempDirSync('happier-cli-logger-test-');
+        envScope.patch({
+            HAPPIER_HOME_DIR: tempDir,
+            DEBUG: undefined,
+        });
         vi.resetModules();
     });
 
     afterEach(() => {
-        rmSync(tempDir, { recursive: true, force: true });
-        if (originalHappyHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-        else process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
-
-        if (originalDebug === undefined) delete process.env.DEBUG;
-        else process.env.DEBUG = originalDebug;
+        removeTempDirSync(tempDir);
+        envScope.restore();
     });
 
     it('does not write to log file when DEBUG is not set', async () => {
@@ -130,6 +131,22 @@ describe('logger.debugLargeJson', () => {
             }).not.toThrow();
         } finally {
             errorSpy.mockRestore();
+        }
+    });
+
+    it('does not throw when console logging hits EPIPE', async () => {
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+        const epipeError = Object.assign(new Error('broken pipe'), { code: 'EPIPE' });
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {
+            throw epipeError;
+        });
+
+        try {
+            expect(() => {
+                logger.warn('[TEST] warn survives broken stdout');
+            }).not.toThrow();
+        } finally {
+            consoleSpy.mockRestore();
         }
     });
 });

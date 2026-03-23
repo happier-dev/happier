@@ -1,13 +1,7 @@
-import { beforeAll, describe, expect, it } from 'vitest';
-
-import sodium from '@/encryption/libsodium.lib';
+import { describe, expect, it } from 'vitest';
 import { decryptSecretValue, sealSecretsDeep, unsealSecretsDeep } from './secretSettings';
 
 describe('secretSettings', () => {
-    beforeAll(async () => {
-        await sodium.ready;
-    });
-
     it('sealSecretsDeep encrypts SecretString.value into SecretString.encryptedValue and drops SecretString.value', () => {
         const key = new Uint8Array(32).fill(7);
         const delta = {
@@ -51,5 +45,43 @@ describe('secretSettings', () => {
         const out: any = (unsealed as any).secret;
         expect(out.value).toBe('sk-test');
         expect(out.encryptedValue).toBeUndefined();
+    });
+
+    it('treats whitespace-only plaintext values as empty and falls back to encrypted data', () => {
+        const key = new Uint8Array(32).fill(7);
+        const sealed = sealSecretsDeep({ secret: { _isSecretValue: true, value: 'sk-test' } }, key) as any;
+
+        expect(
+            decryptSecretValue(
+                {
+                    _isSecretValue: true,
+                    value: '   ',
+                    encryptedValue: sealed.secret.encryptedValue,
+                },
+                key,
+            ),
+        ).toBe('sk-test');
+    });
+
+    it('returns null for encrypted secrets when no key is available', () => {
+        const key = new Uint8Array(32).fill(7);
+        const sealed = sealSecretsDeep({ secret: { _isSecretValue: true, value: 'sk-test' } }, key) as any;
+
+        expect(
+            decryptSecretValue(
+                {
+                    _isSecretValue: true,
+                    encryptedValue: sealed.secret.encryptedValue,
+                },
+                null,
+            ),
+        ).toBeNull();
+    });
+
+    it('returns the original structure unchanged when sealing with a null key', () => {
+        const input = { secret: { _isSecretValue: true, value: 'sk-test' } };
+        const sealed = sealSecretsDeep(input, null);
+
+        expect(sealed).toBe(input);
     });
 });

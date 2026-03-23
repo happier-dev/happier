@@ -60,6 +60,7 @@ export function PermissionModePicker(props: {
                 return (
                     <Pressable
                         key={option.value}
+                        testID={`permission-mode-${option.value}`}
                         onPress={() => props.onSelect(option.value)}
                         style={({ pressed }) => [props.styles.overlayOptionRow, pressed ? props.styles.overlayOptionRowPressed : null]}
                     >

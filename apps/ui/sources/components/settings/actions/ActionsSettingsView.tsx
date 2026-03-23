@@ -1,237 +1,236 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { useUnistyles } from 'react-native-unistyles';
+import { View, Platform } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import {
-  ActionsSettingsV1Schema,
-  isActionEnabledByActionsSettings,
-  listActionSpecs,
-  type ActionId,
-  type ActionSurfaces,
-  type ActionUiPlacement,
-} from '@happier-dev/protocol';
+import { type ActionId } from '@happier-dev/protocol';
 
+import { SearchHeader } from '@/components/ui/forms/SearchHeader';
+import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
+import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Switch } from '@/components/ui/forms/Switch';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { Text } from '@/components/ui/text/Text';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
-type ActionSettingsEntry = Readonly<{
-  enabled?: boolean;
-  enabledPlacements: readonly ActionUiPlacement[];
-  disabledSurfaces: readonly (keyof ActionSurfaces)[];
-  disabledPlacements: readonly ActionUiPlacement[];
-}>;
+import {
+    buildActionSettingsEntries,
+    type ActionSettingsEntry,
+    type ActionSettingsTargetEntry,
+} from './buildActionSettingsEntries';
+import { buildActionSettingsDisplayModel } from './buildActionSettingsDisplayModel';
+import { setActionEnabled, setActionTargetSelected } from './actionSettingsTargets';
+import { normalizeActionsSettings } from './normalizeActionsSettings';
 
-function normalizeEntry(raw: unknown): ActionSettingsEntry {
-  const parsed = ActionsSettingsV1Schema.safeParse({ v: 1, actions: { x: raw } });
-  if (parsed.success) {
-    const entry = (parsed.data.actions as any)?.x ?? null;
-    if (entry) return entry as any;
-  }
-  return { enabled: undefined, enabledPlacements: [], disabledSurfaces: [], disabledPlacements: [] };
+const stylesheet = StyleSheet.create((theme) => ({
+    targetsContainer: {
+        paddingHorizontal: Platform.select({ ios: 16, default: 14 }),
+        paddingVertical: Platform.select({ ios: 14, default: 16 }),
+        gap: 16,
+    },
+    section: {
+        gap: 10,
+    },
+    sectionTitle: {
+        color: theme.colors.textSecondary,
+        fontSize: Platform.select({ ios: 13, default: 13 }),
+        lineHeight: 18,
+        textTransform: 'uppercase',
+        fontWeight: Platform.select({ ios: '500', default: '600' }),
+        letterSpacing: Platform.select({ ios: -0.08, default: 0.2 }),
+    },
+    emptyState: {
+        paddingHorizontal: Platform.select({ ios: 16, default: 14 }),
+        paddingVertical: Platform.select({ ios: 16, default: 18 }),
+    },
+    emptyText: {
+        color: theme.colors.textSecondary,
+        fontSize: Platform.select({ ios: 15, default: 14 }),
+        lineHeight: 20,
+    },
+    unavailableSummary: {
+        paddingHorizontal: Platform.select({ ios: 16, default: 14 }),
+        paddingVertical: Platform.select({ ios: 14, default: 16 }),
+        gap: 14,
+    },
+}));
+
+function buildTileSubtitle(target: ActionSettingsTargetEntry): string {
+    if (target.reasonKey) {
+        return t(target.reasonKey);
+    }
+    return t(target.subtitleKey);
 }
-
-function uniqSorted<T extends string>(values: readonly T[]): readonly T[] {
-  const out = Array.from(new Set(values.map((v) => String(v) as T)));
-  out.sort((a, b) => String(a).localeCompare(String(b)));
-  return out;
-}
-
-const SURFACE_LABELS: Record<keyof ActionSurfaces, string> = {
-  ui_button: 'UI buttons',
-  ui_slash_command: 'Slash commands',
-  voice_tool: 'Voice tools',
-  voice_action_block: 'Voice action blocks',
-  mcp: 'MCP',
-  session_control_cli: 'Session control CLI',
-};
-
-const SURFACE_ICONS: Record<keyof ActionSurfaces, React.ComponentProps<typeof Ionicons>['name']> = {
-  ui_button: 'flash-outline',
-  ui_slash_command: 'code-slash-outline',
-  voice_tool: 'mic-outline',
-  voice_action_block: 'chatbubble-ellipses-outline',
-  mcp: 'cube-outline',
-  session_control_cli: 'terminal-outline',
-};
-
-const PLACEMENT_LABELS: Record<ActionUiPlacement, string> = {
-  agent_input_chips: 'Agent input chips',
-  session_header: 'Session header',
-  session_action_menu: 'Session action menu',
-  command_palette: 'Command palette',
-  slash_command: 'Slash command',
-  voice_panel: 'Voice panel',
-  session_info: 'Session info',
-  run_list: 'Runs list',
-  run_card: 'Run card',
-};
-
-const PLACEMENT_ICONS: Record<ActionUiPlacement, React.ComponentProps<typeof Ionicons>['name']> = {
-  agent_input_chips: 'add-circle-outline',
-  session_header: 'albums-outline',
-  session_action_menu: 'ellipsis-horizontal',
-  command_palette: 'search-outline',
-  slash_command: 'code-slash-outline',
-  voice_panel: 'mic-outline',
-  session_info: 'information-circle-outline',
-  run_list: 'play-outline',
-  run_card: 'document-text-outline',
-};
 
 export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
-  const { theme } = useUnistyles();
-  const [raw, setRaw] = useSettingMutable('actionsSettingsV1');
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const [searchQuery, setSearchQuery] = React.useState('');
+    const [rawSettings, setRawSettings] = useSettingMutable('actionsSettingsV1');
+    const voice = useSetting('voice') as Readonly<{ privacy?: { shareDeviceInventory?: boolean } }> | null;
+    const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const memorySearchEnabled = useFeatureEnabled('memory.search');
+    const voiceEnabled = useFeatureEnabled('voice');
+    const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
+    const mcpServersEnabled = useFeatureEnabled('mcp.servers');
 
-  const settings = React.useMemo(() => {
-    const parsed = ActionsSettingsV1Schema.safeParse(raw ?? null);
-    return parsed.success ? parsed.data : { v: 1 as const, actions: {} as Record<ActionId, any> };
-  }, [raw]);
+    const settings = React.useMemo(() => normalizeActionsSettings(rawSettings), [rawSettings]);
+    const availability = React.useMemo(() => ({
+        executionRunsEnabled,
+        memorySearchEnabled,
+        voiceEnabled,
+        sessionHandoffEnabled,
+        mcpServersEnabled,
+        voiceShareDeviceInventory: voice?.privacy?.shareDeviceInventory !== false,
+    }), [executionRunsEnabled, memorySearchEnabled, voice?.privacy?.shareDeviceInventory, voiceEnabled, sessionHandoffEnabled, mcpServersEnabled]);
 
-  const setSettings = React.useCallback(
-    (next: any) => {
-      const parsed = ActionsSettingsV1Schema.safeParse(next);
-      setRaw(parsed.success ? (parsed.data as any) : ({ v: 1, actions: {} } as any));
-    },
-    [setRaw],
-  );
+    const entries = React.useMemo(() => buildActionSettingsEntries({
+        query: searchQuery,
+        settings,
+        availability,
+        translate: t,
+    }), [availability, searchQuery, settings]);
+    const displayModel = React.useMemo(() => buildActionSettingsDisplayModel(entries), [entries]);
 
-  const specs = React.useMemo(() => {
-    return listActionSpecs()
-      .slice()
-      .sort((a, b) => String(a.title).localeCompare(String(b.title)));
-  }, []);
+    const commitSettings = React.useCallback((next: unknown) => {
+        setRawSettings(normalizeActionsSettings(next));
+    }, [setRawSettings]);
 
-  return (
-    <ItemList style={{ paddingTop: 0 }}>
-      <ItemGroup title={t('common.actions')}>
-        <Item
-          title={t('settings.about')}
-          subtitle={t('settings.actionsSettingsAboutSubtitle')}
-          icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
-          showChevron={false}
-        />
-      </ItemGroup>
+    const handleActionEnabledChange = React.useCallback((actionId: ActionId, enabled: boolean) => {
+        commitSettings(setActionEnabled({ settings, actionId, enabled }));
+    }, [commitSettings, settings]);
 
-      {specs.map((spec) => {
-        const entry = normalizeEntry((settings.actions as any)?.[spec.id]);
-        const globallyEnabled = entry.enabled !== false;
+    const handleSectionSelectionChange = React.useCallback((entry: ActionSettingsEntry, targets: readonly ActionSettingsTargetEntry[], nextSelectedIds: string[]) => {
+        let nextSettings = settings;
+        const selectedSet = new Set(nextSelectedIds);
 
-        const supportedSurfaces = (Object.keys(spec.surfaces ?? {}) as Array<keyof ActionSurfaces>).filter((k) =>
-          Boolean((spec.surfaces as any)?.[k] === true),
-        );
-
-        const supportedPlacements = Array.isArray((spec as any).placements)
-          ? ((spec as any).placements as ActionUiPlacement[])
-          : [];
-
-        const updateEntry = (nextEntry: ActionSettingsEntry) => {
-          const merged = {
-            ...settings,
-            actions: {
-              ...(settings.actions as any),
-              [spec.id]: {
-                enabled: nextEntry.enabled,
-                enabledPlacements: uniqSorted(nextEntry.enabledPlacements as any),
-                disabledSurfaces: uniqSorted(nextEntry.disabledSurfaces as any),
-                disabledPlacements: uniqSorted(nextEntry.disabledPlacements as any),
-              },
-            },
-          };
-          setSettings(merged);
-        };
-
-        const toggleGlobal = () => {
-          updateEntry({
-            ...entry,
-            enabled: globallyEnabled ? false : true,
-          });
-        };
-
-        const toggleSurface = (surface: keyof ActionSurfaces) => {
-          const set = new Set(entry.disabledSurfaces as readonly string[]);
-          if (set.has(surface)) set.delete(surface);
-          else set.add(surface);
-          updateEntry({ ...entry, disabledSurfaces: Array.from(set) as any });
-        };
-
-        const togglePlacement = (placement: ActionUiPlacement) => {
-          const optInPlacements = new Set<ActionUiPlacement>(['agent_input_chips']);
-          if (optInPlacements.has(placement)) {
-            const enabledSet = new Set(entry.enabledPlacements as readonly string[]);
-            const disabledSet = new Set(entry.disabledPlacements as readonly string[]);
-            const isEnabled = enabledSet.has(placement);
-            if (isEnabled) {
-              enabledSet.delete(placement);
-            } else {
-              enabledSet.add(placement);
-              disabledSet.delete(placement);
+        for (const target of targets) {
+            const nextSelected = selectedSet.has(target.id);
+            if (nextSelected === target.selected) {
+                continue;
             }
-            updateEntry({ ...entry, enabledPlacements: Array.from(enabledSet) as any, disabledPlacements: Array.from(disabledSet) as any });
-            return;
-          }
+            nextSettings = setActionTargetSelected({
+                settings: nextSettings,
+                actionId: entry.actionId,
+                targetId: target.id,
+                selected: nextSelected,
+            });
+        }
 
-          const set = new Set(entry.disabledPlacements as readonly string[]);
-          if (set.has(placement)) set.delete(placement);
-          else set.add(placement);
-          updateEntry({ ...entry, disabledPlacements: Array.from(set) as any });
-        };
+        commitSettings(nextSettings);
+    }, [commitSettings, settings]);
 
-        const effectiveEnabled = isActionEnabledByActionsSettings(spec.id as any, settings as any);
-        const statusLabel = effectiveEnabled ? t('common.enabled') : t('common.disabled');
+    const buildUnavailableTargetsSubtitle = React.useCallback((targets: readonly ActionSettingsTargetEntry[]) => {
+        const targetTitles = targets.map((target) => t(target.titleKey)).join(', ');
+        const reasons = Array.from(new Set(
+            targets
+                .map((target) => target.reasonKey)
+                .filter((reasonKey): reasonKey is NonNullable<typeof reasonKey> => Boolean(reasonKey))
+                .map((reasonKey) => t(reasonKey)),
+        ));
 
-        return (
-          <ItemGroup key={spec.id} title={spec.title} footer={spec.id}>
-            <Item
-              title={t('common.enabled')}
-              subtitle={statusLabel}
-              icon={
-                <Ionicons
-                  name={effectiveEnabled ? 'flash-outline' : 'flash-off-outline'}
-                  size={29}
-                  color={effectiveEnabled ? theme.colors.success : theme.colors.warningCritical}
-                />
-              }
-              rightElement={<Switch value={globallyEnabled} onValueChange={toggleGlobal} />}
-              showChevron={false}
-              onPress={toggleGlobal}
+        if (reasons.length === 0) {
+            return targetTitles;
+        }
+
+        return `${targetTitles}. ${reasons.join(' ')}`;
+    }, []);
+
+    return (
+        <ItemList style={{ paddingTop: 0 }}>
+            <SearchHeader
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder={t('settingsActions.searchPlaceholder')}
             />
 
-            {supportedSurfaces.map((surface) => {
-              const isEnabledOnSurface = isActionEnabledByActionsSettings(spec.id as any, settings as any, { surface } as any);
-              return (
+            <ItemGroup title={t('common.actions')} footer={t('settingsActions.aboutFooter')}>
                 <Item
-                  key={`surface:${surface}`}
-                  title={SURFACE_LABELS[surface] ?? String(surface)}
-                  subtitle={isEnabledOnSurface ? t('common.enabled') : t('common.disabled')}
-                  icon={<Ionicons name={SURFACE_ICONS[surface] ?? 'options-outline'} size={29} color={theme.colors.textSecondary} />}
-                  rightElement={<Switch value={isEnabledOnSurface} onValueChange={() => toggleSurface(surface)} />}
-                  showChevron={false}
-                  onPress={() => toggleSurface(surface)}
+                    title={t('settings.about')}
+                    subtitle={t('settingsActions.aboutSubtitle')}
+                    icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                    mode="info"
+                    showChevron={false}
                 />
-              );
+            </ItemGroup>
+
+            {displayModel.entries.length === 0 ? (
+                <ItemGroup>
+                    <View style={styles.emptyState}>
+                        <Text style={styles.emptyText}>{t('settingsActions.noResults')}</Text>
+                    </View>
+                </ItemGroup>
+            ) : null}
+
+            {displayModel.entries.map((entry) => {
+                const actionEnabled = entry.enabled;
+
+                return (
+                    <ItemGroup key={entry.actionId} footer={entry.actionId}>
+                        <Item
+                            title={entry.title}
+                            subtitle={entry.description ?? t('settingsActions.noDescription')}
+                            detail={actionEnabled ? t('common.enabled') : t('common.disabled')}
+                            icon={(
+                                <Ionicons
+                                    name={actionEnabled ? 'flash-outline' : 'flash-off-outline'}
+                                    size={29}
+                                    color={actionEnabled ? theme.colors.success : theme.colors.warningCritical}
+                                />
+                            )}
+                            rightElement={(
+                                <Switch
+                                    value={actionEnabled}
+                                    onValueChange={(nextValue) => handleActionEnabledChange(entry.actionId, nextValue)}
+                                />
+                            )}
+                            showChevron={false}
+                            onPress={() => handleActionEnabledChange(entry.actionId, !actionEnabled)}
+                        />
+
+                        {entry.sections.length > 0 ? (
+                            <View style={styles.targetsContainer}>
+                                {entry.sections.map((section) => (
+                                    <View key={section.id} style={styles.section}>
+                                        <Text style={styles.sectionTitle}>{t(section.titleKey)}</Text>
+                                        <SelectionTiles
+                                            selectionMode="multiple"
+                                            options={section.targets.map((target) => ({
+                                                id: target.id,
+                                                title: t(target.titleKey),
+                                                subtitle: buildTileSubtitle(target),
+                                                icon: target.icon as React.ComponentProps<typeof Ionicons>['name'],
+                                            }))}
+                                            value={section.selectedIds}
+                                            onChange={(nextValue) => handleSectionSelectionChange(entry, section.targets, nextValue)}
+                                        />
+                                    </View>
+                                ))}
+                            </View>
+                        ) : null}
+                    </ItemGroup>
+                );
             })}
 
-            {supportedPlacements.map((placement) => {
-              const isEnabledInPlacement = isActionEnabledByActionsSettings(spec.id as any, settings as any, { placement } as any);
-                return (
-                  <Item
-                  key={`placement:${placement}`}
-                  title={PLACEMENT_LABELS[placement] ?? String(placement)}
-                  subtitle={isEnabledInPlacement ? t('common.enabled') : t('common.disabled')}
-                  icon={<Ionicons name={PLACEMENT_ICONS[placement] ?? 'options-outline'} size={29} color={theme.colors.textSecondary} />}
-                  rightElement={<Switch value={isEnabledInPlacement} onValueChange={() => togglePlacement(placement)} />}
-                  showChevron={false}
-                  onPress={() => togglePlacement(placement)}
-                />
-              );
-            })}
-          </ItemGroup>
-        );
-      })}
-    </ItemList>
-  );
+            {displayModel.unavailableEntries.length > 0 ? (
+                <ItemGroup title={t('settingsActions.badges.unavailable')}>
+                    <View style={styles.unavailableSummary}>
+                        {displayModel.unavailableEntries.map((entry) => (
+                            <Item
+                                key={`unavailable-${entry.actionId}`}
+                                title={entry.title}
+                                subtitle={buildUnavailableTargetsSubtitle(entry.targets)}
+                                icon={<Ionicons name="eye-off-outline" size={29} color={theme.colors.textSecondary} />}
+                                mode="info"
+                                showChevron={false}
+                            />
+                        ))}
+                    </View>
+                </ItemGroup>
+            ) : null}
+        </ItemList>
+    );
 });

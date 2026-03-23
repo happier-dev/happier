@@ -3,11 +3,20 @@ import { run } from '../utils/proc/proc.mjs';
 import { listAllStackNames } from '../utils/stack/stacks.mjs';
 import { getRuntimePortExtraEnv, withStackEnv } from './stack_environment.mjs';
 
-export async function cmdService({ rootDir, stackName, svcCmd }) {
+export async function cmdService({ rootDir, stackName, svcCmd, args = [] }) {
   await withStackEnv({
     stackName,
     fn: async ({ env }) => {
-      await run(process.execPath, [join(rootDir, 'scripts', 'service.mjs'), svcCmd], { cwd: rootDir, env });
+      await run(process.execPath, [join(rootDir, 'scripts', 'service.mjs'), svcCmd, ...args], { cwd: rootDir, env });
+    },
+  });
+}
+
+export async function cmdRuntime({ rootDir, stackName, args = [] }) {
+  await withStackEnv({
+    stackName,
+    fn: async ({ env }) => {
+      await run(process.execPath, [join(rootDir, 'scripts', 'runtime_activate.mjs'), ...args], { cwd: rootDir, env });
     },
   });
 }

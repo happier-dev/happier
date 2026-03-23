@@ -16,4 +16,8 @@ test('package export entrypoints load in Node ESM', async () => {
   assert.equal(typeof root.links.buildTerminalConnectLinks, 'function');
   assert.equal(typeof root.service.resolveServiceBackend, 'function');
   assert.equal(typeof root.providers.planProviderCliInstall, 'function');
+
+  const firstPartyRuntime = await import('../dist/firstPartyRuntime/index.js');
+  assert.equal(typeof firstPartyRuntime.getFirstPartyComponentCatalogEntry, 'function');
+  assert.equal(typeof root.firstPartyRuntime.getFirstPartyComponentCatalogEntry, 'function');
 });

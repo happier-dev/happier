@@ -17,9 +17,27 @@ export interface Artifact {
  * Decrypted artifact header
  */
 export interface ArtifactHeader {
+    /**
+     * Optional version for header payloads that include structured metadata.
+     * Legacy artifacts may omit this value.
+     */
+    v?: number;
+
+    /**
+     * Optional kind discriminator for filtering artifacts without fetching bodies.
+     * Legacy artifacts may omit this value.
+     */
+    kind?: string;
+
     title: string | null;
     sessions?: string[];  // Optional array of session IDs linked to this artifact
     draft?: boolean;      // Optional draft flag - hides artifact from visible list when true
+
+    /**
+     * Passthrough metadata (prompt kinds, approval status, tags, etc).
+     * Consumers must treat unknown keys as optional.
+     */
+    [key: string]: unknown;
 }
 
 /**
@@ -34,6 +52,7 @@ export interface ArtifactBody {
  */
 export interface DecryptedArtifact {
     id: string;
+    header?: ArtifactHeader | null;
     title: string | null;
     sessions?: string[];  // Optional array of session IDs linked to this artifact
     draft?: boolean;      // Optional draft flag - hides artifact from visible list when true

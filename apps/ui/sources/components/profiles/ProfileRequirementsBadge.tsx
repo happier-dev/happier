@@ -3,11 +3,12 @@ import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { AIBackendProfile } from '@/sync/domains/settings/settings';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { t } from '@/text';
 import { useProfileEnvRequirements } from '@/hooks/session/useProfileEnvRequirements';
 import { hasRequiredSecret } from '@/sync/domains/profiles/profileSecrets';
 import { Text } from '@/components/ui/text/Text';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 
 
 export interface ProfileRequirementsBadgeProps {
@@ -85,7 +86,7 @@ export function ProfileRequirementsBadge(props: ProfileRequirementsBadgeProps) {
             ]}
         >
             <View style={styles.badgeRow}>
-                <Ionicons name={iconName as any} size={14} color={statusColor} />
+                {normalizeNodeForView(<Ionicons name={iconName as any} size={14} color={statusColor} />)}
                 <Text style={[styles.badgeText, { color: statusColor }]} numberOfLines={1}>
                     {label}
                 </Text>

@@ -2,12 +2,14 @@ import * as React from 'react';
 import { Platform, Pressable, View, StyleProp, ViewStyle, TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 
 
 export type SelectableRowVariant = 'slim' | 'default' | 'selectable';
 
 export type SelectableRowProps = Readonly<{
+    testID?: string;
     title: React.ReactNode;
     subtitle?: React.ReactNode;
     left?: React.ReactNode;
@@ -21,6 +23,7 @@ export type SelectableRowProps = Readonly<{
     variant?: SelectableRowVariant;
     onPress?: () => void;
     onHover?: () => void;
+    onMouseDownCapture?: (event: unknown) => void;
 
     containerStyle?: StyleProp<ViewStyle>;
     titleStyle?: StyleProp<TextStyle>;
@@ -141,6 +144,9 @@ export function SelectableRow(props: SelectableRowProps) {
             if (!canHover) return;
             setIsHovered(false);
         };
+        if (props.onMouseDownCapture) {
+            pressableProps.onMouseDownCapture = props.onMouseDownCapture;
+        }
     }
 
     const rowVariantStyle =
@@ -153,9 +159,12 @@ export function SelectableRow(props: SelectableRowProps) {
     const titleColorStyle = props.destructive ? styles.titleDestructive : null;
     const titleVariantStyle = variant === 'selectable' ? styles.titleSelectable : null;
     const subtitleVariantStyle = variant === 'selectable' ? styles.subtitleSelectable : null;
+    const leftAccessory = React.useMemo(() => normalizeNodeForView(props.left ?? null), [props.left]);
+    const rightAccessory = React.useMemo(() => normalizeNodeForView(props.right ?? null), [props.right]);
 
     return (
         <Pressable
+            testID={props.testID}
             onPress={disabled ? undefined : props.onPress}
             disabled={disabled}
             accessibilityRole={props.onPress ? 'button' : undefined}
@@ -177,9 +186,9 @@ export function SelectableRow(props: SelectableRowProps) {
             ])}
             {...pressableProps}
         >
-            {props.left ? (
+            {leftAccessory ? (
                 <View style={[styles.left, typeof props.leftGap === 'number' ? { marginRight: props.leftGap } : null]}>
-                    {props.left}
+                    {leftAccessory}
                 </View>
             ) : null}
 
@@ -194,9 +203,9 @@ export function SelectableRow(props: SelectableRowProps) {
                 ) : null}
             </View>
 
-            {props.right ? (
+            {rightAccessory ? (
                 <View style={styles.right}>
-                    {props.right}
+                    {rightAccessory}
                 </View>
             ) : null}
         </Pressable>

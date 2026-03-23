@@ -5,10 +5,11 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 import { ExecutionRunStatusPill } from './ExecutionRunStatusPill';
 import { Text } from '@/components/ui/text/Text';
+import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 
 
 export type ExecutionRunRowRun =
-    Pick<ExecutionRunPublicState, 'runId' | 'intent' | 'backendId' | 'status' | 'display'>
+    Pick<ExecutionRunPublicState, 'runId' | 'intent' | 'backendTarget' | 'status' | 'display'>
     & Partial<Pick<ExecutionRunPublicState, 'startedAtMs' | 'finishedAtMs'>>;
 
 export const ExecutionRunRow = React.memo((props: Readonly<{
@@ -20,12 +21,13 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
     const { theme } = useUnistyles();
     const { run, onPress } = props;
     const subtitle = typeof props.subtitle === 'string' ? props.subtitle : run.runId;
+    const backendLabel = resolveExecutionRunBackendLabel(run.backendTarget);
     const title =
         (run.display && typeof run.display === 'object' && typeof (run.display as any).title === 'string' && String((run.display as any).title).trim().length > 0)
             ? String((run.display as any).title).trim()
             : (run.display && typeof run.display === 'object' && typeof (run.display as any).participantLabel === 'string' && String((run.display as any).participantLabel).trim().length > 0)
                 ? String((run.display as any).participantLabel).trim()
-                : `${run.intent} · ${run.backendId}`;
+                : backendLabel ? `${run.intent} · ${backendLabel}` : run.intent;
 
     return (
         <Pressable

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
-import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -28,6 +29,267 @@ async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T>)
 }
 
 describe('codexLocalLauncher', () => {
+	  it('does not forward CODEX_THREAD_ID to the Codex TUI child process', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const threadIdPath = join(fixture.binDir, 'thread-id.txt');
+    const envDumpPath = join(fixture.binDir, 'codex-env.json');
+    const sessionId = randomUUID();
+    const nowIso = new Date().toISOString();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      recordArgv: false,
+      recordThreadId: true,
+      recordCodexEnv: true,
+      exitAfterMs: 1_500,
+    });
+
+    const { session } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      CODEX_THREAD_ID: 'poisoned-parent-thread',
+      CODEX_CI: '1',
+      CODEX_SHELL: '1',
+      CODEX_INTERNAL_ORIGINATOR_OVERRIDE: 'Codex Desktop',
+      TEST_CODEX_THREAD_ID_PATH: threadIdPath,
+      TEST_CODEX_ENV_DUMP_PATH: envDumpPath,
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: sessionId,
+      TEST_CODEX_TIMESTAMP: nowIso,
+      TEST_CODEX_ARGV_PATH: undefined,
+      CODEX_HOME: undefined,
+    });
+
+    try {
+      const launcherPromise = codexLocalLauncher({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        resumeId: sessionId,
+        rolloutDiscovery: {
+          initialTimeoutMs: 250,
+          initialPollIntervalMs: 25,
+          extendedPollIntervalMs: 25,
+        },
+      });
+
+      await waitFor(() => {
+        expect(existsSync(threadIdPath)).toBe(true);
+      }, { timeoutMs: 5_000 });
+      await waitFor(() => {
+        expect(existsSync(envDumpPath)).toBe(true);
+      }, { timeoutMs: 5_000 });
+
+      const forwarded = await readFile(threadIdPath, 'utf8');
+      expect(forwarded).toBe('');
+
+	      const envDump = JSON.parse(await readFile(envDumpPath, 'utf8')) as Record<string, unknown>;
+	      expect(envDump.CODEX_THREAD_ID).toBeUndefined();
+	      expect(envDump.CODEX_CI).toBe('1');
+	      expect(envDump.CODEX_SHELL).toBeUndefined();
+	      expect(envDump.CODEX_INTERNAL_ORIGINATOR_OVERRIDE).toBeUndefined();
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
+  it('preserves allowlisted CODEX_* env vars for the Codex TUI child process', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const envDumpPath = join(fixture.binDir, 'codex-env.json');
+    const sessionId = randomUUID();
+    const nowIso = new Date().toISOString();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      recordArgv: false,
+      recordCodexEnv: true,
+      exitAfterMs: 1_500,
+    });
+
+    const { session } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      CODEX_THREAD_ID: 'poisoned-parent-thread',
+      CODEX_CI: '1',
+      CODEX_SHELL: '1',
+      CODEX_INTERNAL_ORIGINATOR_OVERRIDE: 'Codex Desktop',
+      TEST_CODEX_ENV_DUMP_PATH: envDumpPath,
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: sessionId,
+      TEST_CODEX_TIMESTAMP: nowIso,
+      TEST_CODEX_ARGV_PATH: undefined,
+      TEST_CODEX_THREAD_ID_PATH: undefined,
+      CODEX_HOME: undefined,
+    });
+
+	    const prevPreserve = process.env.HAPPIER_CODEX_TUI_PRESERVE_CODEX_ENV_KEYS;
+	    process.env.HAPPIER_CODEX_TUI_PRESERVE_CODEX_ENV_KEYS = 'CODEX_SHELL';
+
+    try {
+      const launcherPromise = codexLocalLauncher({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        resumeId: sessionId,
+        rolloutDiscovery: {
+          initialTimeoutMs: 250,
+          initialPollIntervalMs: 25,
+          extendedPollIntervalMs: 25,
+        },
+      });
+
+      await waitFor(() => {
+        expect(existsSync(envDumpPath)).toBe(true);
+      }, { timeoutMs: 5_000 });
+
+	      const envDump = JSON.parse(await readFile(envDumpPath, 'utf8')) as Record<string, unknown>;
+	      expect(envDump.CODEX_THREAD_ID).toBeUndefined();
+	      expect(envDump.CODEX_INTERNAL_ORIGINATOR_OVERRIDE).toBeUndefined();
+
+	      // CODEX_CI should be preserved by default.
+	      expect(envDump.CODEX_CI).toBe('1');
+
+	      // Allowlisted values should be preserved.
+	      expect(envDump.CODEX_SHELL).toBe('1');
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
+    } finally {
+      if (prevPreserve === undefined) delete process.env.HAPPIER_CODEX_TUI_PRESERVE_CODEX_ENV_KEYS;
+      else process.env.HAPPIER_CODEX_TUI_PRESERVE_CODEX_ENV_KEYS = prevPreserve;
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
+  it('launches a JS-backed Codex override even when PATH does not contain node', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const envDumpPath = join(fixture.binDir, 'codex-env.json');
+    const sessionId = randomUUID();
+    const nowIso = new Date().toISOString();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      recordArgv: false,
+      recordCodexEnv: true,
+      exitAfterMs: 1_500,
+    });
+
+    const { session } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      CODEX_CI: '1',
+      TEST_CODEX_ENV_DUMP_PATH: envDumpPath,
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: sessionId,
+      TEST_CODEX_TIMESTAMP: nowIso,
+      TEST_CODEX_ARGV_PATH: undefined,
+      TEST_CODEX_THREAD_ID_PATH: undefined,
+      CODEX_HOME: undefined,
+    });
+    const originalPath = process.env.PATH;
+
+    try {
+      process.env.PATH = join(fixture.binDir, 'empty-path');
+
+      const launcherPromise = codexLocalLauncher({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        resumeId: sessionId,
+        rolloutDiscovery: {
+          initialTimeoutMs: 250,
+          initialPollIntervalMs: 25,
+          extendedPollIntervalMs: 25,
+        },
+      });
+
+      await waitFor(() => {
+        expect(existsSync(envDumpPath)).toBe(true);
+      }, { timeoutMs: 1_000 });
+
+      const envDump = JSON.parse(await readFile(envDumpPath, 'utf8')) as Record<string, unknown>;
+      expect(envDump.CODEX_CI).toBe('1');
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
+  it('discovers rollout files under CODEX_HOME/sessions when HAPPIER_CODEX_SESSIONS_DIR is unset', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-home-'));
+    const sessionsDir = join(codexHome, 'sessions');
+    const sessionId = randomUUID();
+    const nowIso = new Date().toISOString();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      assistantText: 'hello-from-local',
+      recordArgv: false,
+      exitAfterMs: 1_500,
+    });
+
+    const { session, codexMessages } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: undefined,
+      CODEX_HOME: codexHome,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: sessionId,
+      TEST_CODEX_TIMESTAMP: nowIso,
+      TEST_CODEX_ARGV_PATH: undefined,
+    });
+
+    try {
+      const launcherPromise = codexLocalLauncher({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        resumeId: sessionId,
+        rolloutDiscovery: {
+          initialTimeoutMs: 250,
+          initialPollIntervalMs: 25,
+          extendedPollIntervalMs: 25,
+        },
+      });
+
+      await waitFor(() => {
+        expect(codexMessages.some((m) => m.type === 'message' && m.message === 'hello-from-local')).toBe(true);
+      }, { timeoutMs: 5_000 });
+      await waitFor(() => {
+        expect(existsSync(join(sessionsDir, 'rollout-test.jsonl'))).toBe(true);
+      }, { timeoutMs: 5_000 });
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
   it('maps read-only permission mode to never approvalPolicy', async () => {
     const fixture = await createCodexBinaryFixture();
     const argsPath = join(fixture.binDir, 'argv.json');
@@ -131,6 +393,55 @@ describe('codexLocalLauncher', () => {
     }
   });
 
+  it('treats switch-to-local requests as a no-op success', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const sessionId = randomUUID();
+    const nowIso = new Date().toISOString();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      recordArgv: false,
+    });
+
+    const { session, rpcHandlers } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: sessionId,
+      TEST_CODEX_TIMESTAMP: nowIso,
+      TEST_CODEX_ARGV_PATH: undefined,
+    });
+
+    try {
+      const launcherPromise = codexLocalLauncher({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        resumeId: sessionId,
+        rolloutDiscovery: {
+          initialTimeoutMs: 250,
+          initialPollIntervalMs: 25,
+          extendedPollIntervalMs: 25,
+        },
+      });
+
+      await waitFor(() => {
+        expect(typeof rpcHandlers.switch).toBe('function');
+      }, { timeoutMs: 1_000 });
+
+      await expect(rpcHandlers.switch({ to: 'local' })).resolves.toBe(true);
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
   it('waits for session_meta id before switching to remote', async () => {
     const fixture = await createCodexBinaryFixture();
     const sessionId = randomUUID();
@@ -189,7 +500,9 @@ describe('codexLocalLauncher', () => {
     await writeFakeCodexScript(fixture.fakeCodex, {
       terminatedFlag: fixture.terminatedFlag,
       sessionMetaDelayMs: 400,
-      exitAfterMs: 900,
+      // Keep the fake process alive long enough for the launcher to discover the
+      // rollout file and send SIGTERM even on slower machines / crowded CI.
+      exitAfterMs: 5_000,
       recordArgv: false,
       handleSigint: false,
     });
@@ -262,6 +575,47 @@ describe('codexLocalLauncher', () => {
         expect(result.code).not.toBe(0);
       }
     } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
+  it('returns exit when no Codex CLI source is available', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const { session } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: undefined,
+      TEST_CODEX_SESSION_ID: undefined,
+      TEST_CODEX_TIMESTAMP: undefined,
+      TEST_CODEX_ARGV_PATH: undefined,
+    });
+    const originalCodexPath = process.env.HAPPIER_CODEX_PATH;
+    const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+    const originalPath = process.env.PATH;
+
+    try {
+      delete process.env.HAPPIER_CODEX_PATH;
+      process.env.HAPPIER_HOME_DIR = join(fixture.binDir, 'home');
+      process.env.PATH = join(fixture.binDir, 'empty-path');
+
+      await expect(
+        codexLocalLauncher({
+          path: fixture.sessionsRoot,
+          api: {},
+          session,
+          messageQueue,
+          permissionMode: 'default',
+        }),
+      ).resolves.toEqual({ type: 'exit', code: 1 });
+    } finally {
+      if (originalCodexPath === undefined) delete process.env.HAPPIER_CODEX_PATH;
+      else process.env.HAPPIER_CODEX_PATH = originalCodexPath;
+      if (originalHappyHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
       restoreEnv();
       await cleanupCodexBinaryFixture(fixture);
     }

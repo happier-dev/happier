@@ -17,10 +17,10 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
 import { useConnectAccount } from '@/hooks/auth/useConnectAccount';
 import { getDisplayName } from '@/sync/domains/profiles/profile';
-import { Image } from 'expo-image';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { disconnectVendorToken } from '@/sync/api/account/apiVendorTokens';
-import { getAgentCore, resolveAgentIdFromConnectedServiceId, getAgentIconSource, getAgentIconTintColor } from '@/agents/catalog/catalog';
+import { getAgentCore, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
 import { HappyError } from '@/utils/errors/errors';
 import { setAccountUsername } from '@/sync/api/account/apiUsername';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -281,10 +281,9 @@ export default React.memo(() => {
                             const core = getAgentCore(agentId);
                             if (!core.connectedService?.id) return null;
                             return {
+                                agentId,
                                 serviceId,
                                 name: core.connectedService.name,
-                                icon: getAgentIconSource(agentId),
-                                tintColor: getAgentIconTintColor(agentId, theme) ?? null,
                             };
                         })
                         .filter((x): x is NonNullable<typeof x> => Boolean(x));
@@ -306,12 +305,7 @@ export default React.memo(() => {
                                         disabled={isDisconnecting}
                                         showChevron={false}
                                         icon={
-                                            <Image
-                                                source={service.icon}
-                                                style={{ width: 29, height: 29 }}
-                                                tintColor={service.tintColor}
-                                                contentFit="contain"
-                                            />
+                                            <AgentIcon agentId={service.agentId} size={29} />
                                         }
                                     />
                                 );

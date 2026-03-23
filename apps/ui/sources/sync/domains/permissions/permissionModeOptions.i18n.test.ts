@@ -3,9 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 describe('permissionModeOptions i18n descriptions', () => {
     it('builds descriptions from translation keys instead of hardcoded English', async () => {
         vi.resetModules();
-        vi.doMock('@/text', () => ({
-            t: (key: string) => `tx:${key}`,
-        }));
+        vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => `tx:${key}`,
+    });
+});
 
         const { getPermissionModeOptionsForAgentType } = await import('./permissionModeOptions');
 

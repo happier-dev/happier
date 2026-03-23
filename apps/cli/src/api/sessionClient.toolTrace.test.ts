@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 
 import { ApiSessionClient } from './session/sessionClient';
-import { createMockSession, withToolTraceFile } from './testkit/sessionClientTestkit';
+import { createMockSession } from '@/testkit/backends/sessionFixtures';
+import { bindApiSessionSocketPairMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { withToolTraceFile } from '@/testkit/logger/toolTraceFile';
 
 const { mockIo } = vi.hoisted(() => ({
     mockIo: vi.fn(),
@@ -12,33 +14,21 @@ vi.mock('socket.io-client', () => ({
     io: mockIo,
 }));
 
-function createSocketStub() {
-    return {
-        connected: false,
-        connect: vi.fn(),
-        on: vi.fn(),
-        off: vi.fn(),
-        disconnect: vi.fn(),
-        close: vi.fn(),
-        emit: vi.fn(),
-    };
-}
-
 describe('ApiSessionClient tool tracing', () => {
     let sessionSocket: any;
     let userSocket: any;
     let mockSession: any;
 
     beforeEach(() => {
-        sessionSocket = createSocketStub();
-        userSocket = createSocketStub();
+        sessionSocket = createApiSessionSocketStub();
+        userSocket = createApiSessionSocketStub();
         mockSession = createMockSession();
 
-        mockIo.mockReset();
-        mockIo
-            .mockImplementationOnce(() => sessionSocket)
-            .mockImplementationOnce(() => userSocket)
-            .mockImplementation(() => sessionSocket);
+        bindApiSessionSocketPairMock(mockIo, {
+            sessionSocket,
+            userSocket,
+            fallbackSocket: sessionSocket,
+        });
     });
 
     it('records ACP task_complete events to tool trace when tracing is enabled', async () => {

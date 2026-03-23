@@ -1,25 +1,37 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createUseSettingMock, flushHookEffects, renderScreen } from '@/dev/testkit';
+import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
+
+const fixedNow = 1_700_000_000_000;
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).expo = { EventEmitter: class { } };
 
-const machineExecutionRunsListSpy = vi.fn(async () => ({ ok: true, runs: [] as any[] }));
-const itemGroupSpy = vi.fn();
-const itemSpy = vi.fn();
-const switchSpy = vi.fn();
-const stopRunSpy = vi.fn<(..._args: any[]) => Promise<any>>(async (..._args: any[]) => ({ ok: true }));
-const stopSessionSpy = vi.fn<(..._args: any[]) => Promise<any>>(async (..._args: any[]) => ({ ok: true }));
-const executionRunRowSpy = vi.fn();
-const routerMock = { back: vi.fn(), push: vi.fn(), replace: vi.fn() };
+const {
+    machineExecutionRunsListSpy,
+    modalSpies,
+    routerPushSpy,
+    stopRunSpy,
+    stopSessionSpy,
+} = vi.hoisted(() => ({
+    machineExecutionRunsListSpy: vi.fn(async () => ({ ok: true, runs: [] as any[] })),
+    modalSpies: {
+        alert: vi.fn(),
+        confirm: vi.fn(),
+        prompt: vi.fn(),
+        show: vi.fn(),
+    },
+    routerPushSpy: vi.fn(),
+    stopRunSpy: vi.fn<(..._args: any[]) => Promise<any>>(async (..._args: any[]) => ({ ok: true })),
+    stopSessionSpy: vi.fn<(..._args: any[]) => Promise<any>>(async (..._args: any[]) => ({ ok: true })),
+}));
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => {
-    type PlatformSelectOptions<T> = { web?: T; default?: T };
-    return {
-        Platform: { OS: 'web', select: <T,>(options: PlatformSelectOptions<T>) => options.web ?? options.default },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
         TurboModuleRegistry: { getEnforcing: () => ({}) },
         View: 'View',
         Text: 'Text',
@@ -28,7 +40,7 @@ vi.mock('react-native', () => {
         RefreshControl: 'RefreshControl',
         Pressable: 'Pressable',
         TextInput: 'TextInput',
-    };
+    });
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -36,49 +48,76 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('expo-router', () => {
-    const Stack: { Screen: () => null } = { Screen: () => null };
-    return {
-        Stack,
-        useLocalSearchParams: () => ({ id: 'machine-1' }),
-        useRouter: () => routerMock,
-    };
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { back: vi.fn(), push: routerPushSpy, replace: vi.fn() },
+        params: { id: 'machine-1' },
+    });
+    return expoRouterMock.module;
 });
 
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => {
-        itemSpy(props);
-        return React.createElement(React.Fragment, null, props.rightElement ?? null);
-    }
+    Item: (props: any) => React.createElement(
+            'Pressable',
+            {
+                testID: `item:${props.title}`,
+                onPress: props.onPress,
+            },
+            React.isValidElement(props.rightElement)
+                ? React.cloneElement(props.rightElement, { testID: `item-right:${props.title}` })
+                : props.rightElement ?? null,
+        ),
 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ title, children }: any) => {
-        itemGroupSpy({ title });
-        return React.createElement(React.Fragment, null, children);
-    }
+    ItemGroup: ({ title, children }: any) => React.createElement('View', { testID: `item-group:${title}` }, children),
 }));
 vi.mock('@/components/ui/lists/ItemGroupTitleWithAction', () => ({ ItemGroupTitleWithAction: () => null }));
 vi.mock('@/components/ui/lists/ItemList', () => ({ ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children) }));
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({ MultiTextInput: () => null }));
+vi.mock('@/components/ui/pathBrowser/PathInputBrowseButton', () => ({
+    PathInputBrowseButton: () => null,
+}));
+vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
+    openMachinePathBrowserModal: vi.fn(async () => null),
+}));
 vi.mock('@/components/machines/DetectedClisList', () => ({ DetectedClisList: () => null }));
 vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => {
-        switchSpy(props);
-        return null;
-    }
+    Switch: (props: any) => React.createElement('Pressable', {
+        testID: props.testID ?? 'switch',
+        onPress: () => props.onValueChange?.(!props.value),
+    }),
+}));
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: 'Text',
+    TextInput: 'TextInput',
 }));
 vi.mock('@/components/machines/InstallableDepInstaller', () => ({ InstallableDepInstaller: () => null }));
 vi.mock('@/components/sessions/runs/ExecutionRunRow', () => ({
-    ExecutionRunRow: (props: any) => {
-        executionRunRowSpy(props);
-        return null;
-    },
+    ExecutionRunRow: (props: any) => React.createElement(
+            'Pressable',
+            {
+                testID: `execution-run-row:${props.run.runId}`,
+                onPress: props.onPress,
+            },
+            React.isValidElement(props.rightAccessory)
+                ? React.cloneElement(props.rightAccessory, { testID: `execution-run-stop:${props.run.runId}` })
+                : props.rightAccessory ?? null,
+        ),
 }));
 
-vi.mock('@/modal', () => ({ Modal: { alert: vi.fn(), confirm: vi.fn(), prompt: vi.fn(), show: vi.fn() } }));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: modalSpies,
+    }).module;
+});
 
 vi.mock('@/sync/ops', () => ({
     machineSpawnNewSession: vi.fn(async () => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
@@ -92,33 +131,29 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStop: (...args: any[]) => stopRunSpy(...args),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => {
-    const React = require('react');
-    return {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
         useSessions: () => [],
         useMachine: () => ({
             id: 'machine-1',
-            activeAt: Date.now(),
+            activeAt: fixedNow,
             metadata: { platform: 'darwin', windowsRemoteSessionConsole: 'visible' },
             metadataVersion: 1,
             daemonStateVersion: 1,
         }),
-        useSetting: (name: string) => {
-            React.useMemo(() => 0, [name]);
-            return false;
-        },
-        useSettingMutable: (name: string) => {
-            React.useMemo(() => 0, [name]);
-            return [null, vi.fn()];
-        },
-        useSettings: () => {
-            React.useMemo(() => 0, []);
-            return {};
-        },
-    };
+        useSetting: createUseSettingMock({
+            fallback: () => false,
+        }),
+        useSettingMutable: () => [null, vi.fn()],
+        useSettings: () => ({}),
+    });
 });
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => () => { } }));
+vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({
+    useMountedShouldContinue: () => () => true,
+}));
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({ useMachineCapabilitiesCache: () => ({ state: { status: 'idle' }, refresh: vi.fn() }) }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -132,293 +167,203 @@ vi.mock('@/sync/sync', () => ({
         retryNow: vi.fn(),
     },
 }));
+vi.mock('@/utils/system/fireAndForget', () => ({
+    fireAndForget: (promise: Promise<unknown>, options?: { onError?: (error: unknown) => void }) => {
+        void promise.catch((error) => {
+            options?.onError?.(error);
+        });
+    },
+}));
+vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
+    tryShowDaemonUnavailableAlertForRpcError: () => false,
+    tryShowDaemonUnavailableAlertForRpcFailure: () => false,
+}));
 
 vi.mock('@/utils/sessions/machineUtils', () => ({ isMachineOnline: () => true }));
 vi.mock('@/utils/sessions/sessionUtils', () => ({ formatPathRelativeToHome: () => '', getSessionName: () => '', getSessionSubtitle: () => '' }));
 vi.mock('@/utils/path/pathUtils', () => ({ resolveAbsolutePath: () => '' }));
 vi.mock('@/sync/domains/settings/terminalSettings', () => ({ resolveTerminalSpawnOptions: () => ({}) }));
 vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionConsole', () => ({ resolveWindowsRemoteSessionConsoleFromMachineMetadata: () => 'visible' }));
+vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode', () => ({
+    readMachineWindowsRemoteSessionLaunchMode: () => undefined,
+    resolveEffectiveWindowsRemoteSessionLaunchMode: () => ({ mode: 'visible' }),
+}));
 vi.mock('@/capabilities/installablesRegistry', () => ({ getInstallablesRegistryEntries: () => [] }));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     setActiveServerAndSwitch: vi.fn(async () => true),
 }));
+vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: ['codex'],
+    DEFAULT_AGENT_ID: 'codex',
+    getAgentCore: () => ({ cli: { detectKey: 'codex' } }),
+    isAgentId: () => true,
+}));
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: () => null,
+}));
+vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions', () => ({
+    WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS: [],
+}));
+vi.mock('@/sync/ops/sessionMachineTarget', () => ({
+    readMachineTargetForSession: () => null,
+}));
 
 describe('MachineDetailScreen (execution runs section)', () => {
+    function createExecutionRun(overrides: Partial<DaemonExecutionRunEntry> & Pick<DaemonExecutionRunEntry, 'runId'>): DaemonExecutionRunEntry {
+        const { runId, ...rest } = overrides;
+        return {
+            happyHomeDir: '/tmp/happier-test-home',
+            pid: 123,
+            happySessionId: 'sess-1',
+            runId,
+            callId: 'call-1',
+            sidechainId: 'side-1',
+            intent: 'review',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            runClass: 'bounded',
+            ioMode: 'request_response',
+            retentionPolicy: 'ephemeral',
+            status: 'running',
+            startedAtMs: fixedNow,
+            updatedAtMs: fixedNow,
+            ...rest,
+        };
+    }
+
+    beforeEach(() => {
+        routerPushSpy.mockClear();
+        stopRunSpy.mockClear();
+        stopSessionSpy.mockClear();
+        modalSpies.confirm.mockClear();
+    });
+
     it('loads daemon execution runs for online machines', async () => {
         machineExecutionRunsListSpy.mockClear();
-        itemGroupSpy.mockClear();
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
-        await act(async () => {
-            renderer.create(React.createElement(MachineDetailScreen));
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
 
         expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-1', { serverId: 'server-a' });
+        expect(screen.findByTestId('item-group:runs.title')).toBeTruthy();
     });
 
     it('renders an execution runs group when enabled', async () => {
         machineExecutionRunsListSpy.mockResolvedValueOnce({
             ok: true,
-            runs: [{
-                happyHomeDir: '/tmp/happier-test-home',
-                pid: 123,
-                happySessionId: 'sess-1',
-                runId: 'run-1',
-                callId: 'call-1',
-                sidechainId: 'side-1',
-                intent: 'review',
-                backendId: 'claude',
-                runClass: 'bounded',
-                ioMode: 'request_response',
-                retentionPolicy: 'ephemeral',
-                status: 'running',
-                startedAtMs: Date.now(),
-                updatedAtMs: Date.now(),
-            }],
+            runs: [createExecutionRun({ runId: 'run-1' })],
         });
-        itemGroupSpy.mockClear();
-        itemSpy.mockClear();
-        switchSpy.mockClear();
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
-        await act(async () => {
-            renderer.create(React.createElement(MachineDetailScreen));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
 
-        expect(itemGroupSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'runs.title' }));
+        expect(screen.findByTestId('item-group:runs.title')).toBeTruthy();
     });
 
     it('includes an Installables navigation item', async () => {
-        itemSpy.mockClear();
-        routerMock.push.mockClear();
+        routerPushSpy.mockClear();
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
-        await act(async () => {
-            renderer.create(React.createElement(MachineDetailScreen));
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
 
-        const installablesItem = itemSpy.mock.calls
-            .map((c) => c[0])
-            .find((p) => p?.title === 'machine.tools.installablesTitle');
-        expect(installablesItem).toBeTruthy();
+        expect(screen.findByTestId('item:machine.tools.installablesTitle')).toBeTruthy();
+        await screen.pressByTestIdAsync('item:machine.tools.installablesTitle');
 
-        await act(async () => {
-            installablesItem.onPress?.();
-        });
-
-        expect(routerMock.push).toHaveBeenCalled();
+        expect(routerPushSpy).toHaveBeenCalled();
     });
 
     it('shows only running runs by default and includes finished when toggled', async () => {
         machineExecutionRunsListSpy.mockResolvedValueOnce({
             ok: true,
             runs: [
-                {
-                    happyHomeDir: '/tmp/happier-test-home',
-                    pid: 123,
-                    happySessionId: 'sess-1',
-                    runId: 'run-running',
-                    callId: 'call-1',
-                    sidechainId: 'side-1',
-                    intent: 'review',
-                    backendId: 'claude',
-                    runClass: 'bounded',
-                    ioMode: 'request_response',
-                    retentionPolicy: 'ephemeral',
-                    status: 'running',
-                    startedAtMs: Date.now(),
-                    updatedAtMs: Date.now(),
-                },
-                {
-                    happyHomeDir: '/tmp/happier-test-home',
-                    pid: 123,
-                    happySessionId: 'sess-1',
+                createExecutionRun({ runId: 'run-running' }),
+                createExecutionRun({
                     runId: 'run-finished',
                     callId: 'call-2',
                     sidechainId: 'side-2',
-                    intent: 'review',
-                    backendId: 'claude',
-                    runClass: 'bounded',
-                    ioMode: 'request_response',
-                    retentionPolicy: 'ephemeral',
                     status: 'succeeded',
-                    startedAtMs: Date.now(),
-                    updatedAtMs: Date.now(),
-                    finishedAtMs: Date.now(),
-                },
+                    finishedAtMs: fixedNow,
+                }),
             ],
         });
 
-        switchSpy.mockClear();
-        executionRunRowSpy.mockClear();
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
-        await act(async () => {
-            renderer.create(React.createElement(MachineDetailScreen));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
 
         // Default: finished runs are filtered out.
-        const initialRunIds = executionRunRowSpy.mock.calls.map((c) => String(c?.[0]?.run?.runId ?? '')).filter(Boolean);
-        expect(initialRunIds).toContain('run-running');
-        expect(initialRunIds).not.toContain('run-finished');
+        expect(screen.findByTestId('execution-run-row:run-running')).toBeTruthy();
+        expect(screen.findByTestId('execution-run-row:run-finished')).toBeNull();
 
-        const toggle = switchSpy.mock.calls.at(-1)?.[0];
-        expect(typeof toggle?.onValueChange).toBe('function');
+        await screen.pressByTestIdAsync('item-right:runs.showFinished');
+        await flushHookEffects();
 
-        executionRunRowSpy.mockClear();
-        await act(async () => {
-            toggle.onValueChange(true);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        const afterRunIds = executionRunRowSpy.mock.calls.map((c) => String(c?.[0]?.run?.runId ?? '')).filter(Boolean);
-        expect(afterRunIds).toContain('run-running');
-        expect(afterRunIds).toContain('run-finished');
+        expect(screen.findByTestId('execution-run-row:run-running')).toBeTruthy();
+        expect(screen.findByTestId('execution-run-row:run-finished')).toBeTruthy();
     });
 
     it('offers a stop control for running runs', async () => {
         stopRunSpy.mockClear();
         machineExecutionRunsListSpy.mockResolvedValueOnce({
             ok: true,
-            runs: [
-                {
-                    happyHomeDir: '/tmp/happier-test-home',
-                    pid: 123,
-                    happySessionId: 'sess-1',
-                    runId: 'run-running',
-                    callId: 'call-1',
-                    sidechainId: 'side-1',
-                    intent: 'review',
-                    backendId: 'claude',
-                    runClass: 'bounded',
-                    ioMode: 'request_response',
-                    retentionPolicy: 'ephemeral',
-                    status: 'running',
-                    startedAtMs: Date.now(),
-                    updatedAtMs: Date.now(),
-                },
-            ],
+            runs: [createExecutionRun({ runId: 'run-running' })],
         });
 
-        executionRunRowSpy.mockClear();
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
-        await act(async () => {
-            renderer.create(React.createElement(MachineDetailScreen));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
 
-        expect(executionRunRowSpy).toHaveBeenCalled();
-        const rowProps = executionRunRowSpy.mock.calls[0]?.[0];
-        expect(rowProps?.rightAccessory).toBeDefined();
-
-        await act(async () => {
-            rowProps.rightAccessory.props.onPress?.();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        expect(screen.findByTestId('execution-run-stop:run-running')).toBeTruthy();
+        await screen.pressByTestIdAsync('execution-run-stop:run-running');
+        await flushHookEffects();
 
         expect(stopRunSpy).toHaveBeenCalledWith('sess-1', { runId: 'run-running' }, { serverId: 'server-a' });
     });
 
     it('navigates to run details when pressing an execution run row', async () => {
-        routerMock.push.mockClear();
+        routerPushSpy.mockClear();
         machineExecutionRunsListSpy.mockResolvedValueOnce({
             ok: true,
-            runs: [{
-                happyHomeDir: '/tmp/happier-test-home',
-                pid: 123,
-                happySessionId: 'sess-1',
-                runId: 'run-1',
-                callId: 'call-1',
-                sidechainId: 'side-1',
-                intent: 'review',
-                backendId: 'claude',
-                runClass: 'bounded',
-                ioMode: 'request_response',
-                retentionPolicy: 'ephemeral',
-                status: 'running',
-                startedAtMs: Date.now(),
-                updatedAtMs: Date.now(),
-            }],
+            runs: [createExecutionRun({ runId: 'run-1' })],
         });
-        executionRunRowSpy.mockClear();
 
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
-        await act(async () => {
-            renderer.create(React.createElement(MachineDetailScreen));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
 
-        expect(executionRunRowSpy).toHaveBeenCalled();
-        const rowProps = executionRunRowSpy.mock.calls[0]?.[0];
-        expect(rowProps).toEqual(expect.objectContaining({ run: expect.objectContaining({ runId: 'run-1' }) }));
+        expect(screen.findByTestId('execution-run-row:run-1')).toBeTruthy();
+        await screen.pressByTestIdAsync('execution-run-row:run-1');
 
-        await act(async () => {
-            rowProps.onPress();
-        });
-
-        expect(routerMock.push).toHaveBeenCalledWith('/session/sess-1/runs/run-1');
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/sess-1/runs/run-1');
     });
 
     it('can stop a run and falls back to stopping the whole session process when session RPC stop is unavailable', async () => {
-        const { Modal } = await import('@/modal');
-        (Modal.confirm as any).mockResolvedValueOnce(true);
+        modalSpies.confirm.mockResolvedValueOnce(true);
 
         machineExecutionRunsListSpy.mockResolvedValueOnce({
             ok: true,
-            runs: [{
-                happyHomeDir: '/tmp/happier-test-home',
-                pid: 123,
-                happySessionId: 'sess-1',
-                runId: 'run-running',
-                callId: 'call-1',
-                sidechainId: 'side-1',
-                intent: 'review',
-                backendId: 'claude',
-                runClass: 'bounded',
-                ioMode: 'request_response',
-                retentionPolicy: 'ephemeral',
-                status: 'running',
-                startedAtMs: Date.now(),
-                updatedAtMs: Date.now(),
-            }],
+            runs: [createExecutionRun({ runId: 'run-running' })],
         });
 
         stopRunSpy.mockResolvedValueOnce({ ok: false, error: 'Unsupported response from session RPC' });
         stopSessionSpy.mockResolvedValueOnce({ ok: true });
 
-        executionRunRowSpy.mockClear();
         stopRunSpy.mockClear();
         stopSessionSpy.mockClear();
 
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
-        await act(async () => {
-            renderer.create(React.createElement(MachineDetailScreen));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
 
-        const rowProps = executionRunRowSpy.mock.calls[0]?.[0];
-        expect(rowProps).toBeTruthy();
-        const accessory = rowProps.rightAccessory;
-        expect(accessory?.props?.onPress).toBeTruthy();
-
-        await act(async () => {
-            await accessory.props.onPress();
-            await Promise.resolve();
-        });
+        expect(screen.findByTestId('execution-run-stop:run-running')).toBeTruthy();
+        await screen.pressByTestIdAsync('execution-run-stop:run-running');
+        await flushHookEffects();
 
         expect(stopRunSpy).toHaveBeenCalled();
         expect(stopSessionSpy).toHaveBeenCalledWith('machine-1', 'sess-1', { serverId: 'server-a' });

@@ -5,18 +5,101 @@ description: How Happier opens the correct session (and server) from notificatio
 
 Happier notifications are session-aware and multi-server-aware.
 
-When you open a notification:
+When you interact with a notification, Happier tries to land you in the exact place that needs attention:
 
-- Happier routes to the targeted session,
-- and if needed switches to the matching server profile first.
+- the targeted **session**
+- on the correct **server profile**
+- with the safest possible behavior for **permission actions**
 
-This avoids landing on the wrong server/session when you use multiple servers.
+This avoids landing on the wrong server or silently approving a request on an unexpected server.
 
 ## Typical notifications
 
 - turn completion / "it's ready"
 - permission actions
+- action requests
 - share/collaboration events
+
+## What happens when you tap a notification
+
+If the notification contains a session route, Happier opens that session.
+
+If the notification belongs to a different saved server than the one currently active:
+
+- Happier switches to that saved server first
+- then it opens the session
+
+This is the default behavior for normal notification taps and for the `Answer` action used by action-request notifications.
+
+## What happens when you press a notification action
+
+On the mobile app, current interactive notification actions are:
+
+- **Permission requests**: `Allow`, `Deny`
+- **User-action requests**: `Answer`
+
+Their behavior is intentionally different:
+
+- `Allow` and `Deny` open the app, send the permission response when it is safe to do so, and then open the session
+- `Answer` opens the app directly on the session so you can answer in context
+
+User-action requests include cases such as:
+
+- **AskUserQuestion**
+- **Exit Plan Mode**
+
+Happier does **not** currently try to send freeform or multiple-choice answers directly from the notification itself. The action button is a fast path back into the correct session.
+
+## Server-aware safety rules
+
+### 1) Server is already active
+
+If the notification targets the server that is already active:
+
+- Happier performs the action immediately (for example `Allow` / `Deny`)
+- then opens the session
+
+### 2) Server is saved, but not active
+
+If the notification targets a saved server profile that is not currently active:
+
+- Happier switches to that saved server
+- performs the action if applicable
+- opens the session
+
+### 3) Server is not saved, and the device has no saved servers yet
+
+If this is effectively the first server on the device:
+
+- Happier may auto-add and switch to that server so the notification deep link still works
+- Happier opens the session
+- for security, Happier still does **not** auto-send `Allow` / `Deny` on an unsaved server
+
+This is mainly a bootstrap convenience for first-run or self-hosted setups.
+
+### 4) Server is not saved, and the device already has saved servers
+
+If the app already knows about other servers, Happier does **not** auto-add the incoming one.
+
+Instead it:
+
+- stores the pending destination
+- opens **Server settings**
+- prefills the incoming server URL
+- shows a hint that this server is not saved yet
+
+After you choose **Add & Use**, Happier continues to the original session automatically.
+
+## Why this flow is strict
+
+Notification actions are convenient, but permission responses are security-sensitive.
+
+That is why Happier only auto-sends a permission response when it can prove that the targeted server is:
+
+- already active, or
+- already saved locally and can be switched to explicitly
+
+If the server is unknown, Happier falls back to navigation and review instead of silently performing the approval.
 
 ## Prerequisites
 
@@ -31,8 +114,11 @@ If notification taps open the wrong context:
 1. Verify active server profile in app.
 2. Re-run `happier auth login` on the correct server profile in CLI.
 3. Confirm push token registration for that server profile.
+4. If the notification came from a server that is not saved yet, add it from the prefilled **Server settings** screen first.
 
 ## Related pages
 
 - [Multi-server](/docs/features/multi-server)
+- [Permissions](/docs/features/permissions)
+- [Inbox and approvals](/docs/features/inbox-and-approvals)
 - [Notifications](/docs/advanced/notifications)

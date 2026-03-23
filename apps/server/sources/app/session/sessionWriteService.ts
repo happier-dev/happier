@@ -8,8 +8,35 @@ import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStored
 import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
 import { isDeepStrictEqual } from "node:util";
 import { parseSessionMessageSidechainId } from "./parseSessionMessageSidechainId";
+import { didSessionActivityBadgeContributionChange, type SessionActivityBadgeInputs } from "@/app/activity/accountActivityBadge";
 
 type ParticipantCursor = SessionParticipantCursor;
+
+function selectSessionActivityBadgeInputs() {
+    return {
+        seq: true,
+        pendingCount: true,
+        lastViewedSessionSeq: true,
+        pendingPermissionRequestCount: true,
+        pendingUserActionRequestCount: true,
+        active: true,
+        archivedAt: true,
+    } as const;
+}
+
+function toSessionActivityBadgeInputs(
+    value: SessionActivityBadgeInputs | null | undefined,
+): SessionActivityBadgeInputs {
+    return {
+        seq: value?.seq ?? 0,
+        pendingCount: value?.pendingCount ?? 0,
+        lastViewedSessionSeq: value?.lastViewedSessionSeq ?? null,
+        pendingPermissionRequestCount: value?.pendingPermissionRequestCount ?? 0,
+        pendingUserActionRequestCount: value?.pendingUserActionRequestCount ?? 0,
+        active: value?.active ?? true,
+        archivedAt: value?.archivedAt ?? null,
+    };
+}
 
 type EnsureSessionEditAccessResult =
     | { ok: true; sessionOwnerId: string; sessionEncryptionMode: "e2ee" | "plain" }
@@ -56,6 +83,7 @@ export type CreateSessionMessageResult =
         ok: true;
         didWrite: true;
         didUpdate: false;
+        badgeAttentionChanged: boolean;
         message: {
             id: string;
             seq: number;
@@ -71,6 +99,7 @@ export type CreateSessionMessageResult =
         ok: true;
         didWrite: false;
         didUpdate: true;
+        badgeAttentionChanged: boolean;
         message: {
             id: string;
             seq: number;
@@ -86,6 +115,7 @@ export type CreateSessionMessageResult =
         ok: true;
         didWrite: false;
         didUpdate: false;
+        badgeAttentionChanged: false;
         message: {
             id: string;
             seq: number;
@@ -170,7 +200,7 @@ export async function createSessionMessage(
                     }
 
                     if (isDeepStrictEqual(existing.content, content)) {
-                        return { ok: true, didWrite: false, didUpdate: false, message: existing, participantCursors: [] };
+                        return { ok: true, didWrite: false, didUpdate: false, badgeAttentionChanged: false, message: existing, participantCursors: [] };
                     }
 
                     const updated = await tx.sessionMessage.update({
@@ -192,11 +222,17 @@ export async function createSessionMessage(
                         ok: true,
                         didWrite: false,
                         didUpdate: true,
+                        badgeAttentionChanged: false,
                         message: updated,
                         participantCursors,
                     };
                 }
             }
+
+            const beforeBadgeInputs = await tx.session.findUnique({
+                where: { id: sessionId },
+                select: selectSessionActivityBadgeInputs(),
+            });
 
             const next = await tx.session.update({
                 where: { id: sessionId },
@@ -221,10 +257,19 @@ export async function createSessionMessage(
                 hint: { lastMessageSeq: created.seq, lastMessageId: created.id },
             });
 
+            const badgeAttentionChanged = didSessionActivityBadgeContributionChange(
+                toSessionActivityBadgeInputs(beforeBadgeInputs),
+                {
+                    ...toSessionActivityBadgeInputs(beforeBadgeInputs),
+                    seq: created.seq,
+                },
+            );
+
             return {
                 ok: true,
                 didWrite: true,
                 didUpdate: false,
+                badgeAttentionChanged,
                 message: created,
                 participantCursors,
             };
@@ -256,7 +301,7 @@ export async function createSessionMessage(
                 }
 
                 if (isDeepStrictEqual(existing.content, content)) {
-                    return { ok: true, didWrite: false, didUpdate: false, message: existing, participantCursors: [] };
+                    return { ok: true, didWrite: false, didUpdate: false, badgeAttentionChanged: false, message: existing, participantCursors: [] };
                 }
 
                 try {
@@ -273,7 +318,14 @@ export async function createSessionMessage(
                             hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id },
                         });
 
-                        return { ok: true, didWrite: false, didUpdate: true, message: updated, participantCursors };
+                        return {
+                            ok: true,
+                            didWrite: false,
+                            didUpdate: true,
+                            badgeAttentionChanged: false,
+                            message: updated,
+                            participantCursors,
+                        };
                     });
                 } catch {
                     return { ok: false, error: "internal" };
@@ -285,7 +337,7 @@ export async function createSessionMessage(
 }
 
 export type UpdateSessionMetadataResult =
-    | { ok: true; version: number; metadata: string; participantCursors: ParticipantCursor[] }
+    | { ok: true; version: number; metadata: string; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean; lastViewedSessionSeq?: number }
     | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "version-mismatch" | "internal"; current?: { version: number; metadata: string } };
 
 export async function updateSessionMetadata(params: {
@@ -293,11 +345,16 @@ export async function updateSessionMetadata(params: {
     sessionId: string;
     expectedVersion: number;
     metadataCiphertext: string;
+    readCursorHintV1?: { lastViewedSessionSeq: number };
 }): Promise<UpdateSessionMetadataResult> {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const metadataCiphertext = typeof params.metadataCiphertext === "string" ? params.metadataCiphertext : "";
     const expectedVersion = typeof params.expectedVersion === "number" ? params.expectedVersion : NaN;
+    const lastViewedSessionSeqHint =
+        typeof params.readCursorHintV1?.lastViewedSessionSeq === "number" && Number.isFinite(params.readCursorHintV1.lastViewedSessionSeq)
+            ? Math.max(0, Math.floor(params.readCursorHintV1.lastViewedSessionSeq))
+            : null;
 
     if (!sessionId || !actorUserId || !metadataCiphertext || !Number.isFinite(expectedVersion)) {
         return { ok: false, error: "invalid-params" };
@@ -312,7 +369,11 @@ export async function updateSessionMetadata(params: {
 
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
-                select: { metadataVersion: true, metadata: true },
+                select: {
+                    metadataVersion: true,
+                    metadata: true,
+                    ...selectSessionActivityBadgeInputs(),
+                },
             });
             if (!session) {
                 return { ok: false, error: "session-not-found" };
@@ -322,9 +383,22 @@ export async function updateSessionMetadata(params: {
                 return { ok: false, error: "version-mismatch", current: { version: session.metadataVersion, metadata: session.metadata } };
             }
 
+            const nextLastViewedSessionSeq = (() => {
+                if (typeof lastViewedSessionSeqHint !== "number") return undefined;
+                const current = session.lastViewedSessionSeq;
+                // Never decrease; also avoid setting above the current server seq.
+                const clamped = Math.min(lastViewedSessionSeqHint, session.seq ?? lastViewedSessionSeqHint);
+                if (typeof current === "number" && clamped <= current) return undefined;
+                return clamped;
+            })();
+
             const { count } = await tx.session.updateMany({
                 where: { id: sessionId, metadataVersion: expectedVersion },
-                data: { metadata: metadataCiphertext, metadataVersion: expectedVersion + 1 },
+                data: {
+                    metadata: metadataCiphertext,
+                    metadataVersion: expectedVersion + 1,
+                    ...(typeof nextLastViewedSessionSeq === "number" ? { lastViewedSessionSeq: nextLastViewedSessionSeq } : {}),
+                },
             });
 
             if (count === 0) {
@@ -343,8 +417,25 @@ export async function updateSessionMetadata(params: {
             }
 
             const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
+            const badgeAttentionChanged =
+                typeof nextLastViewedSessionSeq === "number"
+                    ? didSessionActivityBadgeContributionChange(
+                        toSessionActivityBadgeInputs(session),
+                        {
+                            ...toSessionActivityBadgeInputs(session),
+                            lastViewedSessionSeq: nextLastViewedSessionSeq,
+                        },
+                    )
+                    : false;
 
-            return { ok: true, version: expectedVersion + 1, metadata: metadataCiphertext, participantCursors };
+            return {
+                ok: true,
+                version: expectedVersion + 1,
+                metadata: metadataCiphertext,
+                participantCursors,
+                badgeAttentionChanged,
+                ...(typeof nextLastViewedSessionSeq === "number" ? { lastViewedSessionSeq: nextLastViewedSessionSeq } : {}),
+            };
         });
     } catch {
         return { ok: false, error: "internal" };
@@ -352,7 +443,15 @@ export async function updateSessionMetadata(params: {
 }
 
 export type UpdateSessionAgentStateResult =
-    | { ok: true; version: number; agentState: string | null; participantCursors: ParticipantCursor[] }
+    | {
+        ok: true;
+        version: number;
+        agentState: string | null;
+        participantCursors: ParticipantCursor[];
+        badgeAttentionChanged: boolean;
+        pendingPermissionRequestCount?: number;
+        pendingUserActionRequestCount?: number;
+      }
     | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "version-mismatch" | "internal"; current?: { version: number; agentState: string | null } };
 
 export async function updateSessionAgentState(params: {
@@ -360,12 +459,22 @@ export async function updateSessionAgentState(params: {
     sessionId: string;
     expectedVersion: number;
     agentStateCiphertext: string | null;
+    pendingPermissionRequestCount?: number;
+    pendingUserActionRequestCount?: number;
 }): Promise<UpdateSessionAgentStateResult> {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const expectedVersion = typeof params.expectedVersion === "number" ? params.expectedVersion : NaN;
     const agentStateCiphertext =
         typeof params.agentStateCiphertext === "string" || params.agentStateCiphertext === null ? params.agentStateCiphertext : undefined;
+    const pendingPermissionRequestCount =
+        typeof params.pendingPermissionRequestCount === "number" && Number.isFinite(params.pendingPermissionRequestCount)
+            ? Math.max(0, Math.floor(params.pendingPermissionRequestCount))
+            : undefined;
+    const pendingUserActionRequestCount =
+        typeof params.pendingUserActionRequestCount === "number" && Number.isFinite(params.pendingUserActionRequestCount)
+            ? Math.max(0, Math.floor(params.pendingUserActionRequestCount))
+            : undefined;
 
     if (!sessionId || !actorUserId || !Number.isFinite(expectedVersion) || agentStateCiphertext === undefined) {
         return { ok: false, error: "invalid-params" };
@@ -380,7 +489,11 @@ export async function updateSessionAgentState(params: {
 
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
-                select: { agentStateVersion: true, agentState: true },
+                select: {
+                    agentStateVersion: true,
+                    agentState: true,
+                    ...selectSessionActivityBadgeInputs(),
+                },
             });
             if (!session) {
                 return { ok: false, error: "session-not-found" };
@@ -392,7 +505,16 @@ export async function updateSessionAgentState(params: {
 
             const { count } = await tx.session.updateMany({
                 where: { id: sessionId, agentStateVersion: expectedVersion },
-                data: { agentState: agentStateCiphertext, agentStateVersion: expectedVersion + 1 },
+                data: {
+                    agentState: agentStateCiphertext,
+                    agentStateVersion: expectedVersion + 1,
+                    ...(typeof pendingPermissionRequestCount === "number"
+                        ? { pendingPermissionRequestCount }
+                        : {}),
+                    ...(typeof pendingUserActionRequestCount === "number"
+                        ? { pendingUserActionRequestCount }
+                        : {}),
+                },
             });
 
             if (count === 0) {
@@ -411,8 +533,111 @@ export async function updateSessionAgentState(params: {
             }
 
             const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
+            const badgeAttentionChanged = didSessionActivityBadgeContributionChange(
+                toSessionActivityBadgeInputs(session),
+                {
+                    ...toSessionActivityBadgeInputs(session),
+                    ...(typeof pendingPermissionRequestCount === "number"
+                        ? { pendingPermissionRequestCount }
+                        : {}),
+                    ...(typeof pendingUserActionRequestCount === "number"
+                        ? { pendingUserActionRequestCount }
+                        : {}),
+                },
+            );
 
-            return { ok: true, version: expectedVersion + 1, agentState: agentStateCiphertext, participantCursors };
+            return {
+                ok: true,
+                version: expectedVersion + 1,
+                agentState: agentStateCiphertext,
+                participantCursors,
+                badgeAttentionChanged,
+                ...(typeof pendingPermissionRequestCount === "number" ? { pendingPermissionRequestCount } : {}),
+                ...(typeof pendingUserActionRequestCount === "number" ? { pendingUserActionRequestCount } : {}),
+            };
+        });
+    } catch {
+        return { ok: false, error: "internal" };
+    }
+}
+
+export type UpdateSessionReadCursorResult =
+    | { ok: true; lastViewedSessionSeq: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
+    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal" };
+
+export async function updateSessionReadCursor(params: {
+    actorUserId: string;
+    sessionId: string;
+    lastViewedSessionSeq: number;
+}): Promise<UpdateSessionReadCursorResult> {
+    const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
+    const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
+    const incomingCursor =
+        typeof params.lastViewedSessionSeq === "number" && Number.isFinite(params.lastViewedSessionSeq)
+            ? Math.max(0, Math.floor(params.lastViewedSessionSeq))
+            : NaN;
+
+    if (!sessionId || !actorUserId || !Number.isFinite(incomingCursor)) {
+        return { ok: false, error: "invalid-params" };
+    }
+
+    try {
+        return await inTx(async (tx) => {
+            const access = await ensureSessionEditAccess(tx, { actorUserId, sessionId });
+            if (!access.ok) {
+                return { ok: false, error: access.error };
+            }
+
+            const session = await tx.session.findUnique({
+                where: { id: sessionId },
+                select: selectSessionActivityBadgeInputs(),
+            });
+            if (!session) {
+                return { ok: false, error: "session-not-found" };
+            }
+
+            const nextCursor = Math.min(incomingCursor, session.seq ?? incomingCursor);
+            const currentCursor = typeof session.lastViewedSessionSeq === "number" ? session.lastViewedSessionSeq : -1;
+            if (nextCursor <= currentCursor) {
+                return {
+                    ok: true,
+                    lastViewedSessionSeq: Math.max(currentCursor, 0),
+                    participantCursors: [],
+                    badgeAttentionChanged: false,
+                };
+            }
+
+            const { count } = await tx.session.updateMany({
+                where: { id: sessionId, lastViewedSessionSeq: { lt: nextCursor } },
+                data: { lastViewedSessionSeq: nextCursor },
+            });
+
+            if (count === 0) {
+                const fresh = await tx.session.findUnique({
+                    where: { id: sessionId },
+                    select: { lastViewedSessionSeq: true },
+                });
+                return {
+                    ok: true,
+                    lastViewedSessionSeq: Math.max(fresh?.lastViewedSessionSeq ?? 0, 0),
+                    participantCursors: [],
+                    badgeAttentionChanged: false,
+                };
+            }
+
+            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
+            return {
+                ok: true,
+                lastViewedSessionSeq: nextCursor,
+                participantCursors,
+                badgeAttentionChanged: didSessionActivityBadgeContributionChange(
+                    toSessionActivityBadgeInputs(session),
+                    {
+                        ...toSessionActivityBadgeInputs(session),
+                        lastViewedSessionSeq: nextCursor,
+                    },
+                ),
+            };
         });
     } catch {
         return { ok: false, error: "internal" };

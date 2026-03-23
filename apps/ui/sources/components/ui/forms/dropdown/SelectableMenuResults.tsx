@@ -1,14 +1,27 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { SelectableRow, type SelectableRowVariant } from '@/components/ui/lists/SelectableRow';
-import { Item } from '@/components/ui/lists/Item';
+import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { ItemGroupSelectionContext } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRowPosition';
 import type { SelectableMenuCategory, SelectableMenuItem } from './selectableMenuTypes';
 import { Text } from '@/components/ui/text/Text';
 
+type WebMouseDownActivationEvent = Readonly<{
+    button?: number;
+    nativeEvent?: Readonly<{ button?: number }>;
+    preventDefault?: () => void;
+    stopPropagation?: () => void;
+}>;
+
+function asWebMouseDownActivationEvent(event: unknown): WebMouseDownActivationEvent {
+    if (!event || typeof event !== 'object') {
+        return {};
+    }
+    return event as WebMouseDownActivationEvent;
+}
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -46,9 +59,12 @@ export function SelectableMenuResults(props: {
     emptyLabel?: string | null;
     showCategoryTitles?: boolean;
     rowKind?: 'selectableRow' | 'item';
+    itemProps?: Partial<
+        Omit<ItemProps, 'title' | 'subtitle' | 'icon' | 'rightElement' | 'selected' | 'disabled' | 'showChevron' | 'showDivider' | 'onPress'>
+    >;
 }) {
     const styles = stylesheet;
-    const itemRefs = React.useRef<Record<number, View | null>>({});
+    const mouseDownActivatedItemIdRef = React.useRef<string | null>(null);
 
     const allItems = React.useMemo(() => props.categories.flatMap((c) => c.items), [props.categories]);
 
@@ -66,6 +82,22 @@ export function SelectableMenuResults(props: {
     let currentIndex = 0;
     const showCategoryTitles = props.showCategoryTitles !== false;
     const rowKind = props.rowKind ?? 'selectableRow';
+    const handleMouseDownActivatedPress = React.useCallback((item: SelectableMenuItem) => {
+        mouseDownActivatedItemIdRef.current = String(item.id);
+        props.onPressItem(item);
+    }, [props.onPressItem]);
+    const handlePressItem = React.useCallback((item: SelectableMenuItem) => {
+        const itemId = String(item.id);
+        if (Platform.OS === 'web' && mouseDownActivatedItemIdRef.current === itemId) {
+            mouseDownActivatedItemIdRef.current = null;
+            return;
+        }
+        props.onPressItem(item);
+    }, [props.onPressItem]);
+    const isPrimaryWebActivationEvent = React.useCallback((event: WebMouseDownActivationEvent) => {
+        const button = event.nativeEvent?.button ?? event.button;
+        return typeof button !== 'number' || button === 0;
+    }, []);
 
     const content = (
         <View style={styles.container}>
@@ -78,52 +110,65 @@ export function SelectableMenuResults(props: {
                     const isSelected = itemIndex === props.selectedIndex;
                     currentIndex++;
                     const testIdSafeItemId = String(item.id).replace(/[^a-zA-Z0-9_-]/g, '_');
-                    return (
-                        <View
-                            key={item.id}
-                            ref={(ref) => { itemRefs.current[itemIndex] = ref; }}
-                            testID={`dropdown-option-${testIdSafeItemId}`}
-                        >
-                            {rowKind === 'item' ? (
-                                <Item
-                                    title={item.title}
-                                    subtitle={item.subtitleNode ?? item.subtitle}
-                                    icon={item.left}
-                                    rightElement={item.right}
-                                    selected={isSelected}
-                                    disabled={item.disabled}
-                                    showChevron={false}
-                                    showDivider={false}
-                                    onPress={() => {
-                                        if (item.disabled) return;
-                                        props.onPressItem(item);
-                                    }}
-                                />
-                            ) : (
-                                <SelectableRow
-                                    variant={props.rowVariant}
-                                    selected={isSelected}
-                                    disabled={item.disabled}
-                                    left={item.left}
-                                    leftGap={item.leftGap}
-                                    right={item.right}
-                                    title={item.titleNode ?? item.title}
-                                    subtitle={item.subtitleNode ?? item.subtitle}
-                                    containerStyle={item.rowContainerStyle}
-                                    titleStyle={item.rowTitleStyle}
-                                    subtitleStyle={item.rowSubtitleStyle}
-                                    onPress={() => {
-                                        if (item.disabled) return;
-                                        props.onPressItem(item);
-                                    }}
-                                    onHover={() => {
-                                        if (item.disabled) return;
-                                        props.onSelectionChange(itemIndex);
-                                    }}
-                                />
-                            )}
-                        </View>
+                    const optionTestID = `dropdown-option-${testIdSafeItemId}`;
+                    const handleOptionMouseDownCapture =
+                        Platform.OS === 'web'
+                            ? ((event: unknown) => {
+                                const activationEvent = asWebMouseDownActivationEvent(event);
+                                if (item.disabled) return;
+                                if (!isPrimaryWebActivationEvent(activationEvent)) return;
+                                activationEvent.preventDefault?.();
+                                activationEvent.stopPropagation?.();
+                                handleMouseDownActivatedPress(item);
+                            })
+                            : undefined;
+                    const itemNode = rowKind === 'item' ? (
+                        <Item
+                            {...(props.itemProps ?? {})}
+                            testID={optionTestID}
+                            title={item.title}
+                            subtitle={item.subtitleNode ?? item.subtitle}
+                            icon={item.left}
+                            rightElement={item.right}
+                            selected={isSelected}
+                            disabled={item.disabled}
+                            showChevron={false}
+                            showDivider={false}
+                            onMouseDownCapture={handleOptionMouseDownCapture}
+                            onPress={() => {
+                                if (item.disabled) return;
+                                handlePressItem(item);
+                            }}
+                        />
+                    ) : (
+                        <SelectableRow
+                            variant={props.rowVariant}
+                            selected={isSelected}
+                            disabled={item.disabled}
+                            left={item.left}
+                            leftGap={item.leftGap}
+                            right={item.right}
+                            title={item.titleNode ?? item.title}
+                            subtitle={item.subtitleNode ?? item.subtitle}
+                            containerStyle={item.rowContainerStyle}
+                            titleStyle={item.rowTitleStyle}
+                            subtitleStyle={item.rowSubtitleStyle}
+                            testID={optionTestID}
+                            onMouseDownCapture={handleOptionMouseDownCapture}
+                            onPress={() => {
+                                if (item.disabled) return;
+                                handlePressItem(item);
+                            }}
+                            onHover={() => {
+                                if (item.disabled) return;
+                                props.onSelectionChange(itemIndex);
+                            }}
+                        />
                     );
+
+                    return React.cloneElement(itemNode, {
+                        key: item.id,
+                    });
                 });
 
                 return (

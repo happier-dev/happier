@@ -109,7 +109,9 @@ describe('real Claude Agent Teams subagent JSONL content probe', () => {
       expect(typeof result.sessionId === 'string' && result.sessionId.trim().length > 0).toBe(true);
       expect(result.agentIds.length).toBeGreaterThan(0);
 
-      const toolResultTexts = result.toolResults.map((r) => coerceTextFromToolResultResult(r.result)).filter(Boolean);
+      const toolResultTexts = result.toolResults
+        .map((r) => coerceTextFromToolResultResult(r.result))
+        .filter((text): text is string => typeof text === 'string' && text.length > 0);
       expect(toolResultTexts.some((t) => t.includes(directMarker))).toBe(true);
       expect(toolResultTexts.some((t) => t.includes(broadcastMarker))).toBe(true);
 

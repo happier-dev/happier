@@ -1,6 +1,12 @@
 import sodium from '@/encryption/libsodium.lib';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import { deriveBoxPublicKeyFromSeed, openBoxBundle, sealBoxBundle } from '@happier-dev/protocol';
+import {
+    deriveBoxPublicKeyFromSeed,
+    openBoxBundle,
+    parseSerializedJsonValue,
+    sealBoxBundle,
+    stringifySerializedJsonValue,
+} from '@happier-dev/protocol';
 
 export function getPublicKeyForBox(secretKey: Uint8Array): Uint8Array {
     return deriveBoxPublicKeyFromSeed(secretKey);
@@ -23,7 +29,11 @@ export function decryptBox(encryptedBundle: Uint8Array, recipientSecretKey: Uint
 
 export function encryptSecretBox(data: any, secret: Uint8Array): Uint8Array {
     const nonce = getRandomBytes(sodium.crypto_secretbox_NONCEBYTES);
-    const encrypted = sodium.crypto_secretbox_easy(new TextEncoder().encode(JSON.stringify(data)), nonce, secret);
+    const encrypted = sodium.crypto_secretbox_easy(
+        new TextEncoder().encode(stringifySerializedJsonValue(data)),
+        nonce,
+        secret
+    );
     const result = new Uint8Array(nonce.length + encrypted.length);
     result.set(nonce);
     result.set(encrypted, nonce.length);
@@ -39,7 +49,7 @@ export function decryptSecretBox(data: Uint8Array, secret: Uint8Array): any | nu
         if (!decrypted) {
             return null;
         }
-        return JSON.parse(new TextDecoder().decode(decrypted));
+        return parseSerializedJsonValue(new TextDecoder().decode(decrypted));
     } catch (error) {
         return null;
     }

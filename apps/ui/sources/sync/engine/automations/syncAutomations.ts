@@ -8,6 +8,9 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 export async function fetchAndApplyAutomations(params: {
     credentials: AuthCredentials | null | undefined;
     applyAutomations: (automations: Automation[]) => void;
+    loadedAutomationRunIds?: readonly string[];
+    setAutomationRuns?: (automationId: string, runs: AutomationRun[]) => void;
+    runsLimit?: number;
 }): Promise<void> {
     if (!params.credentials) {
         return;
@@ -25,6 +28,31 @@ export async function fetchAndApplyAutomations(params: {
 
     const rows = await listAutomations(params.credentials);
     params.applyAutomations(rows);
+
+    if (!params.setAutomationRuns) {
+        return;
+    }
+
+    const loadedAutomationRunIds = Array.from(new Set(params.loadedAutomationRunIds ?? []));
+    if (loadedAutomationRunIds.length === 0) {
+        return;
+    }
+
+    const rowIds = new Set(rows.map((row) => row.id));
+    const idsToRefresh = loadedAutomationRunIds.filter((automationId) => rowIds.has(automationId));
+    if (idsToRefresh.length === 0) {
+        return;
+    }
+
+    const limit = params.runsLimit ?? 20;
+    await Promise.all(idsToRefresh.map(async (automationId) => {
+        const result = await listAutomationRuns({
+            credentials: params.credentials!,
+            automationId,
+            limit,
+        });
+        params.setAutomationRuns?.(automationId, result.runs);
+    }));
 }
 
 export async function fetchAndApplyAutomationRuns(params: {

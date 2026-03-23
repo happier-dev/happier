@@ -12,6 +12,7 @@ export async function createEphemeralServerSocketClient(params: ScopedSocketConn
                 token: params.token,
                 clientType: 'user-scoped' as const,
             },
+            forceNew: true,
             ...(transports ? { transports } : null),
             reconnection: false,
         });

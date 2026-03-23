@@ -35,6 +35,18 @@ describe('feature catalog', () => {
     expect(isFeatureId('attachments.uploads')).toBe(true);
   });
 
+  it('includes direct sessions feature id', () => {
+    expect(isFeatureId('sessions.direct')).toBe(true);
+  });
+
+  it('includes session handoff feature ids', () => {
+    expect(isFeatureId('sessions.handoff')).toBe(true);
+    expect(isFeatureId('sessions.handoff.serverRoutedTransfer')).toBe(false);
+    expect(isFeatureId('machines.transfer.serverRouted')).toBe(true);
+    expect(isFeatureId('machines.transfer.directPeer')).toBe(true);
+    expect(isFeatureId('machines.transfer.directPeer.transportRns')).toBe(false);
+  });
+
   it('includes sharing feature ids', () => {
     expect(isFeatureId('sharing.session')).toBe(true);
     expect(isFeatureId('sharing.public')).toBe(true);

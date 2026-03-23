@@ -7,6 +7,8 @@ import { applySettings, type Settings } from '../../domains/settings/settings';
 import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/persistence';
 import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
+import { emitLocalSettingChangedEvents } from '@/track/settingsAnalytics/emitSettingChangedEvent';
+import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 
 import type { StoreGet, StoreSet } from './_shared';
 
@@ -18,7 +20,7 @@ export type SettingsDomain = {
     applySettingsLocal: (delta: Partial<Settings>) => void;
     applySettings: (settings: Settings, version: number) => void;
     replaceSettings: (settings: Settings, version: number) => void;
-    applyLocalSettings: (delta: Partial<LocalSettings>) => void;
+    applyLocalSettings: (delta: Partial<LocalSettings>, options?: { source?: SettingsAnalyticsSource }) => void;
     applyPurchases: (customerInfo: CustomerInfo) => void;
 };
 
@@ -141,10 +143,16 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                         : state.sessionListViewDataByServerId,
                 };
             }),
-        applyLocalSettings: (delta) =>
+        applyLocalSettings: (delta, options) =>
             set((state) => {
+                const previousLocalSettings = state.localSettings;
                 const updatedLocalSettings = applyLocalSettings(state.localSettings, delta);
                 saveLocalSettings(updatedLocalSettings);
+                emitLocalSettingChangedEvents({
+                    previousSettings: previousLocalSettings,
+                    nextSettings: updatedLocalSettings,
+                    source: options?.source,
+                });
                 return {
                     ...state,
                     localSettings: updatedLocalSettings,

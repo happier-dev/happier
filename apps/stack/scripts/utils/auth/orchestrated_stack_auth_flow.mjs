@@ -2,16 +2,22 @@ import { join } from 'node:path';
 
 import { createStepPrinter } from '../cli/progress.mjs';
 import { createFileLogForwarder } from '../cli/log_forwarder.mjs';
-import { getComponentDir, resolveStackEnvPath } from '../paths/paths.mjs';
+import { resolveStackEnvPath } from '../paths/paths.mjs';
 import { getStackRuntimeStatePath, isPidAlive, readStackRuntimeStateFile } from '../stack/runtime_state.mjs';
 import { readEnvObjectFromFile } from '../env/read.mjs';
 import { getWebappUrlEnvOverride, resolveServerUrls } from '../server/urls.mjs';
 import { readLastLines } from '../fs/tail.mjs';
 import { run } from '../proc/proc.mjs';
 
-import { guidedStackAuthLoginNow, assertExpoWebappBundlesOrThrow, resolveStackWebappUrlForAuth } from './stack_guided_login.mjs';
+import {
+  guidedStackAuthLoginNow,
+  assertGuidedAuthWebappReadyOrThrow,
+  resolveStackWebappTargetForAuth,
+  resolveStackAuthCliExecutable,
+} from './stack_guided_login.mjs';
 import { checkDaemonState, startLocalDaemonWithAuth } from '../../daemon.mjs';
 import { isTty } from '../cli/wizard.mjs';
+import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 
 function appendCauseText(baseMessage, cause) {
   const msg = String(baseMessage ?? '').trim();
@@ -117,16 +123,27 @@ async function appendRunnerLogTailDiagnostics({ message, stackName, lines = 140 
 async function tryStartStackUiInBackgroundForAuth({ rootDir, stackName, env = process.env } = {}) {
   const name = String(stackName ?? '').trim() || 'main';
   try {
+    const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env });
+    const useRuntimeStart = Boolean(runtimeLaunchContext.snapshot);
+    const command = useRuntimeStart ? 'start' : 'dev';
     await run(
       process.execPath,
-      [join(rootDir, 'scripts', 'stack.mjs'), 'dev', name, '--background', '--no-daemon', '--no-browser'],
+      [
+        join(rootDir, 'scripts', 'stack.mjs'),
+        command,
+        name,
+        '--background',
+        ...(useRuntimeStart ? ['--runtime'] : []),
+        '--no-daemon',
+        '--no-browser',
+      ],
       {
         cwd: rootDir,
         timeoutMs: resolveAuthUiStartTimeoutMs(env),
         env: {
           ...process.env,
           ...(env ?? {}),
-          HAPPIER_STACK_AUTH_FLOW: '1',
+          ...(useRuntimeStart ? {} : { HAPPIER_STACK_AUTH_FLOW: '1' }),
         },
       }
     );
@@ -176,6 +193,8 @@ export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps 
     const tick = async () => {
       if (stopped) return;
       try {
+        const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env });
+        const waitingForRuntimeUi = Boolean(runtimeLaunchContext.snapshot);
         const st = await readStackRuntimeStateFile(getStackRuntimeStatePath(name)).catch(() => null);
         const ownerPid = Number(st?.ownerPid);
         const ownerAlive = Number.isFinite(ownerPid) && ownerPid > 1 ? isPidAlive(ownerPid) : null;
@@ -183,7 +202,9 @@ export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps 
         const expoAlive = Number.isFinite(expoPid) && expoPid > 1 ? isPidAlive(expoPid) : null;
         const elapsedSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
         const stateText =
-          expoAlive === true
+          waitingForRuntimeUi
+            ? 'Stack UI is still starting; waiting for the runtime-backed web UI...'
+            : expoAlive === true
             ? 'Expo dev server is running; waiting for the first web build to finish...'
             : 'Stack UI is still starting; waiting for Expo dev server...';
         // eslint-disable-next-line no-console
@@ -214,20 +235,21 @@ export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps 
   }
   try {
     const resolveAndAssert = async () => {
-      const webappUrl = await resolveStackWebappUrlForAuth({ rootDir, stackName: name, env });
-      await assertExpoWebappBundlesOrThrow({
+      const target = await resolveStackWebappTargetForAuth({ rootDir, stackName: name, env });
+      await assertGuidedAuthWebappReadyOrThrow({
         rootDir,
         stackName: name,
-        webappUrl,
+        webappUrl: target.webappUrl,
+        kind: target.kind,
         timeoutMs: resolveAuthExpoBundleReadyTimeoutMs(env ?? process.env),
       });
-      return webappUrl;
+      return target;
     };
 
     try {
-      const webappUrl = await resolveAndAssert();
+      const webappTarget = await resolveAndAssert();
       if (printer) printer.stop('✓', label);
-      return webappUrl;
+      return webappTarget;
     } catch (initialErr) {
       const recovery = await tryStartStackUiInBackgroundForAuth({
         rootDir,
@@ -236,9 +258,9 @@ export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps 
       });
       if (recovery.ok) {
         try {
-          const webappUrl = await resolveAndAssert();
+          const webappTarget = await resolveAndAssert();
           if (printer) printer.stop('✓', label);
-          return webappUrl;
+          return webappTarget;
         } catch (retryErr) {
           const enriched = await appendRunnerLogTailDiagnostics({
             stackName: name,
@@ -273,7 +295,11 @@ export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps 
 
 export async function runGuidedLogin({ rootDir, stackName, env, webappUrl, forwarder } = {}) {
   const name = String(stackName ?? '').trim() || 'main';
-  const url = String(webappUrl ?? '').trim();
+  const target =
+    webappUrl && typeof webappUrl === 'object'
+      ? webappUrl
+      : { webappUrl: String(webappUrl ?? '').trim(), kind: 'server' };
+  const url = String(target.webappUrl ?? '').trim();
   if (!url) {
     throw new Error('[auth] guided login requires a webappUrl');
   }
@@ -289,6 +315,7 @@ export async function runGuidedLogin({ rootDir, stackName, env, webappUrl, forwa
       stackName: name,
       env: { ...(env ?? process.env), HAPPIER_STACK_AUTH_SKIP_BUNDLE_CHECK: '1' },
       webappUrl: url,
+      webappKind: target.kind,
     });
   } finally {
     try {
@@ -335,8 +362,7 @@ export async function startDaemonPostAuth({
   const cliHomeDir =
     (mergedEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim() ||
     join(baseDir, 'cli');
-  const cliDir = getComponentDir(rootDir, 'happier-cli', mergedEnv);
-  const cliBin = join(cliDir, 'bin', 'happier.mjs');
+  const cliBin = await resolveStackAuthCliExecutable({ rootDir, env: mergedEnv });
 
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
   const explicitWebappUrl = String(webappUrl ?? '').trim();
@@ -415,7 +441,7 @@ export async function runOrchestratedGuidedAuthFlow({
     }
   }
 
-  let resolved = String(webappUrl ?? '').trim();
+  let resolved = String(webappUrl ?? '').trim() ? { webappUrl: String(webappUrl).trim(), kind: 'server' } : null;
   try {
     if (!resolved) {
       resolved = await prepareGuidedLoginWebapp({ rootDir, stackName: name, env, steps });
@@ -429,5 +455,5 @@ export async function runOrchestratedGuidedAuthFlow({
     }
   }
 
-  return { ok: true, webappUrl: resolved };
+  return { ok: true, webappUrl: resolved?.webappUrl ?? '', webappKind: resolved?.kind ?? 'server' };
 }

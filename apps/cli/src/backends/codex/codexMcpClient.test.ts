@@ -1,8 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { dirname } from 'node:path';
 import { getCodexElicitationToolCallId, getCodexEventToolCallId } from './codexMcpClient';
 import type { Mock } from 'vitest';
 import { getCodexMcpCommand } from './mcp/version';
 import { getCodexElicitationToolCallId as getCodexElicitationToolCallIdFromModule } from './mcp/elicitationTypes';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createExecutableShim } from '@/testkit/fs/executableShim';
+import { removeTempDir } from '@/testkit/fs/tempDir';
 
 // NOTE: This test suite uses mocks because the real Codex CLI / MCP transport
 // is not guaranteed to be available in CI or local test environments.
@@ -60,6 +64,33 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
     }
 
     return { Client };
+});
+
+const envKeys = ['PATH', 'HAPPIER_CODEX_PATH'] as const;
+const TEMP_DIRS = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
+
+async function createFakeCodexBinary(): Promise<string> {
+    const binPath = await createExecutableShim({
+        dirPrefix: 'happier-codex-mcp-client-',
+        fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
+        contents: process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+    });
+    const dir = dirname(binPath);
+    TEMP_DIRS.add(dir);
+    return binPath;
+}
+
+beforeEach(async () => {
+    process.env.PATH = '';
+    process.env.HAPPIER_CODEX_PATH = await createFakeCodexBinary();
+});
+
+afterEach(async () => {
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
+    for (const dir of TEMP_DIRS) await removeTempDir(dir);
+    TEMP_DIRS.clear();
 });
 
 describe('CodexMcpClient elicitation ids', () => {
@@ -163,8 +194,17 @@ describe('CodexMcpClient command detection', () => {
         await expect(client.connect()).resolves.toBeUndefined();
 
         expect(transportInstances).toHaveLength(1);
-        expect(transportInstances[0]?.command).toBe('codex');
+        expect(transportInstances[0]?.command).toBe(process.env.HAPPIER_CODEX_PATH);
         expect(transportInstances[0]?.args).toEqual(['mcp-server']);
+    });
+
+    it('fails closed when no Codex CLI source is available', async () => {
+        vi.resetModules();
+        delete process.env.HAPPIER_CODEX_PATH;
+        process.env.PATH = '';
+
+        const mod = await import('./codexMcpClient');
+        expect(() => new mod.CodexMcpClient()).toThrow(/system install/i);
     });
 
     it('uses legacy "mcp" subcommand for older codex versions', async () => {
@@ -237,18 +277,18 @@ describe('CodexMcpClient command detection', () => {
             const transportInstances = await getTransportInstances();
             transportInstances.length = 0;
 
-            const resumeCmdPath = 'C:\\Users\\herbz\\AppData\\Local\\Happier\\codex-mcp-resume.CMD';
+            const mcpServerCmdPath = 'C:\\Users\\herbz\\AppData\\Local\\Happier\\some-mcp-server.CMD';
             const mod = await import('./codexMcpClient');
             const client = new mod.CodexMcpClient({
                 mode: 'mcp-server',
-                command: resumeCmdPath,
+                command: mcpServerCmdPath,
                 args: ['--stdio'],
             });
             await expect(client.connect()).resolves.toBeUndefined();
 
             expect(execFileSync).not.toHaveBeenCalled();
             expect(transportInstances).toHaveLength(1);
-            expect(transportInstances[0]?.command).toBe(resumeCmdPath);
+            expect(transportInstances[0]?.command).toBe(mcpServerCmdPath);
             expect(transportInstances[0]?.args).toEqual(['--stdio']);
         });
     });
@@ -263,16 +303,12 @@ describe('CodexMcpClient command detection', () => {
         transportInstances.length = 0;
 
         const mod = await import('./codexMcpClient');
-        const client = new mod.CodexMcpClient({
-            mode: 'mcp-server',
-            command: '/tmp/codex-mcp-resume',
-            args: ['--stdio'],
-        });
+        const client = new mod.CodexMcpClient({ mode: 'mcp-server', command: '/tmp/some-mcp-server', args: ['--stdio'] });
         await expect(client.connect()).resolves.toBeUndefined();
 
         expect(execFileSync).not.toHaveBeenCalled();
         expect(transportInstances).toHaveLength(1);
-        expect(transportInstances[0]?.command).toBe('/tmp/codex-mcp-resume');
+        expect(transportInstances[0]?.command).toBe('/tmp/some-mcp-server');
         expect(transportInstances[0]?.args).toEqual(['--stdio']);
     });
 });

@@ -1,5 +1,5 @@
-import type { AttachmentsUploadConfig } from '@/sync/ops/sessionAttachmentsUpload';
-import { sessionAttachmentsUploadFile } from '@/sync/ops/sessionAttachmentsUpload';
+import type { AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
+import { sessionAttachmentsUploadFile } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
 import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
 import { randomUUID } from '@/platform/randomUUID';
 
@@ -61,12 +61,19 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
             continue;
         }
 
-        args.applyDraftPatch(stillPresent.id, { status: 'uploading', error: undefined });
+        const initialProgress =
+            typeof described.sizeBytes === 'number' && Number.isFinite(described.sizeBytes) && described.sizeBytes >= 0
+                ? { uploadedBytes: 0, totalBytes: described.sizeBytes }
+                : undefined;
+        args.applyDraftPatch(stillPresent.id, { status: 'uploading', error: undefined, uploadProgress: initialProgress });
         const uploadRes = await sessionAttachmentsUploadFile({
             sessionId: args.sessionId,
             file: stillPresent.source,
             messageLocalId,
             config: args.config,
+            onProgress: (progress) => {
+                args.applyDraftPatch(stillPresent.id, { uploadProgress: progress });
+            },
         });
         if (!uploadRes.success) {
             args.applyDraftPatch(stillPresent.id, { status: 'error', error: uploadRes.error });
@@ -80,6 +87,7 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
             uploadedMimeType: described.mimeType,
             sha256: uploadRes.sha256,
             error: undefined,
+            uploadProgress: { uploadedBytes: uploadRes.sizeBytes, totalBytes: uploadRes.sizeBytes },
         });
 
         uploaded.push({
@@ -96,7 +104,7 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
 
 export function formatAttachmentsBlock(uploaded: readonly UploadedAttachment[]): string {
     const lines: string[] = [
-        'Attachments: read each file path with the Read tool before answering.',
+        'Attachments: open and analyze these files before answering.',
         '[attachments]',
     ];
     for (const a of uploaded) {
@@ -106,4 +114,3 @@ export function formatAttachmentsBlock(uploaded: readonly UploadedAttachment[]):
     lines.push('[/attachments]');
     return lines.join('\n');
 }
-

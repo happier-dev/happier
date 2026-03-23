@@ -48,9 +48,7 @@
       "HAPPIER_VARIANT": "dev",
       "HAPPIER_EXPERIMENTAL_CODEX_ACP": "1",
       "HAPPIER_E2E_ACP_TRACE_MARKERS": "1",
-      "HAPPIER_CODEX_ACP_NPX_MODE": "never",
       "HAPPIER_CODEX_ACP_BIN": "../../packages/tests/fixtures/acp-stub-provider/acp-stub-provider.mjs"
     }
   }
 }
-

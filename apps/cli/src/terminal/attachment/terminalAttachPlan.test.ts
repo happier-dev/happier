@@ -12,6 +12,52 @@ describe('createTerminalAttachPlan', () => {
     expect(plan.type).toBe('not-attachable');
   });
 
+  it('returns a hidden Windows attach error when a Windows host was requested but plain mode was used', () => {
+    const terminal: NonNullable<Metadata['terminal']> = {
+      mode: 'plain',
+      requested: 'windows_terminal',
+    };
+    const plan = createTerminalAttachPlan({ terminal, insideTmux: false });
+    expect(plan).toEqual({
+      type: 'not-attachable',
+      reason: 'This Windows session was started hidden and cannot be attached later.',
+    });
+  });
+
+  it('returns a Windows Terminal focus plan for windows_terminal mode', () => {
+    const terminal: NonNullable<Metadata['terminal']> = {
+      mode: 'windows_terminal',
+      requested: 'windows_terminal',
+      windows: {
+        host: 'windows_terminal',
+        windowId: 'happy-session-1',
+      },
+    };
+
+    const plan = createTerminalAttachPlan({ terminal, insideTmux: false });
+    expect(plan).toEqual({
+      type: 'windows_terminal_host',
+      windowId: 'happy-session-1',
+    });
+  });
+
+  it('returns a console foreground plan for windows_console mode', () => {
+    const terminal: NonNullable<Metadata['terminal']> = {
+      mode: 'windows_console',
+      requested: 'console',
+      windows: {
+        host: 'console',
+        pid: 123,
+      },
+    };
+
+    const plan = createTerminalAttachPlan({ terminal, insideTmux: false });
+    expect(plan).toEqual({
+      type: 'windows_console_host',
+      pid: 123,
+    });
+  });
+
   it('returns not-attachable when tmux mode has no target', () => {
     const terminal: NonNullable<Metadata['terminal']> = { mode: 'tmux' };
     const plan = createTerminalAttachPlan({ terminal, insideTmux: false });

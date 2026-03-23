@@ -72,6 +72,12 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
   const headerLines = [
     'This session is continuing from a previous Happy session that could not be vendor-resumed.',
     'The app is replaying recent transcript messages for context.',
+    strategy === 'summary_plus_recent' && summaryText
+      ? 'The summary below is the authoritative condensed context from earlier transcript history.'
+      : null,
+    strategy === 'summary_plus_recent' && summaryText
+      ? 'The recent transcript is only the tail and may omit older important details.'
+      : null,
     previousSessionId ? `Previous session id: ${previousSessionId}` : null,
   ].filter(Boolean);
   const summaryLines =
@@ -80,7 +86,8 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
       : [];
 
   const prefix = [...headerLines, '', ...summaryLines, 'Recent transcript:'].join('\n') + '\n';
-  const suffix = '\n\nContinue from here. If important details are missing, ask clarifying questions.';
+  const suffix =
+    '\n\nContinue from here. Treat the summary as the durable source of older context, and use the recent transcript as the latest tail. If important details are still missing, ask clarifying questions.';
 
   const tailLines = boundedByCount.map((item) => `${item.role}: ${item.text}`);
 

@@ -10,10 +10,12 @@ export function isAutomationSocketUpdateType(type: string): boolean {
 export function applyAutomationSocketUpdate(params: {
     updateType: string;
     invalidateAutomations: () => void;
+    invalidateAutomationsCoalesced?: () => void;
 }): boolean {
     if (!isAutomationSocketUpdateType(params.updateType)) {
         return false;
     }
-    params.invalidateAutomations();
+    const invalidate = params.invalidateAutomationsCoalesced ?? params.invalidateAutomations;
+    invalidate();
     return true;
 }

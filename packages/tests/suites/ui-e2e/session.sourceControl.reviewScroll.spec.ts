@@ -9,8 +9,11 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { clickScopedButtonByTestIdOrRole } from '../../src/testkit/uiE2e/clickScopedButtonByTestIdOrRole';
 import { createGitRepoWithChanges } from '../../src/testkit/uiE2e/gitRepoFixtures';
+import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { toTestIdSafeValue } from '../../src/testkit/uiE2e/testIdSafeValue';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -49,31 +52,6 @@ function rightPaneLocator(page: Page) {
   return page
     .getByTestId('multi-pane-right-docked')
     .or(page.getByTestId('multi-pane-right-overlay'));
-}
-
-async function spawnSessionFromDaemon(params: {
-  daemon: StartedDaemon;
-  directory: string;
-}): Promise<string> {
-  const token = params.daemon.state.controlToken;
-  if (!token) throw new Error('daemon control token missing');
-
-  const res = await fetch(`http://127.0.0.1:${params.daemon.state.httpPort}/spawn-session`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-happier-daemon-token': token,
-    },
-    body: JSON.stringify({
-      directory: params.directory,
-      agent: 'claude',
-    }),
-  });
-  const json = (await res.json().catch(() => null)) as any;
-  if (!res.ok || !json || json.success !== true || typeof json.sessionId !== 'string') {
-    throw new Error(`Failed to spawn session (status=${res.status}): ${JSON.stringify(json)}`);
-  }
-  return json.sessionId as string;
 }
 
 async function readScrollTopOfNearestScrollableAncestor(page: Page, testId: string): Promise<number> {
@@ -204,7 +182,9 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    // Expo web bundling + first-run Metro startup can exceed 7 minutes on cold caches.
+    // Keep this generous to avoid flaking the suite before we even reach UI assertions.
+    test.setTimeout(900_000);
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -217,6 +197,7 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
         HAPPIER_PRESENCE_SESSION_TIMEOUT_MS: '60000',
         HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '60000',
         HAPPIER_PRESENCE_TIMEOUT_TICK_MS: '1000',
+        HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
       },
     });
 
@@ -227,6 +208,9 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
         EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+        // On cold caches, the initial Metro web bundle can take >2 minutes; avoid aborting the request
+        // before it has a chance to complete (which can cause repeated restarts and flakiness).
+        HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '420000',
       },
     });
 
@@ -241,7 +225,7 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
   });
 
   test('scrolls Review without losing collapsed state or tab context', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(900_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const browserDiagnostics = collectBrowserDiagnostics({ page });
@@ -250,18 +234,7 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     try {
       await page.setViewportSize({ width: 1440, height: 900 });
       await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-
-      // Depending on persisted state (retries/repeats) or RN-web testID forwarding, the app may
-      // skip the welcome screen or render the button without `data-testid`.
-      await expect
-        .poll(
-          async () =>
-            (await page.getByTestId('session-getting-started-kind-connect_machine').count())
-            + (await page.getByTestId('welcome-create-account').count())
-            + (await page.getByRole('button', { name: 'Create account' }).count()),
-          { timeout: 120_000 },
-        )
-        .toBeGreaterThan(0);
+      await waitForInitialAppUi({ page, browserDiagnostics });
 
       const createAccountByTestId = page.getByTestId('welcome-create-account');
       const createAccountByRole = page.getByRole('button', { name: 'Create account' });
@@ -290,6 +263,7 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
           HAPPIER_VARIANT: 'dev',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         },
       });
 
@@ -341,6 +315,7 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
           HAPPIER_WEBAPP_URL: uiBaseUrl,
           HAPPIER_DISABLE_CAFFEINATE: '1',
           HAPPIER_VARIANT: 'dev',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           // Machine-scoped RPC (used as a fallback when a newly-spawned session has no encryption context yet)
           // must be allowed to read the repo fixture directory.
           HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
@@ -383,14 +358,12 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
 
     // Some RN-web render paths don't forward `testID` onto the segmented tab buttons; fall back to role/name.
     const rightPane = rightPaneLocator(page);
-    const gitTabByTestId = rightPane.getByTestId('session-rightpanel-tab-git');
-    if (await gitTabByTestId.count()) {
-      await gitTabByTestId.click();
-    } else {
-      const sourceControlTab = rightPane.getByRole('button', { name: 'Source control' });
-      await expect(sourceControlTab).toHaveCount(1, { timeout: 60_000 });
-      await sourceControlTab.click({ timeout: 60_000, force: true });
-    }
+    await clickScopedButtonByTestIdOrRole({
+      scope: rightPane,
+      testId: 'session-rightpanel-tab-git',
+      roleName: 'Source control',
+      timeoutMs: 60_000,
+    });
     const openReviewByTestId = rightPane.getByTestId('session-rightpanel-git-open-review');
     if (await openReviewByTestId.count()) {
       await openReviewByTestId.click();
@@ -432,7 +405,14 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(laterPath)}`)).toHaveCount(1, { timeout: 60_000 });
 
     // Collapse a diff and ensure its block disappears without a big scroll jump.
-    const midRow = reviewList.locator(`[data-testid="scm-change-row-${toTestIdSafeValue(midPath)}"]:visible`);
+    // NOTE: the list is virtualized, so we must scroll to the target row to ensure it is mounted.
+    const midRow = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(midPath)}`);
+    for (let i = 0; i < 25; i += 1) {
+      if (await midRow.count()) break;
+      await reviewList.hover();
+      await page.mouse.wheel(0, -1200);
+      await page.waitForTimeout(50);
+    }
     await expect(midRow).toHaveCount(1, { timeout: 60_000 });
     await midRow.scrollIntoViewIfNeeded();
     const scrollTopBeforeCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
@@ -524,14 +504,53 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${laterPath}`)}`).click();
     await page.getByTestId('file-details-edit').click();
 
-    const editorTextarea = detailsPaneLocator(page).locator('textarea').first();
-    await expect(editorTextarea).toHaveCount(1, { timeout: 60_000 });
-    await editorTextarea.focus();
-    await editorTextarea.type('\nui-e2e edit');
+    const editorSurface = page.getByTestId('file-details-editor');
+    await expect(editorSurface).toHaveCount(1, { timeout: 60_000 });
+    // Ensure Monaco is mounted and focus the editor's content area before typing.
+    const monacoRoot = editorSurface.locator('.monaco-editor');
+    await expect(monacoRoot).toHaveCount(1, { timeout: 60_000 });
+    // Monaco keeps focus in a hidden textarea; clicking the container isn't always sufficient on CI.
+    const monacoInput = monacoRoot.locator('textarea');
+    if (await monacoInput.count()) {
+      await monacoInput.first().click({ force: true });
+    } else {
+      await monacoRoot.click({ force: true, position: { x: 60, y: 40 } });
+    }
+    await page.keyboard.type('\nui-e2e edit');
+
+    // Ensure the edit landed before switching tabs (otherwise the next assertion is ambiguous).
+    const markerMatch = laterPath.match(/file-(\\d+)\\.txt$/);
+    const marker = markerMatch ? `hello ${markerMatch[1]}` : null;
+
+    const readMonacoValue = async () =>
+      page.evaluate((valueMarker) => {
+        const monaco = (window as any).monaco;
+        const models: any[] = monaco?.editor?.getModels?.() ?? [];
+        const model = valueMarker
+          ? models.find((m) => {
+            try {
+              return typeof m?.getValue === 'function' && String(m.getValue()).includes(String(valueMarker));
+            } catch {
+              return false;
+            }
+          })
+          : models[0];
+        try {
+          return typeof model?.getValue === 'function' ? (model.getValue() as string) : null;
+        } catch {
+          return null;
+        }
+      }, marker);
+
+    await expect
+      .poll(async () => readMonacoValue(), { timeout: 60_000 })
+      .toContain('ui-e2e edit');
 
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(reviewTabKey)}`).click();
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${laterPath}`)}`).click();
-    await expect(editorTextarea).toHaveValue(/ui-e2e edit/);
+    await expect
+      .poll(async () => readMonacoValue(), { timeout: 60_000 })
+      .toContain('ui-e2e edit');
 
     // File details tab must remain scrollable (regression: details pane/tab content stopped scrolling).
     // Open a large file from Review to ensure scroll container is mounted and responds to wheel/scrollTop changes.
@@ -540,7 +559,8 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     for (let i = 0; i < 30; i += 1) {
       if (await bigRowForScroll.count()) break;
       await reviewList.hover();
-      await page.mouse.wheel(0, 1200);
+      // `big.txt` is near the top of the list; scroll upwards until it is mounted.
+      await page.mouse.wheel(0, -1200);
       await page.waitForTimeout(50);
     }
     await expect(bigRowForScroll).toHaveCount(1, { timeout: 60_000 });
@@ -616,7 +636,9 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
 
     // The file tab should still contain the unsaved edits.
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${laterPath}`)}`).click();
-    await expect(editorTextarea).toHaveValue(/ui-e2e edit/);
+    await expect
+      .poll(async () => readMonacoValue(), { timeout: 60_000 })
+      .toContain('ui-e2e edit');
 
     // Close the edited file tab so subsequent file-details assertions don't collide with duplicate testIDs
     // from multiple kept-mounted file details views.

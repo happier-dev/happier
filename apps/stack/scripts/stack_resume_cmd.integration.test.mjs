@@ -1,28 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
+import { createStackHappierCliCommandFixture } from './testkit/stack_happier_cli_command_testkit.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
 
-async function ensureMinimalHappierMonorepo({ monoRoot }) {
-  await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'cli', 'bin'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'cli', 'dist'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
-  await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
-}
-
-async function writeStubHappyCli({ cliDir }) {
-  const script = [
+function buildStubHappyCliScript() {
+  return [
     "import { appendFileSync } from 'node:fs';",
     "import { join } from 'node:path';",
     '',
@@ -50,51 +40,21 @@ async function writeStubHappyCli({ cliDir }) {
     'process.exit(0);',
     '',
   ].join('\n');
-
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), script, 'utf-8');
-  await writeFile(join(cliDir, 'bin', 'happier.mjs'), "import '../dist/index.mjs';\n", 'utf-8');
 }
 
 async function createResumeFixture(t, { stackName = 'exp-test', serverPort = 4101 } = {}) {
-  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-resume-'));
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true });
+  const fixture = await createStackHappierCliCommandFixture(t, {
+    prefix: 'happier-stack-resume-',
+    stackName,
+    serverPort,
+    distIndexScript: buildStubHappyCliScript(),
+    binHappierScript: "import '../dist/index.mjs';\n",
   });
 
-  const storageDir = join(tmp, 'storage');
-  const homeDir = join(tmp, 'home');
-  const workspaceDir = join(tmp, 'workspace');
-  const monoRoot = join(workspaceDir, 'happier');
-  const cliDir = join(monoRoot, 'apps', 'cli');
-  const stackCliHome = join(storageDir, stackName, 'cli');
-
-  await ensureMinimalHappierMonorepo({ monoRoot });
-  await writeStubHappyCli({ cliDir });
-  await mkdir(stackCliHome, { recursive: true });
-
-  const envPath = join(storageDir, stackName, 'env');
-  await mkdir(dirname(envPath), { recursive: true });
-  await writeFile(
-    envPath,
-    [
-      `HAPPIER_STACK_REPO_DIR=${monoRoot}`,
-      `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
-      `HAPPIER_STACK_SERVER_PORT=${serverPort}`,
-      '',
-    ].join('\n'),
-    'utf-8'
-  );
-
   return {
-    stackName,
-    stackCliHome,
-    baseEnv: {
-      ...process.env,
-      HAPPIER_STACK_HOME_DIR: homeDir,
-      HAPPIER_STACK_STORAGE_DIR: storageDir,
-      HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
-      HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
-    },
+    stackName: fixture.stackName,
+    stackCliHome: fixture.stackCliHome,
+    baseEnv: fixture.baseEnv,
   };
 }
 

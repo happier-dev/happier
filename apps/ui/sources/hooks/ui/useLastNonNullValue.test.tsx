@@ -3,6 +3,8 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
 import { useLastNonNullValue } from './useLastNonNullValue';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,9 +18,7 @@ describe('useLastNonNullValue', () => {
         }
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe, { value: 'a', resetKey: 'k1' }));
-        });
+        tree = (await renderScreen(React.createElement(Probe, { value: 'a', resetKey: 'k1' }))).tree;
 
         expect(current).toBe('a');
 
@@ -38,9 +38,7 @@ describe('useLastNonNullValue', () => {
         }
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe, { value: 'a', resetKey: 'k1' }));
-        });
+        tree = (await renderScreen(React.createElement(Probe, { value: 'a', resetKey: 'k1' }))).tree;
 
         expect(current).toBe('a');
 

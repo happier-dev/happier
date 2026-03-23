@@ -1,4 +1,10 @@
-import type { ExecutionRunIntent, ExecutionRunRetentionPolicy, ExecutionRunClass, ExecutionRunIoMode } from '@happier-dev/protocol';
+import type {
+  BackendTargetRefV1,
+  ExecutionRunClass,
+  ExecutionRunIntent,
+  ExecutionRunIoMode,
+  ExecutionRunRetentionPolicy,
+} from '@happier-dev/protocol';
 
 export type ExecutionRunProfileStartParams = Readonly<{
   sessionId: string;
@@ -7,7 +13,9 @@ export type ExecutionRunProfileStartParams = Readonly<{
   sidechainId: string;
   intent: ExecutionRunIntent;
   backendId: string;
+  backendTarget: BackendTargetRefV1;
   instructions: string;
+  intentInput?: unknown;
   permissionMode: string;
   retentionPolicy: ExecutionRunRetentionPolicy;
   runClass: ExecutionRunClass;
@@ -52,5 +60,9 @@ export type ExecutionRunIntentProfile = Readonly<{
   transcriptMaterialization: 'full' | 'none';
   buildPrompt: (params: ExecutionRunProfileStartParams) => string;
   onBoundedComplete: (params: ExecutionRunProfileBoundedCompleteParams) => ExecutionRunProfileBoundedCompleteResult;
+  listAvailableActionIds?: (params: Readonly<{
+    start: ExecutionRunProfileStartParams;
+    structuredMeta?: ExecutionRunStructuredMeta | null;
+  }>) => readonly string[];
   applyAction?: (params: ExecutionRunProfileActionParams) => ExecutionRunProfileActionResult;
 }>;

@@ -99,7 +99,7 @@ export class ClaudeTaskOutputSidechainImporter {
     if (!toolUseId) return { imported: [], taskOutputSummary: null };
 
     const toolName = this.toolNameByToolUseId.get(toolUseId) ?? null;
-    if (toolName === 'Task') {
+    if (toolName && isGenericSubAgentToolName(toolName)) {
       return { imported: this.ingestTaskToolResult({ taskToolUseId: toolUseId, toolResultText: params.toolResultText }), taskOutputSummary: null };
     }
     if (toolName === 'TaskOutput') {
@@ -210,3 +210,4 @@ export class ClaudeTaskOutputSidechainImporter {
     return imported;
   }
 }
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';

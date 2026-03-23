@@ -16,6 +16,7 @@ describe('automationTemplateTransport', () => {
             template: {
                 directory: '/tmp/project',
                 prompt: 'Run maintenance',
+                transcriptStorage: 'direct',
                 existingSessionId: 'session-1',
             },
             encryptRaw,
@@ -29,6 +30,7 @@ describe('automationTemplateTransport', () => {
             expect.objectContaining({
                 directory: '/tmp/project',
                 prompt: 'Run maintenance',
+                transcriptStorage: 'direct',
                 existingSessionId: 'session-1',
             }),
         );
@@ -42,6 +44,7 @@ describe('automationTemplateTransport', () => {
             template: {
                 directory: '/tmp/project',
                 prompt: 'Run maintenance',
+                transcriptStorage: 'direct',
                 existingSessionId: 'session-1',
             },
             encryptRaw,
@@ -49,7 +52,7 @@ describe('automationTemplateTransport', () => {
 
         const envelope = JSON.parse(payload);
         expect(envelope.kind).toBe('happier_automation_template_plain_v1');
-        expect(envelope.payload).toEqual(expect.objectContaining({ directory: '/tmp/project', prompt: 'Run maintenance', existingSessionId: 'session-1' }));
+        expect(envelope.payload).toEqual(expect.objectContaining({ directory: '/tmp/project', prompt: 'Run maintenance', transcriptStorage: 'direct', existingSessionId: 'session-1' }));
         expect(envelope.existingSessionId).toBe('session-1');
         expect(encryptRaw).not.toHaveBeenCalled();
     });

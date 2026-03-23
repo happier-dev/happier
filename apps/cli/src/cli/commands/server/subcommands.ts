@@ -21,7 +21,7 @@ import {
   promptInput,
   runCliAction,
 } from './commandUtilities';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
 import { fetchServerAdvertisedUrls } from '@/server/serverCapabilities';
 import {

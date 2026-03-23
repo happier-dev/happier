@@ -11,14 +11,19 @@ import { rpcHandler } from "./socket/rpcHandler";
 import { pingHandler } from "./socket/pingHandler";
 import { sessionUpdateHandler } from "./socket/sessionUpdateHandler";
 import { machineUpdateHandler } from "./socket/machineUpdateHandler";
+import { machineTransferHandler } from "./socket/machineTransferHandler";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
+import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
 import { getSocketRooms } from "./socketRooms";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { getRedisClient } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
 import { getSocketAdapterFromEnv, isRedisStreamsEnabled } from "@/config/backends";
 import { db } from "@/storage/db";
+import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
+import { readMachineTransferFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
 
 export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
 
@@ -33,6 +38,11 @@ export function resolveSocketMaxHttpBufferSizeFromEnv(env: Record<string, string
 export function startSocket(app: Fastify) {
     const socketAdapter = getSocketAdapterFromEnv(process.env, "memory");
     const shouldEnableRedisAdapter = isRedisStreamsEnabled(process.env, socketAdapter);
+    const serverRoutedTransferEnabled = isServerFeatureEnabledForRequest(
+        'machines.transfer.serverRouted',
+        process.env,
+    );
+    const machineTransferFeatureEnv = readMachineTransferFeatureEnv(process.env);
 
     const instanceId = process.env.HAPPIER_INSTANCE_ID?.trim() || process.env.HAPPY_INSTANCE_ID?.trim() || randomUUID();
 
@@ -67,6 +77,11 @@ export function startSocket(app: Fastify) {
     }
 
     let rpcListeners = new Map<string, Map<string, Socket>>();
+    app.forwardRpcForUser = createServerRpcForwarder({
+        io,
+        allRpcListeners: rpcListeners,
+        redisRegistry: shouldEnableRedisAdapter ? { enabled: true, instanceId } : { enabled: false },
+    });
     eventRouter.setIo(io);
 
     io.use(async (socket, next) => {
@@ -111,6 +126,18 @@ export function startSocket(app: Fastify) {
             }
         }
 
+        if (clientType === 'session-scoped' && sessionId) {
+            const binding = await resolveSessionScopedSocketBinding({
+                userId: verified.userId,
+                sessionId,
+                machineId,
+            });
+            if (!binding.ok) {
+                return next(rejectSocket({ statusCode: binding.statusCode, error: binding.error }));
+            }
+            (socket.data as any).sessionScopedBinding = binding.binding;
+        }
+
         (socket.data as any).userId = verified.userId;
         (socket.data as any).clientType = clientType;
         (socket.data as any).sessionId = sessionId;
@@ -122,7 +149,9 @@ export function startSocket(app: Fastify) {
         log({ module: 'websocket' }, `New connection attempt from socket: ${socket.id}`);
         const userId = (socket.data as any).userId as string | undefined;
         const clientType = (socket.data as any).clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
-        const sessionId = (socket.data as any).sessionId as string | undefined;
+        const sessionId =
+            (socket.data as any).sessionScopedBinding?.sessionId as string | undefined
+            ?? (socket.data as any).sessionId as string | undefined;
         const machineId = (socket.data as any).machineId as string | undefined;
 
         if (!userId) {
@@ -214,6 +243,11 @@ export function startSocket(app: Fastify) {
         sessionUpdateHandler(userId, socket, connection);
         pingHandler(socket);
         machineUpdateHandler(userId, socket);
+        machineTransferHandler(userId, socket, {
+            io,
+            serverRoutedTransferEnabled,
+            serverRoutedTransferMaxBytes: machineTransferFeatureEnv.serverRoutedMaxBytes,
+        });
         artifactUpdateHandler(userId, socket);
         accessKeyHandler(userId, socket);
 

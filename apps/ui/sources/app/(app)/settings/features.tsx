@@ -15,6 +15,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useSettingMutable, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { Switch } from '@/components/ui/forms/Switch';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import { FeatureDiagnosticsPanel } from '@/components/settings/features/FeatureDiagnosticsPanel';
 import {
@@ -32,6 +33,7 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [featureToggles, setFeatureToggles] = useSettingMutable('featureToggles');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
     const [commandPaletteEnabled, setCommandPaletteEnabled] = useLocalSettingMutable('commandPaletteEnabled');
+    const [embeddedTerminalDockLocation, setEmbeddedTerminalDockLocation] = useLocalSettingMutable('embeddedTerminalDockLocation');
     const [showEnvironmentBadge, setShowEnvironmentBadge] = useSettingMutable('showEnvironmentBadge');
     const [useEnhancedSessionWizard, setUseEnhancedSessionWizard] = useSettingMutable('useEnhancedSessionWizard');
     const [useMachinePickerSearch, setUseMachinePickerSearch] = useSettingMutable('useMachinePickerSearch');
@@ -169,6 +171,7 @@ export default React.memo(function FeaturesSettingsScreen() {
 
     const standardToggleDefinitions = visibleToggleDefinitions.filter((d) => !d.isExperimental);
     const experimentalToggleDefinitions = visibleToggleDefinitions.filter((d) => d.isExperimental);
+    const [embeddedTerminalDockMenuOpen, setEmbeddedTerminalDockMenuOpen] = React.useState(false);
 
     const seedExperimentalFeatureToggleDefaults = React.useCallback(() => {
         const defaults = buildUiFeatureToggleDefaults({ experimentalOnly: true });
@@ -206,6 +209,25 @@ export default React.memo(function FeaturesSettingsScreen() {
         }
         return false;
     }, [toggleSettings, toggleableFeatureIdSet]);
+
+    const embeddedTerminalDockSettingVisible = React.useMemo(() => {
+        if (!experiments) return false;
+        if (isToggleHardDisabledByServer('terminal.embeddedPty')) return false;
+        if (isLocallyBlockedByDependencies('terminal.embeddedPty')) return false;
+        return resolveUiFeatureToggleEnabled(toggleSettings, 'terminal.embeddedPty');
+    }, [experiments, isToggleHardDisabledByServer, isLocallyBlockedByDependencies, toggleSettings]);
+
+    const embeddedTerminalDockLocationLabel = React.useMemo(() => {
+        switch (embeddedTerminalDockLocation) {
+            case 'details':
+                return t('terminalEmbedded.location.details');
+            case 'bottom':
+                return t('terminalEmbedded.location.bottom');
+            case 'sidebar':
+            default:
+                return t('terminalEmbedded.location.sidebar');
+        }
+    }, [embeddedTerminalDockLocation]);
 
     const applyLocalToggleChange = React.useCallback((featureId: FeatureId, next: boolean) => {
         const nextToggles: Record<string, boolean> = {
@@ -247,7 +269,13 @@ export default React.memo(function FeaturesSettingsScreen() {
                         ? t('settingsFeatures.enhancedSessionWizardEnabled')
                         : t('settingsFeatures.enhancedSessionWizardDisabled')}
                     icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.purple} />}
-                    rightElement={<Switch value={useEnhancedSessionWizard} onValueChange={setUseEnhancedSessionWizard} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-feature-toggle-useEnhancedSessionWizard"
+                            value={useEnhancedSessionWizard}
+                            onValueChange={setUseEnhancedSessionWizard}
+                        />
+                    }
                     showChevron={false}
                 />
                 <Item
@@ -352,6 +380,37 @@ export default React.memo(function FeaturesSettingsScreen() {
                     title={t('settingsFeatures.experimentalOptions')}
                     footer={t('settingsFeatures.experimentalOptionsDescription')}
                 >
+                    {embeddedTerminalDockSettingVisible ? (
+                        <DropdownMenu
+                            open={embeddedTerminalDockMenuOpen}
+                            onOpenChange={setEmbeddedTerminalDockMenuOpen}
+                            variant="selectable"
+                            search={false}
+                            selectedId={embeddedTerminalDockLocation}
+                            showCategoryTitles={false}
+                            matchTriggerWidth={true}
+                            connectToTrigger={true}
+                            rowKind="item"
+                            itemTrigger={{
+                                title: t('terminalEmbedded.settings.locationTitle'),
+                                subtitle: embeddedTerminalDockLocationLabel,
+                                icon: <Ionicons name="terminal-outline" size={29} color={theme.colors.accent.blue} />,
+                                itemProps: { testID: 'settings-embedded-terminal-dock-location' },
+                            }}
+                            items={[
+                                { id: 'sidebar', title: t('terminalEmbedded.location.sidebar'), icon: <Ionicons name="albums-outline" size={18} color={theme.colors.textSecondary} /> },
+                                { id: 'details', title: t('terminalEmbedded.location.details'), icon: <Ionicons name="information-circle-outline" size={18} color={theme.colors.textSecondary} /> },
+                                { id: 'bottom', title: t('terminalEmbedded.location.bottom'), icon: <Ionicons name="reorder-four-outline" size={18} color={theme.colors.textSecondary} /> },
+                            ]}
+                            onSelect={(id) => {
+                                if (id === 'sidebar' || id === 'details' || id === 'bottom') {
+                                    setEmbeddedTerminalDockLocation(id);
+                                }
+                                setEmbeddedTerminalDockMenuOpen(false);
+                            }}
+                        />
+                    ) : null}
+
                     {experimentalToggleDefinitions.map((d) => {
                         const blockedByDependencies = isLocallyBlockedByDependencies(d.featureId);
                         const enabled = blockedByDependencies ? false : resolveUiFeatureToggleEnabled(toggleSettings, d.featureId);

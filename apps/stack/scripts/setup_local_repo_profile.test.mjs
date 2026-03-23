@@ -2,45 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { basename, dirname, join } from 'node:path';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout.on('data', (d) => {
-      stdout += String(d);
-    });
-    proc.stderr.on('data', (d) => {
-      stderr += String(d);
-    });
-    proc.on('error', reject);
-    proc.on('exit', (code, signal) => {
-      resolve({
-        code: code ?? (signal ? 1 : 0),
-        signal,
-        stdout,
-        stderr,
-      });
-    });
-  });
-}
+import { ensureMinimalMonorepoLayout } from './testkit/core/minimal_monorepo_layout.mjs';
+import { runNodeCapture as runNode } from './testkit/core/run_node_capture.mjs';
 
 function toDataUrl(source) {
   return `data:text/javascript,${encodeURIComponent(source)}`;
-}
-
-async function writeHappyMonorepoStub({ repoDir }) {
-  await mkdir(join(repoDir, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(repoDir, 'apps', 'cli'), { recursive: true });
-  await mkdir(join(repoDir, 'apps', 'server'), { recursive: true });
-  await writeFile(join(repoDir, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(repoDir, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(repoDir, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
 }
 
 test('hstack setup --profile=local-repo creates a dedicated stack without bootstrapping/cloning', async () => {
@@ -53,7 +21,7 @@ test('hstack setup --profile=local-repo creates a dedicated stack without bootst
   const registerPath = join(tmp, 'register.mjs');
 
   const repoDir = join(tmp, 'repo');
-  await writeHappyMonorepoStub({ repoDir });
+  await ensureMinimalMonorepoLayout(repoDir);
 
   const stubBySpecifier = {
     './utils/proc/proc.mjs': toDataUrl(`
@@ -175,4 +143,3 @@ export async function resolve(specifier, context, defaultResolve) {
     await rm(tmp, { recursive: true, force: true });
   }
 });
-

@@ -1,5 +1,7 @@
 export type ConnectedServiceQuotasLoopHandle = Readonly<{
   stop: () => void;
+  pause: () => void;
+  resume: () => void;
 }>;
 
 export function startConnectedServiceQuotasLoop(params: Readonly<{
@@ -19,8 +21,10 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
 
   let stopped = false;
   let inFlight = false;
+  let paused = false;
   const intervalHandle = setIntervalImpl(() => {
     if (stopped || inFlight) return;
+    if (paused) return;
     inFlight = true;
     void (async () => {
       try {
@@ -39,6 +43,12 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
       if (stopped) return;
       stopped = true;
       clearIntervalImpl(intervalHandle);
+    },
+    pause: () => {
+      paused = true;
+    },
+    resume: () => {
+      paused = false;
     },
   };
 }

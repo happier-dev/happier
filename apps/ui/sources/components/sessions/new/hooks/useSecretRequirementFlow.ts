@@ -5,7 +5,8 @@ import { shouldAutoPromptSecretRequirement } from '@/utils/secrets/secretRequire
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { Modal } from '@/modal';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
-import type { AIBackendProfile, SavedSecret } from '@/sync/domains/settings/settings';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { getTempData } from '@/utils/sessions/tempDataStore';
 

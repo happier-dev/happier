@@ -1,28 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import type { SDKAssistantMessage } from '../sdk';
-import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
+import { withToolTraceFile } from '@/testkit/logger/toolTraceFile';
 import { PermissionHandler } from './permissionHandler';
 import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
 
 describe('Claude PermissionHandler tool trace', () => {
-  afterEach(() => {
-    delete process.env.HAPPIER_STACK_TOOL_TRACE;
-    delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
-    __resetToolTraceForTests();
-  });
-
   it('records permission-request and permission-response when tool tracing is enabled', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'happy-tool-trace-claude-permissions-'));
-    const filePath = join(dir, 'tool-trace.jsonl');
-    process.env.HAPPIER_STACK_TOOL_TRACE = '1';
-    process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
-
-    try {
+    await withToolTraceFile('happy-tool-trace-claude-permissions-', async (filePath) => {
       const { session } = createPermissionHandlerSessionStub();
       const handler = new PermissionHandler(session);
 
@@ -76,8 +62,6 @@ describe('Claude PermissionHandler tool trace', () => {
           }),
         ]),
       );
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    });
   });
 });

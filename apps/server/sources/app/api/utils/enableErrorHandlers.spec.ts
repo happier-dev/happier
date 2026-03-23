@@ -3,17 +3,18 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { applyEnvValues, snapshotEnv, restoreEnv } from "../testkit/env";
 import { enableErrorHandlers } from './enableErrorHandlers';
 
 describe('enableErrorHandlers', () => {
     it('responds 404 when UI index.html is missing (instead of 500)', async () => {
         const dir = await mkdtemp(join(tmpdir(), 'happy-ui-missing-'));
         const app = Fastify();
-
-        const prevUiDir = process.env.HAPPIER_SERVER_UI_DIR;
-        const prevUiPrefix = process.env.HAPPIER_SERVER_UI_PREFIX;
-        process.env.HAPPIER_SERVER_UI_DIR = dir;
-        process.env.HAPPIER_SERVER_UI_PREFIX = '/';
+        const envSnapshot = snapshotEnv();
+        applyEnvValues({
+            HAPPIER_SERVER_UI_DIR: dir,
+            HAPPIER_SERVER_UI_PREFIX: '/',
+        });
 
         try {
             enableErrorHandlers(app as any);
@@ -23,11 +24,7 @@ describe('enableErrorHandlers', () => {
             expect(res.statusCode).toBe(404);
         } finally {
             await app.close().catch(() => {});
-            if (typeof prevUiDir === 'string') process.env.HAPPIER_SERVER_UI_DIR = prevUiDir;
-            else delete process.env.HAPPIER_SERVER_UI_DIR;
-
-            if (typeof prevUiPrefix === 'string') process.env.HAPPIER_SERVER_UI_PREFIX = prevUiPrefix;
-            else delete process.env.HAPPIER_SERVER_UI_PREFIX;
+            restoreEnv(envSnapshot);
             await rm(dir, { recursive: true, force: true });
         }
     });

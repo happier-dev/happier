@@ -1,6 +1,8 @@
 import * as React from 'react';
+import { buildBackendTargetKey, isBuiltInAgentTarget, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { tLoose, type TranslationKeyNoParams } from '@/text';
 import {
@@ -17,7 +19,7 @@ import {
 } from '@/sync/domains/sessionModes/dynamicSessionModeProbeCache';
 
 export function useNewSessionPreflightSessionModesState(params: Readonly<{
-    agentType: AgentId;
+    backendTarget: BackendTargetRefV1;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
@@ -40,22 +42,38 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         setRefreshNonce((n) => n + 1);
     }, []);
 
+    const backendTargetKind = params.backendTarget.kind;
+    const backendTargetAgentId = isBuiltInAgentTarget(params.backendTarget) ? params.backendTarget.agentId : null;
+    const backendTargetBackendId = isBuiltInAgentTarget(params.backendTarget) ? null : params.backendTarget.backendId;
+
+    const backendTarget = React.useMemo<BackendTargetRefV1>(() => {
+        return backendTargetKind === 'builtInAgent'
+            ? { kind: 'builtInAgent', agentId: backendTargetAgentId! }
+            : { kind: 'configuredAcpBackend', backendId: backendTargetBackendId! };
+    }, [backendTargetAgentId, backendTargetBackendId, backendTargetKind]);
+
+    const agentType = React.useMemo<AgentId>(() => {
+        return resolveProviderAgentIdForBackendTarget(backendTarget);
+    }, [backendTarget]);
+
+    const backendTargetKey = React.useMemo(() => buildBackendTargetKey(backendTarget), [backendTarget]);
+
     const preflightModesKey = React.useMemo(() => {
         return buildDynamicSessionModeProbeCacheKey({
             machineId: params.selectedMachineId,
-            agentType: params.agentType,
+            targetKey: backendTargetKey,
             serverId: params.capabilityServerId,
             cwd: params.cwd ?? null,
         });
-    }, [params.agentType, params.capabilityServerId, params.cwd, params.selectedMachineId]);
+    }, [backendTargetKey, params.capabilityServerId, params.cwd, params.selectedMachineId]);
 
     const supportsPreflightModeProbe = React.useMemo(() => {
-        const core = getAgentCore(params.agentType);
-        return core.sessionModes.kind === 'acpAgentModes';
-    }, [params.agentType]);
+        const core = getAgentCore(agentType);
+        return core.sessionModes.kind === 'acpAgentModes' || core.sessionModes.kind === 'acpPolicyPresets';
+    }, [agentType]);
 
     const staticModeOptions = React.useMemo((): readonly SessionModeOption[] => {
-        const core = getAgentCore(params.agentType);
+        const core = getAgentCore(agentType);
         if (core.sessionModes.kind !== 'staticAgentModes') return [];
 
         const raw = core.sessionModes.staticOptions ?? [];
@@ -88,7 +106,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                 { id: 'default', name: tLoose('common.default') },
                 ...deduped,
             ];
-    }, [params.agentType]);
+    }, [agentType]);
 
     React.useEffect(() => {
         if (!preflightModesKey) {
@@ -125,10 +143,11 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                 const res = await machineCapabilitiesInvoke(
                     params.selectedMachineId!,
                     {
-                        id: `cli.${params.agentType}` as any,
+                        id: `cli.${agentType}` as any,
                         method: 'probeModes',
                         params: {
                             timeoutMs: 15_000,
+                            backendTarget,
                             ...(cwd ? { cwd } : {}),
                         },
                     },
@@ -184,7 +203,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         return () => {
             cancelled = true;
         };
-    }, [preflightModesKey, params.agentType, params.selectedMachineId, params.capabilityServerId, params.cwd, refreshNonce, supportsPreflightModeProbe]);
+    }, [agentType, backendTarget, preflightModesKey, params.selectedMachineId, params.capabilityServerId, params.cwd, refreshNonce, supportsPreflightModeProbe]);
 
     const modeOptions = React.useMemo(() => {
         if (staticModeOptions.length > 0) return staticModeOptions;

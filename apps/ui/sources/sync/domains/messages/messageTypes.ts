@@ -36,6 +36,7 @@ export type ToolCall = {
 export type UserTextMessage = {
     kind: 'user-text';
     id: string;
+    realID?: string | null;
     seq?: number;
     localId: string | null;
     createdAt: number;
@@ -47,6 +48,7 @@ export type UserTextMessage = {
 export type ModeSwitchMessage = {
     kind: 'agent-event';
     id: string;
+    realID?: string | null;
     seq?: number;
     createdAt: number;
     event: AgentEvent;
@@ -56,6 +58,7 @@ export type ModeSwitchMessage = {
 export type AgentTextMessage = {
     kind: 'agent-text';
     id: string;
+    realID?: string | null;
     seq?: number;
     localId: string | null;
     createdAt: number;
@@ -67,6 +70,7 @@ export type AgentTextMessage = {
 export type ToolCallMessage = {
     kind: 'tool-call';
     id: string;
+    realID?: string | null;
     seq?: number;
     localId: string | null;
     createdAt: number;

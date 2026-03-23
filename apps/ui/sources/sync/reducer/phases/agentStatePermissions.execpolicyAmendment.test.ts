@@ -13,6 +13,7 @@ function createToolMessage(params: {
   const createdAt = params.createdAt ?? 1;
   return {
     id: params.id,
+    localId: null,
     realID: null,
     seq: null,
     role: 'agent' as const,

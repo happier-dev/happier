@@ -29,12 +29,12 @@ describe('describeEffectiveModelMode', () => {
         expect(out.applyScope).toBe('spawn_only');
     });
 
-    it('treats Codex ACP model overrides as live when ACP metadata is present', () => {
+    it('treats Codex session-control model overrides as live when generic metadata is present', () => {
         const out = describeEffectiveModelMode({
             agentType: 'codex',
             selectedModelId: 'gpt-5-codex-high',
             metadata: buildMetadata({
-                acpSessionModesV1: { v: 1, provider: 'codex', updatedAt: 1, currentModeId: 'ask', availableModes: [] },
+                sessionModesV1: { v: 1, provider: 'codex', updatedAt: 1, currentModeId: 'ask', availableModes: [] },
             }),
         });
         expect(out.applyScope).toBe('live');
@@ -45,7 +45,7 @@ describe('describeEffectiveModelMode', () => {
             agentType: 'gemini',
             selectedModelId: 'gemini-2.5-flash',
             metadata: buildMetadata({
-                acpSessionModesV1: { v: 1, provider: 'gemini', updatedAt: 1, currentModeId: 'default', availableModes: [] },
+                sessionModesV1: { v: 1, provider: 'gemini', updatedAt: 1, currentModeId: 'default', availableModes: [] },
             }),
         });
         expect(out.applyScope).toBe('live');
@@ -91,6 +91,18 @@ describe('describeEffectiveModelMode', () => {
                     currentModelId: 'gpt-5-codex',
                     availableModels: [],
                 } as Metadata['acpSessionModelsV1'],
+            }),
+        });
+
+        expect(out.applyScope).toBe('live');
+    });
+
+    it('falls back to legacy ACP metadata keys when generic session-control keys are absent', () => {
+        const out = describeEffectiveModelMode({
+            agentType: 'codex',
+            selectedModelId: 'gpt-5-codex',
+            metadata: buildMetadata({
+                acpSessionModesV1: { v: 1, provider: 'codex', updatedAt: 1, currentModeId: 'ask', availableModes: [] },
             }),
         });
 

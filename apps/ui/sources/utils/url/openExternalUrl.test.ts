@@ -2,10 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 
 const openUrlSpy = vi.fn(async (_url: string) => {});
 
-vi.mock('react-native', () => ({
-  Platform: { OS: 'ios' },
-  Linking: { openURL: openUrlSpy },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+            },
+            Linking: {
+                openURL: openUrlSpy,
+            },
+        }
+    );
+});
 
 describe('openExternalUrl', () => {
   it('uses Linking.openURL on native', async () => {

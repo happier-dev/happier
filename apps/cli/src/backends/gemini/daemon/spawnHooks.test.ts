@@ -1,32 +1,32 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
-const ORIGINAL_ENV = {
-  PATH: process.env.PATH,
-  HAPPIER_GEMINI_PATH: process.env.HAPPIER_GEMINI_PATH,
-};
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createExecutableShim, writeExecutableShim } from '@/testkit/fs/executableShim';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
+const envKeys = ['PATH', 'HAPPIER_HOME_DIR', 'HAPPIER_GEMINI_PATH'] as const;
 const tempDirs = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
 
 async function createFakeBin(name: string): Promise<{ dir: string; binPath: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'happier-gemini-spawnhooks-'));
+  const binPath = await createExecutableShim({
+    dirPrefix: 'happier-gemini-spawnhooks-',
+    fileName: process.platform === 'win32' ? `${name}.cmd` : name,
+    contents: process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+  });
+  const dir = dirname(binPath);
   tempDirs.add(dir);
-  const binPath = join(dir, name);
-  await writeFile(binPath, '#!/bin/sh\necho ok\n', 'utf8');
-  await chmod(binPath, 0o755);
   return { dir, binPath };
 }
 
 afterEach(async () => {
-  if (ORIGINAL_ENV.PATH === undefined) delete process.env.PATH;
-  else process.env.PATH = ORIGINAL_ENV.PATH;
-  if (ORIGINAL_ENV.HAPPIER_GEMINI_PATH === undefined) delete process.env.HAPPIER_GEMINI_PATH;
-  else process.env.HAPPIER_GEMINI_PATH = ORIGINAL_ENV.HAPPIER_GEMINI_PATH;
+  envScope.restore();
+  envScope = createEnvKeyScope(envKeys);
   vi.resetModules();
   for (const dir of tempDirs) {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
   tempDirs.clear();
 });
@@ -41,7 +41,8 @@ describe('geminiDaemonSpawnHooks.validateSpawn', () => {
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error('expected validation to fail');
     expect(res.errorMessage.toLowerCase()).toContain('gemini');
-    expect(res.errorMessage.toLowerCase()).toContain('path');
+    expect(res.errorMessage.toLowerCase()).toContain('system install');
+    expect(res.errorMessage.toLowerCase()).toContain('managed install');
   });
 
   it('allows spawn when gemini is on PATH', async () => {
@@ -63,5 +64,33 @@ describe('geminiDaemonSpawnHooks.validateSpawn', () => {
     const res = await geminiDaemonSpawnHooks.validateSpawn!({});
     expect(res.ok).toBe(true);
   });
+
+  it('allows spawn when a managed gemini install exists', async () => {
+    process.env.PATH = '';
+    delete process.env.HAPPIER_GEMINI_PATH;
+
+    const homeDir = await createTempDir('happier-gemini-managed-home-');
+    tempDirs.add(homeDir);
+    process.env.HAPPIER_HOME_DIR = homeDir;
+
+    const { resolveProviderCliManagedCommandPath } = await import('@/runtime/managedTools/providerCliResolution');
+    const binPath = resolveProviderCliManagedCommandPath('gemini', { happyHomeDir: homeDir });
+    await mkdir(join(binPath, '..'), { recursive: true });
+    await writeExecutableShim({
+      dir: dirname(binPath),
+      fileName: basename(binPath),
+      contents: process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+    });
+
+    const { geminiDaemonSpawnHooks } = await import('./spawnHooks');
+    const res = await geminiDaemonSpawnHooks.validateSpawn!({});
+    expect(res.ok).toBe(true);
+  });
 });
 
+describe('geminiDaemonSpawnHooks', () => {
+  it('does not expose legacy generic token auth plumbing', async () => {
+    const { geminiDaemonSpawnHooks } = await import('./spawnHooks');
+    expect('buildAuthEnv' in geminiDaemonSpawnHooks).toBe(false);
+  });
+});

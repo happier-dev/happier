@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { createInTxHarness } from "../../testkit/txHarness";
 
 const markAccountChanged = vi.fn(async () => 123);
@@ -30,38 +32,23 @@ const existingMachine = {
     updatedAt: new Date(1),
 };
 
-const dbMachineFindFirst = vi.fn(async () => existingMachine);
-const dbAccountFindUnique = vi.fn(async () => ({ contentPublicKey: new Uint8Array(32).fill(7) }));
+const dbMocks = createDbMocks({
+    machine: ["findFirst", "findUnique"],
+    account: ["findUnique"],
+} as const);
+const txDbMocks = createDbMocks({
+    accessKey: ["deleteMany"],
+    machine: ["create", "findFirst", "update"],
+} as const);
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        machine: {
-            findFirst: dbMachineFindFirst,
-            findUnique: vi.fn(async () => null),
-        },
-        account: {
-            findUnique: dbAccountFindUnique,
-        },
-    },
+installDbModuleMock(() => ({
+    db: dbMocks.db,
     isPrismaErrorCode: () => false,
 }));
 
-const txMachineUpdate = vi.fn(async (args: any) => ({
-    ...existingMachine,
-    ...args.data,
-    lastActiveAt: new Date(),
-    updatedAt: new Date(),
-}));
-
 const harness = createInTxHarness(() => ({
-    accessKey: {
-        deleteMany: vi.fn(async () => ({ count: 0 })),
-    },
-    machine: {
-        create: vi.fn(async () => { throw new Error("unexpected create"); }),
-        findFirst: vi.fn(async () => existingMachine),
-        update: txMachineUpdate,
-    },
+    accessKey: txDbMocks.db.accessKey,
+    machine: txDbMocks.db.machine,
 }));
 
 vi.mock("@/storage/inTx", () => ({
@@ -70,18 +57,35 @@ vi.mock("@/storage/inTx", () => ({
 }));
 
 describe("machinesRoutes (update existing machine)", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        dbMocks.reset();
+        txDbMocks.reset();
+        dbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
+        dbMocks.db.machine.findUnique.mockResolvedValue(null);
+        dbMocks.db.account.findUnique.mockResolvedValue({ contentPublicKey: new Uint8Array(32).fill(7) });
+        txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
+        txDbMocks.db.machine.create.mockImplementation(async () => { throw new Error("unexpected create"); });
+        txDbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
+        txDbMocks.db.machine.update.mockImplementation(async (args: any) => ({
+            ...existingMachine,
+            ...args.data,
+            lastActiveAt: new Date(),
+            updatedAt: new Date(),
+        }));
+    });
+
     it("updates dataEncryptionKey when machine already exists for the authenticated account", async () => {
         const { machinesRoutes } = await import("./machinesRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines",
+            registerRoutes(app) {
+                machinesRoutes(app as any);
+            },
+        });
 
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines");
-        expect(typeof handler).toBe("function");
-
-        const reply = createReplyStub();
-
-        const response = await handler(
+        const { response, reply } = await route.invoke(
             {
                 userId: "u1",
                 body: {
@@ -93,7 +97,6 @@ describe("machinesRoutes (update existing machine)", () => {
                     contentPublicKey: Buffer.from(new Uint8Array(32).fill(7)).toString("base64"),
                 },
             },
-            reply,
         );
 
         expect(markAccountChanged).toHaveBeenCalledWith(
@@ -101,7 +104,7 @@ describe("machinesRoutes (update existing machine)", () => {
             expect.objectContaining({ accountId: "u1", kind: "machine", entityId: "m1" }),
         );
 
-        expect(txMachineUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        expect(txDbMocks.db.machine.update).toHaveBeenCalledWith(expect.objectContaining({
             where: { accountId_id: { accountId: "u1", id: "m1" } },
             data: expect.objectContaining({
                 // Ensure the update writes the new key instead of leaving stale state.

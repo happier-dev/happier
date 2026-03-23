@@ -18,6 +18,18 @@ const AcpSessionModelSchema = z.object({
     id: z.string().trim().min(1),
     name: z.string().trim().min(1),
     description: z.string().trim().min(1).optional(),
+    modelOptions: z.array(z.object({
+        id: z.string().trim().min(1),
+        name: z.string().trim().min(1),
+        description: z.string().trim().min(1).optional(),
+        type: z.string().trim().min(1),
+        currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+        options: z.array(z.object({
+            value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+            name: z.string().trim().min(1),
+            description: z.string().trim().min(1).optional(),
+        })).default([]),
+    })).default([]),
 });
 
 const AcpSessionModelsStateSchema = z.object({

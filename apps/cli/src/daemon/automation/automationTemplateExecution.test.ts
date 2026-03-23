@@ -174,6 +174,211 @@ describe('parseAutomationTemplateExecution', () => {
     expect(parsed.value.prompt).toBe('Hello');
   });
 
+  it('parses configured ACP backend targets from plaintext templates', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'ACP backend',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+            prompt: 'Use the ACP backend',
+          }),
+        },
+      }),
+      undefined,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+    expect(parsed.value.prompt).toBe('Use the ACP backend');
+  });
+
+  it('parses mcpSelection from plaintext templates', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Plain envelope',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            agent: 'codex',
+            mcpSelection: {
+              v: 1,
+              managedServersEnabled: false,
+              forceIncludeServerIds: ['server-portable'],
+              forceExcludeServerIds: ['server-disabled'],
+            },
+          }),
+        },
+      }),
+      undefined,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.mcpSelection).toEqual({
+      v: 1,
+      managedServersEnabled: false,
+      forceIncludeServerIds: ['server-portable'],
+      forceExcludeServerIds: ['server-disabled'],
+    });
+  });
+
+  it('parses agent mode from plaintext templates', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Plain envelope',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            agent: 'codex',
+            agentModeId: 'plan',
+          }),
+        },
+      }),
+      undefined,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.agentModeId).toBe('plan');
+  });
+
+  it('parses codexBackendMode from plaintext templates', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Codex backend mode',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            agent: 'codex',
+            codexBackendMode: 'appServer',
+          }),
+        },
+      }),
+      undefined,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.codexBackendMode).toBe('appServer');
+  });
+
+  it('rejects workspace-linked plaintext templates', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Workspace intent',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            agent: 'codex',
+            workspaceId: 'ws_payments',
+            workspaceLocationId: 'loc_local',
+            workspaceCheckoutId: 'checkout_feature_auth',
+            checkoutCreationDraft: {
+              kind: 'git_worktree',
+              displayName: 'feature/auth',
+              baseRef: 'main',
+            },
+          }),
+        },
+      }),
+      undefined,
+    );
+
+    expect(parsed.ok).toBe(false);
+  });
+
+  it('parses connectedServices and transcriptStorage from plaintext templates', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Plain envelope',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            connectedServices: {
+              v: 1,
+              bindingsByServiceId: {
+                anthropic: { source: 'connected', profileId: 'work' },
+              },
+            },
+            transcriptStorage: 'direct',
+          }),
+        },
+      }),
+      undefined,
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.connectedServices).toEqual({
+      v: 1,
+      bindingsByServiceId: {
+        anthropic: { source: 'connected', profileId: 'work' },
+      },
+    });
+    expect(parsed.value.transcriptStorage).toBe('direct');
+  });
+
+  it('rejects templates with invalid permissionMode values', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Invalid permission mode',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            permissionMode: 'not-a-mode',
+          }),
+        },
+      }),
+      undefined,
+    );
+
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.error).toMatch(/permissionMode/i);
+  });
+
+  it('rejects templates with invalid terminal spawn options', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Invalid terminal',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            terminal: 123,
+          }),
+        },
+      }),
+      undefined,
+    );
+
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.error).toMatch(/terminal/i);
+  });
+
   it('parses new-session encrypted templates and normalizes defaults', () => {
     const parsed = parseAutomationTemplateExecution(
       buildClaimedRun(),
@@ -187,7 +392,7 @@ describe('parseAutomationTemplateExecution', () => {
 
     expect(parsed.value.targetType).toBe('new_session');
     expect(parsed.value.directory).toBe('/tmp/project');
-    expect(parsed.value.agent).toBe('codex');
+    expect(parsed.value.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
   });
 
   it('rejects invalid template payloads', () => {
@@ -236,6 +441,34 @@ describe('parseAutomationTemplateExecution', () => {
     expect(parsed.value.targetType).toBe('existing_session');
     expect(parsed.value.existingSessionId).toBe('session-1');
     expect(parsed.value.prompt).toBe('Run checks');
+  });
+
+  it('parses existing-session plaintext session encryption mode when present', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Existing plaintext session',
+          enabled: true,
+          targetType: 'existing_session',
+          templateCiphertext: buildEncryptedTemplateCiphertext({
+            directory: '/tmp/project',
+            existingSessionId: 'session-plain',
+            sessionEncryptionMode: 'plain',
+            prompt: 'Run checks',
+          }),
+        },
+      }),
+      {
+        type: 'legacy',
+        secret: new Uint8Array(32).fill(7),
+      },
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.sessionEncryptionMode).toBe('plain');
+    expect(parsed.value.sessionEncryptionKeyBase64).toBeUndefined();
   });
 
   it('rejects existing-session templates when envelope existingSessionId mismatches payload existingSessionId', () => {

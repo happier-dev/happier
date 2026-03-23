@@ -187,6 +187,17 @@ export interface TransportHandler {
   getIdleTimeout?(): number;
 
   /**
+   * Get the quiet-period timeout to use after assistant chunks but before the first tool call.
+   *
+   * Some ACP providers emit an initial planning/status message, then start their first tool call
+   * a short time later. Using a longer timeout here prevents the runtime from declaring the turn
+   * idle in that gap and prematurely flushing streamed transcript state.
+   *
+   * When omitted, handlers fall back to `getIdleTimeout()`.
+   */
+  getPreToolCallIdleTimeoutMs?(): number | undefined;
+
+  /**
    * Get the maximum time to wait for the *first* session/update after a prompt.
    *
    * ACP agents commonly ACK `session/prompt` immediately while the model is still working.
@@ -197,4 +208,33 @@ export interface TransportHandler {
    * but never emit any `session/update` events for a turn.
    */
   getPostPromptNoUpdatesTimeoutMs?(): number;
+
+  /**
+   * Get the maximum time to wait for ACP to acknowledge `session/prompt` or begin
+   * emitting `session/update` traffic for that prompt.
+   *
+   * This is a liveness guard for broken/stuck providers. It is distinct from the
+   * overall response-completion timeout, which continues waiting while the prompt
+   * is actively producing updates.
+   */
+  getPromptLivenessTimeoutMs?(): number;
+
+  /**
+   * Get the quiet-period timeout to use after a tool call completes before declaring the turn idle.
+   *
+   * Some ACP providers can emit terminal tool updates before they resume trailing assistant text.
+   * This timeout gives those providers a short window to continue the turn without the runtime
+   * prematurely flushing transcript streaming state.
+   */
+  getPostToolCallIdleTimeoutMs?(): number;
+
+  /**
+   * Get the additional quiet-period timeout to require after an idle candidate when the
+   * current prompt has not produced any assistant message chunks yet.
+   *
+   * Some ACP providers can emit transient idle gaps between tool/thinking phases before they
+   * eventually stream the assistant's final answer. Returning a positive value here delays
+   * response completion until either assistant chunks arrive or this extra quiet period expires.
+   */
+  getIdleWithoutAssistantMessageTimeoutMs?(): number;
 }

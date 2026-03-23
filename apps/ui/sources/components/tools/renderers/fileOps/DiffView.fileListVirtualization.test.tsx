@@ -1,14 +1,19 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const diffFilesListSpy = vi.fn();
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('@/components/ui/code/diff/DiffPresentationStyleToggleButton', () => ({
     DiffPresentationStyleToggleButton: 'DiffPresentationStyleToggleButton',
@@ -29,7 +34,9 @@ vi.mock('@/components/ui/code/model/diff/diffViewModel', () => ({
     ]),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'showLineNumbersInToolViews') return false;
         if (key === 'wrapLinesInDiffs') return true;
@@ -38,7 +45,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
     useSessionReviewCommentsDrafts: () => [],
     storage: { getState: () => ({ upsertSessionReviewCommentDraft: () => {}, deleteSessionReviewCommentDraft: () => {} }) },
-}));
+});
+});
 
 vi.mock('@/sync/domains/settings/settings', () => ({
     settingsDefaults: {
@@ -46,9 +54,10 @@ vi.mock('@/sync/domains/settings/settings', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
@@ -66,9 +75,7 @@ describe('DiffView (file list virtualization)', () => {
             result: null,
         });
 
-        await act(async () => {
-            renderer.create(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' })));
-        });
+        await renderScreen(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' })));
 
         expect(diffFilesListSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualizeFileList: true }));
     });

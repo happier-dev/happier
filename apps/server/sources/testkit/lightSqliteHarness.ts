@@ -8,12 +8,14 @@ import { auth } from "@/app/auth/auth";
 import { initEncrypt } from "@/modules/encrypt";
 import { initFilesLocalFromEnv, loadFiles } from "@/storage/blob/files";
 import { db, initDbSqlite } from "@/storage/db";
+import { applyEnvValues, restoreEnv as restoreSnapshotEnv, snapshotEnv, type EnvValues } from "./env";
 
 export type LightSqliteHarness = {
     readonly baseDir: string;
     readonly dbPath: string;
     readonly envBase: NodeJS.ProcessEnv;
     restoreEnv: () => void;
+    resetEnv: (overrides?: EnvValues) => NodeJS.ProcessEnv;
     resetDbTables: (fns: Array<() => Promise<unknown>>) => Promise<void>;
     close: () => Promise<void>;
 };
@@ -24,20 +26,8 @@ export type LightSqliteHarnessOptions = Readonly<{
     initAuth?: boolean;
     initEncrypt?: boolean;
     initFiles?: boolean;
+    env?: EnvValues;
 }>;
-
-function restoreEnvFromSnapshot(snapshot: NodeJS.ProcessEnv): void {
-    for (const key of Object.keys(process.env)) {
-        if (!(key in snapshot)) {
-            delete (process.env as any)[key];
-        }
-    }
-    for (const [key, value] of Object.entries(snapshot)) {
-        if (typeof value === "string") {
-            process.env[key] = value;
-        }
-    }
-}
 
 function runSqliteMigrations(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
     const res = spawnSync(
@@ -58,21 +48,24 @@ function runSqliteMigrations(params: { cwd: string; env: NodeJS.ProcessEnv }): v
 }
 
 export async function createLightSqliteHarness(options: LightSqliteHarnessOptions): Promise<LightSqliteHarness> {
-    const envBackup = { ...process.env };
+    const envBackup = snapshotEnv();
     const tempDirBase = typeof options.tempDirBase === "string" && options.tempDirBase.trim().length > 0
         ? options.tempDirBase
         : tmpdir();
     const baseDir = await mkdtemp(join(tempDirBase, options.tempDirPrefix));
     const dbPath = join(baseDir, "test.sqlite");
     try {
-        process.env.HAPPIER_DB_PROVIDER = "sqlite";
-        process.env.HAPPY_DB_PROVIDER = "sqlite";
-        process.env.DATABASE_URL = `file:${dbPath}`;
-        process.env.HAPPY_SERVER_LIGHT_DATA_DIR = baseDir;
-        process.env.HAPPIER_SERVER_LIGHT_DATA_DIR = baseDir;
+        applyEnvValues({
+            HAPPIER_DB_PROVIDER: "sqlite",
+            HAPPY_DB_PROVIDER: "sqlite",
+            DATABASE_URL: `file:${dbPath}`,
+            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
+            HAPPIER_SERVER_LIGHT_DATA_DIR: baseDir,
+            ...options.env,
+        });
         applyLightDefaultEnv(process.env);
         await ensureHandyMasterSecret(process.env);
-        const envBase = { ...process.env };
+        const envBase = snapshotEnv();
 
         runSqliteMigrations({ cwd: process.cwd(), env: process.env });
         await initDbSqlite();
@@ -90,7 +83,13 @@ export async function createLightSqliteHarness(options: LightSqliteHarnessOption
         }
 
         const restoreEnv = () => {
-            restoreEnvFromSnapshot(envBase);
+            restoreSnapshotEnv(envBase);
+        };
+
+        const resetEnv = (overrides: EnvValues = {}) => {
+            restoreEnv();
+            applyEnvValues(overrides);
+            return snapshotEnv();
         };
 
         const resetDbTables = async (fns: Array<() => Promise<unknown>>) => {
@@ -101,18 +100,18 @@ export async function createLightSqliteHarness(options: LightSqliteHarnessOption
 
         const close = async () => {
             await db.$disconnect();
-            restoreEnvFromSnapshot(envBackup);
+            restoreSnapshotEnv(envBackup);
             await rm(baseDir, { recursive: true, force: true });
         };
 
-        return { baseDir, dbPath, envBase, restoreEnv, resetDbTables, close };
+        return { baseDir, dbPath, envBase, restoreEnv, resetEnv, resetDbTables, close };
     } catch (error) {
         try {
             await db.$disconnect();
         } catch {
             // ignore cleanup disconnect errors
         }
-        restoreEnvFromSnapshot(envBackup);
+        restoreSnapshotEnv(envBackup);
         try {
             await rm(baseDir, { recursive: true, force: true });
         } catch {

@@ -6,7 +6,7 @@ import { Stack } from 'expo-router';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
-import { createOkFetchResponse, createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
+import { createOkFetchResponse, createRootLayoutFeaturesResponse, renderScreen } from '@/dev/testkit';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -66,17 +66,22 @@ async function flushEffects(): Promise<void> {
 
 async function renderRootLayout() {
     const { default: RootLayout } = await import('@/app/(app)/_layout');
-    let tree: ReturnType<typeof renderer.create> | undefined;
+    const screen = await renderScreen(<RootLayout />);
     await act(async () => {
-        tree = renderer.create(<RootLayout />);
         await flushEffects();
     });
-    return tree;
+    return screen;
 }
 
-function getFriendsManageScreen(tree: ReturnType<typeof renderer.create> | undefined) {
-    const screens = tree?.root.findAllByType(Stack.Screen) ?? [];
+function getFriendsManageScreen(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const screens = screen.findAllByType(Stack.Screen) ?? [];
     return screens.find((node) => node.props?.name === 'friends/manage');
+}
+
+function getScreenNames(screen: Awaited<ReturnType<typeof renderScreen>>): string[] {
+    return (screen.findAllByType(Stack.Screen) ?? [])
+        .map((node) => node.props?.name)
+        .filter((name): name is string => typeof name === 'string');
 }
 
 afterEach(() => {
@@ -121,25 +126,41 @@ describe('RootLayout', () => {
             });
 
             const tree = await renderRootLayout();
-            // Let feature probing fetch + apply server features so the headerRight opacity
-            // reflects the computed friends identity readiness.
-            await act(async () => {
-                await flushEffects();
-            });
+            try {
+                // Let feature probing fetch + apply server features so the headerRight opacity
+                // reflects the computed friends identity readiness.
+                await act(async () => {
+                    await flushEffects();
+                });
 
-            const friendsManage = getFriendsManageScreen(tree);
-            expect(friendsManage).toBeTruthy();
+                const friendsManage = getFriendsManageScreen(tree);
+                expect(friendsManage).toBeTruthy();
 
-            const options = friendsManage?.props?.options?.({ navigation: { navigate: vi.fn() } });
-            expect(typeof options?.headerRight).toBe('function');
+                const options = friendsManage?.props?.options?.({ navigation: { navigate: vi.fn() } });
+                expect(typeof options?.headerRight).toBe('function');
 
-            const node = options.headerRight();
-            expect(node).not.toBeNull();
-            expect(node.props?.style?.opacity).toBe(scenario.expectedOpacity);
-
-            act(() => {
-                tree?.unmount();
-            });
+                const node = options.headerRight();
+                expect(node).not.toBeNull();
+                expect(node.props?.style?.opacity).toBe(scenario.expectedOpacity);
+            } finally {
+                await tree?.unmount();
+            }
         });
     }
+
+    it('registers session detail routes for tool and execution-run screens', async () => {
+        vi.resetModules();
+        stubRootLayoutFeaturesFetch();
+
+        const tree = await renderRootLayout();
+        try {
+            const screenNames = getScreenNames(tree);
+
+            expect(screenNames).toContain('session/[id]/message/[messageId]');
+            expect(screenNames).toContain('session/[id]/runs/new');
+            expect(screenNames).toContain('session/[id]/runs/[runId]');
+        } finally {
+            await tree?.unmount();
+        }
+    });
 });

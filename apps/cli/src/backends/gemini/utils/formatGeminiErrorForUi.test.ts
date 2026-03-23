@@ -28,8 +28,12 @@ describe('formatGeminiErrorForUi', () => {
       .toContain('happier gemini project set');
   });
 
-  it('formats empty object errors as missing CLI install', () => {
-    expect(formatGeminiErrorForUi({}, null)).toContain('Is "gemini" CLI installed?');
+  it('formats empty object errors as generic missing CLI guidance', () => {
+    const output = formatGeminiErrorForUi({}, null);
+    expect(output).toContain('Happier provider settings');
+    expect(output).toContain('"gemini"');
+    expect(output).toContain('PATH');
+    expect(output).not.toContain('npm install -g');
   });
 
   it('does not include empty quota reset time when no duration is captured', () => {

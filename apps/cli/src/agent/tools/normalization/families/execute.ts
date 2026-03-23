@@ -1,3 +1,5 @@
+import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol';
+
 type UnknownRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -90,6 +92,13 @@ export function normalizeBashInput(rawInput: unknown): { command?: string; timeo
         out.command = fromString;
     } else if (fromArray && fromArray.length > 0) {
         out.command = fromArray.join(' ');
+    }
+
+    if (typeof out.command === 'string') {
+        const parsedShellBridge = parseHappierToolsShellBridgeCommand(out.command);
+        if (parsedShellBridge) {
+            out.happierToolsShellBridge = parsedShellBridge;
+        }
     }
 
     const timeout = record.timeout;

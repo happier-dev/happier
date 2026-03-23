@@ -1,132 +1,162 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
-import { createInTxHarness } from "../../testkit/txHarness";
-
-let txAccountFindUnique: any;
-let txAccountUpdateMany: any;
-let dbAccountFindUnique: any;
-
-vi.mock("@/storage/inTx", () => {
-    const harness = createInTxHarness(() => ({
-        account: {
-            findUnique: (...args: any[]) => txAccountFindUnique(...args),
-            updateMany: (...args: any[]) => txAccountUpdateMany(...args),
-        },
-    }));
-    return { afterTx: harness.afterTx, inTx: harness.inTx };
-});
-
-vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 1) }));
-vi.mock("@/app/events/eventRouter", () => ({
-    eventRouter: { emitUpdate: vi.fn() },
-    buildUpdateAccountUpdate: vi.fn(() => ({ id: "u", seq: 1, body: { t: "update-account" } })),
-}));
-vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "upd-id") }));
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
-
-vi.mock("@/storage/db", () => ({
-    db: {
-        account: {
-            findUnique: (...args: any[]) => dbAccountFindUnique(...args),
-        },
-    },
-}));
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
+import { accountRoutes } from "./accountRoutes";
 
 describe("accountRoutes (/v2/account/settings) (integration)", () => {
+    let harness: LightSqliteHarness;
+
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-account-settings-v2-", initAuth: false });
+    }, 120_000);
+
+    afterAll(async () => {
+        await harness.close();
+    });
+
+    beforeEach(() => {
+        vi.resetModules();
+        harness.resetEnv();
+    });
+
+    afterEach(async () => {
+        harness.resetEnv();
+        await harness.resetDbTables([
+            () => db.accountChange.deleteMany(),
+            () => db.repeatKey.deleteMany(),
+            () => db.account.deleteMany(),
+        ]);
+    });
+
     it("GET /v2/account/settings returns plain envelope for a plain account", async () => {
-        dbAccountFindUnique = vi.fn(async () => ({
-            settings: JSON.stringify({ t: "plain", v: { schemaVersion: 2, notificationsSettingsV1: { v: 1 } } }),
-            settingsVersion: 3,
-            publicKey: null,
-            encryptionMode: "plain",
-        }));
-
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = createFakeRouteApp();
-        accountRoutes(app as any);
-
-        const handler = getRouteHandler(app, "GET", "/v2/account/settings");
-        const reply = createReplyStub();
-
-        const response = await handler({ userId: "u1" }, reply);
-        expect(response).toEqual({
-            content: { t: "plain", v: expect.any(Object) },
-            version: 3,
+        const account = await db.account.create({
+            data: {
+                publicKey: "pk-account-settings-v2-get",
+                encryptionMode: "plain",
+                settings: JSON.stringify({ t: "plain", v: { schemaVersion: 2, notificationsSettingsV1: { v: 1 } } }),
+                settingsVersion: 3,
+            },
+            select: { id: true },
         });
-        expect((response as any).content.v.schemaVersion).toBe(2);
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "GET",
+                    url: "/v2/account/settings",
+                    headers: { "x-test-user-id": account.id },
+                });
+
+                expect(res.statusCode).toBe(200);
+                const body = res.json() as any;
+                expect(body).toEqual({
+                    content: { t: "plain", v: expect.any(Object) },
+                    version: 3,
+                });
+                expect(body.content.v.schemaVersion).toBe(2);
+            },
+        );
     });
 
     it("POST /v1/account/settings fails fast for a plain account", async () => {
-        txAccountFindUnique = vi.fn(async () => ({
-            settings: null,
-            settingsVersion: 0,
-            publicKey: null,
-            encryptionMode: "plain",
-        }));
+        const account = await db.account.create({
+            data: {
+                publicKey: "pk-account-settings-v1-plain",
+                encryptionMode: "plain",
+                settings: null,
+                settingsVersion: 0,
+            },
+            select: { id: true },
+        });
 
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = createFakeRouteApp();
-        accountRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: "/v1/account/settings",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: { settings: "ciphertext", expectedVersion: 0 },
+                });
 
-        const handler = getRouteHandler(app, "POST", "/v1/account/settings");
-        const reply = createReplyStub();
+                expect(res.statusCode).toBe(400);
+                expect(res.json()).toEqual({ error: "plain_account_requires_settings_v2" });
+            },
+        );
 
-        const response = await handler({ userId: "u1", body: { settings: "ciphertext", expectedVersion: 0 } }, reply);
-
-        expect(reply.code).toHaveBeenCalledWith(400);
-        expect(reply.send).toHaveBeenCalledWith({ error: "plain_account_requires_settings_v2" });
+        const stored = await db.account.findUnique({
+            where: { id: account.id },
+            select: { settings: true, settingsVersion: true },
+        });
+        expect(stored).toEqual({ settings: null, settingsVersion: 0 });
     });
 
     it("POST /v2/account/settings rejects encrypted content for plain accounts", async () => {
-        txAccountFindUnique = vi.fn(async () => ({
-            settings: null,
-            settingsVersion: 0,
-            publicKey: null,
-            encryptionMode: "plain",
-        }));
-        txAccountUpdateMany = vi.fn(async () => ({ count: 1 }));
+        const account = await db.account.create({
+            data: {
+                publicKey: "pk-account-settings-v2-plain",
+                encryptionMode: "plain",
+                settings: null,
+                settingsVersion: 0,
+            },
+            select: { id: true },
+        });
 
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = createFakeRouteApp();
-        accountRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: "/v2/account/settings",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: { content: { t: "encrypted", c: "ciphertext" }, expectedVersion: 0 },
+                });
 
-        const handler = getRouteHandler(app, "POST", "/v2/account/settings");
-        const reply = createReplyStub();
-
-        const response = await handler(
-            { userId: "u1", body: { content: { t: "encrypted", c: "ciphertext" }, expectedVersion: 0 } },
-            reply,
+                expect(res.statusCode).toBe(400);
+                expect(res.json()).toEqual({ error: "invalid-params" });
+            },
         );
 
-        expect(reply.code).toHaveBeenCalledWith(400);
-        expect(reply.send).toHaveBeenCalledWith({ error: "invalid-params" });
-        expect(txAccountUpdateMany).not.toHaveBeenCalled();
+        const stored = await db.account.findUnique({
+            where: { id: account.id },
+            select: { settings: true, settingsVersion: true },
+        });
+        expect(stored).toEqual({ settings: null, settingsVersion: 0 });
     });
 
     it("POST /v2/account/settings rejects plain content for e2ee accounts", async () => {
-        txAccountFindUnique = vi.fn(async () => ({
-            settings: "ciphertext",
-            settingsVersion: 1,
-            publicKey: "pk",
-            encryptionMode: "e2ee",
-        }));
-        txAccountUpdateMany = vi.fn(async () => ({ count: 1 }));
+        const account = await db.account.create({
+            data: {
+                publicKey: "pk-account-settings-v2-e2ee",
+                encryptionMode: "e2ee",
+                settings: "ciphertext",
+                settingsVersion: 1,
+            },
+            select: { id: true },
+        });
 
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = createFakeRouteApp();
-        accountRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: "/v2/account/settings",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: { content: { t: "plain", v: {} }, expectedVersion: 1 },
+                });
 
-        const handler = getRouteHandler(app, "POST", "/v2/account/settings");
-        const reply = createReplyStub();
-
-        const response = await handler(
-            { userId: "u1", body: { content: { t: "plain", v: {} }, expectedVersion: 1 } },
-            reply,
+                expect(res.statusCode).toBe(400);
+                expect(res.json()).toEqual({ error: "invalid-params" });
+            },
         );
 
-        expect(reply.code).toHaveBeenCalledWith(400);
-        expect(reply.send).toHaveBeenCalledWith({ error: "invalid-params" });
-        expect(txAccountUpdateMany).not.toHaveBeenCalled();
+        const stored = await db.account.findUnique({
+            where: { id: account.id },
+            select: { settings: true, settingsVersion: true },
+        });
+        expect(stored).toEqual({ settings: "ciphertext", settingsVersion: 1 });
     });
 });

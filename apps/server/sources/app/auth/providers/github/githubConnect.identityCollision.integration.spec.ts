@@ -21,9 +21,9 @@ describe("githubConnect identity collisions (integration)", () => {
     });
 
     beforeEach(async () => {
-        harness.restoreEnv();
+        harness.resetEnv();
         vi.unstubAllGlobals();
-        delete process.env.GITHUB_STORE_ACCESS_TOKEN;
+        harness.resetEnv({ GITHUB_STORE_ACCESS_TOKEN: undefined });
         await harness.resetDbTables([
             () => db.accountIdentity.deleteMany(),
             () => db.account.deleteMany(),

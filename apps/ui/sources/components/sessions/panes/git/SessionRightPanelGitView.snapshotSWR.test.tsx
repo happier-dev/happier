@@ -1,26 +1,39 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let mockSnapshot: any = null;
 let lastScmOperationsInput: any = null;
+const invalidateFromUserAndAwaitMock = vi.hoisted(() => vi.fn());
+const invalidateFromAutoRefreshAndAwaitMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => ({
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-    AppState: {
-        addEventListener: () => ({ remove: () => {} }),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                                    View: (props: any) => React.createElement('View', props, props.children),
+                                                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                                                    ActivityIndicator: 'ActivityIndicator',
+                                                                    Platform: {
+                                                                    OS: 'web',
+                                                                    select: (value: any) => value?.default ?? null,
+                                                                },
+                                                                    AppState: {
+                                                                    addEventListener: () => ({ remove: () => {} }),
+                                                                },
+                                                                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: false,
             colors: {
@@ -28,12 +41,8 @@ vi.mock('react-native-unistyles', () => ({
                 text: '#111',
             },
         },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (value: any) => value,
-    },
-}));
+    });
+});
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
@@ -88,22 +97,27 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    __esModule: true,
-    useSetting: () => null,
-    useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
-    useProjectForSession: () => null,
-    useProjectSessions: () => [],
-    useMachine: () => ({ online: true }),
-    useSession: () => ({ active: true, metadata: { machineId: 'm1', path: '/repo' } }),
-    useSessionProjectScmCommitSelectionPaths: () => [],
-    useSessionProjectScmCommitSelectionPatches: () => [],
-    useSessionProjectScmInFlightOperation: () => null,
-    useSessionProjectScmOperationLog: () => [],
-    useSessionProjectScmSnapshot: () => mockSnapshot,
-    useSessionProjectScmSnapshotError: () => null,
-    useSessionProjectScmTouchedPaths: () => [],
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(
+        importOriginal,
+        {
+            useSetting: () => null,
+            useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
+            useProjectForSession: () => null,
+            useProjectSessions: () => [],
+            useMachine: () => ({ online: true }),
+            useSession: () => ({ active: true, metadata: { machineId: 'm1', path: '/repo' } }),
+            useSessionProjectScmCommitSelectionPaths: () => [],
+            useSessionProjectScmCommitSelectionPatches: () => [],
+            useSessionProjectScmInFlightOperation: () => null,
+            useSessionProjectScmOperationLog: () => [],
+            useSessionProjectScmSnapshot: () => mockSnapshot,
+            useSessionProjectScmSnapshotError: () => null,
+            useSessionProjectScmTouchedPaths: () => [],
+        },
+    );
+});
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
@@ -131,31 +145,55 @@ vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {
-        invalidateFromUserAndAwait: vi.fn(),
+        invalidateFromUserAndAwait: invalidateFromUserAndAwaitMock,
+        invalidateFromAutoRefreshAndAwait: invalidateFromAutoRefreshAndAwaitMock,
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
 vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
-    SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab'),
+    SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab', { testID: 'session-right-panel-git-commit-tab' }),
 }));
 
 vi.mock('./SessionRightPanelGitUpdateTab', () => ({
-    SessionRightPanelGitUpdateTab: () => React.createElement('UpdateTab'),
+    SessionRightPanelGitUpdateTab: () => React.createElement('UpdateTab', { testID: 'session-right-panel-git-update-tab' }),
 }));
 
 vi.mock('./SessionRightPanelGitHistoryTab', () => ({
-    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab'),
+    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab', { testID: 'session-right-panel-git-history-tab' }),
 }));
 
 describe('SessionRightPanelGitView (snapshot SWR)', () => {
+    it('keeps retrying source-control refresh while the first snapshot is still unavailable', async () => {
+        vi.useFakeTimers();
+        try {
+            const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+            mockSnapshot = null;
+            invalidateFromUserAndAwaitMock.mockReset();
+            invalidateFromAutoRefreshAndAwaitMock.mockReset();
+
+            await renderScreen(React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: 'session:s1' }));
+
+            expect(invalidateFromUserAndAwaitMock).toHaveBeenCalledWith('s1');
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(10_500);
+            });
+
+            expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledWith('s1');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('keeps last-known snapshot content visible while snapshot is revalidating', async () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 
@@ -198,21 +236,18 @@ describe('SessionRightPanelGitView (snapshot SWR)', () => {
             return React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: `session:s1:${props.tick}` });
         }
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Wrapper, { tick: 0 }));
-        });
+        const screen = await renderScreen(React.createElement(Wrapper, { tick: 0 }));
 
-        expect(tree.root.findAllByType('CommitTab' as any)).toHaveLength(1);
+        expect(screen.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(1);
         expect(lastScmOperationsInput?.scmSnapshot).toBe(validSnapshot);
 
         mockSnapshot = null;
         await act(async () => {
-            tree.update(React.createElement(Wrapper, { tick: 1 }));
+            screen.tree.update(React.createElement(Wrapper, { tick: 1 }));
         });
 
         // Should keep the commit surface mounted, rather than falling back to the empty loading state.
-        expect(tree.root.findAllByType('CommitTab' as any)).toHaveLength(1);
+        expect(screen.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(1);
         expect(lastScmOperationsInput?.scmSnapshot).toBe(validSnapshot);
     });
 });

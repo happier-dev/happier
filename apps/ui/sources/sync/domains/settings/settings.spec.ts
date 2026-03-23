@@ -1,11 +1,42 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
-import { settingsParse, applySettings, settingsDefaults, type Settings, AIBackendProfileSchema } from './settings';
+import { buildBackendTargetKey, DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+import { settingsParse, applySettings, settingsDefaults, type Settings } from './settings';
+import { AIBackendProfileSchema } from '../profiles/profileCompatibility';
+import type { AIBackendProfile } from '../profiles/profileCompatibility';
+import type { SavedSecret } from './savedSecretTypes';
 import { getBuiltInProfile } from '../profiles/profileUtils';
 
 describe('settings', () => {
     const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
         ...settingsDefaults,
+        ...overrides,
+    });
+    const parsedSettingsDefaults = {
+        ...settingsDefaults,
+        backendCliSourcePreferenceByTargetKey: {},
+    } as Settings & {
+        backendCliSourcePreferenceByTargetKey: Record<string, never>;
+    };
+    const makeProfile = (overrides: Partial<AIBackendProfile> = {}): AIBackendProfile => AIBackendProfileSchema.parse({
+        id: 'profile',
+        name: 'Profile',
+        environmentVariables: [],
+        defaultPermissionModeByAgent: {},
+        defaultPermissionModeByTargetKey: {},
+        defaultPersistenceModeByAgent: {},
+        defaultPersistenceModeByTargetKey: {},
+        compatibility: { claude: true, codex: true, gemini: true },
+        compatibilityByTargetKey: {
+            'agent:claude': true,
+            'agent:codex': true,
+            'agent:gemini': true,
+        },
+        envVarRequirements: [],
+        isBuiltIn: false,
+        createdAt: 0,
+        updatedAt: 0,
+        version: '1.0.0',
         ...overrides,
     });
 
@@ -15,11 +46,18 @@ describe('settings', () => {
             expect(settingsParse(undefined)).toEqual(settingsDefaults);
             expect(settingsParse('invalid')).toEqual(settingsDefaults);
             expect(settingsParse(123)).toEqual(settingsDefaults);
-            expect(settingsParse([])).toEqual(settingsDefaults);
+            expect(settingsParse([])).toEqual(parsedSettingsDefaults);
         });
 
         it('should return defaults when given empty object', () => {
-            expect(settingsParse({})).toEqual(settingsDefaults);
+            expect(settingsParse({})).toEqual(parsedSettingsDefaults);
+        });
+
+        it('defaults session list density to cozy', () => {
+            const settings = settingsParse({});
+            expect((settings as any).sessionListDensity).toBe('cozy');
+            expect((settings as any).compactSessionView).toBe(true);
+            expect((settings as any).compactSessionViewMinimal).toBe(false);
         });
 
         it('includes installables policy map by default', () => {
@@ -27,12 +65,82 @@ describe('settings', () => {
             expect((settings as any).installablesPolicyByMachineId).toEqual({});
         });
 
+        it('includes mcpServersSettingsV1 by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).mcpServersSettingsV1).toEqual({
+                v: 1,
+                strictMode: false,
+                servers: [],
+                bindings: [],
+            });
+        });
+
+        it('includes acpCatalogSettingsV1 by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).acpCatalogSettingsV1).toEqual({
+                v: 2,
+                backends: [],
+            });
+        });
+
+        it('includes promptStacksV1 by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).promptStacksV1).toEqual({
+                v: 1,
+                surfaces: {
+                    coding: [],
+                    voice: [],
+                    profilesById: {},
+                },
+            });
+        });
+
+        it('includes promptInvocationsV1 by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).promptInvocationsV1).toEqual({
+                v: 1,
+                entries: [],
+            });
+        });
+
+        it('includes promptFoldersV1 by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).promptFoldersV1).toEqual({
+                v: 1,
+                folders: [],
+            });
+        });
+
+        it('includes promptRegistrySourcesV1 by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).promptRegistrySourcesV1).toEqual({
+                v: 1,
+                sources: [],
+            });
+        });
+
+        it('includes contextSelectionsV1 by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).contextSelectionsV1).toEqual({
+                v: 1,
+                selectionsByKey: {},
+            });
+        });
+
+        it('includes promptExternalLinksV1 by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).promptExternalLinksV1).toEqual({
+                v: 1,
+                links: [],
+            });
+        });
+
         it('should parse valid settings object', () => {
             const validSettings = {
                 viewInline: true
             };
             expect(settingsParse(validSettings)).toEqual({
-                ...settingsDefaults,
+                ...parsedSettingsDefaults,
                 viewInline: true
             });
         });
@@ -41,7 +149,7 @@ describe('settings', () => {
             const invalidSettings = {
                 viewInline: 'not a boolean'
             };
-            expect(settingsParse(invalidSettings)).toEqual(settingsDefaults);
+            expect(settingsParse(invalidSettings)).toEqual(parsedSettingsDefaults);
         });
 
         it('should preserve unknown fields (loose schema)', () => {
@@ -52,7 +160,7 @@ describe('settings', () => {
             };
             const result = settingsParse(settingsWithExtra);
             expect(result).toEqual({
-                ...settingsDefaults,
+                ...parsedSettingsDefaults,
                 viewInline: true,
                 unknownField: 'some value',
                 anotherField: 123
@@ -64,7 +172,7 @@ describe('settings', () => {
                 viewInline: true
             };
             expect(settingsParse(partialSettings)).toEqual({
-                ...settingsDefaults,
+                ...parsedSettingsDefaults,
                 viewInline: true
             });
         });
@@ -75,7 +183,7 @@ describe('settings', () => {
                 someOtherField: undefined
             };
             expect(settingsParse(settingsWithNull)).toEqual({
-                ...settingsDefaults,
+                ...parsedSettingsDefaults,
                 someOtherField: undefined
             });
         });
@@ -91,7 +199,7 @@ describe('settings', () => {
             };
             const result = settingsParse(settingsWithNested);
             expect(result).toEqual({
-                ...settingsDefaults,
+                ...parsedSettingsDefaults,
                 viewInline: false,
                 image: {
                     url: 'http://example.com',
@@ -137,12 +245,12 @@ describe('settings', () => {
             const parsed = settingsParse({
                 experiments: true,
                 featureToggles: {
-                    'session.typeSelector': true,
+                    'sessions.direct': true,
                 },
             } as any);
 
             expect((parsed as any).featureToggles).toEqual({
-                'session.typeSelector': true,
+                'sessions.direct': true,
             });
         });
 
@@ -156,12 +264,12 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).featureToggles?.['files.editor']).toBeUndefined();
-            expect((parsed as any).schemaVersion).toBe(5);
+            expect((parsed as any).schemaVersion).toBe(6);
         });
 
         it('keeps explicit disable for files.editor when schemaVersion matches current (user intent)', () => {
             const parsed = settingsParse({
-                schemaVersion: 5,
+                schemaVersion: 6,
                 experiments: false,
                 featureToggles: {
                     'files.editor': false,
@@ -169,7 +277,7 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).featureToggles?.['files.editor']).toBe(false);
-            expect((parsed as any).schemaVersion).toBe(5);
+            expect((parsed as any).schemaVersion).toBe(6);
         });
 
         it('migrates legacy filesDiffPresentationStyle=split to unified (new default) for old schema versions', () => {
@@ -179,17 +287,41 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).filesDiffPresentationStyle).toBe('unified');
-            expect((parsed as any).schemaVersion).toBe(5);
+            expect((parsed as any).schemaVersion).toBe(6);
         });
 
         it('keeps explicit filesDiffPresentationStyle=split when schemaVersion matches current (user intent)', () => {
             const parsed = settingsParse({
-                schemaVersion: 5,
+                schemaVersion: 6,
                 filesDiffPresentationStyle: 'split',
             } as any);
 
             expect((parsed as any).filesDiffPresentationStyle).toBe('split');
-            expect((parsed as any).schemaVersion).toBe(5);
+            expect((parsed as any).schemaVersion).toBe(6);
+        });
+
+        it('migrates legacy sessionListDensity=compact to cozy', () => {
+            const parsed = settingsParse({
+                sessionListDensity: 'compact',
+            } as any);
+
+            expect((parsed as any).sessionListDensity).toBe('cozy');
+        });
+
+        it('derives sessionListDensity from legacy compact session view flags when the enum is missing', () => {
+            expect(settingsParse({
+                compactSessionView: true,
+                compactSessionViewMinimal: false,
+            } as any).sessionListDensity).toBe('cozy');
+
+            expect(settingsParse({
+                compactSessionView: true,
+                compactSessionViewMinimal: true,
+            } as any).sessionListDensity).toBe('narrow');
+
+            expect(settingsParse({
+                compactSessionView: false,
+            } as any).sessionListDensity).toBe('detailed');
         });
 
         it('migrates featureToggles inbox.friends to social.friends (hard cutover)', () => {
@@ -216,9 +348,9 @@ describe('settings', () => {
 
         it('defaults per-agent new-session permission modes', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.claude).toBe('default');
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.codex).toBe('default');
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('default');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]).toBe('default');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]).toBe('default');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]).toBe('default');
         });
 
         it('defaults source-control commit strategy to atomic', () => {
@@ -242,8 +374,8 @@ describe('settings', () => {
             expect((parsed as any).scmReviewPrefetchBehindCountNative).toBeGreaterThanOrEqual(0);
             expect((parsed as any).scmReviewPrefetchConcurrency).toBeGreaterThan(0);
             expect((parsed as any).scmReviewPrefetchDebounceMs).toBeGreaterThanOrEqual(0);
-            expect((parsed as any).scmCommitMessageGeneratorEnabled).toBe(false);
-            expect((parsed as any).scmCommitMessageGeneratorBackendId).toBe('claude');
+            expect((parsed as any).scmCommitMessageGeneratorEnabled).toBe(true);
+            expect((parsed as any).scmCommitMessageGeneratorBackendId).toBe(DEFAULT_AGENT_ID);
             expect((parsed as any).scmCommitMessageGeneratorInstructions).toBe('');
             expect((parsed as any).scmIncludeCoAuthoredBy).toBe(false);
         });
@@ -266,6 +398,28 @@ describe('settings', () => {
             expect((parsed as any).actionsSettingsV1).toEqual({
                 v: 1,
                 actions: { 'review.start': { enabled: false, enabledPlacements: [], disabledSurfaces: [], disabledPlacements: [] } },
+            });
+        });
+
+        it('normalizes legacy session_control_cli action surface overrides to cli', () => {
+            const parsed = settingsParse({
+                actionsSettingsV1: {
+                    v: 1,
+                    actions: {
+                        'review.start': { disabledSurfaces: ['session_control_cli'] },
+                    },
+                },
+            } as any);
+
+            expect((parsed as any).actionsSettingsV1).toEqual({
+                v: 1,
+                actions: {
+                    'review.start': {
+                        enabledPlacements: [],
+                        disabledSurfaces: ['cli'],
+                        disabledPlacements: [],
+                    },
+                },
             });
         });
 
@@ -327,16 +481,16 @@ describe('settings', () => {
             expect((parsed as any).voice.adapters.local_conversation.conversationMode).toBe('direct_session');
             expect((parsed as any).voice.adapters.local_conversation.agent.backend).toBe('daemon');
             expect((parsed as any).voice.adapters.local_conversation.handsFree.enabled).toBe(false);
-            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.silenceMs).toBe(450);
-            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.minSpeechMs).toBe(120);
+            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.silenceMs).toBe(5000);
+            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.minSpeechMs).toBe(1000);
             expect((parsed as any).voice.adapters.local_conversation.tts.bargeInEnabled).toBe(true);
             expect((parsed as any).voice.adapters.local_conversation.agent.permissionPolicy).toBe('read_only');
             expect((parsed as any).voice.adapters.local_conversation.agent.idleTtlSeconds).toBe(1800);
             expect((parsed as any).voice.adapters.local_conversation.agent.chatModelSource).toBe('custom');
             expect((parsed as any).voice.adapters.local_conversation.agent.chatModelId).toBe('default');
             expect((parsed as any).voice.adapters.local_conversation.agent.commitModelSource).toBe('chat');
-            expect((parsed as any).voice.adapters.local_conversation.streaming.enabled).toBe(false);
-            expect((parsed as any).voice.adapters.local_conversation.streaming.ttsEnabled).toBe(false);
+            expect((parsed as any).voice.adapters.local_conversation.streaming.enabled).toBe(true);
+            expect((parsed as any).voice.adapters.local_conversation.streaming.ttsEnabled).toBe(true);
             expect((parsed as any).voice.adapters.local_conversation.streaming.ttsChunkChars).toBe(200);
             expect((parsed as any).voice.adapters.local_conversation.agent.verbosity).toBe('short');
         });
@@ -451,6 +605,23 @@ describe('settings', () => {
             expect((parsed as any).sessionListInactiveGroupingV1).toBe('project');
         });
 
+        it('parses new-session persistence defaults', () => {
+            const parsed = settingsParse({
+                newSessionDefaultPersistenceModeV1: 'direct',
+                newSessionDefaultPersistenceModeByTargetKeyV1: {
+                    [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'direct',
+                    [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'persisted',
+                    invalid: 'nope',
+                },
+            } as any);
+
+            expect((parsed as any).newSessionDefaultPersistenceModeV1).toBe('direct');
+            expect((parsed as any).newSessionDefaultPersistenceModeByTargetKeyV1).toEqual({
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'direct',
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'persisted',
+            });
+        });
+
         it('migrates legacy lastUsedPermissionMode into per-agent defaults when missing', () => {
             const parsed = settingsParse({
                 lastUsedAgent: 'claude',
@@ -458,9 +629,9 @@ describe('settings', () => {
             } as any);
             // Legacy mapping: "plan" is now a session behavior mode; treat it as read-only at the
             // permission layer when seeding per-agent defaults.
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.claude).toBe('read-only');
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.codex).toBe('read-only');
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('read-only');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]).toBe('read-only');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]).toBe('read-only');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]).toBe('read-only');
         });
 
         it('should keep valid secrets when one secret entry is invalid', () => {
@@ -497,7 +668,7 @@ describe('settings', () => {
                         id: 'rule-1',
                         description: 'Prefer Claude for UI work',
                         enabled: true,
-                        suggestedBackendId: 'claude',
+                        suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
                         suggestedModelId: 'claude-sonnet-4-5',
                         suggestedIntent: 'delegate',
                     },
@@ -505,7 +676,7 @@ describe('settings', () => {
                         id: 'rule-2',
                         description: 'Invalid backend id should be dropped',
                         enabled: true,
-                        suggestedBackendId: 'not-a-real-agent',
+                        suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'not-a-real-agent' },
                     },
                 ],
             } as any);
@@ -515,7 +686,7 @@ describe('settings', () => {
                 expect.objectContaining({
                     id: 'rule-1',
                     description: 'Prefer Claude for UI work',
-                    suggestedBackendId: 'claude',
+                    suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
                     suggestedModelId: 'claude-sonnet-4-5',
                     suggestedIntent: 'delegate',
                 }),
@@ -685,24 +856,25 @@ describe('settings', () => {
 
         describe('settingsDefaults', () => {
             it('should have correct default values', () => {
-            expect(settingsDefaults.schemaVersion).toBe(5);
+            expect(settingsDefaults.schemaVersion).toBe(6);
             expect(settingsDefaults.experiments).toBe(false);
-            expect(settingsDefaults.backendEnabledById).toMatchObject({
-                claude: true,
-                codex: true,
-                opencode: true,
-                gemini: true,
-                auggie: true,
-                qwen: true,
-                kimi: true,
-                kilo: true,
+            expect(settingsDefaults.backendEnabledByTargetKey).toMatchObject({
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: true,
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'opencode' })]: true,
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: true,
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'auggie' })]: true,
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'qwen' })]: true,
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'kimi' })]: true,
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'kilo' })]: true,
             });
-            expect(settingsDefaults.codexBackendMode).toBe('mcp');
+            expect((settingsDefaults as any).backendCliSourcePreferenceById).toEqual({});
+            expect(settingsDefaults.codexBackendMode).toBe('appServer');
             expect(settingsDefaults.sessionReplayMaxSeedChars).toBe(120_000);
-            expect(settingsDefaults.sessionDefaultPermissionModeByAgent).toMatchObject({
-                claude: 'default',
-                codex: 'default',
-                gemini: 'default',
+            expect(settingsDefaults.sessionDefaultPermissionModeByTargetKey).toMatchObject({
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'default',
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'default',
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: 'default',
             });
             expect(settingsDefaults.toolViewDetailLevelDefault).toBe('default');
             expect(settingsDefaults.toolViewDetailLevelDefaultLocalControl).toBe('title');
@@ -722,17 +894,30 @@ describe('settings', () => {
                 v: 1,
                 pushEnabled: true,
                 ready: true,
+                readyIncludeMessageText: true,
                 foregroundBehavior: 'full',
                 permissionRequest: true,
                 userActionRequest: true,
             });
+            expect((settingsDefaults as any).notificationChannelsV1).toEqual([
+                {
+                    v: 1,
+                    id: 'builtin:expo_push',
+                    kind: 'expo_push',
+                    enabled: true,
+                    topics: {
+                        ready: true,
+                        permissionRequest: true,
+                        userActionRequest: true,
+                    },
+                    readyIncludeMessageText: true,
+                },
+            ]);
             expect((settingsDefaults as any).attachmentsUploadsUploadLocation).toBe('workspace');
             expect((settingsDefaults as any).attachmentsUploadsWorkspaceRelativeDir).toBe('.happier/uploads');
             expect((settingsDefaults as any).attachmentsUploadsVcsIgnoreStrategy).toBe('git_info_exclude');
             expect((settingsDefaults as any).attachmentsUploadsVcsIgnoreWritesEnabled).toBe(true);
             expect((settingsDefaults as any).attachmentsUploadsMaxFileBytes).toBe(25 * 1024 * 1024);
-            expect((settingsDefaults as any).attachmentsUploadsUploadTtlMs).toBe(5 * 60 * 1000);
-            expect((settingsDefaults as any).attachmentsUploadsChunkSizeBytes).toBe(256 * 1024);
             expect((settingsDefaults as any).expGemini).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeClaude).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeCodex).toBeUndefined();
@@ -741,7 +926,7 @@ describe('settings', () => {
 
         it('should be a valid Settings object', () => {
             const parsed = settingsParse(settingsDefaults);
-            expect(parsed).toEqual(settingsDefaults);
+            expect(parsed).toEqual(parsedSettingsDefaults);
         });
 
         it('drops deprecated session-only tool view keys', () => {
@@ -764,6 +949,24 @@ describe('settings', () => {
             const parsed = AIBackendProfileSchema.safeParse(profile);
             expect(parsed.success).toBe(true);
         });
+
+        it('accepts per-agent persistence mode defaults on profiles', () => {
+            const profile = {
+                id: 'profile-1',
+                name: 'Profile 1',
+                environmentVariables: [],
+                defaultPermissionModeByAgent: {},
+                defaultPersistenceModeByAgent: { codex: 'direct', claude: 'persisted' },
+                compatibility: { codex: true, claude: true, gemini: true },
+                envVarRequirements: [],
+                isBuiltIn: false,
+                createdAt: 1,
+                updatedAt: 1,
+                version: '1.0.0',
+            };
+
+            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
+        });
     });
 
     // Keep the remainder of the file intact; avoid pinning full defaults objects in tests.
@@ -772,7 +975,28 @@ describe('settings', () => {
         it('should handle settings from older version (missing new fields)', () => {
             const oldVersionSettings = {};
             const parsed = settingsParse(oldVersionSettings);
-            expect(parsed).toEqual(settingsDefaults);
+            expect(parsed).toEqual(parsedSettingsDefaults);
+        });
+
+        it('preserves legacy Codex backend mode when upgrading a pre-v6 payload', () => {
+            const parsed = settingsParse({ schemaVersion: 5, codexBackendMode: 'mcp' } as any);
+            expect(parsed.schemaVersion).toBe(6);
+            expect((parsed as any).codexBackendMode).toBe('mcp');
+        });
+
+        it('keeps valid backend CLI source preferences when parsing forward-compatible settings', () => {
+            const parsed = settingsParse({
+                backendCliSourcePreferenceById: {
+                    codex: 'managed-first',
+                    gemini: 'system-first',
+                    invalid: 'nope',
+                },
+            } as any);
+
+            expect((parsed as any).backendCliSourcePreferenceById).toEqual({
+                codex: 'managed-first',
+                gemini: 'system-first',
+            });
         });
 
         it('should handle settings from newer version (extra fields)', () => {
@@ -993,11 +1217,12 @@ describe('settings', () => {
                     { id: 'k1', name: 'My Secret', kind: 'apiKey', encryptedValue: { _isSecretValue: true, value: 'sk-test' }, createdAt: now, updatedAt: now },
                 ],
             });
-            expect(parsed.secrets.length).toBe(1);
-            expect(parsed.secrets[0]?.name).toBe('My Secret');
+            const secrets = parsed.secrets as SavedSecret[];
+            expect(secrets.length).toBe(1);
+            expect(secrets[0]?.name).toBe('My Secret');
             // settingsParse should tolerate plaintext values (legacy/input form),
             // but the runtime should seal them before persisting.
-            expect(parsed.secrets[0]?.encryptedValue?.value).toBe('sk-test');
+            expect(secrets[0]?.encryptedValue?.value).toBe('sk-test');
         });
 
         it('drops invalid secrets entries (missing value)', () => {
@@ -1017,9 +1242,10 @@ describe('settings', () => {
                     { id: 'k1', name: 'My Secret', kind: 'apiKey', encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'Zm9v' } }, createdAt: now, updatedAt: now },
                 ],
             } as any);
-            expect(parsed.secrets.length).toBe(1);
-            expect(parsed.secrets[0]?.name).toBe('My Secret');
-            expect(parsed.secrets[0]?.encryptedValue?.encryptedValue?.t).toBe('enc-v1');
+            const secrets = parsed.secrets as SavedSecret[];
+            expect(secrets.length).toBe(1);
+            expect(secrets[0]?.name).toBe('My Secret');
+            expect(secrets[0]?.encryptedValue?.encryptedValue?.t).toBe('enc-v1');
         });
     });
 
@@ -1051,39 +1277,13 @@ describe('settings', () => {
                 // Server settings from another device (version 11)
                 // Missing useEnhancedSessionWizard because other device doesn't have it
                 viewInline: true,
-                profiles: [
-                    {
-                        id: 'server-profile',
-                        name: 'Server Profile',
-                        environmentVariables: [],
-                        defaultPermissionModeByAgent: {},
-                        compatibility: { claude: true, codex: true, gemini: true },
-                        envVarRequirements: [],
-                        isBuiltIn: false,
-                        createdAt: Date.now(),
-                        updatedAt: Date.now(),
-                        version: '1.0.0',
-                    }
-                ]
+                profiles: [makeProfile({ id: 'server-profile', name: 'Server Profile', createdAt: Date.now(), updatedAt: Date.now() })]
             };
 
             const pendingChanges: Partial<Settings> = {
                 // User's local changes that haven't synced yet
                 useEnhancedSessionWizard: true,
-                profiles: [
-                    {
-                        id: 'local-profile',
-                        name: 'Local Profile',
-                        environmentVariables: [],
-                        defaultPermissionModeByAgent: {},
-                        compatibility: { claude: true, codex: true, gemini: true },
-                        envVarRequirements: [],
-                        isBuiltIn: false,
-                        createdAt: Date.now(),
-                        updatedAt: Date.now(),
-                        version: '1.0.0',
-                    }
-                ]
+                profiles: [makeProfile({ id: 'local-profile', name: 'Local Profile', createdAt: Date.now(), updatedAt: Date.now() })]
             };
 
             // Parse server settings (fills in defaults for missing fields)
@@ -1174,27 +1374,17 @@ describe('settings', () => {
             // Accumulate second change (simulates line 298: this.pendingSettings = { ...this.pendingSettings, ...delta })
             const pending2: Partial<Settings> = {
                 ...pending1,
-                profiles: [{
-                    id: 'test-profile',
-                    name: 'Test',
-                    environmentVariables: [],
-                    defaultPermissionModeByAgent: {},
-                    compatibility: { claude: true, codex: true, gemini: true },
-                    envVarRequirements: [],
-                    isBuiltIn: false,
-                    createdAt: Date.now(),
-                    updatedAt: Date.now(),
-                    version: '1.0.0',
-                }]
+                profiles: [makeProfile({ id: 'test-profile', name: 'Test', createdAt: Date.now(), updatedAt: Date.now() })]
             };
 
             // Merge with server settings
             const merged = applySettings(serverSettings, pending2);
+            const profiles = merged.profiles as AIBackendProfile[];
 
             // Both pending changes preserved
             expect(merged.useEnhancedSessionWizard).toBe(true);
-            expect(merged.profiles).toHaveLength(1);
-            expect(merged.profiles[0].id).toBe('test-profile');
+            expect(profiles).toHaveLength(1);
+            expect(profiles[0]?.id).toBe('test-profile');
             // Server settings preserved
             expect(merged.viewInline).toBe(false);
             expect(merged.experiments).toBe(false);
@@ -1208,16 +1398,14 @@ describe('settings', () => {
 
             // Server accepted Device B's change first (v11)
             const serverSettingsV11 = settingsParse({
-                profiles: [{
+                profiles: [makeProfile({
                     id: 'device-b-profile',
                     name: 'Device B Profile',
-                    environmentVariables: [],
-                    compatibility: { claude: true, codex: true },
-                    isBuiltIn: false,
+                    compatibility: { claude: true, codex: true, gemini: true },
+                    compatibilityByTargetKey: { 'agent:claude': true, 'agent:codex': true, 'agent:gemini': true },
                     createdAt: Date.now(),
                     updatedAt: Date.now(),
-                    version: '1.0.0',
-                }]
+                })]
             });
 
             // Device A's pending change
@@ -1227,12 +1415,13 @@ describe('settings', () => {
 
             // Device A merges and retries
             const merged = applySettings(serverSettingsV11, deviceAPending);
+            const profiles = merged.profiles as AIBackendProfile[];
 
             // Device A's flag preserved
             expect(merged.useEnhancedSessionWizard).toBe(true);
             // Device B's profile preserved
-            expect(merged.profiles).toHaveLength(1);
-            expect(merged.profiles[0].id).toBe('device-b-profile');
+            expect(profiles).toHaveLength(1);
+            expect(profiles[0]?.id).toBe('device-b-profile');
         });
 
         it('should handle Device A and B both changing same field', () => {
@@ -1319,17 +1508,14 @@ describe('settings', () => {
 
         it('should preserve complex nested structures during merge', () => {
             const serverSettings = settingsParse({
-                profiles: [{
+                profiles: [makeProfile({
                     id: 'server-profile-1',
                     name: 'Server Profile',
-                    environmentVariables: [],
-                    compatibility: { claude: true, codex: true },
-                    envVarRequirements: [],
-                    isBuiltIn: false,
+                    compatibility: { claude: true, codex: true, gemini: true },
+                    compatibilityByTargetKey: { 'agent:claude': true, 'agent:codex': true, 'agent:gemini': true },
                     createdAt: 1000,
                     updatedAt: 1000,
-                    version: '1.0.0',
-                }],
+                })],
                 dismissedCLIWarnings: {
                     perMachine: { 'machine-1': { claude: true } },
                     global: { codex: true }
@@ -1338,18 +1524,12 @@ describe('settings', () => {
 
             const pendingChanges: Partial<Settings> = {
                 useEnhancedSessionWizard: true,
-                profiles: [{
+                profiles: [makeProfile({
                     id: 'local-profile-1',
                     name: 'Local Profile',
-                    environmentVariables: [],
-                    defaultPermissionModeByAgent: {},
-                    compatibility: { claude: true, codex: true, gemini: true },
-                    envVarRequirements: [],
-                    isBuiltIn: false,
                     createdAt: 2000,
                     updatedAt: 2000,
-                    version: '1.0.0',
-                }],
+                })],
                 dismissedCLIWarnings: {
                     perMachine: { 'machine-2': { claude: true } },
                     global: {}

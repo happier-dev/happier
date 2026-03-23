@@ -3,6 +3,7 @@ import { encodeBase64, decodeBase64 } from "@/encryption/base64";
 import sodium from '@/encryption/libsodium.lib';
 import { decodeUTF8, encodeUTF8 } from "@/encryption/text";
 import { decryptAESGCMString, encryptAESGCMString } from "@/encryption/aes";
+import { parseSerializedJsonValue, stringifySerializedJsonValue } from '@happier-dev/protocol';
 
 //
 // IMPORTANT: Right now there is a bug in the AES implementation and it works only with a normal strings converted to Uint8Array. 
@@ -58,7 +59,7 @@ export class BoxEncryption implements Encryptor, Decryptor {
         // Process as batch, not Promise.all - more efficient
         const results: Uint8Array[] = [];
         for (const item of data) {
-            results.push(encryptBox(encodeUTF8(JSON.stringify(item)), this.publicKey));
+            results.push(encryptBox(encodeUTF8(stringifySerializedJsonValue(item)), this.publicKey));
         }
         return results;
     }
@@ -72,7 +73,7 @@ export class BoxEncryption implements Encryptor, Decryptor {
                 results.push(null);
                 continue;
             }
-            results.push(JSON.parse(decodeUTF8(decrypted)));
+            results.push(parseSerializedJsonValue(decodeUTF8(decrypted)));
         }
         return results;
     }
@@ -92,7 +93,9 @@ export class AES256Encryption implements Encryptor, Decryptor {
         const results: Uint8Array[] = [];
         for (const item of data) {
             // Serialize to JSON string first
-            const encrypted = decodeBase64(await encryptAESGCMString(JSON.stringify(item), this.secretKeyB64));
+            const encrypted = decodeBase64(
+                await encryptAESGCMString(stringifySerializedJsonValue(item), this.secretKeyB64)
+            );
             let output = new Uint8Array(encrypted.length + 1);
             output[0] = 0;
             output.set(encrypted, 1);
@@ -115,7 +118,7 @@ export class AES256Encryption implements Encryptor, Decryptor {
                     results.push(null);
                 } else {
                     // Parse JSON string back to object
-                    results.push(JSON.parse(decryptedString));
+                    results.push(parseSerializedJsonValue(decryptedString));
                 }
             } catch (error) {
                 results.push(null);

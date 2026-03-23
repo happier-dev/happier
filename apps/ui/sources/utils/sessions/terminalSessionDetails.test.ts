@@ -23,6 +23,26 @@ describe('terminalSessionDetails', () => {
         } as any)).toBeNull();
     });
 
+    it('returns an attach command for windows terminal sessions', () => {
+        expect(getAttachCommandForSession({
+            sessionId: 's1',
+            terminal: {
+                mode: 'windows_terminal',
+                windows: { host: 'windows_terminal', windowId: 'happy-session-1' },
+            },
+        } as any)).toBe('happier attach s1');
+    });
+
+    it('returns an attach command for windows console sessions even when the remote metadata does not include a pid', () => {
+        expect(getAttachCommandForSession({
+            sessionId: 's1',
+            terminal: {
+                mode: 'windows_console',
+                windows: { host: 'console' },
+            },
+        } as any)).toBe('happier attach s1');
+    });
+
     it('returns tmux target when present', () => {
         expect(getTmuxTargetForSession({
             mode: 'tmux',

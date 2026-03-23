@@ -84,6 +84,8 @@ const ALLOW_SAME_KEY_PREFIXES: ReadonlyArray<string> = [
     'agentInput.geminiPermissionMode.',
     'agentInput.geminiModel.',
     'profiles.builtInNames.',
+    // MCP server settings copy is currently shared across locales.
+    'settings.mcpServers',
 ];
 
 const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<string>>> = {

@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -40,9 +42,7 @@ describe('voiceSessionStore', () => {
     });
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Test));
-    });
+    tree = (await renderScreen(React.createElement(Test))).tree;
 
     await act(async () => {
       setVoiceSessionSnapshot(snap);

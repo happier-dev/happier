@@ -48,6 +48,10 @@ export async function getLastNotificationResponseAsync(): Promise<unknown> {
     return null;
 }
 
+export async function setBadgeCountAsync(_count: number): Promise<boolean> {
+    return true;
+}
+
 export function addNotificationReceivedListener(_listener: unknown) {
     return { remove: () => {} };
 }

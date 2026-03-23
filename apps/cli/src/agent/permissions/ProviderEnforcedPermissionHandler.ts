@@ -25,6 +25,7 @@ export type { PermissionResult, PendingRequest };
 type HandlerOpts = Readonly<{
   pushSender?: PermissionRequestPushSender | null;
   getAccountSettings?: (() => AccountSettings | null) | null;
+  getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
   onAbortRequested?: (() => void | Promise<void>) | null;
   toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
   alwaysAutoApproveToolNameIncludes?: ReadonlyArray<string>;
@@ -60,6 +61,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     super(session, {
       pushSender: params.pushSender ?? null,
       getAccountSettings: params.getAccountSettings ?? null,
+      getAccountSettingsSecretsReadKeys: params.getAccountSettingsSecretsReadKeys ?? null,
       onAbortRequested: params.onAbortRequested ?? null,
       toolTrace: params.toolTrace ?? null,
     });
@@ -82,8 +84,8 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
    * Compatibility shim: some runtimes still call `setPermissionMode()` even when provider enforcement is enabled.
    * This handler intentionally ignores the mode for decision-making.
    */
-  setPermissionMode(_mode: PermissionMode): void {
-    logger.debug(`${this.getLogPrefix()} Permission mode ignored (provider-enforced)`);
+  setPermissionMode(mode: PermissionMode): void {
+    logger.debug(`${this.getLogPrefix()} Permission mode set to: ${mode} (provider-enforced, no local auto-approval)`);
   }
 
   private splitNameTokens(value: string): string[] {
@@ -94,19 +96,35 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       .filter(Boolean);
   }
 
+  private matchesSafeToolSegment(value: string, candidate: string): boolean {
+    const lowerValue = value.toLowerCase();
+    const lowerCandidate = candidate.toLowerCase();
+    return lowerValue === lowerCandidate || lowerValue.endsWith(`_${lowerCandidate}`);
+  }
+
   private isAlwaysAutoApprove(toolName: string, toolCallId: string): boolean {
     const toolNameTokens = this.splitNameTokens(toolName);
     const toolCallIdTokens = this.splitNameTokens(toolCallId);
     if (this.alwaysAutoApproveToolNameIncludes.some((n) => toolNameTokens.includes(n.toLowerCase()))) return true;
     if (this.alwaysAutoApproveToolCallIdIncludes.some((n) => toolCallIdTokens.includes(n.toLowerCase()))) return true;
+    if (this.alwaysAutoApproveToolNameIncludes.some((n) => this.matchesSafeToolSegment(toolName, n))) return true;
+    if (this.alwaysAutoApproveToolCallIdIncludes.some((n) => this.matchesSafeToolSegment(toolCallId, n))) return true;
     return false;
   }
 
+  getImmediateDecision(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
+    if (!this.isAlwaysAutoApprove(toolName, toolCallId)) {
+      return null;
+    }
+    return { decision: 'approved' };
+  }
+
   async handleToolCall(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
-    if (this.isAlwaysAutoApprove(toolName, toolCallId)) {
+    const immediateDecision = this.getImmediateDecision(toolCallId, toolName, input);
+    if (immediateDecision) {
+      this.recordAutoDecision(toolCallId, toolName, input, immediateDecision.decision);
       logger.debug(`${this.getLogPrefix()} Auto-approving safe tool ${toolName} (${toolCallId})`);
-      this.recordAutoDecision(toolCallId, toolName, input, 'approved');
-      return { decision: 'approved' };
+      return immediateDecision;
     }
 
     // Respect user "don't ask again for session" choices captured via our permission UI.

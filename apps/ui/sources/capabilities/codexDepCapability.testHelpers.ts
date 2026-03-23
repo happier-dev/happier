@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 type RegistryState =
-    | { ok: true; latestVersion: string | null }
+    | { ok: true; latestVersion: string | null; label: string | null }
     | { ok: false; errorMessage: string };
 
 type DepDataShape = {
@@ -10,15 +10,14 @@ type DepDataShape = {
     installDir: string;
     binPath: string | null;
     installedVersion: string | null;
-    distTag: string;
+    sourceKind: string;
     lastInstallLogPath: string | null;
-    registry?: RegistryState;
+    latestVersionCheck?: RegistryState;
 };
 
 type CapabilitySuiteConfig<TDepData extends DepDataShape> = {
     suiteName: string;
     depId: CapabilityId;
-    distTag: string;
     getDetectResult: (
         results: Partial<Record<CapabilityId, CapabilityDetectResult>> | null | undefined,
     ) => CapabilityDetectResult | null;
@@ -36,7 +35,6 @@ type CapabilitySuiteConfig<TDepData extends DepDataShape> = {
 };
 
 function buildDepData<TDepData extends DepDataShape>(
-    distTag: string,
     overrides: Partial<TDepData> = {},
 ): TDepData {
     return {
@@ -44,9 +42,9 @@ function buildDepData<TDepData extends DepDataShape>(
         installDir: '/tmp',
         binPath: '/tmp/bin',
         installedVersion: '1.0.0',
-        distTag,
+        sourceKind: 'github_release_binary',
         lastInstallLogPath: null,
-        registry: { ok: true, latestVersion: '1.0.1' },
+        latestVersionCheck: { ok: true, latestVersion: '1.0.1', label: 'v1.0.1' },
         ...overrides,
     } as TDepData;
 }
@@ -66,7 +64,7 @@ export function runCodexDepCapabilityContract<TDepData extends DepDataShape>(
             const detectResult: CapabilityDetectResult = {
                 ok: true,
                 checkedAt: 123,
-                data: buildDepData<TDepData>(config.distTag),
+                data: buildDepData<TDepData>(),
             };
 
             const results = buildResults(config.depId, detectResult);
@@ -89,7 +87,7 @@ export function runCodexDepCapabilityContract<TDepData extends DepDataShape>(
                 buildResults(config.depId, {
                     ok: true,
                     checkedAt: 123,
-                    data: buildDepData<TDepData>(config.distTag),
+                    data: buildDepData<TDepData>(),
                 }),
             );
             expect(config.getLatestVersion(current)).toBe('1.0.1');
@@ -100,7 +98,7 @@ export function runCodexDepCapabilityContract<TDepData extends DepDataShape>(
                 buildResults(config.depId, {
                     ok: true,
                     checkedAt: 123,
-                    data: buildDepData<TDepData>(config.distTag, { installedVersion: '1.0.2' } as Partial<TDepData>),
+                    data: buildDepData<TDepData>({ installedVersion: '1.0.2' } as Partial<TDepData>),
                 }),
             );
             expect(config.isUpdateAvailable(installedNewer)).toBe(false);
@@ -109,7 +107,7 @@ export function runCodexDepCapabilityContract<TDepData extends DepDataShape>(
                 buildResults(config.depId, {
                     ok: true,
                     checkedAt: 123,
-                    data: buildDepData<TDepData>(config.distTag, { installedVersion: 'main' } as Partial<TDepData>),
+                    data: buildDepData<TDepData>({ installedVersion: 'main' } as Partial<TDepData>),
                 }),
             );
             expect(config.isUpdateAvailable(nonSemver)).toBe(false);
@@ -118,8 +116,8 @@ export function runCodexDepCapabilityContract<TDepData extends DepDataShape>(
                 buildResults(config.depId, {
                     ok: true,
                     checkedAt: 123,
-                    data: buildDepData<TDepData>(config.distTag, {
-                        registry: { ok: false, errorMessage: 'boom' },
+                    data: buildDepData<TDepData>({
+                        latestVersionCheck: { ok: false, errorMessage: 'boom' },
                     } as Partial<TDepData>),
                 }),
             );
@@ -154,7 +152,7 @@ export function runCodexDepCapabilityContract<TDepData extends DepDataShape>(
                     config.shouldPrefetchRegistry({
                         requireExistingResult: true,
                         result: { ok: true, checkedAt: 123, data: {} },
-                        data: buildDepData<TDepData>(config.distTag, { registry: undefined } as Partial<TDepData>),
+                        data: buildDepData<TDepData>({ latestVersionCheck: undefined } as Partial<TDepData>),
                     }),
                 ).toBe(true);
 
@@ -162,7 +160,7 @@ export function runCodexDepCapabilityContract<TDepData extends DepDataShape>(
                     config.shouldPrefetchRegistry({
                         requireExistingResult: true,
                         result: { ok: true, checkedAt: now, data: {} },
-                        data: buildDepData<TDepData>(config.distTag),
+                        data: buildDepData<TDepData>(),
                     }),
                 ).toBe(false);
 
@@ -170,7 +168,7 @@ export function runCodexDepCapabilityContract<TDepData extends DepDataShape>(
                     config.shouldPrefetchRegistry({
                         requireExistingResult: true,
                         result: { ok: true, checkedAt: now - 2 * dayMs, data: {} },
-                        data: buildDepData<TDepData>(config.distTag),
+                        data: buildDepData<TDepData>(),
                     }),
                 ).toBe(true);
             } finally {

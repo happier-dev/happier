@@ -1,4 +1,4 @@
-import type { ExecutionRunBackendFactory } from '@/backends/executionRuns/types';
+import type { ExecutionRunBackendFactory } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 
 import { CodeRabbitReviewBackend } from './CodeRabbitReviewBackend.js';
 

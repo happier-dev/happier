@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import React from 'react';
+import { renderScreen } from '@/dev/testkit';
 import { EnvironmentVariableCard } from './EnvironmentVariableCard';
 
 (
@@ -9,53 +10,28 @@ import { EnvironmentVariableCard } from './EnvironmentVariableCard';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    TextInput: 'TextInput',
-    Platform: {
-        OS: 'web',
-        select: (options: { web?: unknown; ios?: unknown; default?: unknown }) =>
-            options.web ?? options.ios ?? options.default,
-    },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                Pressable: 'Pressable',
+                TextInput: 'TextInput',
+            }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        margins: { md: 8 },
-        iconSize: { small: 12, large: 16 },
-        colors: {
-            surface: '#fff',
-            groupped: { sectionTitle: '#666', background: '#fff' },
-            shadow: { color: '#000', opacity: 0.1 },
-            text: '#000',
-            textSecondary: '#666',
-            textDestructive: '#f00',
-            divider: '#ddd',
-            input: { background: '#fff', text: '#000', placeholder: '#999' },
-            button: {
-                primary: { background: '#000', tint: '#fff' },
-                secondary: { tint: '#000' },
-            },
-            deleteAction: '#f00',
-            warning: '#f90',
-            success: '#0a0',
-        },
-    };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme, {}) : input) },
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@/components/ui/forms/Switch', () => ({
@@ -82,46 +58,44 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
         React.createElement('ItemGroup', props, props.children),
 }));
 
-function renderCard(params: {
+type RenderedCard = Awaited<ReturnType<typeof renderScreen>>;
+
+async function renderCard(params: {
     value: string;
     onUpdate: ReturnType<typeof vi.fn<(index: number, next: string) => void>>;
-}) {
-    let tree: renderer.ReactTestRenderer | undefined;
-    act(() => {
-        tree = renderer.create(
-            React.createElement(EnvironmentVariableCard, {
-                variable: { name: 'FOO', value: params.value },
-                index: 0,
-                machineId: 'machine-1',
-                onUpdate: params.onUpdate,
-                onDelete: () => {},
-                onDuplicate: () => {},
-            }),
-        );
-    });
-    return tree!;
+}): Promise<RenderedCard> {
+    return renderScreen(
+        React.createElement(EnvironmentVariableCard, {
+            variable: { name: 'FOO', value: params.value },
+            index: 0,
+            machineId: 'machine-1',
+            onUpdate: params.onUpdate,
+            onDelete: () => {},
+            onDuplicate: () => {},
+        }),
+    );
 }
 
-function findTextInputs(tree: renderer.ReactTestRenderer): ReactTestInstance[] {
-    return tree.root.findAllByType('TextInput');
+function findTextInputs(screen: RenderedCard) {
+    return screen.findAllByType('TextInput');
 }
 
-function findUseMachineSwitch(tree: renderer.ReactTestRenderer): ReactTestInstance | undefined {
-    const switches = tree.root.findAllByType('Switch');
+function findUseMachineSwitch(screen: RenderedCard) {
+    const switches = screen.findAllByType('Switch');
     return switches.find((node) => node.props.disabled !== true);
 }
 
 describe('EnvironmentVariableCard', () => {
     describe('remote-template state synchronization', () => {
-        it('syncs remote-variable toggle state when variable value changes externally', () => {
+        it('syncs remote-variable toggle state when variable value changes externally', async () => {
             const onUpdate = vi.fn<(index: number, next: string) => void>();
-            const tree = renderCard({ value: '${BAR:-baz}', onUpdate });
+            const screen = await renderCard({ value: '${BAR:-baz}', onUpdate });
 
-            const initialUseMachineSwitch = findUseMachineSwitch(tree);
+            const initialUseMachineSwitch = findUseMachineSwitch(screen);
             expect(initialUseMachineSwitch?.props.value).toBe(true);
 
-            act(() => {
-                tree.update(
+            await act(async () => {
+                screen.tree.update(
                     React.createElement(EnvironmentVariableCard, {
                         variable: { name: 'FOO', value: 'literal' },
                         index: 0,
@@ -133,20 +107,20 @@ describe('EnvironmentVariableCard', () => {
                 );
             });
 
-            const updatedUseMachineSwitch = findUseMachineSwitch(tree);
+            const updatedUseMachineSwitch = findUseMachineSwitch(screen);
             expect(updatedUseMachineSwitch?.props.value).toBe(false);
         });
     });
 
     describe('fallback template transformation', () => {
-        it('adds a fallback operator when user enters fallback for template without one', () => {
+        it('adds a fallback operator when user enters fallback for template without one', async () => {
             const onUpdate = vi.fn<(index: number, next: string) => void>();
-            const tree = renderCard({ value: '${BAR}', onUpdate });
+            const screen = await renderCard({ value: '${BAR}', onUpdate });
 
-            const [fallbackInput] = findTextInputs(tree);
+            const [fallbackInput] = findTextInputs(screen);
             expect(fallbackInput).toBeTruthy();
 
-            act(() => {
+            await act(async () => {
                 fallbackInput?.props.onChangeText?.('baz');
             });
 
@@ -154,14 +128,14 @@ describe('EnvironmentVariableCard', () => {
             expect(lastCall).toEqual([0, '${BAR:-baz}']);
         });
 
-        it('removes operator when user clears existing fallback', () => {
+        it('removes operator when user clears existing fallback', async () => {
             const onUpdate = vi.fn<(index: number, next: string) => void>();
-            const tree = renderCard({ value: '${BAR:=baz}', onUpdate });
+            const screen = await renderCard({ value: '${BAR:=baz}', onUpdate });
 
-            const [fallbackInput] = findTextInputs(tree);
+            const [fallbackInput] = findTextInputs(screen);
             expect(fallbackInput).toBeTruthy();
 
-            act(() => {
+            await act(async () => {
                 fallbackInput?.props.onChangeText?.('');
             });
 

@@ -1,8 +1,10 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,15 +49,10 @@ describe('useNewSessionServerTargetState', () => {
     it('preserves listServerProfiles ordering (does not reorder by lastUsedAt)', async () => {
         const captured: Array<ReturnType<typeof useNewSessionServerTargetState>> = [];
 
-        await act(async () => {
-            renderer.create(
-                <Probe
+        await renderScreen(<Probe
                     request={{}}
                     onState={(state) => captured.push(state)}
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
 
         expect(captured.at(-1)!.serverProfiles.map((profile) => profile.id)).toEqual(['server-a', 'server-c', 'server-b']);
     });
@@ -63,17 +60,12 @@ describe('useNewSessionServerTargetState', () => {
     it('derives allowed server ids from the current active settings target and resolves requested server inside that scope', async () => {
         const captured: Array<ReturnType<typeof useNewSessionServerTargetState>> = [];
 
-        await act(async () => {
-            renderer.create(
-                <Probe
+        await renderScreen(<Probe
                     request={{
                         spawnServerIdParam: 'server-c',
                     }}
                     onState={(state) => captured.push(state)}
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
 
         const latest = captured.at(-1)!;
         expect(latest.selectedServerTarget?.kind).toBe('group');
@@ -86,17 +78,12 @@ describe('useNewSessionServerTargetState', () => {
     it('falls back to the first allowed group server when requested server is outside current active target scope', async () => {
         const captured: Array<ReturnType<typeof useNewSessionServerTargetState>> = [];
 
-        await act(async () => {
-            renderer.create(
-                <Probe
+        await renderScreen(<Probe
                     request={{
                         spawnServerIdParam: 'server-a',
                     }}
                     onState={(state) => captured.push(state)}
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
 
         const latest = captured.at(-1)!;
         expect(latest.allowedTargetServerIds).toEqual(['server-b', 'server-c']);

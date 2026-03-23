@@ -2,14 +2,19 @@ import { randomUUID } from 'node:crypto';
 
 import type { AgentBackend } from '@/agent/core/AgentBackend';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import {
+  type BackendTargetRefV1,
   ExecutionRunPublicStateSchema,
   type ExecutionRunPublicState,
 } from '@happier-dev/protocol';
 
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { VoiceAgentError, VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
+import { resolveCliVoicePromptStackBlocks } from '@/agent/promptLibrary/resolveCliVoicePromptStackBlocks';
+import { configuration } from '@/configuration';
+import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 import type {
   ExecutionRunActionParams,
   ExecutionRunActionResult,
@@ -26,6 +31,7 @@ import {
 import { sendBackendLongLivedRun } from '@/agent/executionRuns/runtime/backendLongLivedSend';
 import { stopExecutionRun } from '@/agent/executionRuns/runtime/executionRunStop';
 import { applyExecutionRunAction } from '@/agent/executionRuns/runtime/executionRunApplyAction';
+import { getExecutionRunAvailableActionIds } from '@/agent/executionRuns/runtime/getExecutionRunAvailableActionIds';
 import { executeBoundedBackendRun } from '@/agent/executionRuns/runtime/boundedBackendRun';
 import { ensureExecutionRun } from '@/agent/executionRuns/runtime/executionRunManager/ensureExecutionRun';
 import { finishExecutionRun } from '@/agent/executionRuns/runtime/executionRunManager/finishExecutionRun';
@@ -48,15 +54,20 @@ export class ExecutionRunManager {
   private readonly cwd: string;
   private readonly createBackend: (opts: {
     backendId: string;
+    backendTarget?: BackendTargetRefV1;
     permissionMode: string;
     modelId?: string;
-    start?: ExecutionRunManagerStartParams;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+    start?: ExecutionRunBackendStartContext;
   }) => AgentBackend;
   private readonly sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  private readonly streamedTranscriptSession: StreamedTranscriptWriterSession | null;
   private readonly transcriptWriter:
     | Readonly<{
         appendUserText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
         appendAssistantText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
+        appendUserTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
+        appendAssistantTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
       }>
     | null;
   private readonly getNowMs: () => number;
@@ -68,6 +79,25 @@ export class ExecutionRunManager {
   private readonly markerWriteChains = new Map<string, Promise<void>>();
   private readonly terminalMarkerWritePromises = new Map<string, Promise<void>>();
   private readonly voiceAgentManager: VoiceAgentManager;
+  private readonly onPublicStateUpdated: ((run: ExecutionRunPublicState) => void) | null;
+
+  private emitPublicStateUpdated(runId: string): void {
+    const callback = this.onPublicStateUpdated;
+    if (!callback) return;
+    const run = (() => {
+      try {
+        return this.getPublic(runId);
+      } catch {
+        return null;
+      }
+    })();
+    if (!run) return;
+    try {
+      callback(run);
+    } catch {
+      // Best effort
+    }
+  }
 
   private enqueueMarkerWrite(runId: string, write: () => Promise<void>): Promise<void> {
     return enqueueExecutionRunMarkerWrite({ markerWriteChains: this.markerWriteChains, runId, write });
@@ -87,21 +117,41 @@ export class ExecutionRunManager {
   constructor(opts: Readonly<{
     parentProvider: ACPProvider;
     cwd: string;
-    createBackend: (opts: { runId?: string; backendId: string; permissionMode: string; modelId?: string; start?: ExecutionRunManagerStartParams }) => AgentBackend;
+    createBackend: (opts: {
+      runId?: string;
+      backendId: string;
+      backendTarget?: BackendTargetRefV1;
+      permissionMode: string;
+      modelId?: string;
+      accountSettings?: Readonly<Record<string, unknown>> | null;
+      start?: ExecutionRunBackendStartContext;
+    }) => AgentBackend;
     sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+    streamedTranscriptSession?: StreamedTranscriptWriterSession;
     transcriptWriter?: Readonly<{
       appendUserText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
       appendAssistantText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
+      appendUserTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
+      appendAssistantTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
     }>;
+    onPublicStateUpdated?: (run: ExecutionRunPublicState) => void;
     getNowMs?: () => number;
     boundedTimeoutMs?: number;
     maxTurns?: number;
     budgetRegistry?: ExecutionBudgetRegistry;
+    resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
+    resolveVoicePromptStackBlocks?: (args: Readonly<{
+      settings?: unknown;
+      profileId?: string | null;
+      sessionId?: string | null;
+      workingDirectory?: string | null;
+    }>) => Promise<readonly string[]>;
   }>) {
     this.parentProvider = opts.parentProvider;
     this.cwd = opts.cwd;
     this.createBackend = opts.createBackend;
     this.sendAcp = opts.sendAcp;
+    this.streamedTranscriptSession = opts.streamedTranscriptSession ?? null;
     this.transcriptWriter = opts.transcriptWriter ?? null;
     this.getNowMs = opts.getNowMs ?? (() => Date.now());
     this.boundedTimeoutMs =
@@ -113,11 +163,23 @@ export class ExecutionRunManager {
         ? Math.floor(opts.maxTurns)
         : null;
     this.budgetRegistry = opts.budgetRegistry ?? null;
+    this.onPublicStateUpdated = typeof opts.onPublicStateUpdated === 'function' ? opts.onPublicStateUpdated : null;
+    const resolveAccountSettings = opts.resolveAccountSettings ?? (async () => null);
+    const resolveVoicePromptStackBlocks = opts.resolveVoicePromptStackBlocks
+      ?? (async ({
+        settings,
+        profileId,
+      }: Readonly<{
+        settings?: unknown;
+        profileId?: string | null;
+        sessionId?: string | null;
+        workingDirectory?: string | null;
+      }>) => await resolveCliVoicePromptStackBlocks({ settings, profileId }));
 
     this.voiceAgentManager = new VoiceAgentManager({
-      createBackend: ({ agentId, modelId, permissionPolicy }) => {
+      createBackend: ({ agentId, modelId, permissionPolicy, start }) => {
         try {
-          return this.createBackend({ backendId: agentId, modelId, permissionMode: permissionPolicy });
+          return this.createBackend({ backendId: agentId, backendTarget: { kind: 'builtInAgent', agentId }, modelId, permissionMode: permissionPolicy, ...(start ? { start } : {}) });
         } catch (e) {
           // Backend init failures should surface as "unsupported" so callers can fall back to
           // alternate voice engines. If the backend already classified the error, preserve it.
@@ -126,6 +188,16 @@ export class ExecutionRunManager {
           throw new VoiceAgentError('VOICE_AGENT_UNSUPPORTED', message);
         }
       },
+      resolveSystemAppendBlocks: async ({ profileId, sessionId, workingDirectory }) => {
+        const settings = await resolveAccountSettings();
+        return await resolveVoicePromptStackBlocks({
+          settings,
+          profileId,
+          sessionId,
+          workingDirectory: workingDirectory ?? this.cwd,
+        });
+      },
+      responseTimeoutMs: configuration.voiceAgentResponseTimeoutMs,
       getNowMs: this.getNowMs,
     });
   }
@@ -168,18 +240,23 @@ export class ExecutionRunManager {
   getPublic(runId: string): ExecutionRunPublicState | null {
     const run = this.runs.get(runId);
     if (!run) return null;
+    const ctrl = this.controllers.get(runId) ?? null;
+    const availableActionIds = getExecutionRunAvailableActionIds(run, ctrl);
     return ExecutionRunPublicStateSchema.parse({
       runId: run.runId,
       callId: run.callId,
       sidechainId: run.sidechainId,
       intent: run.intent,
-      backendId: run.backendId,
+      backendTarget: run.backendTarget,
       ...(run.display ? { display: run.display } : {}),
       permissionMode: run.permissionMode,
       retentionPolicy: run.retentionPolicy,
       runClass: run.runClass,
       ioMode: run.ioMode,
       status: run.status,
+      ...(ctrl?.kind === 'backend' ? { turnInFlight: ctrl.turnInFlight } : {}),
+      ...(availableActionIds.length > 0 ? { availableActionIds } : {}),
+      ...(run.voiceAgentConfig?.transcript ? { transcript: run.voiceAgentConfig.transcript } : {}),
       startedAtMs: run.startedAtMs,
       ...(run.resumeHandle ? { resumeHandle: run.resumeHandle } : {}),
       ...(typeof run.finishedAtMs === 'number' ? { finishedAtMs: run.finishedAtMs } : {}),
@@ -190,18 +267,23 @@ export class ExecutionRunManager {
   listPublic(): readonly ExecutionRunPublicState[] {
     const out: ExecutionRunPublicState[] = [];
     for (const run of this.runs.values()) {
+      const ctrl = this.controllers.get(run.runId) ?? null;
+      const availableActionIds = getExecutionRunAvailableActionIds(run, ctrl);
       const parsed = ExecutionRunPublicStateSchema.parse({
         runId: run.runId,
         callId: run.callId,
         sidechainId: run.sidechainId,
         intent: run.intent,
-        backendId: run.backendId,
+        backendTarget: run.backendTarget,
         ...(run.display ? { display: run.display } : {}),
         permissionMode: run.permissionMode,
         retentionPolicy: run.retentionPolicy,
         runClass: run.runClass,
         ioMode: run.ioMode,
         status: run.status,
+        ...(ctrl?.kind === 'backend' ? { turnInFlight: ctrl.turnInFlight } : {}),
+        ...(availableActionIds.length > 0 ? { availableActionIds } : {}),
+        ...(run.voiceAgentConfig?.transcript ? { transcript: run.voiceAgentConfig.transcript } : {}),
         startedAtMs: run.startedAtMs,
         ...(run.resumeHandle ? { resumeHandle: run.resumeHandle } : {}),
         ...(typeof run.finishedAtMs === 'number' ? { finishedAtMs: run.finishedAtMs } : {}),
@@ -234,6 +316,7 @@ export class ExecutionRunManager {
       | 'sessionId'
       | 'depth'
       | 'intent'
+      | 'backendTarget'
       | 'backendId'
       | 'instructions'
       | 'permissionMode'
@@ -262,13 +345,15 @@ export class ExecutionRunManager {
       enqueueMarkerWrite: this.enqueueMarkerWrite.bind(this),
       terminalMarkerWritePromises: this.terminalMarkerWritePromises,
     });
+    this.emitPublicStateUpdated(runId);
   }
 
   async start(params: ExecutionRunManagerStartParams): Promise<ExecutionRunStartResult> {
-    return startExecutionRun({
+    const started = await startExecutionRun({
       params,
       parentProvider: this.parentProvider,
       sendAcp: this.sendAcp,
+      streamedTranscriptSession: this.streamedTranscriptSession,
       createBackend: this.createBackend,
       getNowMs: this.getNowMs,
       budgetRegistry: this.budgetRegistry,
@@ -281,7 +366,17 @@ export class ExecutionRunManager {
       send: this.send.bind(this),
       voiceAgentManager: this.voiceAgentManager,
       getDepthByCallId: this.getDepthByCallId.bind(this),
+      onPublicStateUpdated: (runId) => this.emitPublicStateUpdated(runId),
     });
+    this.emitPublicStateUpdated(started.runId);
+    return started;
+  }
+
+  private resolveBoundedTimeoutMs(params: ExecutionRunManagerStartParams): number | null {
+    if (typeof params.boundedTimeoutMs === 'number' && Number.isFinite(params.boundedTimeoutMs) && params.boundedTimeoutMs >= 1) {
+      return Math.floor(params.boundedTimeoutMs);
+    }
+    return this.boundedTimeoutMs;
   }
 
   private async executeBoundedRun(args: {
@@ -297,7 +392,7 @@ export class ExecutionRunManager {
       sendAcp: this.sendAcp,
       parentProvider: this.parentProvider,
       getNowMs: this.getNowMs,
-      boundedTimeoutMs: this.boundedTimeoutMs,
+      boundedTimeoutMs: this.resolveBoundedTimeoutMs(args.params),
       finishRun: this.finishRun.bind(this),
     });
   }
@@ -317,13 +412,15 @@ export class ExecutionRunManager {
         runs: this.runs,
         controllers: this.controllers,
         budgetRegistry: this.budgetRegistry,
-        createBackend: ({ backendId, permissionMode }) => this.createBackend({ backendId, permissionMode }),
+        createBackend: ({ backendId, backendTarget, permissionMode }) => this.createBackend({ backendId, backendTarget, permissionMode }),
         maxTurns: this.maxTurns,
         getNowMs: this.getNowMs,
         finishRun: this.finishRun.bind(this),
         sendAcp: this.sendAcp,
         parentProvider: this.parentProvider,
+        streamedTranscriptSession: this.streamedTranscriptSession,
         writeActivityMarker: this.writeActivityMarker.bind(this),
+        onPublicStateUpdated: (runId2) => this.emitPublicStateUpdated(runId2),
       });
     }
 
@@ -387,13 +484,15 @@ export class ExecutionRunManager {
       runs: this.runs,
       controllers: this.controllers,
       budgetRegistry: this.budgetRegistry,
-      createBackend: ({ backendId, permissionMode }) => this.createBackend({ backendId, permissionMode }),
+      createBackend: ({ backendId, backendTarget, permissionMode }) => this.createBackend({ backendId, backendTarget, permissionMode }),
       maxTurns: this.maxTurns,
       getNowMs: this.getNowMs,
       finishRun: this.finishRun.bind(this),
       sendAcp: this.sendAcp,
       parentProvider: this.parentProvider,
+      streamedTranscriptSession: this.streamedTranscriptSession,
       writeActivityMarker: this.writeActivityMarker.bind(this),
+      onPublicStateUpdated: (runId2) => this.emitPublicStateUpdated(runId2),
     });
   }
 
@@ -404,10 +503,14 @@ export class ExecutionRunManager {
       runs: this.runs,
       controllers: this.controllers,
       budgetRegistry: this.budgetRegistry,
-      createBackend: ({ backendId, permissionMode }) => this.createBackend({ backendId, permissionMode }),
+      createBackend: ({ backendId, backendTarget, permissionMode }) => this.createBackend({ backendId, backendTarget, permissionMode }),
+      sendAcp: this.sendAcp,
+      parentProvider: this.parentProvider,
+      streamedTranscriptSession: this.streamedTranscriptSession,
       getNowMs: this.getNowMs,
       writeActivityMarker: this.writeActivityMarker.bind(this),
       voiceAgentManager: this.voiceAgentManager,
+      onPublicStateUpdated: (runId2) => this.emitPublicStateUpdated(runId2),
     });
   }
 
@@ -433,7 +536,7 @@ export class ExecutionRunManager {
 
   async startTurnStream(
     runId: string,
-    params: Readonly<{ message: string; resume?: boolean }>,
+    params: Readonly<{ message: string; displayMessage?: string; resume?: boolean }>,
   ): Promise<{ ok: true; streamId: string } | { ok: false; errorCode: string; error: string }> {
     if (params.resume === true) {
       const ensured = await this.ensure(runId, { resume: true });
@@ -441,11 +544,21 @@ export class ExecutionRunManager {
     }
     return startVoiceAgentTurnStream({
       runId,
-      params: { message: params.message },
+      params: {
+        message: params.message,
+        ...(typeof params.displayMessage === 'string' ? { displayMessage: params.displayMessage } : {}),
+      },
       runs: this.runs,
       controllers: this.controllers,
       voiceAgentManager: this.voiceAgentManager,
-      transcriptWriter: this.transcriptWriter ? { appendUserText: this.transcriptWriter.appendUserText } : null,
+      transcriptWriter: this.transcriptWriter
+        ? {
+            appendUserText: this.transcriptWriter.appendUserText,
+            ...(this.transcriptWriter.appendUserTextCommitted
+              ? { appendUserTextCommitted: this.transcriptWriter.appendUserTextCommitted }
+              : {}),
+          }
+        : null,
     });
   }
 
@@ -462,7 +575,14 @@ export class ExecutionRunManager {
       runs: this.runs,
       controllers: this.controllers,
       voiceAgentManager: this.voiceAgentManager,
-      transcriptWriter: this.transcriptWriter ? { appendAssistantText: this.transcriptWriter.appendAssistantText } : null,
+      transcriptWriter: this.transcriptWriter
+        ? {
+            appendAssistantText: this.transcriptWriter.appendAssistantText,
+            ...(this.transcriptWriter.appendAssistantTextCommitted
+              ? { appendAssistantTextCommitted: this.transcriptWriter.appendAssistantTextCommitted }
+              : {}),
+          }
+        : null,
       writeActivityMarker: this.writeActivityMarker.bind(this),
       getNowMs: this.getNowMs,
     });
@@ -499,7 +619,9 @@ export class ExecutionRunManager {
       runs: this.runs,
       controllers: this.controllers,
       voiceAgentManager: this.voiceAgentManager,
+      startRun: this.start.bind(this),
       sendAcp: this.sendAcp,
+      sendCommittedAcp: this.streamedTranscriptSession?.sendAgentMessageCommitted,
       parentProvider: this.parentProvider,
     });
   }

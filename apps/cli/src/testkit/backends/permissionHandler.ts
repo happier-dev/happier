@@ -39,7 +39,13 @@ export class FakePermissionSession {
     return this.agentState;
   }
 
-  snapshot(): AgentState {
-    return this.agentState;
-  }
+    snapshot(): AgentState {
+        return this.agentState;
+    }
+}
+
+export function createApprovedPermissionHandler(): { handleToolCall: () => Promise<{ decision: 'approved' }> } {
+    return {
+        handleToolCall: async () => ({ decision: 'approved' }),
+    };
 }

@@ -1,18 +1,17 @@
 import React, { useState, useMemo } from 'react';
 import { View, Pressable, Platform } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
-import { CommonActions } from '@react-navigation/native';
 import { Typography } from '@/constants/Typography';
 import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { layout } from '@/components/ui/layout/layout';
-import { PathSelector } from '@/components/sessions/new/components/PathSelector';
-import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { Text } from '@/components/ui/text/Text';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 
 
 export default React.memo(function PathPickerScreen() {
@@ -20,7 +19,14 @@ export default React.memo(function PathPickerScreen() {
     const styles = stylesheet;
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams<{ machineId?: string; selectedPath?: string }>();
+    const params = useLocalSearchParams<{
+        dataId?: string;
+        machineId?: string;
+        selectedPath?: string;
+        directory?: string;
+        path?: string;
+        spawnServerId?: string;
+    }>();
     const machines = useAllMachines();
     const sessions = useSessions();
     const recentMachinePaths = useSetting('recentMachinePaths');
@@ -28,12 +34,21 @@ export default React.memo(function PathPickerScreen() {
     const [favoriteDirectoriesRaw, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
     const favoriteDirectories = favoriteDirectoriesRaw ?? [];
 
-    const [customPath, setCustomPathState] = useState(params.selectedPath || '');
+    const initialPath = typeof params.selectedPath === 'string' && params.selectedPath.length > 0
+        ? params.selectedPath
+        : (typeof params.directory === 'string' && params.directory.length > 0
+            ? params.directory
+            : (typeof params.path === 'string' ? params.path : ''));
+    const [customPath, setCustomPathState] = useState(initialPath);
     const customPathRef = React.useRef(customPath);
     const setCustomPath = React.useCallback((next: string) => {
         customPathRef.current = next;
         setCustomPathState(next);
     }, []);
+    React.useEffect(() => {
+        customPathRef.current = initialPath;
+        setCustomPathState(initialPath);
+    }, [initialPath]);
     const [pathSearchQuery, setPathSearchQuery] = useState('');
 
     // Get the selected machine
@@ -57,23 +72,29 @@ export default React.memo(function PathPickerScreen() {
     const handleSelectPath = React.useCallback((pathOverride?: string) => {
         const rawPath = typeof pathOverride === 'string' ? pathOverride : customPathRef.current;
         const pathToUse = rawPath.trim() || machineHomeDir;
-        const state = navigation.getState();
-        const previousRoute = state?.routes?.[state.index - 1];
-        if (state && state.index > 0 && previousRoute) {
-            // Set params on the previous route first, then navigate back.
-            navigation.dispatch({
-                ...CommonActions.setParams({ path: pathToUse }),
-                source: previousRoute.key,
-            });
-            router.back();
-        } else {
-            router.setParams({ path: pathToUse });
+        const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;
+        const spawnServerId = typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0
+            ? params.spawnServerId
+            : undefined;
+        const returnMode = setNewSessionPickerReturnParams({
+            navigation,
+            router,
+            routeParams: { directory: pathToUse },
+            replaceParams: {
+                ...(dataId ? { dataId } : {}),
+                machineId: params.machineId,
+                directory: pathToUse,
+                ...(spawnServerId ? { spawnServerId } : {}),
+            },
+        });
+        if (returnMode === 'dispatch') {
+            safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-    }, [machineHomeDir, navigation, router]);
+    }, [machineHomeDir, navigation, params.dataId, params.machineId, params.spawnServerId, router]);
 
     const handleBackPress = React.useCallback(() => {
-        router.back();
-    }, [router]);
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
+    }, [navigation, router]);
 
     const headerTitle = t('newSession.selectPathTitle');
     const headerBackTitle = t('common.back');
@@ -148,31 +169,23 @@ export default React.memo(function PathPickerScreen() {
             <Stack.Screen
                 options={screenOptions}
             />
-            <ItemList style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled">
-                {usePathPickerSearch && (
-                    <SearchHeader
-                        value={pathSearchQuery}
-                        onChangeText={setPathSearchQuery}
-                        placeholder={t('newSession.searchPathsPlaceholder')}
-                    />
-                )}
-                <View style={styles.contentWrapper}>
-                    <PathSelector
-                        machineHomeDir={machineHomeDir}
-                        selectedPath={customPath}
-                        onChangeSelectedPath={setCustomPath}
-                        submitBehavior="confirm"
-                        onSubmitSelectedPath={handleSelectPath}
-                        recentPaths={recentPaths}
-                        usePickerSearch={usePathPickerSearch}
-                        searchVariant="none"
-                        searchQuery={pathSearchQuery}
-                        onChangeSearchQuery={setPathSearchQuery}
-                        favoriteDirectories={favoriteDirectories}
-                        onChangeFavoriteDirectories={setFavoriteDirectories}
-                    />
-                </View>
-            </ItemList>
+            <NewSessionPathSelectionContent
+                machineHomeDir={machineHomeDir}
+                selectedPath={customPath}
+                onChangeSelectedPath={setCustomPath}
+                submitBehavior="confirm"
+                onSubmitSelectedPath={handleSelectPath}
+                recentPaths={recentPaths}
+                usePickerSearch={usePathPickerSearch}
+                searchQuery={pathSearchQuery}
+                onChangeSearchQuery={setPathSearchQuery}
+                favoriteDirectories={favoriteDirectories}
+                onChangeFavoriteDirectories={setFavoriteDirectories}
+                machineBrowse={{
+                    enabled: true,
+                    machineId: machine.id,
+                }}
+            />
         </>
     );
 });
@@ -189,27 +202,5 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         textAlign: 'center',
         ...Typography.default(),
-    },
-    contentWrapper: {
-        width: '100%',
-        maxWidth: layout.maxWidth,
-        alignSelf: 'center',
-    },
-    pathInputContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        paddingHorizontal: 16,
-        paddingVertical: 16,
-    },
-    pathInput: {
-        flex: 1,
-        backgroundColor: theme.colors.input.background,
-        borderRadius: 10,
-        paddingHorizontal: 12,
-        minHeight: 36,
-        position: 'relative',
-        borderWidth: 0.5,
-        borderColor: theme.colors.divider,
     },
 }));

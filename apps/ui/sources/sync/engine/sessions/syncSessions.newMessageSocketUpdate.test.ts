@@ -8,6 +8,7 @@ function buildUpdate(params: {
     sid?: string;
     messageId: string;
     messageSeq: number;
+    content?: { t: 'encrypted'; c: string } | { t: 'plain'; v: unknown };
 }): {
     id: string;
     seq: number;
@@ -18,7 +19,7 @@ function buildUpdate(params: {
         message: {
             id: string;
             seq: number;
-            content: { t: 'encrypted'; c: string };
+                content: { t: 'encrypted'; c: string } | { t: 'plain'; v: unknown };
             localId: null;
             createdAt: number;
             updatedAt: number;
@@ -35,7 +36,7 @@ function buildUpdate(params: {
             message: {
                 id: params.messageId,
                 seq: params.messageSeq,
-                content: { t: 'encrypted', c: 'x' },
+                content: params.content ?? { t: 'encrypted', c: 'x' },
                 localId: null,
                 createdAt: 1_000,
                 updatedAt: 1_000,
@@ -125,6 +126,40 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(applyMessages).toHaveBeenCalledTimes(1);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
         expect(onMessageGapDetected).not.toHaveBeenCalled();
+    });
+
+    it('applies plaintext realtime messages when the session is plain and session encryption is unavailable', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const { params, fetchSessions, applyMessages, applySessions, markSessionMaterializedMaxSeq } = buildHarness({
+                updateData: buildUpdate({
+                    sid: 's1',
+                    messageId: 'm2',
+                    messageSeq: 2,
+                    content: {
+                        t: 'plain',
+                        v: { role: 'user', content: { type: 'text', text: 'hello from plain realtime' } },
+                    },
+                }),
+                getSessionEncryption: () => null as any,
+                getSession: () => ({ ...buildSession('s1'), encryptionMode: 'plain' } as Session),
+            });
+
+            await handleNewMessageSocketUpdate(params);
+
+            expect(fetchSessions).not.toHaveBeenCalled();
+            expect(consoleError).not.toHaveBeenCalled();
+            expect(applyMessages).toHaveBeenCalledTimes(1);
+            expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
+            expect(applyMessages.mock.calls[0]?.[1]?.[0]).toMatchObject({
+                id: 'm2',
+                seq: 2,
+                role: 'user',
+            });
+            expect(applySessions).toHaveBeenCalledTimes(1);
+        } finally {
+            consoleError.mockRestore();
+        }
     });
 
     it('triggers catch-up when a gap is detected for a loaded transcript', async () => {

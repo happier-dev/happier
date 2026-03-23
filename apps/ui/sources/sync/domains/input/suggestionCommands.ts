@@ -91,6 +91,33 @@ function buildActionSlashCommands(state: any): CommandItem[] {
     return out;
 }
 
+function buildPromptInvocationSlashCommands(state: any): CommandItem[] {
+    const out: CommandItem[] = [];
+
+    const entries = (state as any)?.settings?.promptInvocationsV1?.entries;
+    if (!Array.isArray(entries) || entries.length === 0) return out;
+
+    for (const entry of entries) {
+        if (!entry || typeof entry !== 'object') continue;
+        const token = typeof (entry as any).token === 'string' ? String((entry as any).token) : '';
+        if (!token.startsWith('/')) continue;
+
+        const availableIn = typeof (entry as any).availableIn === 'string' ? String((entry as any).availableIn) : 'global';
+        if (availableIn !== 'global') continue;
+
+        const command = token.slice(1);
+        if (command.trim().length === 0) continue;
+
+        const title = typeof (entry as any).title === 'string' ? String((entry as any).title) : '';
+        out.push({
+            command,
+            description: title.trim().length > 0 ? title : undefined,
+        });
+    }
+
+    return out;
+}
+
 // Command descriptions for known tools/commands
 const COMMAND_DESCRIPTIONS: Record<string, string> = {
     // Default commands
@@ -115,6 +142,12 @@ function getCommandsFromSession(sessionId: string): CommandItem[] {
     const state = storage.getState();
     const session = state.sessions[sessionId];
     const commands: CommandItem[] = [...buildActionSlashCommands(state), ...DEFAULT_COMMANDS];
+
+    // Add prompt template tokens (never overriding action/default commands).
+    for (const invocation of buildPromptInvocationSlashCommands(state)) {
+        if (commands.find((c) => c.command === invocation.command)) continue;
+        commands.push(invocation);
+    }
     if (!session || !session.metadata) {
         return commands;
     }

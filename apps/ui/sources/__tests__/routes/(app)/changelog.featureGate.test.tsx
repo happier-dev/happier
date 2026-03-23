@@ -1,6 +1,8 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,33 +28,27 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
-vi.mock('react-native', () => ({
-    View: (props: any) => React.createElement('View', props, props.children),
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: (props: any) => React.createElement('View', props, props.children),
+                    Text: (props: any) => React.createElement('Text', props, props.children),
+                    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+                    Platform: {
+                        OS: 'web',
+                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+                    },
+                    AppState: {
+                        addEventListener: () => ({ remove: () => {} }),
+                    },
+                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) => {
-            const theme = {
-                colors: {
-                    surface: '#fff',
-                    surfaceHigh: '#fff',
-                    divider: '#ddd',
-                    text: '#000',
-                    textSecondary: '#666',
-                    textLink: '#00f',
-                    shadow: { color: '#000', opacity: 0.2 },
-                },
-            };
-            const runtime = {};
-            return typeof styles === 'function' ? styles(theme, runtime) : styles;
-        },
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#fff',
@@ -64,8 +60,8 @@ vi.mock('react-native-unistyles', () => ({
                 shadow: { color: '#000', opacity: 0.2 },
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ bottom: 0, top: 0, left: 0, right: 0 }),
@@ -85,9 +81,10 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 describe('ChangelogScreen (feature gate)', () => {
     const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
@@ -109,9 +106,7 @@ describe('ChangelogScreen (feature gate)', () => {
         const ChangelogScreen = mod.default;
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ChangelogScreen));
-        });
+        tree = (await renderScreen(React.createElement(ChangelogScreen))).tree;
 
         expect(tree.toJSON()).toBeNull();
     });

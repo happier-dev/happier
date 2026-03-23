@@ -7,42 +7,38 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { Metadata } from '@/api/types';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
+import { waitForPidInspection } from '@/testkit/process/pidInspection';
 import type { TrackedSession } from './types';
 import {
   shouldRunDaemonReattachIntegration,
   spawnHappyLookingProcess,
-  waitForPidInspection,
 } from './testkit/realIntegration.testkit';
 
 describe.skipIf(!shouldRunDaemonReattachIntegration())(
   'reattach (real) integration tests (opt-in)',
   { timeout: 20_000 },
   () => {
-    const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+    let envScope: ReturnType<typeof createEnvKeyScope>;
     const spawned: Array<() => void> = [];
     const tempHomes: string[] = [];
 
     beforeEach(() => {
-      const home = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-reattach-test-'));
+      envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+      const home = createTempDirSync('happier-cli-daemon-reattach-test-');
       tempHomes.push(home);
-      process.env.HAPPIER_HOME_DIR = home;
+      envScope.patch({ HAPPIER_HOME_DIR: home });
       vi.resetModules();
     });
 
     afterEach(() => {
       for (const k of spawned.splice(0)) k();
       for (const home of tempHomes.splice(0)) {
-        rmSync(home, { recursive: true, force: true });
+        removeTempDirSync(home);
       }
-      if (originalHappyHomeDir === undefined) {
-        delete process.env.HAPPIER_HOME_DIR;
-      } else {
-        process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
-      }
+      envScope.restore();
       vi.resetModules();
     });
 

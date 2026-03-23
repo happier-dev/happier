@@ -10,6 +10,7 @@ import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { Text } from '@/components/ui/text/Text';
 import { PermissionFooter } from '@/components/tools/shell/permissions/PermissionFooter';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
+import { buildPermissionToolCallRoute, canOpenPermissionToolCallRoute } from '@/utils/sessions/permissions/buildPermissionToolCallRoute';
 import { t } from '@/text';
 import { buildPermissionPromptModel } from '@/components/tools/shell/permissions/presentation/buildPermissionPromptModel';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -19,6 +20,7 @@ import {
     resolveToolViewDetailLevelDefaultForChromeMode,
     type ToolViewDetailLevelSetting,
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 
 export const PermissionPromptCard = React.memo(function PermissionPromptCard(props: {
     request: PendingPermissionRequest;
@@ -41,21 +43,9 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     const headerText = model.headerText;
 
     const onViewTool = React.useCallback(() => {
-        const loc = props.location;
-        if (loc?.kind === 'top' && typeof loc.seq === 'number') {
-            router.push(`/session/${props.sessionId}?jumpSeq=${loc.seq}`);
-            return;
-        }
-        if (loc?.kind === 'top') {
-            router.push(`/session/${props.sessionId}/message/${loc.messageId}`);
-            return;
-        }
-        if (loc?.kind === 'nested') {
-            router.push(`/session/${props.sessionId}/message/${loc.parentMessageId}?jumpChildId=${loc.messageId}`);
-            return;
-        }
-        router.push(`/session/${props.sessionId}`);
+        router.push(buildPermissionToolCallRoute({ sessionId: props.sessionId, location: props.location }));
     }, [props.location, props.sessionId, router]);
+    const canOpenToolRoute = canOpenPermissionToolCallRoute(props.location);
 
     const previewDetailLevel = React.useMemo(() => {
         const normalizedToolViewDetailLevelDefaultSetting: ToolViewDetailLevelSetting =
@@ -85,7 +75,10 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
         toolViewDetailLevelDefault,
         toolViewDetailLevelDefaultLocalControl,
     ]);
-    const inlineDetailLevel = headerText.normalizedToolName === 'Task' && previewDetailLevel === 'full' ? 'summary' : previewDetailLevel;
+    const inlineDetailLevel =
+        isGenericSubAgentToolName(headerText.normalizedToolName) && previewDetailLevel === 'full'
+            ? 'summary'
+            : previewDetailLevel;
     const isPreviewVisible = inlineDetailLevel !== 'title' && inlineDetailLevel !== 'compact';
 
     const effectiveSubtitle = React.useMemo(() => {
@@ -116,15 +109,17 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
                     ) : null}
                 </View>
                 {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
-                <Pressable
-                    testID="permission-prompt-view-tool"
-                    onPress={onViewTool}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('toolView.open')}
-                    style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
-                >
-                    <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
-                </Pressable>
+                {canOpenToolRoute ? (
+                    <Pressable
+                        testID="permission-prompt-view-tool"
+                        onPress={onViewTool}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('toolView.open')}
+                        style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
+                    >
+                        <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
+                    </Pressable>
+                ) : null}
             </View>
 
             {isPreviewVisible ? (

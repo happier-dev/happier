@@ -83,6 +83,14 @@ Avoid flat folders growing without structure:
 ### “Canonical entrypoints” rule
 If a file path is already the established entrypoint (e.g. `api/apiMachine.ts`, `daemon/run.ts`), keep it as the entrypoint and extract internals under subfolders so the file stays readable and reviewable.
 
+### Backend catalog and hooks (required)
+
+- Treat `src/backends/catalog.ts` + `src/backends/<provider>/index.ts` as the canonical executable provider registry for CLI backend behavior.
+- If a new cross-provider feature needs provider-specific execution logic, extend `AgentCatalogEntry` in `src/backends/types.ts` with a new hook and implement it in each provider `index.ts`; do not create a new side registry elsewhere in core.
+- Keep provider-specific execution code inside `src/backends/<provider>/...` and make core/orchestration layers call the catalog hook instead of branching on provider ids.
+- Declarative support/capability facts belong in `packages/agents/*`, not in ad-hoc CLI maps.
+- Core CLI domains such as `src/agent/*`, `src/api/*`, `src/daemon/*`, `src/rpc/*`, and `src/session/*` must stay provider-agnostic unless they are themselves inside a provider folder.
+
 ## Architecture & Key Components
 
 ### 1. API Module (`/src/api/`)

@@ -26,12 +26,18 @@ config.transformer.getTransformOptions = async () => ({
 // Never bundle route-adjacent test/spec files into runtime app bundles.
 // They may import Vitest APIs, which crash when executed in Expo runtime.
 const testRouteBlockList = /[\\/]sources[\\/]app[\\/].*\.(test|spec)\.[jt]sx?$/;
+const projectArtifactsBlockList = /[\\/]\.project[\\/]/;
 const existingBlockList = config.resolver.blockList;
 config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testRouteBlockList]
+  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList]
   : existingBlockList
-    ? [existingBlockList, testRouteBlockList]
-    : [testRouteBlockList];
+    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList]
+    : [testRouteBlockList, projectArtifactsBlockList];
+
+const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFolders : [];
+config.watchFolders = existingWatchFolders.filter(
+  (folder, index, all) => typeof folder === 'string' && folder.length > 0 && all.indexOf(folder) === index,
+);
 
 // Kokoro (kokoro-js) ships a `.web.js` prebundle that Metro cannot transform (it contains non-literal dynamic imports).
 // For Expo web, force Metro to resolve the package to its ESM entry and shim Node builtins that the ESM file imports
@@ -45,6 +51,20 @@ const onnxruntimeWebStub = path.resolve(__dirname, "sources/platform/stubs/onnxr
 const kokoroJsStub = path.resolve(__dirname, "sources/platform/stubs/kokoroJsStub.ts");
 const transformersStub = path.resolve(__dirname, "sources/platform/stubs/huggingfaceTransformersStub.ts");
 const fontFaceObserverWebShim = path.resolve(__dirname, "sources/platform/shims/fontFaceObserverWebShim.ts");
+const expoAsyncRequireSetupShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoAsyncRequireSetupShim.ts");
+const expoMessageSocketShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoMessageSocketShim.ts");
+const workspaceEntryPoint = path.resolve(__dirname, "index.ts");
+
+function isExpoModuleOrigin(originModulePath, suffixes) {
+  const origin = String(originModulePath ?? "");
+  if (!origin) return false;
+
+  return suffixes.some((suffix) => {
+    const normalizedSuffix = suffix.replace(/\//g, "[\\\\/]");
+    const pattern = new RegExp(`[\\\\/]node_modules[\\\\/]expo[\\\\/](?:src|build)[\\\\/]${normalizedSuffix}$`);
+    return pattern.test(origin);
+  });
+}
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
@@ -52,6 +72,37 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   let resolvedModuleName = moduleName;
   if (moduleName === "event-target-shim/index") {
     resolvedModuleName = "event-target-shim";
+  }
+
+  // Per-tab web QA opt-out: allow disabling Fast Refresh/HMR on specific browser tabs (via sessionStorage),
+  // without turning it off for all connected clients.
+  //
+  // Expo's web dev runtime enables Fast Refresh/HMR by importing `expo/src/async-require/setup` very early
+  // (via `expo/src/winter/runtime.ts`). We shim that module on web so it can consult a per-tab flag and
+  // initialize the HMR client with `isEnabled=false` when opted out (keeps bundle splitting working).
+  if (
+    platform === "web" &&
+    resolvedModuleName === "../async-require/setup" &&
+    isExpoModuleOrigin(context?.originModulePath, ["winter/runtime\\.(ts|js)"])
+  ) {
+    return { type: "sourceFile", filePath: expoAsyncRequireSetupShim };
+  }
+
+  // Expo also opens a reload socket from Expo.fx.tsx. Intercept that path too so per-tab QA opt-out
+  // suppresses full-page reload commands, not just Fast Refresh/HMR patch delivery.
+  if (
+    platform === "web" &&
+    resolvedModuleName === "./async-require/messageSocket" &&
+    isExpoModuleOrigin(context?.originModulePath, ["Expo\\.fx\\.(tsx|js)"])
+  ) {
+    return { type: "sourceFile", filePath: expoMessageSocketShim };
+  }
+
+  if (
+    platform === "web" &&
+    (resolvedModuleName === "./apps/ui/index.ts" || resolvedModuleName === "apps/ui/index.ts")
+  ) {
+    return { type: "sourceFile", filePath: workspaceEntryPoint };
   }
 
   if (

@@ -294,6 +294,9 @@ action_uninstall() {
 
   rm -f "${BIN_DIR}/${exe}" "${INSTALL_DIR}/bin/${exe}.new" "${INSTALL_DIR}/bin/${exe}.previous" || true
   rm -f "${INSTALL_DIR}/bin/${exe}" || true
+  if [[ "${PRODUCT}" == "cli" ]]; then
+    rm -rf "${INSTALL_DIR}/cli" || true
+  fi
   if [[ "${PURGE_INSTALL_DIR}" == "1" ]]; then
     rm -rf "${INSTALL_DIR}" || true
   fi
@@ -848,26 +851,62 @@ EXTRACT_DIR="${TMP_DIR}/extract"
 mkdir -p "${EXTRACT_DIR}"
 tar_extract_gz "${ARCHIVE_PATH}" "${EXTRACT_DIR}"
 
-BINARY_PATH="$(find "${EXTRACT_DIR}" -type f -name "${EXE_NAME}" -perm -u+x | head -n 1 || true)"
-if [[ -z "${BINARY_PATH}" ]]; then
+PAYLOAD_ROOT="${EXTRACT_DIR}/${VERSION_PREFIX}${VERSION}-${OS}-${ARCH}"
+if [[ ! -d "${PAYLOAD_ROOT}" ]]; then
+  echo "Failed to find extracted payload root: ${PAYLOAD_ROOT}" >&2
+  exit 1
+fi
+
+PAYLOAD_BINARY_PATH="${PAYLOAD_ROOT}/${EXE_NAME}"
+if [[ ! -x "${PAYLOAD_BINARY_PATH}" ]]; then
   echo "Failed to find extracted ${EXE_NAME} binary." >&2
   exit 1
 fi
 
 mkdir -p "${INSTALL_DIR}/bin" "${BIN_DIR}"
 TARGET_BIN="${INSTALL_DIR}/bin/${EXE_NAME}"
-STAGED_BIN="${TARGET_BIN}.new"
-PREVIOUS_BIN="${TARGET_BIN}.previous"
-cp "${BINARY_PATH}" "${STAGED_BIN}"
-chmod +x "${STAGED_BIN}"
-if [[ -f "${TARGET_BIN}" ]]; then
-  cp "${TARGET_BIN}" "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
-  chmod +x "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+
+if [[ "${PRODUCT}" == "cli" ]]; then
+  PROMOTION_OUTPUT=""
+  if ! PROMOTION_OUTPUT="$(
+    HAPPIER_HOME_DIR="${INSTALL_DIR}" "${PAYLOAD_BINARY_PATH}" self __install-payload \
+      --component happier-cli \
+      --payload-root "${PAYLOAD_ROOT}" \
+      --version "${VERSION}" \
+      2>&1
+  )"; then
+    if printf '%s' "${PROMOTION_OUTPUT}" | grep -Eq 'Unknown self subcommand: __install-payload'; then
+      warn "Falling back to legacy binary install because the extracted CLI does not support payload promotion."
+    else
+      printf '%s\n' "${PROMOTION_OUTPUT}" >&2
+      exit 1
+    fi
+    STAGED_BIN="${TARGET_BIN}.new"
+    PREVIOUS_BIN="${TARGET_BIN}.previous"
+    cp "${PAYLOAD_BINARY_PATH}" "${STAGED_BIN}"
+    chmod +x "${STAGED_BIN}"
+    if [[ -f "${TARGET_BIN}" ]]; then
+      cp "${TARGET_BIN}" "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+      chmod +x "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+    fi
+    mv -f "${STAGED_BIN}" "${TARGET_BIN}"
+    chmod +x "${TARGET_BIN}"
+  fi
+else
+  STAGED_BIN="${TARGET_BIN}.new"
+  PREVIOUS_BIN="${TARGET_BIN}.previous"
+  cp "${PAYLOAD_BINARY_PATH}" "${STAGED_BIN}"
+  chmod +x "${STAGED_BIN}"
+  if [[ -f "${TARGET_BIN}" ]]; then
+    cp "${TARGET_BIN}" "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+    chmod +x "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+  fi
+  # Avoid ETXTBSY when replacing a running executable: swap the directory entry atomically.
+  mv -f "${STAGED_BIN}" "${TARGET_BIN}"
+  chmod +x "${TARGET_BIN}"
 fi
-# Avoid ETXTBSY when replacing a running executable: swap the directory entry atomically.
-mv -f "${STAGED_BIN}" "${TARGET_BIN}"
-chmod +x "${TARGET_BIN}"
-ln -sf "${INSTALL_DIR}/bin/${EXE_NAME}" "${BIN_DIR}/${EXE_NAME}"
+
+ln -sf "${TARGET_BIN}" "${BIN_DIR}/${EXE_NAME}"
 
 append_path_hint
 

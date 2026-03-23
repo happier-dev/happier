@@ -3,12 +3,30 @@ import { tracking } from './tracking';
 // Re-export tracking for direct access
 export { tracking } from './tracking';
 
+let trackingAnonymousUserId: string | null = null;
+const trackingAnonymousUserIdListeners = new Set<() => void>();
+
+function publishTrackingAnonymousUserIdChange() {
+    trackingAnonymousUserIdListeners.forEach((listener) => listener());
+}
+
 /**
  * Initialize tracking with an anonymous user ID.
  * Should be called once during auth initialization.
  */
 export function initializeTracking(anonymousUserId: string) {
+    trackingAnonymousUserId = anonymousUserId;
+    publishTrackingAnonymousUserIdChange();
     tracking?.identify(anonymousUserId, { name: anonymousUserId });
+}
+
+export function getTrackingAnonymousUserId(): string | null {
+    return trackingAnonymousUserId;
+}
+
+export function subscribeTrackingAnonymousUserId(listener: () => void): () => void {
+    trackingAnonymousUserIdListeners.add(listener);
+    return () => trackingAnonymousUserIdListeners.delete(listener);
 }
 
 /**
@@ -23,6 +41,8 @@ export function trackAccountRestored() {
 }
 
 export function trackLogout() {
+    trackingAnonymousUserId = null;
+    publishTrackingAnonymousUserIdChange();
     tracking?.reset();
 }
 
@@ -115,4 +135,3 @@ export function trackFriendsProfileView() {
 export function trackFriendsConnect() {
     tracking?.capture('friends_connect');
 }
-

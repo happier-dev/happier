@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { capture } = vi.hoisted(() => ({
     capture: vi.fn(),
@@ -19,7 +19,10 @@ describe('reportScmStatusSyncError', () => {
     beforeEach(() => {
         capture.mockReset();
         resetScmStatusSyncErrorReportingForTests();
-        vi.useRealTimers();
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
     });
 
     it('tracks normalized source-control status sync failures without exposing raw project paths', () => {
@@ -42,18 +45,16 @@ describe('reportScmStatusSyncError', () => {
     });
 
     it('throttles duplicate error reports for the same project+message bucket', () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-02-12T10:00:00.000Z'));
+        vi.spyOn(Date, 'now')
+            .mockReturnValueOnce(1_000)
+            .mockReturnValueOnce(1_000)
+            .mockReturnValueOnce(31_000)
+            .mockReturnValueOnce(62_000);
 
         reportScmStatusSyncError({
             projectKey: 'machine:/repo',
             error: new Error('snapshot failed'),
         });
-        reportScmStatusSyncError({
-            projectKey: 'machine:/repo',
-            error: new Error('snapshot failed'),
-        });
-        vi.advanceTimersByTime(30_000);
         reportScmStatusSyncError({
             projectKey: 'machine:/repo',
             error: new Error('snapshot failed'),
@@ -61,7 +62,12 @@ describe('reportScmStatusSyncError', () => {
 
         expect(capture).toHaveBeenCalledTimes(1);
 
-        vi.advanceTimersByTime(31_000);
+        reportScmStatusSyncError({
+            projectKey: 'machine:/repo',
+            error: new Error('snapshot failed'),
+        });
+        expect(capture).toHaveBeenCalledTimes(1);
+
         reportScmStatusSyncError({
             projectKey: 'machine:/repo',
             error: new Error('snapshot failed'),
@@ -70,8 +76,8 @@ describe('reportScmStatusSyncError', () => {
     });
 
     it('evicts stale dedupe buckets when the cache grows to high cardinality', () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-02-12T11:00:00.000Z'));
+        const now = vi.spyOn(Date, 'now');
+        now.mockReturnValue(1_000);
 
         reportScmStatusSyncError({
             projectKey: 'machine:/repo',
@@ -86,6 +92,7 @@ describe('reportScmStatusSyncError', () => {
             });
         }
 
+        now.mockReturnValue(62_000);
         reportScmStatusSyncError({
             projectKey: 'machine:/repo',
             error: new Error('retriable failure'),

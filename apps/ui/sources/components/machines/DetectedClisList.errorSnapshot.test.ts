@@ -1,39 +1,42 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
+import type { ReactTestInstance } from 'react-test-renderer';
 import type { MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { renderScreen } from '@/dev/testkit';
 import { DetectedClisList } from './DetectedClisList';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'ios',
-        select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
-    },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    Text: 'Text',
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+                select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            Text: 'Text',
+            View: 'View',
+        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('react-native-unistyles', () => {
-    const theme = { colors: { textSecondary: '#666', shadow: { color: '#000', opacity: 0.2 }, status: { connected: '#0a0' } } };
-    return {
-        StyleSheet: {
-            create: (styles: any) => (typeof styles === 'function' ? styles(theme) : styles),
-            absoluteFillObject: {},
-        },
-        useUnistyles: () => ({ theme }),
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -46,6 +49,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex'],
+    DEFAULT_AGENT_ID: 'claude',
     getAgentCore: (agentId: string) => {
         if (agentId === 'claude') {
             return { displayNameKey: 'agentInput.agent.claude', cli: { detectKey: 'claude' } };
@@ -84,19 +88,15 @@ function buildState(params: {
     };
 }
 
-function renderList(state: MachineCapabilitiesCacheState): renderer.ReactTestRenderer {
-    let tree: renderer.ReactTestRenderer | undefined;
-    act(() => {
-        tree = renderer.create(React.createElement(DetectedClisList, { state }));
-    });
-    return tree!;
+async function renderList(state: MachineCapabilitiesCacheState) {
+    return await renderScreen(React.createElement(DetectedClisList, { state }));
 }
 
-function findItems(tree: renderer.ReactTestRenderer): ReactTestInstance[] {
-    return tree.root.findAllByType('Item');
+function findItems(tree: Awaited<ReturnType<typeof renderList>>): ReactTestInstance[] {
+    return tree.findAllByType('Item');
 }
 
-function findItemByTitle(tree: renderer.ReactTestRenderer, title: string): ReactTestInstance | undefined {
+function findItemByTitle(tree: Awaited<ReturnType<typeof renderList>>, title: string): ReactTestInstance | undefined {
     return findItems(tree).find((node) => node.props.title === title);
 }
 
@@ -111,8 +111,8 @@ function subtitleContainsText(value: unknown, expectedText: string): boolean {
 }
 
 describe('DetectedClisList', () => {
-    it('renders the last known snapshot when refresh fails and suppresses unknown capability keys', () => {
-        const tree = renderList(buildState({
+    it('renders the last known snapshot when refresh fails and suppresses unknown capability keys', async () => {
+        const tree = await renderList(buildState({
             status: 'error',
             results: {
                 'cli.claude': buildOkResult({ available: true, version: 'v1.0.0', resolvedPath: '/usr/bin/claude' }),
@@ -128,14 +128,14 @@ describe('DetectedClisList', () => {
         expect(titles).not.toContain('tool.unknown-custom');
     });
 
-    it('shows unknown status row when in error state without a snapshot', () => {
-        const tree = renderList(buildState({ status: 'error' }));
+    it('shows unknown status row when in error state without a snapshot', async () => {
+        const tree = await renderList(buildState({ status: 'error' }));
         const titles = findItems(tree).map((node) => node.props.title);
         expect(titles).toEqual(['machine.detectedCliUnknown']);
     });
 
-    it('renders mixed availability states from loaded snapshot', () => {
-        const tree = renderList(buildState({
+    it('renders mixed availability states from loaded snapshot', async () => {
+        const tree = await renderList(buildState({
             status: 'loaded',
             results: {
                 'cli.claude': buildOkResult({ available: true, version: '1.0.0', resolvedPath: '/usr/bin/claude' }),

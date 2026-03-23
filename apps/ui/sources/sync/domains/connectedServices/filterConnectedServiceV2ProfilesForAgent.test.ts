@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentCore } from '@happier-dev/agents';
+import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES, type AgentCore } from '@happier-dev/agents';
 
 import { filterConnectedServiceV2ProfilesForAgent } from './filterConnectedServiceV2ProfilesForAgent';
 
@@ -10,13 +10,18 @@ describe('filterConnectedServiceV2ProfilesForAgent', () => {
       id: 'pi',
       cliSubcommand: 'pi',
       detectKey: 'pi',
+      cloudConnect: null,
       connectedServices: {
         supportedServiceIds: ['openai-codex', 'anthropic'],
         supportedKindsByServiceId: {
           anthropic: ['token'],
         },
       },
-      resume: { vendorResume: 'unsupported', vendorResumeIdField: null, runtimeGate: null },
+      resume: { vendorResume: 'unsupported', vendorResumeIdField: null },
+      sessionStorage: { direct: false, persisted: false },
+      sessionCapabilities: UNSUPPORTED_AGENT_SESSION_CAPABILITIES,
+      handoff: { vendorStateTransfer: 'unsupported' },
+      tools: { delivery: 'shell_bridge', support: 'experimental' },
     };
 
     const profiles = [
@@ -39,10 +44,15 @@ describe('filterConnectedServiceV2ProfilesForAgent', () => {
       id: 'pi',
       cliSubcommand: 'pi',
       detectKey: 'pi',
+      cloudConnect: null,
       connectedServices: {
         supportedServiceIds: ['openai-codex', 'anthropic'],
       },
-      resume: { vendorResume: 'unsupported', vendorResumeIdField: null, runtimeGate: null },
+      resume: { vendorResume: 'unsupported', vendorResumeIdField: null },
+      sessionStorage: { direct: false, persisted: false },
+      sessionCapabilities: UNSUPPORTED_AGENT_SESSION_CAPABILITIES,
+      handoff: { vendorStateTransfer: 'unsupported' },
+      tools: { delivery: 'shell_bridge', support: 'experimental' },
     };
 
     const profiles = [
@@ -59,4 +69,3 @@ describe('filterConnectedServiceV2ProfilesForAgent', () => {
     expect(filtered.map((p) => p.profileId)).toEqual(['work', 'personal']);
   });
 });
-

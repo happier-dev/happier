@@ -1,22 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentMessage, EventMessage } from '@/agent/core/AgentMessage';
-import { createAcpRuntime, type AcpRuntimeBackend } from '../createAcpRuntime';
+import type { EventMessage } from '@/agent/core/AgentMessage';
+import { createAcpRuntime } from '../createAcpRuntime';
 import type { Metadata } from '@/api/types';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import {
-  createApprovedPermissionHandler,
-  createBasicSessionClient,
-  createDefaultMetadata,
-  createFakeAcpRuntimeBackend,
-  createSessionClientWithMetadata,
-} from '../createAcpRuntime.testkit';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClient, createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 
 describe('createAcpRuntime (session models)', () => {
   it('publishes ACP session models into session metadata', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, metadataUpdates, getMetadata } = createSessionClientWithMetadata({
-      initialMetadata: createDefaultMetadata(),
+      initialMetadata: createTestMetadata(),
     });
 
     const runtime = createAcpRuntime({
@@ -62,7 +59,7 @@ describe('createAcpRuntime (session models)', () => {
   it('publishes model options derived from ACP config options when models are absent', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, metadataUpdates, getMetadata } = createSessionClientWithMetadata({
-      initialMetadata: createDefaultMetadata(),
+      initialMetadata: createTestMetadata(),
     });
 
     const runtime = createAcpRuntime({
@@ -113,12 +110,11 @@ describe('createAcpRuntime (session models)', () => {
 
   it('delegates setSessionModel to the backend when supported', async () => {
     let lastSet: { sessionId: string; modelId: string } | null = null;
-    const backend = {
-      ...createFakeAcpRuntimeBackend(),
+    const backend = createFakeAcpRuntimeBackend({
       async setSessionModel(sessionId: string, modelId: string) {
         lastSet = { sessionId, modelId };
       },
-    } as AcpRuntimeBackend & { emit: (msg: AgentMessage) => void };
+    });
 
     const runtime = createAcpRuntime({
       provider: 'codex',
@@ -137,17 +133,31 @@ describe('createAcpRuntime (session models)', () => {
     expect(lastSet).toEqual({ sessionId: 'sess_main', modelId: 'model-b' });
   });
 
+  it('rejects setSessionModel before the ACP runtime has started', async () => {
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => createFakeAcpRuntimeBackend(),
+    });
+
+    await expect(runtime.setSessionModel('model-b')).rejects.toThrow(/ACP session was not started/);
+  });
+
   it('falls back to session/set_config_option(model=...) when session/set_model is unsupported', async () => {
     let lastSetConfig: { sessionId: string; configId: string; value: unknown } | null = null;
-    const backend = {
-      ...createFakeAcpRuntimeBackend(),
+    const backend = createFakeAcpRuntimeBackend({
       async setSessionConfigOption(sessionId: string, configId: string, value: unknown) {
         lastSetConfig = { sessionId, configId, value };
       },
       async setSessionModel(_sessionId: string, _modelId: string) {
         throw new Error('ACP SDK does not support session/set_model');
       },
-    } as AcpRuntimeBackend & { emit: (msg: AgentMessage) => void };
+    });
 
     const runtime = createAcpRuntime({
       provider: 'codex',
@@ -168,15 +178,14 @@ describe('createAcpRuntime (session models)', () => {
 
   it('falls back to config option id "model" when provider model config lookup fails', async () => {
     let lastSetConfig: { sessionId: string; configId: string; value: unknown } | null = null;
-    const backend = {
-      ...createFakeAcpRuntimeBackend(),
+    const backend = createFakeAcpRuntimeBackend({
       async setSessionConfigOption(sessionId: string, configId: string, value: unknown) {
         lastSetConfig = { sessionId, configId, value };
       },
       async setSessionModel(_sessionId: string, _modelId: string) {
         throw new Error('ACP SDK does not support session/set_model');
       },
-    } as AcpRuntimeBackend & { emit: (msg: AgentMessage) => void };
+    });
 
     const runtime = createAcpRuntime({
       provider: 'not-a-real-provider' as any,

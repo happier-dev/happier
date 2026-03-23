@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { applyEnvValues, restoreEnv, snapshotEnv } from "../testkit/env";
 import { enableServeUi } from './enableServeUi';
 
 async function withTempDir(prefix: string, run: (dir: string) => Promise<void>) {
@@ -75,10 +76,12 @@ describe('enableServeUi (mountRoot)', () => {
   });
 
   it('does not leak absolute index.html path when NODE_ENV=production', async () => {
-    const originalNodeEnv = process.env.NODE_ENV;
+    const envSnapshot = snapshotEnv();
     await withTempDir('happier-ui-missing-prod-', async (dir) => {
       try {
-        process.env.NODE_ENV = 'production';
+        applyEnvValues({
+          NODE_ENV: 'production',
+        });
         await withApp(async (app) => {
           enableServeUi(app, { dir, prefix: '/', mountRoot: true, required: false });
           await app.ready();
@@ -90,7 +93,7 @@ describe('enableServeUi (mountRoot)', () => {
           expect(res.body).not.toContain(join(dir, 'index.html'));
         });
       } finally {
-        process.env.NODE_ENV = originalNodeEnv;
+        restoreEnv(envSnapshot);
       }
     });
   });

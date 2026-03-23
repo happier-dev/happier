@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, rm, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { analyzeTarList, findMonorepoRoot, resolvePackDirForComponent } from './pack.mjs';
@@ -65,4 +65,12 @@ test('resolvePackDirForComponent prefers explicitDir override', async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('stack package exposes happier as a published binary', async () => {
+  const pkg = JSON.parse(await readFile(resolve('apps', 'stack', 'package.json'), 'utf8'));
+  assert.deepEqual(pkg.bin, {
+    hstack: './bin/hstack.mjs',
+    happier: './bin/happier.mjs',
+  });
 });

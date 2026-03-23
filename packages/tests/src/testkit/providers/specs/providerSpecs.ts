@@ -20,6 +20,20 @@ type ProviderSpecRecord = {
   spec: CliProviderSpecV1;
 };
 
+function resolveCoverageExpectation(
+  scenariosRegistry: CliProviderScenarioRegistryV1,
+): ProviderUnderTest['coverageExpectation'] {
+  if (scenariosRegistry.coverageExpectation) {
+    return scenariosRegistry.coverageExpectation;
+  }
+
+  return {
+    providerLaneScope: 'declared-scenarios',
+    defaultRuntimePath: 'provider-lane',
+    appServerCoverage: 'not-applicable',
+  };
+}
+
 function providerSpecSearchDirs(): string[] {
   return [
     join(repoRootDir(), 'apps', 'cli', 'src', 'backends'),
@@ -125,6 +139,7 @@ export async function loadProvidersFromCliSpecs(): Promise<ProviderUnderTest[]> 
       enableEnvVar: spec.enableEnvVar,
       protocol: spec.protocol,
       traceProvider: spec.traceProvider,
+      coverageExpectation: resolveCoverageExpectation(scenariosRegistry),
       requiredEnv: spec.requiredEnv,
       auth: spec.auth,
       permissions: spec.permissions,

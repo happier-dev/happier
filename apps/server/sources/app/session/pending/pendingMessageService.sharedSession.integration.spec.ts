@@ -1,15 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
-import { initDbSqlite, db } from "@/storage/db";
-import type { Prisma } from "@/storage/prisma";
+import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
-import { restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
 import {
     deletePendingMessage,
     discardPendingMessage,
@@ -20,62 +14,24 @@ import {
     restorePendingMessage,
     updatePendingMessage,
 } from "./pendingMessageService";
-
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 120_000,
-            killSignal: "SIGKILL",
-        },
-    );
-    if (res.error) {
-        throw new Error(`prisma migrate deploy failed before completion: ${res.error.message}`);
-    }
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 describe("pendingMessageService (shared sessions)", () => {
-    const envBackup = snapshotEnv();
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-pending-shared-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        Object.assign(process.env, {
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-pending-shared-",
+            initAuth: true,
         });
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = snapshotEnv();
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await auth.init();
     }, 120_000);
 
     afterAll(async () => {
-        await db.$disconnect();
-        restoreEnv(envBackup);
-        await rm(baseDir, { recursive: true, force: true });
+        await harness.close();
     });
 
     beforeEach(() => {
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
     });
 
     const createAccount = async (kind: string) => {

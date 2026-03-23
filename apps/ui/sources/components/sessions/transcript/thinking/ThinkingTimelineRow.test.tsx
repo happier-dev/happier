@@ -1,18 +1,26 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
-vi.mock('react-native', () => ({
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 input: { background: '#222' },
@@ -23,26 +31,8 @@ vi.mock('react-native-unistyles', () => ({
                 surfacePressedOverlay: '#333',
             },
         },
-    }),
-    StyleSheet: {
-        create: (input: any) =>
-            typeof input === 'function'
-                ? input(
-                      {
-                          colors: {
-                              input: { background: '#222' },
-                              text: '#fff',
-                              textSecondary: '#aaa',
-                              surface: '#111',
-                              surfaceHigh: '#222',
-                              surfacePressedOverlay: '#333',
-                          },
-                      },
-                      {},
-                  )
-                : input,
-    },
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -57,9 +47,7 @@ describe('ThinkingTimelineRow', () => {
         const { ThinkingTimelineRow } = await import('./ThinkingTimelineRow');
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ThinkingTimelineRow
+        tree = (await renderScreen(<ThinkingTimelineRow
                     id="t1"
                     createdAt={1}
                     label="Thinking"
@@ -69,23 +57,20 @@ describe('ThinkingTimelineRow', () => {
                     chrome="plain"
                 >
                     {React.createElement('Text', { testID: 'body' }, 'BODY')}
-                </ThinkingTimelineRow>,
-            );
-        });
+                </ThinkingTimelineRow>)).tree;
 
-        const summaryNode = tree!.root.findByProps({ testID: 'transcript-thinking-summary-inline' });
+        const summaryNode = tree!.findByProps({ testID: 'transcript-thinking-summary-inline' });
         expect(String(summaryNode.props.children)).toBe('Hello world…');
-        const iconCollapsed = tree!.root.findAllByType('Ionicons').at(-1) as any;
+        const iconCollapsed = tree!.findAllByType('Ionicons').at(-1) as any;
         expect(iconCollapsed?.props?.name).toBe('chevron-down-outline');
 
-        const header = tree!.root.findByProps({ testID: 'transcript-thinking-header' });
         await act(async () => {
-            header.props.onPress();
+            await tree!.pressByTestIdAsync('transcript-thinking-header');
         });
 
-        expect(tree!.root.findAllByProps({ testID: 'transcript-thinking-summary-inline' })).toHaveLength(0);
-        const iconExpanded = tree!.root.findAllByType('Ionicons').at(-1) as any;
+        expect(tree!.findAllByTestId('transcript-thinking-summary-inline')).toHaveLength(0);
+        const iconExpanded = tree!.findAllByType('Ionicons').at(-1) as any;
         expect(iconExpanded?.props?.name).toBe('chevron-up-outline');
-        expect(tree!.root.findAllByProps({ testID: 'body' })).toHaveLength(1);
+        expect(tree!.findAllByTestId('body')).toHaveLength(1);
     });
 });

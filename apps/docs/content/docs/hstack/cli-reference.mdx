@@ -43,7 +43,9 @@ Lifecycle:
 - List/info: `hstack stack list`, `hstack stack info <name>`
 - Run: `hstack stack dev <name>`, `hstack stack start <name>`
 - Stop: `hstack stack stop <name>`
-- Build UI: `hstack stack build <name>`
+- Build: `hstack stack build <name>`, `hstack stack build <name> --web|--server|--daemon|--all`, `hstack stack build <name> --activate-runtime`
+  - `--tauri` is still the legacy local `hstack build` flag, not a named-stack artifact/runtime target in v1.
+- Activate runtime from existing artifacts: `hstack stack runtime <name> activate --web|--server|--daemon|--all`
 - Diagnose: `hstack stack doctor <name>`
 
 Pin a stack to a worktree/checkout:
@@ -62,6 +64,40 @@ Auth:
 Stack-scoped app CLI (runs the Happier CLI/daemon in stack context):
 
 - `hstack stack happier <name> -- <args...>`
+
+Services:
+
+- `hstack stack service <name> install|enable|status|restart|logs|tail`
+
+Menu bar:
+
+- `hstack menubar install --stack=<name> --mode=selfhost`
+
+Typical production-like named-stack flow:
+
+```bash
+hstack stack new dev-built --repo=/absolute/path/to/checkout
+hstack stack build dev-built --activate-runtime
+hstack stack env dev-built set HAPPIER_STACK_RUNTIME_MODE=prefer
+hstack stack service dev-built install
+hstack stack service dev-built enable
+hstack menubar install --stack=dev-built --mode=selfhost
+```
+
+Component-only runtime refreshes:
+
+```bash
+# UI-only refresh
+hstack stack build dev-built --web
+hstack stack runtime dev-built activate --web
+```
+
+```bash
+# Server-only refresh
+hstack stack build dev-built --server
+hstack stack runtime dev-built activate --server
+hstack stack service dev-built restart
+```
 
 PR stacks:
 

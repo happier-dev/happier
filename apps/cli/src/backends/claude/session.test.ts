@@ -195,6 +195,35 @@ describe('Session', () => {
     }
   });
 
+  it('publishes direct-session metadata when transcript storage is direct', () => {
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+    vi.stubEnv('CLAUDE_CONFIG_DIR', '/tmp/.claude');
+    let metadata: Metadata = createMetadataStub({ machineId: 'machine-1' } as Partial<Metadata>);
+
+    const client = createSessionClientStub({
+      updateMetadata: (updater) => {
+        metadata = updater(metadata);
+      },
+    });
+
+    const session = createSession(client);
+
+    try {
+      session.onSessionFound('sess_1', hookWithTranscript('/tmp/.claude/projects/proj-a/sess_1.jsonl'));
+
+      expect(metadata.directSessionV1).toMatchObject({
+        v: 1,
+        providerId: 'claude',
+        machineId: 'machine-1',
+        remoteSessionId: 'sess_1',
+        source: { kind: 'claudeConfig', configDir: '/tmp/.claude', projectId: 'proj-a' },
+      });
+    } finally {
+      session.cleanup();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('does not carry over transcriptPath when sessionId changes and hook lacks transcriptPath', () => {
     let metadata: Metadata = createMetadataStub();
 

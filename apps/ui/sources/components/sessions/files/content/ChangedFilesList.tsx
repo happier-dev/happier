@@ -15,6 +15,8 @@ type ChangedFilesListProps = {
     changedFilesViewMode: ChangedFilesViewMode;
     attributionReliability: SessionAttributionReliability;
     allRepositoryChangedFiles: ScmFileStatus[];
+    turnAttributedFiles?: SessionAttributedFile[];
+    turnRepositoryOnlyFiles?: ScmFileStatus[];
     sessionAttributedFiles: SessionAttributedFile[];
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
@@ -31,8 +33,8 @@ export function ChangedFilesList({
     changedFilesViewMode,
     attributionReliability,
     allRepositoryChangedFiles,
+    turnAttributedFiles = [],
     sessionAttributedFiles,
-    repositoryOnlyFiles,
     suppressedInferredCount,
     onFilePress,
     onFilePressPinned,
@@ -52,9 +54,12 @@ export function ChangedFilesList({
         });
     }, [sessionAttributedFiles]);
 
-    const filteredRepositoryOnlyFiles = React.useMemo(() => {
-        return filterDirectoryLikeScmFileStatuses(repositoryOnlyFiles);
-    }, [repositoryOnlyFiles]);
+    const filteredTurnAttributedFiles = React.useMemo(() => {
+        return turnAttributedFiles.filter((entry) => {
+            if (!entry?.file) return false;
+            return !isDirectoryLikeScmFileStatus(entry.file);
+        });
+    }, [turnAttributedFiles]);
 
     if (changedFilesViewMode === 'repository') {
         return (
@@ -76,6 +81,66 @@ export function ChangedFilesList({
                         showDivider={index < repositoryChangedFiles.length - 1}
                     />
                 ))}
+            </>
+        );
+    }
+
+    if (changedFilesViewMode === 'turn') {
+        return (
+            <>
+                <View
+                    style={{
+                        backgroundColor: theme.colors.surfaceHigh,
+                        paddingHorizontal: 16,
+                        paddingVertical: 12,
+                        borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                        borderBottomColor: theme.colors.divider,
+                    }}
+                >
+                    <Text
+                        style={{
+                            fontSize: 14,
+                            color: theme.colors.text,
+                            ...Typography.default('semiBold'),
+                        }}
+                    >
+                        {t('files.latestTurnChanges', { count: filteredTurnAttributedFiles.length })}
+                    </Text>
+                    <Text
+                        style={{
+                            marginTop: 4,
+                            fontSize: 12,
+                            color: theme.colors.textSecondary,
+                            ...Typography.default(),
+                        }}
+                    >
+                        {t('files.latestTurnDescription')}
+                    </Text>
+                </View>
+
+                {filteredTurnAttributedFiles.length === 0 ? (
+                    <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+                            {t('files.noLatestTurnChanges')}
+                        </Text>
+                    </View>
+                ) : (
+                    filteredTurnAttributedFiles.map((entry, index) => (
+                        <ScmChangeRow
+                            key={`turn-${entry.file.fullPath}-${index}`}
+                            theme={theme}
+                            file={entry.file}
+                            density={rowDensity}
+                            leadingElement={renderFileActions ? renderFileActions(entry.file) : null}
+                            trailingElement={renderFileTrailingActions ? renderFileTrailingActions(entry.file) : null}
+                            onPress={() => onFilePress(entry.file)}
+                            onPressPinned={onFilePressPinned ? () => onFilePressPinned(entry.file) : undefined}
+                            onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(entry.file) : undefined}
+                            showDivider={index < filteredTurnAttributedFiles.length - 1}
+                        />
+                    ))
+                )}
+
             </>
         );
     }
@@ -159,28 +224,6 @@ export function ChangedFilesList({
                         showDivider={index < filteredSessionAttributedFiles.length - 1}
                     />
                 ))
-            )}
-
-            {filteredRepositoryOnlyFiles.length > 0 && (
-                <>
-                    <ChangedFilesSectionHeader theme={theme} color={theme.colors.textSecondary}>
-                        {t('files.otherRepositoryChanges', { count: filteredRepositoryOnlyFiles.length })}
-                    </ChangedFilesSectionHeader>
-                    {filteredRepositoryOnlyFiles.map((file, index) => (
-                        <ScmChangeRow
-                            key={`repo-${file.fullPath}-${index}`}
-                            theme={theme}
-                            file={file}
-                            density={rowDensity}
-                            leadingElement={renderFileActions ? renderFileActions(file) : null}
-                            trailingElement={renderFileTrailingActions ? renderFileTrailingActions(file) : null}
-                            onPress={() => onFilePress(file)}
-                            onPressPinned={onFilePressPinned ? () => onFilePressPinned(file) : undefined}
-                            onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(file) : undefined}
-                            showDivider={index < filteredRepositoryOnlyFiles.length - 1}
-                        />
-                    ))}
-                </>
             )}
         </>
     );

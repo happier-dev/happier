@@ -17,6 +17,12 @@ describe('buildHappySessionControlArgs', () => {
     })).toEqual(['--model', 'o3', '--model-updated-at', '456']);
   });
 
+  it('includes agent mode flags when provided', () => {
+    expect(buildHappySessionControlArgs({
+      agentModeId: 'plan',
+    })).toEqual(['--agent-mode', 'plan']);
+  });
+
   it('omits model flags when modelUpdatedAt is missing', () => {
     expect(buildHappySessionControlArgs({
       modelId: 'o3',
@@ -49,5 +55,11 @@ describe('buildHappySessionControlArgs', () => {
       modelId: 'o3',
       modelUpdatedAt: 0,
     })).toEqual(['--model', 'o3', '--model-updated-at', '0']);
+  });
+
+  it('includes backend flag when the backend target is a configured ACP backend', () => {
+    expect(buildHappySessionControlArgs({
+      backendTarget: { kind: 'configuredAcpBackend', backendId: ' custom-kiro ' },
+    })).toEqual(['--backend', 'custom-kiro']);
   });
 });

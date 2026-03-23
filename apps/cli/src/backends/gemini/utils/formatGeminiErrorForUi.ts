@@ -1,5 +1,7 @@
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { getSuggestedGeminiModelsForUi } from '@/backends/gemini/models/suggestedGeminiModelsForUi';
+import { buildProviderCliUnavailableMessage } from '@/runtime/managedTools/buildProviderCliUnavailableMessage';
+import { buildGeminiWorkspaceProjectAuthenticationMessage } from './buildGeminiWorkspaceProjectGuidance';
 
 export function formatGeminiErrorForUi(error: unknown, displayedModel?: string | null): string {
     // Parse error message (keep existing UX-focused heuristics; avoid dumping stacks unless needed)
@@ -76,20 +78,16 @@ export function formatGeminiErrorForUi(error: unknown, displayedModel?: string |
             errorMsg = `Gemini quota exceeded.${resetTimeMsg} Try using a different model (gemini-2.5-flash-lite) or wait for quota reset.`;
         }
         // Check for authentication error (Google Workspace accounts need project ID)
-	        else if (
-	            errorMessage.includes('Authentication required') ||
-	            errorDetails.includes('Authentication required') ||
-	            errorCode === -32000
-	        ) {
-	            errorMsg =
-	                `Authentication required. For Google Workspace accounts, you need to set a Google Cloud Project:\n` +
-	                `  happier gemini project set <your-project-id>\n` +
-	                `Or use a different Google account: happier connect gemini\n` +
-	                `Guide: https://goo.gle/gemini-cli-auth-docs#workspace-gca`;
-	        }
+        else if (
+            errorMessage.includes('Authentication required') ||
+            errorDetails.includes('Authentication required') ||
+            errorCode === -32000
+        ) {
+            errorMsg = buildGeminiWorkspaceProjectAuthenticationMessage();
+        }
         // Check for empty error (command not found). Ignore Error instances here.
         else if (!isErrorInstance && Object.keys(error).length === 0) {
-            errorMsg = 'Failed to start Gemini. Is "gemini" CLI installed? Run: npm install -g @google/gemini-cli';
+            errorMsg = `Failed to start Gemini. ${buildProviderCliUnavailableMessage({ agentId: 'gemini' })}`;
         }
         // Use message from error object (prefer details if present)
         else if (errObj.message || errorMessage) {

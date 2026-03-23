@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createDbMocks, installDbModuleMock } from "../testkit/dbMocks";
 import { createInTxHarness } from "../testkit/txHarness";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
@@ -38,49 +40,37 @@ vi.mock("@/app/monitoring/metrics2", () => ({
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-let txArtifactFindFirst: any;
-let txArtifactFindUnique: any;
-let txArtifactUpdateMany: any;
-let txArtifactCreate: any;
-let txArtifactDelete: any;
+const txDbMocks = createDbMocks({
+    artifact: ["findFirst", "findUnique", "updateMany", "create", "delete"],
+} as const);
 
 vi.mock("@/storage/inTx", () => {
     const { inTx, afterTx } = createInTxHarness(() => ({
-            artifact: {
-                findFirst: (...args: any[]) => txArtifactFindFirst(...args),
-                findUnique: (...args: any[]) => txArtifactFindUnique(...args),
-                updateMany: (...args: any[]) => txArtifactUpdateMany(...args),
-                create: (...args: any[]) => txArtifactCreate(...args),
-                delete: (...args: any[]) => txArtifactDelete(...args),
-            },
+            artifact: txDbMocks.db.artifact,
     }));
 
     return { afterTx, inTx };
 });
 
-const dbArtifactFindUnique = vi.fn();
-vi.mock("@/storage/db", () => ({
-    db: {
-        artifact: {
-            findUnique: (...args: any[]) => dbArtifactFindUnique(...args),
-        },
-    },
+const dbMocks = createDbMocks({
+    artifact: ["findUnique"],
+} as const);
+const dbArtifactFindUnique = dbMocks.db.artifact.findUnique;
+installDbModuleMock(() => ({
+    db: dbMocks.db,
 }));
 
 describe("artifactUpdateHandler (AccountChange integration)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        dbMocks.reset();
+        txDbMocks.reset();
 
         dbArtifactFindUnique.mockResolvedValue(null);
-        txArtifactFindFirst = vi.fn();
-        txArtifactFindUnique = vi.fn();
-        txArtifactUpdateMany = vi.fn();
-        txArtifactCreate = vi.fn();
-        txArtifactDelete = vi.fn();
     });
 
     it("marks artifact update and emits update using returned cursor", async () => {
-        txArtifactFindFirst.mockResolvedValue({
+        txDbMocks.db.artifact.findFirst.mockResolvedValue({
             id: "a1",
             accountId: "u1",
             header: Buffer.from("h"),
@@ -92,7 +82,7 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
             createdAt: new Date(1),
             updatedAt: new Date(1),
         });
-        txArtifactUpdateMany.mockResolvedValue({ count: 1 });
+        txDbMocks.db.artifact.updateMany.mockResolvedValue({ count: 1 });
 
         const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
 
@@ -132,8 +122,8 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
     });
 
     it("marks artifact create and emits new-artifact using returned cursor", async () => {
-        txArtifactFindUnique.mockResolvedValue(null);
-        txArtifactCreate.mockResolvedValue({
+        txDbMocks.db.artifact.findUnique.mockResolvedValue(null);
+        txDbMocks.db.artifact.create.mockResolvedValue({
             id: "a2",
             accountId: "u1",
             header: Buffer.from("h"),
@@ -170,8 +160,8 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
     });
 
     it("marks artifact delete and emits delete-artifact using returned cursor", async () => {
-        txArtifactFindFirst.mockResolvedValue({ id: "a3" });
-        txArtifactDelete.mockResolvedValue({ id: "a3" });
+        txDbMocks.db.artifact.findFirst.mockResolvedValue({ id: "a3" });
+        txDbMocks.db.artifact.delete.mockResolvedValue({ id: "a3" });
 
         const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
 

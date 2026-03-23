@@ -7,7 +7,7 @@ import { useHeaderHeight } from '@react-navigation/elements';
 import Constants from 'expo-constants';
 import { t } from '@/text';
 import { ProfileEditForm } from '@/components/profiles/edit';
-import { AIBackendProfile } from '@/sync/domains/settings/settings';
+import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { layout } from '@/components/ui/layout/layout';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { DEFAULT_PROFILES, getBuiltInProfile, getBuiltInProfileNameKey, resolveProfileById } from '@/sync/domains/profiles/profileUtils';
@@ -17,6 +17,8 @@ import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert'
 import { Ionicons } from '@expo/vector-icons';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 export default React.memo(function ProfileEditScreen() {
     const { theme } = useUnistyles();
@@ -191,58 +193,47 @@ export default React.memo(function ProfileEditScreen() {
             // selection to /new and close itself. This avoids stacking /new on top of /new (wizard case).
             isDirtyRef.current = false;
             setIsDirty(false);
-            const state = (navigation as any).getState?.();
-            const previousRoute = state?.routes?.[state.index - 1];
-            if (state && state.index > 0 && previousRoute) {
-                (navigation as any).dispatch({
-                    type: 'SET_PARAMS',
-                    payload: { params: { profileId: profileToSave.id } },
-                    source: previousRoute.key,
-                } as never);
-                router.back();
-                return true;
+            const returnMode = setNewSessionPickerReturnParams({
+                navigation: navigation as any,
+                router,
+                routeParams: { profileId: profileToSave.id },
+            });
+            if (returnMode === 'dispatch') {
+                safeRouterBack({ router, navigation, fallbackHref: '/new' });
             }
-
-            // Fallback: if we can't find a previous route to set params on, go to /new directly.
-            router.replace({
-                pathname: '/new',
-                params: { profileId: profileToSave.id },
-            } as any);
             return true;
         }
 
         // Pass selection back to the /new screen via navigation params (unmount-safe).
-        const state = (navigation as any).getState?.();
-        const previousRoute = state?.routes?.[state.index - 1];
-        if (state && state.index > 0 && previousRoute) {
-            (navigation as any).dispatch({
-                type: 'SET_PARAMS',
-                payload: { params: { profileId: profileToSave.id } },
-                source: previousRoute.key,
-            } as never);
+        const returnMode = setNewSessionPickerReturnParams({
+            navigation: navigation as any,
+            router,
+            routeParams: { profileId: profileToSave.id },
+        });
+        if (returnMode === 'dispatch') {
+            safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
         // Prevent the unsaved-changes guard from triggering on successful save.
         isDirtyRef.current = false;
         setIsDirty(false);
-        router.back();
         return true;
     };
 
     const handleCancel = React.useCallback(() => {
         fireAndForget((async () => {
             if (!isDirtyRef.current) {
-                router.back();
+                safeRouterBack({ router, navigation, fallbackHref: '/new' });
                 return;
             }
             const decision = await confirmDiscard();
             if (decision === 'discard') {
                 isDirtyRef.current = false;
-                router.back();
+                safeRouterBack({ router, navigation, fallbackHref: '/new' });
             } else if (decision === 'save') {
                 saveRef.current?.();
             }
         })(), { tag: 'ProfileEditScreen.cancel' });
-    }, [confirmDiscard, router]);
+    }, [confirmDiscard, navigation, router]);
 
     const headerTitle = profile.name ? t('profiles.editProfile') : t('profiles.addProfile');
     const headerBackTitle = t('common.back');

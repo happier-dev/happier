@@ -16,6 +16,7 @@ import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domain
 import { clearPendingTerminalConnect, getPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { buildTerminalConnectDeepLink } from '@/utils/path/terminalConnectUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnistyles } from 'react-native-unistyles';
 
 export default function TerminalConnectScreen() {
@@ -26,9 +27,14 @@ export default function TerminalConnectScreen() {
     const [hashProcessed, setHashProcessed] = useState(false);
     const auth = useAuth();
     const authRedirectTriggeredRef = React.useRef(false);
+
+    const navigateBackOrToTerminal = React.useCallback(() => {
+        safeRouterBack({ router, fallbackHref: '/terminal' });
+    }, [router]);
+
     const { processAuthUrl, isLoading } = useConnectTerminal({
         onSuccess: () => {
-            router.back();
+            navigateBackOrToTerminal();
         }
     });
 
@@ -108,7 +114,7 @@ export default function TerminalConnectScreen() {
 
     const handleReject = () => {
         clearPendingTerminalConnect();
-        router.back();
+        navigateBackOrToTerminal();
     };
 
     // Show placeholder for mobile platforms

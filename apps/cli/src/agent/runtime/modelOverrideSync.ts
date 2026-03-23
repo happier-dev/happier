@@ -12,21 +12,20 @@ export function createModelOverrideSynchronizer(params: Readonly<{
 } {
   let lastAppliedUpdatedAt = 0;
   let pending: { modelId: string; updatedAt: number } | null = null;
-  let applying = false;
+  let applyingPromise: Promise<void> | null = null;
 
-  const applyPendingIfPossible = (): void => {
-    if (applying) return;
-    if (!pending) return;
-    if (!params.isStarted()) return;
+  const applyPendingIfPossible = (): Promise<void> => {
+    if (applyingPromise) return applyingPromise;
+    if (!pending) return Promise.resolve();
+    if (!params.isStarted()) return Promise.resolve();
 
     const next = pending;
     if (next.updatedAt <= lastAppliedUpdatedAt) {
       pending = null;
-      return;
+      return Promise.resolve();
     }
 
-    applying = true;
-    params.runtime
+    applyingPromise = params.runtime
       .setSessionModel(next.modelId)
       .then(() => {
         // Only mark as applied after a successful runtime update so failures can be retried.
@@ -37,17 +36,20 @@ export function createModelOverrideSynchronizer(params: Readonly<{
         // Best-effort only. Keep `pending` so the next sync attempt can retry.
       })
       .finally(() => {
-        applying = false;
+        applyingPromise = null;
         // If a newer override arrived while we were applying, attempt to apply it now.
-        if (pending && pending.updatedAt > lastAppliedUpdatedAt && params.isStarted()) {
-          applyPendingIfPossible();
+        if (pending && pending.updatedAt > next.updatedAt && params.isStarted()) {
+          void applyPendingIfPossible();
         }
       });
+
+    return applyingPromise;
   };
 
   const syncFromMetadata = (): void => {
+    const snapshot = params.session.getMetadataSnapshot();
     const next = computePendingModelOverrideApplication({
-      metadata: params.session.getMetadataSnapshot(),
+      metadata: snapshot,
       lastAppliedUpdatedAt,
     });
     if (!next) return;
@@ -58,30 +60,16 @@ export function createModelOverrideSynchronizer(params: Readonly<{
     }
 
     pending = next;
-    applyPendingIfPossible();
+    void applyPendingIfPossible();
   };
 
   const flushPendingAfterStart = async (): Promise<void> => {
-    if (applying) return;
     if (!pending) return;
     if (!params.isStarted()) return;
 
     const next = pending;
     if (next.updatedAt <= lastAppliedUpdatedAt) return;
-
-    applying = true;
-    try {
-      await params.runtime.setSessionModel(next.modelId);
-      lastAppliedUpdatedAt = next.updatedAt;
-      if (pending && pending.updatedAt <= lastAppliedUpdatedAt) pending = null;
-    } catch {
-      // Best-effort only.
-    } finally {
-      applying = false;
-      if (pending && pending.updatedAt > lastAppliedUpdatedAt && params.isStarted()) {
-        applyPendingIfPossible();
-      }
-    }
+    await applyPendingIfPossible();
   };
 
   return { syncFromMetadata, flushPendingAfterStart };

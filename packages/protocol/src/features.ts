@@ -31,6 +31,17 @@ export {
   DEFAULT_AUTH_CAPABILITIES,
   type AuthCapabilities,
 } from './features/payload/capabilities/authCapabilities.js';
+export {
+  DEFAULT_MACHINE_TRANSFER_CAPABILITIES,
+  DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_CAPABILITIES,
+  MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY,
+  MachineTransferCapabilitiesSchema,
+  MachineTransferServerRoutedCapabilitiesSchema,
+  normalizeMachineTransferServerRoutedMaxBytes,
+  readMachineTransferServerRoutedMaxBytes,
+  type MachineTransferCapabilities,
+  type MachineTransferServerRoutedCapabilities,
+} from './features/payload/capabilities/machineTransferCapabilities.js';
 
 export { CapabilitiesSchema, type Capabilities } from './features/payload/capabilities/capabilitiesSchema.js';
 export { FeatureGatesSchema, type FeatureGates } from './features/payload/featureGatesSchema.js';

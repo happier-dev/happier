@@ -1,10 +1,13 @@
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { resolveScopedSessionCryptoContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveScopedSessionDataKey';
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
+import type { ResolvedServerSessionRpcContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import type { SocketRpcResult } from './serverScopedRpcTypes';
 
@@ -12,41 +15,42 @@ function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
 }
 
-export async function sessionRpcWithServerScope<R, A>(params: Readonly<{
+function shouldRetryWithScopedSessionContext(error: unknown): boolean {
+  if (readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /session encryption not found/i.test(message);
+}
+
+async function callScopedSessionRpc<R, A>(params: Readonly<{
   sessionId: string;
-  serverId?: string | null;
   method: string;
   payload: A;
-  timeoutMs?: number;
+  context: Extract<ResolvedServerSessionRpcContext, { scope: 'scoped' }>;
 }>): Promise<R> {
-  const sessionId = normalizeId(params.sessionId);
-  const context = await resolveServerScopedSessionContext({ serverId: params.serverId, timeoutMs: params.timeoutMs });
-
-  if (context.scope === 'active') {
-    return await apiSocket.sessionRPC<R, A>(sessionId, params.method, params.payload);
-  }
-
   const cryptoContext = await resolveScopedSessionCryptoContext({
-    serverId: context.targetServerId,
-    serverUrl: context.targetServerUrl,
-    token: context.token,
-    sessionId,
-    timeoutMs: context.timeoutMs,
-    decryptEncryptionKey: (value) => context.encryption.decryptEncryptionKey(value),
+    serverId: params.context.targetServerId,
+    serverUrl: params.context.targetServerUrl,
+    token: params.context.token,
+    sessionId: params.sessionId,
+    timeoutMs: params.context.timeoutMs,
+    decryptEncryptionKey: (value) => params.context.encryption.decryptEncryptionKey(value),
   });
 
   const socket = await createEphemeralServerSocketClient({
-    serverUrl: context.targetServerUrl,
-    token: context.token,
-    timeoutMs: context.timeoutMs,
+    serverUrl: params.context.targetServerUrl,
+    token: params.context.token,
+    timeoutMs: params.context.timeoutMs,
   });
   try {
     if (cryptoContext.encryptionMode === 'plain') {
       const result = (await socket
-        .timeout(context.timeoutMs)
+        .timeout(params.context.timeoutMs)
         .emitWithAck(SOCKET_RPC_EVENTS.CALL, {
-          method: `${sessionId}:${params.method}`,
+          method: `${params.sessionId}:${params.method}`,
           params: params.payload,
+          timeoutMs: params.context.timeoutMs,
         })) as SocketRpcResult;
 
       if (result.ok) return result.result as R;
@@ -64,20 +68,21 @@ export async function sessionRpcWithServerScope<R, A>(params: Readonly<{
       });
     }
 
-    await context.encryption.initializeSessions(new Map([[sessionId, cryptoContext.sessionDataKey]]));
-    const sessionEncryption = context.encryption.getSessionEncryption(sessionId);
+    await params.context.encryption.initializeSessions(new Map([[params.sessionId, cryptoContext.sessionDataKey]]));
+    const sessionEncryption = params.context.encryption.getSessionEncryption(params.sessionId);
     if (!sessionEncryption) {
       throw createRpcCallError({
-        error: `Session encryption not found for ${sessionId}`,
+        error: `Session encryption not found for ${params.sessionId}`,
         errorCode: 'session_encryption_not_found',
       });
     }
 
     const result = (await socket
-      .timeout(context.timeoutMs)
+      .timeout(params.context.timeoutMs)
       .emitWithAck(SOCKET_RPC_EVENTS.CALL, {
-        method: `${sessionId}:${params.method}`,
+        method: `${params.sessionId}:${params.method}`,
         params: await sessionEncryption.encryptRaw(params.payload),
+        timeoutMs: params.context.timeoutMs,
       })) as SocketRpcResult;
 
     if (result.ok) {
@@ -91,4 +96,43 @@ export async function sessionRpcWithServerScope<R, A>(params: Readonly<{
   } finally {
     socket.disconnect();
   }
+}
+
+export async function sessionRpcWithServerScope<R, A>(params: Readonly<{
+  sessionId: string;
+  serverId?: string | null;
+  method: string;
+  payload: A;
+  timeoutMs?: number;
+}>): Promise<R> {
+  const sessionId = normalizeId(params.sessionId);
+  const context = await resolveServerScopedSessionContext({ serverId: params.serverId, timeoutMs: params.timeoutMs });
+
+  if (context.scope === 'active') {
+    try {
+      return await apiSocket.sessionRPC<R, A>(sessionId, params.method, params.payload, {
+        timeoutMs: context.timeoutMs,
+      });
+    } catch (error) {
+      if (!shouldRetryWithScopedSessionContext(error)) throw error;
+      const retryContext = await resolveServerScopedSessionContext({
+        serverId: params.serverId,
+        timeoutMs: params.timeoutMs,
+        preferScoped: true,
+      });
+      if (retryContext.scope !== 'scoped') throw error;
+      return await callScopedSessionRpc({
+        sessionId,
+        method: params.method,
+        payload: params.payload,
+        context: retryContext,
+      });
+    }
+  }
+  return await callScopedSessionRpc({
+    sessionId,
+    method: params.method,
+    payload: params.payload,
+    context,
+  });
 }

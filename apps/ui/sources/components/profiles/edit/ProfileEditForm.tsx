@@ -5,10 +5,10 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { AIBackendProfile, type SavedSecret } from '@/sync/domains/settings/settings';
+import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { type SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { normalizeProfileDefaultPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType, normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
-import { SessionTypeSelector } from '@/components/ui/forms/SessionTypeSelector';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
@@ -16,20 +16,42 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { getBuiltInProfileDocumentation } from '@/sync/domains/profiles/profileUtils';
 import { EnvironmentVariablesList } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
-import { useSetting, useAllMachines, useMachine, useSettingMutable } from '@/sync/domains/state/storage';
+import { useSetting, useSettings, useAllMachines, useMachine, useSettingMutable } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
-import { OptionTiles } from '@/components/ui/forms/OptionTiles';
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { layout } from '@/components/ui/layout/layout';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { DEFAULT_AGENT_ID, getAgentCore, type AgentId, type MachineLoginKey } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { supportsDirectTranscriptStorageForNewSession } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
+import { readAccountTranscriptStorageDefaults, type SessionTranscriptStorageMode } from '@/sync/domains/session/transcriptStorageDefaults';
 import { MachinePreviewModal } from './MachinePreviewModal';
+import { resolveMachineLoginRequirementForProfileTargets } from './resolveMachineLoginRequirementForProfileTargets';
+import {
+    isProfileCompatibleWithResolvedBackendEntry,
+    readProfileTargetKeyValueForEntry,
+    stripLegacyProviderSentinelTargetKeys,
+} from './profileBackendEntryStorage';
 import { Text, TextInput } from '@/components/ui/text/Text';
+
+function stripUndefinedRecordValues<TValue>(
+    record: Readonly<Record<string, TValue | undefined>>,
+): Record<string, TValue> {
+    const next: Record<string, TValue> = {};
+    for (const [key, value] of Object.entries(record)) {
+        if (value !== undefined) {
+            next[key] = value;
+        }
+    }
+    return next;
+}
 
 
 export interface ProfileEditFormProps {
@@ -64,6 +86,8 @@ export function ProfileEditForm({
     const popoverBoundaryRef = React.useRef<any>(null);
     const enabledAgentIds = useEnabledAgentIds();
     const machines = useAllMachines();
+    const settings = useSettings();
+    const directSessionsEnabled = useFeatureEnabled('sessions.direct');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
     const [secrets, setSecrets] = useSettingMutable('secrets');
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
@@ -88,10 +112,22 @@ export function ProfileEditForm({
     const resolvedMachineId = routeMachine ?? previewMachineId;
     const resolvedMachine = useMachine(resolvedMachineId ?? '');
     const activeServerId = getActiveServerId();
+    const backendEnabledByTargetKey = settings.backendEnabledByTargetKey;
+    const resolvedBackendEntries = React.useMemo(() => {
+        return getResolvedBackendCatalogEntries({
+            enabledAgentIds,
+            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+            backendEnabledByTargetKey,
+        });
+    }, [backendEnabledByTargetKey, enabledAgentIds, settings.acpCatalogSettingsV1]);
     const cliDetection = useCLIDetection(resolvedMachineId, {
         includeLoginStatus: Boolean(resolvedMachineId),
         serverId: activeServerId,
     });
+
+    const getPermissionAgentIdForEntry = React.useCallback((entry: ResolvedBackendCatalogEntry): AgentId => {
+        return entry.builtInAgentId ?? entry.iconAgentId;
+    }, []);
 
     const toggleFavoriteMachineId = React.useCallback((machineIdToToggle: string) => {
         if (favoriteMachines.includes(machineIdToToggle)) {
@@ -136,64 +172,78 @@ export function ProfileEditForm({
     );
 
     const [name, setName] = React.useState(profile.name || '');
-    const [defaultSessionType, setDefaultSessionType] = React.useState<'simple' | 'worktree'>(
-        profile.defaultSessionType || 'simple',
-    );
-    const sessionDefaultPermissionModeByAgent = useSetting('sessionDefaultPermissionModeByAgent');
+    const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
+    const newSessionDefaultPersistenceModeV1 = useSetting('newSessionDefaultPersistenceModeV1');
+    const newSessionDefaultPersistenceModeByTargetKeyV1 = useSetting('newSessionDefaultPersistenceModeByTargetKeyV1');
 
-    const [defaultPermissionModes, setDefaultPermissionModes] = React.useState<Partial<Record<AgentId, PermissionMode | null>>>(() => {
-        const explicitByAgent = (profile.defaultPermissionModeByAgent as Record<string, PermissionMode | undefined>) ?? {};
-        const out: Partial<Record<AgentId, PermissionMode | null>> = {};
+    const [defaultPermissionModesByTargetKey, setDefaultPermissionModesByTargetKey] = React.useState<Record<string, PermissionMode | null>>(() => {
+        const explicitByTargetKey = (profile.defaultPermissionModeByTargetKey as Record<string, PermissionMode | undefined>) ?? {};
+        const out: Record<string, PermissionMode | null> = {};
 
-        for (const agentId of enabledAgentIds) {
-            const explicit = explicitByAgent[agentId];
-            out[agentId] = explicit ? normalizePermissionModeForAgentType(explicit, agentId) : null;
+        for (const entry of resolvedBackendEntries) {
+            const permissionAgentId = getPermissionAgentIdForEntry(entry);
+            const explicit = readProfileTargetKeyValueForEntry(explicitByTargetKey, entry);
+            out[entry.targetKey] = explicit ? normalizePermissionModeForAgentType(explicit, permissionAgentId) : null;
         }
 
-        const hasAnyExplicit = enabledAgentIds.some((agentId) => Boolean(out[agentId]));
+        const hasAnyExplicit = resolvedBackendEntries.some((entry) => Boolean(out[entry.targetKey]));
         if (hasAnyExplicit) return out;
 
         const legacyRaw = profile.defaultPermissionMode as PermissionMode | undefined;
         const legacy = legacyRaw ? normalizeProfileDefaultPermissionMode(legacyRaw) : undefined;
         if (!legacy) return out;
-        const compat = profile.compatibility ?? {};
 
-        for (const agentId of enabledAgentIds) {
-            const explicitCompat = compat[agentId];
-            const isCompat = typeof explicitCompat === 'boolean' ? explicitCompat : (profile.isBuiltIn ? false : true);
+        for (const entry of resolvedBackendEntries) {
+            const isCompat = isProfileCompatibleWithResolvedBackendEntry(profile, entry);
             if (!isCompat) continue;
-            out[agentId] = normalizePermissionModeForAgentType(legacy, agentId);
+            out[entry.targetKey] = normalizePermissionModeForAgentType(legacy, getPermissionAgentIdForEntry(entry));
+        }
+
+        return out;
+    });
+    const transcriptStorageSettings = React.useMemo(() => ({
+        opencodeBackendMode: (settings as Record<string, unknown>).opencodeBackendMode,
+    }), [settings]);
+    const [defaultTranscriptStorageModesByTargetKey, setDefaultTranscriptStorageModesByTargetKey] = React.useState<Record<string, SessionTranscriptStorageMode | null>>(() => {
+        const explicitByTargetKey = (profile.defaultPersistenceModeByTargetKey as Record<string, SessionTranscriptStorageMode | undefined>) ?? {};
+        const out: Record<string, SessionTranscriptStorageMode | null> = {};
+
+        for (const entry of resolvedBackendEntries) {
+            const permissionAgentId = getPermissionAgentIdForEntry(entry);
+            const explicit = readProfileTargetKeyValueForEntry(explicitByTargetKey, entry);
+            out[entry.targetKey] = explicit === 'direct' || explicit === 'persisted' ? explicit : null;
+            if (!supportsDirectTranscriptStorageForNewSession({ agentId: permissionAgentId, settings: transcriptStorageSettings })) {
+                out[entry.targetKey] = null;
+            }
         }
 
         return out;
     });
 
-    const [compatibility, setCompatibility] = React.useState<NonNullable<AIBackendProfile['compatibility']>>(() => {
-        const base: NonNullable<AIBackendProfile['compatibility']> = { ...(profile.compatibility ?? {}) };
-        for (const agentId of enabledAgentIds) {
-            if (typeof base[agentId] !== 'boolean') {
-                base[agentId] = profile.isBuiltIn ? false : true;
-            }
+    const [compatibilityByTargetKeyState, setCompatibilityByTargetKeyState] = React.useState<Record<string, boolean>>(() => {
+        const out: Record<string, boolean> = {};
+        for (const entry of resolvedBackendEntries) {
+            out[entry.targetKey] = isProfileCompatibleWithResolvedBackendEntry(profile, entry);
         }
-        if (enabledAgentIds.length > 0 && enabledAgentIds.every((agentId) => base[agentId] !== true)) {
-            base[enabledAgentIds[0]] = true;
+        if (resolvedBackendEntries.length > 0 && resolvedBackendEntries.every((entry) => out[entry.targetKey] !== true)) {
+            out[resolvedBackendEntries[0]!.targetKey] = true;
         }
-        return base;
+        return out;
     });
 
     React.useEffect(() => {
-        setCompatibility((prev) => {
+        setCompatibilityByTargetKeyState((prev) => {
             let changed = false;
-            const next: NonNullable<AIBackendProfile['compatibility']> = { ...prev };
-            for (const agentId of enabledAgentIds) {
-                if (typeof next[agentId] !== 'boolean') {
-                    next[agentId] = profile.isBuiltIn ? false : true;
+            const next = { ...prev };
+            for (const entry of resolvedBackendEntries) {
+                if (typeof next[entry.targetKey] !== 'boolean') {
+                    next[entry.targetKey] = profile.isBuiltIn ? false : entry.family === 'builtInAgent';
                     changed = true;
                 }
             }
             return changed ? next : prev;
         });
-    }, [enabledAgentIds, profile.isBuiltIn]);
+    }, [profile.isBuiltIn, resolvedBackendEntries]);
 
     const [authMode, setAuthMode] = React.useState<AIBackendProfile['authMode']>(profile.authMode);
     const [requiresMachineLogin, setRequiresMachineLogin] = React.useState<AIBackendProfile['requiresMachineLogin']>(profile.requiresMachineLogin);
@@ -385,61 +435,96 @@ export function ProfileEditForm({
         }
     }, [profile.id, secretBindingsByProfileId, setSecretBindingsByProfileId]);
 
-    const allowedMachineLoginOptions = React.useMemo(() => {
-        const options: MachineLoginKey[] = [];
-        for (const agentId of enabledAgentIds) {
-            if (compatibility[agentId] !== true) continue;
-            options.push(getAgentCore(agentId).cli.machineLoginKey);
-        }
-        return options;
-    }, [compatibility, enabledAgentIds]);
+    const compatibleBackendEntries = React.useMemo(() => {
+        return resolvedBackendEntries.filter((entry) => compatibilityByTargetKeyState[entry.targetKey] === true);
+    }, [compatibilityByTargetKeyState, resolvedBackendEntries]);
+    const compatibleMachineLoginTargets = React.useMemo(() => {
+        return compatibleBackendEntries.map((entry) => ({
+            targetKey: entry.targetKey,
+            machineLoginKey: getAgentCore(getPermissionAgentIdForEntry(entry)).cli.machineLoginKey,
+        }));
+    }, [compatibleBackendEntries, getPermissionAgentIdForEntry]);
+    const machineLoginRequirement = React.useMemo(() => {
+        return resolveMachineLoginRequirementForProfileTargets({
+            compatibleTargets: compatibleMachineLoginTargets,
+        });
+    }, [compatibleMachineLoginTargets]);
 
-    const [openPermissionProvider, setOpenPermissionProvider] = React.useState<null | AgentId>(null);
+    const [openPermissionProvider, setOpenPermissionProvider] = React.useState<null | string>(null);
+    const [openStorageProvider, setOpenStorageProvider] = React.useState<null | string>(null);
 
-    const setDefaultPermissionModeForProvider = React.useCallback((provider: AgentId, next: PermissionMode | null) => {
-        setDefaultPermissionModes((prev) => {
-            if (prev[provider] === next) return prev;
-            return { ...prev, [provider]: next };
+    const canSelectMachineLogin = machineLoginRequirement.selectableTargetKey !== null;
+    const effectiveAuthMode = authMode === 'machineLogin' && canSelectMachineLogin ? 'machineLogin' : undefined;
+
+    const setDefaultPermissionModeForTarget = React.useCallback((targetKey: string, next: PermissionMode | null) => {
+        setDefaultPermissionModesByTargetKey((prev) => {
+            if (prev[targetKey] === next) return prev;
+            return { ...prev, [targetKey]: next };
+        });
+    }, []);
+
+    const supportedDirectBackendEntries = React.useMemo(() => {
+        return resolvedBackendEntries.filter((entry) => supportsDirectTranscriptStorageForNewSession({
+            agentId: getPermissionAgentIdForEntry(entry),
+            settings: transcriptStorageSettings,
+        }));
+    }, [getPermissionAgentIdForEntry, resolvedBackendEntries, transcriptStorageSettings]);
+
+    const accountTranscriptStorageDefaults = React.useMemo(() => {
+        return readAccountTranscriptStorageDefaults({
+            globalDefault: newSessionDefaultPersistenceModeV1,
+            byTargetKey: newSessionDefaultPersistenceModeByTargetKeyV1,
+            enabledBackendTargets: supportedDirectBackendEntries.map((entry) => entry.target),
+        });
+    }, [newSessionDefaultPersistenceModeByTargetKeyV1, newSessionDefaultPersistenceModeV1, supportedDirectBackendEntries]);
+
+    const setDefaultTranscriptStorageModeForTarget = React.useCallback((
+        targetKey: string,
+        next: SessionTranscriptStorageMode | null,
+    ) => {
+        setDefaultTranscriptStorageModesByTargetKey((prev) => {
+            if (prev[targetKey] === next) return prev;
+            return { ...prev, [targetKey]: next };
         });
     }, []);
 
     const accountDefaultPermissionModes = React.useMemo(() => {
         const out: Partial<Record<AgentId, PermissionMode>> = {};
         for (const agentId of enabledAgentIds) {
-            const raw = (sessionDefaultPermissionModeByAgent as any)?.[agentId] as PermissionMode | undefined;
+            const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId });
+            const raw = (sessionDefaultPermissionModeByTargetKey as any)?.[targetKey] as PermissionMode | undefined;
             out[agentId] = normalizePermissionModeForAgentType((raw ?? 'default') as PermissionMode, agentId);
         }
         return out;
-    }, [enabledAgentIds, sessionDefaultPermissionModeByAgent]);
+    }, [enabledAgentIds, sessionDefaultPermissionModeByTargetKey]);
 
     const getPermissionIconNameForAgent = React.useCallback((agent: AgentId, mode: PermissionMode) => {
         return getPermissionModeOptionsForAgentType(agent).find((opt) => opt.value === mode)?.icon ?? 'shield-outline';
     }, []);
 
     React.useEffect(() => {
-        if (authMode !== 'machineLogin') return;
-        // If exactly one backend is enabled, we can persist the explicit CLI requirement.
-        // If multiple are enabled, the required CLI is derived at session-start from the selected backend.
-        if (allowedMachineLoginOptions.length === 1) {
-            const only = allowedMachineLoginOptions[0];
-            if (requiresMachineLogin !== only) {
-                setRequiresMachineLogin(only);
-            }
+        if (authMode === 'machineLogin' && !canSelectMachineLogin) {
+            setAuthMode(undefined);
+        }
+        if (effectiveAuthMode !== 'machineLogin') {
+            if (!requiresMachineLogin) return;
+            setRequiresMachineLogin(undefined);
             return;
         }
-        if (requiresMachineLogin) {
-            setRequiresMachineLogin(undefined);
+        if (!machineLoginRequirement.machineLoginKey) return;
+        if (requiresMachineLogin !== machineLoginRequirement.machineLoginKey) {
+            setRequiresMachineLogin(machineLoginRequirement.machineLoginKey);
         }
-    }, [allowedMachineLoginOptions, authMode, requiresMachineLogin]);
+    }, [authMode, canSelectMachineLogin, effectiveAuthMode, machineLoginRequirement.machineLoginKey, requiresMachineLogin]);
 
     const initialSnapshotRef = React.useRef<string | null>(null);
-    if (initialSnapshotRef.current === null) {
+        if (initialSnapshotRef.current === null) {
         initialSnapshotRef.current = JSON.stringify({
             name,
             environmentVariables,
-            defaultSessionType,
-            defaultPermissionModes,
-            compatibility,
+            defaultPermissionModesByTargetKey,
+            defaultTranscriptStorageModesByTargetKey,
+            compatibilityByTargetKeyState,
             authMode,
             requiresMachineLogin,
             derivedEnvVarRequirements,
@@ -452,9 +537,9 @@ export function ProfileEditForm({
         const currentSnapshot = JSON.stringify({
             name,
             environmentVariables,
-            defaultSessionType,
-            defaultPermissionModes,
-            compatibility,
+            defaultPermissionModesByTargetKey,
+            defaultTranscriptStorageModesByTargetKey,
+            compatibilityByTargetKeyState,
             authMode,
             requiresMachineLogin,
             derivedEnvVarRequirements,
@@ -463,9 +548,9 @@ export function ProfileEditForm({
         return currentSnapshot !== initialSnapshotRef.current;
     }, [
         authMode,
-        compatibility,
-        defaultPermissionModes,
-        defaultSessionType,
+        compatibilityByTargetKeyState,
+        defaultPermissionModesByTargetKey,
+        defaultTranscriptStorageModesByTargetKey,
         environmentVariables,
         name,
         derivedEnvVarRequirements,
@@ -478,17 +563,17 @@ export function ProfileEditForm({
         onDirtyChange?.(isDirty);
     }, [isDirty, onDirtyChange]);
 
-    const toggleCompatibility = React.useCallback((agentId: AgentId) => {
-        setCompatibility((prev) => {
-            const next = { ...prev, [agentId]: !prev[agentId] };
-            const enabledCount = enabledAgentIds.filter((id) => next[id] === true).length;
+    const toggleCompatibility = React.useCallback((targetKey: string) => {
+        setCompatibilityByTargetKeyState((prev) => {
+            const next = { ...prev, [targetKey]: !prev[targetKey] };
+            const enabledCount = resolvedBackendEntries.filter((entry) => next[entry.targetKey] === true).length;
             if (enabledCount === 0) {
                 Modal.alert(t('common.error'), t('profiles.aiBackend.selectAtLeastOneError'));
                 return prev;
             }
             return next;
         });
-    }, [enabledAgentIds]);
+    }, [resolvedBackendEntries]);
 
     const openSetupGuide = React.useCallback(async () => {
         const url = profileDocs?.setupGuideUrl;
@@ -511,40 +596,79 @@ export function ProfileEditForm({
         }
 
         const { defaultPermissionModeClaude, defaultPermissionModeCodex, defaultPermissionModeGemini, ...profileBase } = profile as any;
-        const defaultPermissionModeByAgent: Record<string, PermissionMode> = {};
-        for (const agentId of enabledAgentIds) {
-            const mode = (defaultPermissionModes as any)?.[agentId] as PermissionMode | null | undefined;
-            if (mode) defaultPermissionModeByAgent[agentId] = mode;
+        const defaultPermissionModeByTargetKey = stripLegacyProviderSentinelTargetKeys(
+            stripUndefinedRecordValues(
+                (profileBase.defaultPermissionModeByTargetKey as Record<string, PermissionMode | undefined>) ?? {},
+            ),
+            resolvedBackendEntries,
+        );
+        for (const entry of resolvedBackendEntries) {
+            const mode = defaultPermissionModesByTargetKey[entry.targetKey] as PermissionMode | null | undefined;
+            if (mode) {
+                defaultPermissionModeByTargetKey[entry.targetKey] = mode;
+            } else {
+                delete defaultPermissionModeByTargetKey[entry.targetKey];
+            }
+        }
+        const defaultPersistenceModeByTargetKey = stripLegacyProviderSentinelTargetKeys(
+            stripUndefinedRecordValues(
+                (profileBase.defaultPersistenceModeByTargetKey as Record<string, SessionTranscriptStorageMode | undefined>) ?? {},
+            ),
+            resolvedBackendEntries,
+        );
+        for (const entry of supportedDirectBackendEntries) {
+            const mode = defaultTranscriptStorageModesByTargetKey[entry.targetKey] as SessionTranscriptStorageMode | null | undefined;
+            if (mode === 'direct' || mode === 'persisted') {
+                defaultPersistenceModeByTargetKey[entry.targetKey] = mode;
+            } else {
+                delete defaultPersistenceModeByTargetKey[entry.targetKey];
+            }
+        }
+        const compatibilityByTargetKey = stripLegacyProviderSentinelTargetKeys(
+            stripUndefinedRecordValues(
+                (profileBase.compatibilityByTargetKey as Record<string, boolean | undefined>) ?? {},
+            ),
+            resolvedBackendEntries,
+        );
+        for (const entry of resolvedBackendEntries) {
+            compatibilityByTargetKey[entry.targetKey] = compatibilityByTargetKeyState[entry.targetKey] === true;
         }
 
+        const persistedAuthMode = effectiveAuthMode;
         return onSave({
             ...profileBase,
             name: name.trim(),
             environmentVariables,
-            authMode,
-            requiresMachineLogin: authMode === 'machineLogin' && allowedMachineLoginOptions.length === 1
-                ? allowedMachineLoginOptions[0]
+            authMode: persistedAuthMode,
+            requiresMachineLoginTargetKey: persistedAuthMode === 'machineLogin'
+                ? machineLoginRequirement.selectableTargetKey
                 : undefined,
+            requiresMachineLogin: undefined,
             envVarRequirements: derivedEnvVarRequirements,
-            defaultSessionType,
             // Prefer provider-specific defaults; clear legacy field on save.
             defaultPermissionMode: undefined,
-            defaultPermissionModeByAgent,
-            compatibility,
+            defaultPermissionModeByTargetKey,
+            defaultPermissionModeByAgent: {},
+            defaultPersistenceModeByTargetKey,
+            defaultPersistenceModeByAgent: {},
+            compatibilityByTargetKey,
+            compatibility: {},
             updatedAt: Date.now(),
         });
     }, [
-        allowedMachineLoginOptions,
-        enabledAgentIds,
+        compatibilityByTargetKeyState,
+        defaultPermissionModesByTargetKey,
+        defaultTranscriptStorageModesByTargetKey,
         derivedEnvVarRequirements,
-        compatibility,
-        defaultPermissionModes,
-        defaultSessionType,
         environmentVariables,
+        resolvedBackendEntries,
         name,
         onSave,
         profile,
         authMode,
+        effectiveAuthMode,
+        machineLoginRequirement.selectableTargetKey,
+        supportedDirectBackendEntries,
     ]);
 
     React.useEffect(() => {
@@ -590,8 +714,10 @@ export function ProfileEditForm({
                     leftElement={<Ionicons name="terminal-outline" size={24} color={theme.colors.textSecondary} />}
                     rightElement={(
                         <Switch
-                            value={authMode === 'machineLogin'}
+                            value={effectiveAuthMode === 'machineLogin'}
+                            disabled={!canSelectMachineLogin}
                             onValueChange={(next) => {
+                                if (!canSelectMachineLogin) return;
                                 if (!next) {
                                     setAuthMode(undefined);
                                     setRequiresMachineLogin(undefined);
@@ -604,7 +730,8 @@ export function ProfileEditForm({
                     )}
                     showChevron={false}
                     onPress={() => {
-                        const next = authMode !== 'machineLogin';
+                        if (!canSelectMachineLogin) return;
+                        const next = effectiveAuthMode !== 'machineLogin';
                         if (!next) {
                             setAuthMode(undefined);
                             setRequiresMachineLogin(undefined);
@@ -619,7 +746,7 @@ export function ProfileEditForm({
 
             <ItemGroup title={t('profiles.aiBackend.title')}>
                 {(() => {
-                    const shouldShowLoginStatus = authMode === 'machineLogin' && Boolean(resolvedMachineId);
+                    const shouldShowLoginStatus = effectiveAuthMode === 'machineLogin' && Boolean(resolvedMachineId);
 
                     const renderLoginStatus = (status: boolean) => (
                         <Text style={[styles.aiBackendStatus, { color: status ? theme.colors.status.connected : theme.colors.status.disconnected }]}>
@@ -629,24 +756,25 @@ export function ProfileEditForm({
 
                     return (
                         <>
-                            {enabledAgentIds.map((agentId, index) => {
-                                const core = getAgentCore(agentId);
-                                const defaultSubtitle = t(core.subtitleKey);
-                                const loginStatus = shouldShowLoginStatus ? cliDetection.login[agentId] : null;
+                            {resolvedBackendEntries.map((entry, index) => {
+                                const core = getAgentCore(entry.iconAgentId);
+                                const permissionAgentId = getPermissionAgentIdForEntry(entry);
+                                const defaultSubtitle = entry.subtitle ?? t(core.subtitleKey);
+                                const loginStatus = shouldShowLoginStatus ? cliDetection.login[permissionAgentId] : null;
                                 const subtitle = shouldShowLoginStatus && typeof loginStatus === 'boolean'
                                     ? renderLoginStatus(loginStatus)
                                     : defaultSubtitle;
-                                const enabled = compatibility[agentId] === true;
-                                const showDivider = index < enabledAgentIds.length - 1;
+                                const enabled = compatibilityByTargetKeyState[entry.targetKey] === true;
+                                const showDivider = index < resolvedBackendEntries.length - 1;
                                 return (
                                     <Item
-                                        key={agentId}
-                                        title={t(core.displayNameKey)}
+                                        key={entry.targetKey}
+                                        title={entry.title}
                                         subtitle={subtitle}
                                         leftElement={<Ionicons name={core.ui.agentPickerIconName as any} size={24} color={theme.colors.textSecondary} />}
-                                        rightElement={<Switch value={enabled} onValueChange={() => toggleCompatibility(agentId)} />}
+                                        rightElement={<Switch value={enabled} onValueChange={() => toggleCompatibility(entry.targetKey)} />}
                                         showChevron={false}
-                                        onPress={() => toggleCompatibility(agentId)}
+                                        onPress={() => toggleCompatibility(entry.targetKey)}
                                         showDivider={showDivider}
                                     />
                                 );
@@ -655,29 +783,29 @@ export function ProfileEditForm({
                     );
                 })()}
             </ItemGroup>
-
-            <ItemGroup title={t('profiles.defaultSessionType')}>
-                <SessionTypeSelector value={defaultSessionType} onChange={setDefaultSessionType} title={null} />
-            </ItemGroup>
-
             <ItemGroup
                 title={t('profiles.defaultPermissions.title')}
                 footer={t('profiles.defaultPermissions.footer')}
             >
-                {enabledAgentIds
-                    .filter((agentId) => compatibility[agentId] === true)
-                    .map((agentId, index, items) => {
-                        const core = getAgentCore(agentId);
-                        const override = (defaultPermissionModes as any)?.[agentId] as PermissionMode | null | undefined;
-                        const accountDefault = ((accountDefaultPermissionModes as any)?.[agentId] ?? 'default') as PermissionMode;
+                {resolvedBackendEntries
+                    .filter((entry) => compatibilityByTargetKeyState[entry.targetKey] === true)
+                    .map((entry, index, items) => {
+                        const permissionAgentId = getPermissionAgentIdForEntry(entry);
+                        const core = getAgentCore(entry.iconAgentId);
+                        const override = defaultPermissionModesByTargetKey[entry.targetKey] as PermissionMode | null | undefined;
+                        const accountTargetRaw = (sessionDefaultPermissionModeByTargetKey as any)?.[entry.targetKey] as PermissionMode | undefined;
+                        const accountDefault = normalizePermissionModeForAgentType(
+                            (accountTargetRaw ?? (accountDefaultPermissionModes as any)?.[permissionAgentId] ?? 'default') as PermissionMode,
+                            permissionAgentId,
+                        );
                         const effectiveMode = (override ?? accountDefault) as PermissionMode;
                         const showDivider = index < items.length - 1;
 
                         return (
                             <DropdownMenu
-                                key={agentId}
-                                open={openPermissionProvider === agentId}
-                                onOpenChange={(next) => setOpenPermissionProvider(next ? agentId : null)}
+                                key={entry.targetKey}
+                                open={openPermissionProvider === entry.targetKey}
+                                onOpenChange={(next) => setOpenPermissionProvider(next ? entry.targetKey : null)}
                                 popoverBoundaryRef={popoverBoundaryRef}
                                 variant="selectable"
                                 search={false}
@@ -689,16 +817,16 @@ export function ProfileEditForm({
                                 trigger={({ open, toggle }) => (
                                     <Item
                                         selected={false}
-                                        title={t(core.displayNameKey)}
+                                        title={entry.title}
                                         subtitle={override
-                                            ? getPermissionModeLabelForAgentType(agentId, override)
-                                            : t('profiles.defaultPermissions.accountDefaultSubtitle', { label: getPermissionModeLabelForAgentType(agentId, accountDefault) })
+                                            ? getPermissionModeLabelForAgentType(permissionAgentId, override)
+                                            : t('profiles.defaultPermissions.accountDefaultSubtitle', { label: getPermissionModeLabelForAgentType(permissionAgentId, accountDefault) })
                                         }
                                         icon={<Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.textSecondary} />}
                                         rightElement={(
                                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                                                 <Ionicons
-                                                    name={getPermissionIconNameForAgent(agentId, effectiveMode) as any}
+                                                    name={getPermissionIconNameForAgent(permissionAgentId, effectiveMode) as any}
                                                     size={22}
                                                     color={theme.colors.textSecondary}
                                                 />
@@ -718,14 +846,14 @@ export function ProfileEditForm({
                                     {
                                         id: '__account__',
                                         title: t('profiles.defaultPermissions.useAccountDefault'),
-                                        subtitle: t('profiles.defaultPermissions.currently', { label: getPermissionModeLabelForAgentType(agentId, accountDefault) }),
+                                        subtitle: t('profiles.defaultPermissions.currently', { label: getPermissionModeLabelForAgentType(permissionAgentId, accountDefault) }),
                                         icon: (
                                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                                                 <Ionicons name="settings-outline" size={22} color={theme.colors.textSecondary} />
                                             </View>
                                         ),
                                     },
-                                    ...getPermissionModeOptionsForAgentType(agentId).map((opt) => ({
+                                    ...getPermissionModeOptionsForAgentType(permissionAgentId).map((opt) => ({
                                         id: opt.value,
                                         title: opt.label,
                                         subtitle: opt.description,
@@ -738,9 +866,9 @@ export function ProfileEditForm({
                                 ]}
                                 onSelect={(id) => {
                                     if (id === '__account__') {
-                                        setDefaultPermissionModeForProvider(agentId, null);
+                                        setDefaultPermissionModeForTarget(entry.targetKey, null);
                                     } else {
-                                        setDefaultPermissionModeForProvider(agentId, id as any);
+                                        setDefaultPermissionModeForTarget(entry.targetKey, id as any);
                                     }
                                     setOpenPermissionProvider(null);
                                 }}
@@ -748,6 +876,112 @@ export function ProfileEditForm({
                         );
                     })}
             </ItemGroup>
+
+            {directSessionsEnabled && supportedDirectBackendEntries.filter((entry) => compatibilityByTargetKeyState[entry.targetKey] === true).length > 0 ? (
+                <ItemGroup
+                    title={t('profiles.defaultStorage.title')}
+                    footer={t('profiles.defaultStorage.footer')}
+                >
+                    {supportedDirectBackendEntries
+                        .filter((entry) => compatibilityByTargetKeyState[entry.targetKey] === true)
+                        .map((entry, index, items) => {
+                            const core = getAgentCore(entry.iconAgentId);
+                            const override = defaultTranscriptStorageModesByTargetKey[entry.targetKey] as SessionTranscriptStorageMode | null | undefined;
+                            const accountDefault = accountTranscriptStorageDefaults.byTargetKey[entry.targetKey]
+                                ?? accountTranscriptStorageDefaults.globalDefault;
+                            const effectiveMode = override ?? accountDefault;
+                            const showDivider = index < items.length - 1;
+
+                            return (
+                                <DropdownMenu
+                                    key={`storage-${entry.targetKey}`}
+                                    open={openStorageProvider === entry.targetKey}
+                                    onOpenChange={(next) => setOpenStorageProvider(next ? entry.targetKey : null)}
+                                    popoverBoundaryRef={popoverBoundaryRef}
+                                    variant="selectable"
+                                    search={false}
+                                    showCategoryTitles={false}
+                                    matchTriggerWidth={true}
+                                    connectToTrigger={true}
+                                rowKind="item"
+                                selectedId={override ?? '__account__'}
+                                trigger={({ open, toggle }) => (
+                                    <Item
+                                        selected={false}
+                                        title={entry.title}
+                                        subtitle={override
+                                            ? t(`sessionsList.storage${override === 'direct' ? 'Direct' : 'Persisted'}Tab`)
+                                            : t('profiles.defaultStorage.accountDefaultSubtitle', {
+                                                    label: t(`sessionsList.storage${accountDefault === 'direct' ? 'Direct' : 'Persisted'}Tab`),
+                                                })
+                                            }
+                                            icon={<Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.textSecondary} />}
+                                            rightElement={(
+                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                                    <Ionicons
+                                                        name={effectiveMode === 'direct' ? 'radio-outline' : 'save-outline'}
+                                                        size={22}
+                                                        color={theme.colors.textSecondary}
+                                                    />
+                                                    <Ionicons
+                                                        name={open ? 'chevron-up' : 'chevron-down'}
+                                                        size={20}
+                                                        color={theme.colors.textSecondary}
+                                                    />
+                                                </View>
+                                            )}
+                                            showChevron={false}
+                                            onPress={toggle}
+                                            showDivider={showDivider}
+                                        />
+                                    )}
+                                    items={[
+                                        {
+                                            id: '__account__',
+                                            title: t('profiles.defaultStorage.useAccountDefault'),
+                                            subtitle: t('profiles.defaultStorage.currently', {
+                                                label: t(`sessionsList.storage${accountDefault === 'direct' ? 'Direct' : 'Persisted'}Tab`),
+                                            }),
+                                            icon: (
+                                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                                    <Ionicons name="settings-outline" size={22} color={theme.colors.textSecondary} />
+                                                </View>
+                                            ),
+                                        },
+                                        {
+                                            id: 'persisted',
+                                            title: t('sessionsList.storagePersistedTab'),
+                                            subtitle: t('settingsSession.defaultStorage.persistedSubtitle'),
+                                            icon: (
+                                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                                    <Ionicons name="save-outline" size={22} color={theme.colors.textSecondary} />
+                                                </View>
+                                            ),
+                                        },
+                                        {
+                                            id: 'direct',
+                                            title: t('sessionsList.storageDirectTab'),
+                                            subtitle: t('settingsSession.defaultStorage.directSubtitle'),
+                                            icon: (
+                                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                                    <Ionicons name="radio-outline" size={22} color={theme.colors.textSecondary} />
+                                                </View>
+                                            ),
+                                        },
+                                    ]}
+                                    onSelect={(id) => {
+                                        if (id === '__account__') {
+                                            setDefaultTranscriptStorageModeForTarget(entry.targetKey, null);
+                                        } else {
+                                            setDefaultTranscriptStorageModeForTarget(entry.targetKey, id as SessionTranscriptStorageMode);
+                                        }
+                                        setOpenStorageProvider(null);
+                                    }}
+                                />
+                            );
+                        })}
+                </ItemGroup>
+            ) : null}
 
             {!routeMachine && (
                 <ItemGroup title={t('profiles.previewMachine.title')}>

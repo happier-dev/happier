@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
 import { makeCompletedTool, normalizedHostText } from '../core/truncationView.testHelpers';
@@ -18,16 +18,11 @@ vi.mock('../../shell/presentation/ToolSectionView', () => ({
 describe('WebFetchView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { WebFetchView } = await import('./WebFetchView');
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
-                    WebFetchView,
-                    makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ),
-            );
-        });
-        return tree;
+        const screen = await renderScreen(React.createElement(
+            WebFetchView,
+            makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
+        ));
+        return screen.tree;
     }
 
     it('shows HTTP status when present', async () => {

@@ -1,16 +1,99 @@
 ---
 title: Encryption model
-description: High-level overview of keys and encrypted payloads.
+description: How Happier session encryption, secret-key restore, and plaintext storage mode work from a user perspective.
 ---
 
-This doc is intentionally high-level:
+Happier supports two account/storage models:
 
-- Clients generate keys locally.
-- Encrypted payloads are uploaded and synced.
-- Sharing requires distributing data keys to authorized users (still encrypted end-to-end).
+- **Device-key accounts (default)**: session content is encrypted before the server stores it
+- **Plaintext storage deployments**: the server stores new session content in plaintext instead of encrypted-at-rest form
 
-## Plaintext storage (encryption opt-out)
+This page explains what that means as a user, what your secret key is for, and what changes when a deployment enables plaintext storage.
 
-Some deployments may choose to store **new** session content as plaintext on the server (no E2EE for storage).
+## Default model: device-key accounts
 
-This is a server-operator configuration. See: [Server → Encryption & plaintext storage](../server/encryption).
+For device-key accounts:
+
+- encryption keys are created on your device,
+- Happier encrypts supported session content before it is stored on the server,
+- another device or browser must be explicitly restored before it can read your existing encrypted data.
+
+This is why a brand-new browser or device may ask you to restore access before older sessions become readable there.
+
+## What your secret key is for
+
+Your secret key is the recovery path for device-key accounts.
+
+You use it when you need to restore access on a new browser or device, for example:
+
+- after clearing browser storage,
+- after signing in on a second computer,
+- after reinstalling the app on a new phone.
+
+Without restore, the new device can still authenticate to your account, but it cannot decrypt older encrypted session data yet.
+
+## Where restore happens
+
+Restore happens in Happier’s app flows, not in normal provider CLIs.
+
+Common restore flows include:
+
+- **Add your phone** on a signed-in desktop/web app, then **Restore account** on the phone,
+- **Restore account** on a new browser/computer and approving it from another already-signed-in device,
+- **Restore with Secret Key Instead** when you need a manual recovery path.
+
+The Happier CLI does not usually need your secret key directly. It relies on the app/account restore flow.
+
+For the concrete QR/button flows, see [Features → Device linking & restore](/docs/features/device-linking-and-restore).
+
+## What stays the same across devices
+
+After a device is restored:
+
+- the same encrypted sessions become readable there,
+- the same account can continue using the web app, desktop app, and CLI,
+- session sharing continues to work through Happier’s normal access controls.
+
+## Plaintext storage mode
+
+Some deployments choose to store **new** session content as plaintext on the server instead of encrypted-at-rest.
+
+This is a server policy, not something individual users normally toggle per message.
+
+Each session keeps the storage mode it was created with. In practice, that means an older encrypted session stays encrypted even if newer sessions on the same deployment use plaintext storage.
+
+When plaintext storage mode is enabled for your deployment:
+
+- new plaintext-mode sessions do not require transcript decryption on each device,
+- restore flows may be simpler because stored session content is not tied to a per-device decryption state,
+- authentication, access control, and transport security still matter exactly as before.
+
+## What plaintext storage does not mean
+
+Plaintext storage does **not** mean:
+
+- the session is public,
+- anyone can read it,
+- the login/authentication model changes,
+- TLS or server-side access controls stop mattering.
+
+It only changes how session content is stored at rest on the server.
+
+## Sharing and collaboration
+
+From a user perspective, shared sessions still behave like shared sessions:
+
+- people with access can open the same session,
+- session history remains a single shared transcript,
+- pending messages and attachments still belong to the session.
+
+The difference is the storage mode behind the scenes.
+
+## Which mode am I using?
+
+That depends on how your Happier server is configured.
+
+- On standard Happier deployments, assume **device-key encrypted storage** unless your admin/server explicitly documents otherwise.
+- On enterprise or special deployments, the server may advertise **optional** or **plaintext-only** storage behavior.
+
+If you operate the server yourself, see [Server → Encryption & plaintext storage](../server/encryption).

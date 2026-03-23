@@ -2,14 +2,11 @@ import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
 import { ExecutionRunGetRequestSchema } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
-import { callSessionRpc } from '@/sessionControl/sessionRpc';
-import { hasFlag } from '@/sessionControl/argvFlags';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { hasFlag } from '@/cli/commands/shared/argvFlags';
+import { getExecutionRun } from '@/session/services/executionRuns';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
 export async function cmdSessionRunGet(
   argv: string[],
@@ -34,52 +31,48 @@ export async function cmdSessionRunGet(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  if (!sessionTarget.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_get',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(sessionTarget.code);
   }
-  const sessionId = resolved.sessionId;
-
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_get', error: { code: 'session_not_found', sessionId } });
-      return;
-    }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
-  }
-
-  const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
+  const { sessionId, ctx, mode } = sessionTarget;
   const request = ExecutionRunGetRequestSchema.parse({
     runId,
     ...(includeStructured ? { includeStructured: true } : {}),
   });
-
-  const method = `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_GET}`;
-  const result = await callSessionRpc({
+  const result = await getExecutionRun({
     token: credentials.token,
     sessionId,
     mode,
     ctx,
-    method,
     request,
   });
 
+  if (!result.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_get',
+        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+      });
+      return;
+    }
+    throw new Error(result.message ?? result.code);
+  }
+
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_get', data: { sessionId, ...(result as any) } });
+    printJsonEnvelope({ ok: true, kind: 'session_run_get', data: { sessionId, ...(result.data as any) } });
     return;
   }
 
   console.log(chalk.green('✓'), 'execution run fetched');
-  console.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result.data, null, 2));
 }

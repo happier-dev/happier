@@ -1,13 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { CatalogAcpRuntimeCreateCall } from '@/testkit/backends/catalogAcpRuntime';
+import { createCatalogAcpBackendSpy, createMessageBufferFixture } from '@/testkit/backends/catalogAcpRuntime';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createOpenCodeAcpRuntime } from './runtime';
-import {
-  createOpenCodeCatalogBackendSpy,
-  createOpenCodeMessageBufferFixture,
-  createOpenCodePermissionHandlerFixture,
-  createOpenCodeSessionFixture,
-  type OpenCodeRuntimeCreateCall,
-} from './runtime.testkit';
 
 describe('OpenCode ACP runtime permission mode wiring', () => {
   afterEach(() => {
@@ -15,15 +12,16 @@ describe('OpenCode ACP runtime permission mode wiring', () => {
   });
 
   it('forwards permissionMode to createCatalogAcpBackend and recreates backend after reset', async () => {
-    const createCalls: OpenCodeRuntimeCreateCall[] = [];
-    const createSpy = createOpenCodeCatalogBackendSpy(createCalls);
+    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+    const createSpy = createCatalogAcpBackendSpy(createCalls);
     let permissionMode: 'default' | 'yolo' = 'default';
     const runtime = createOpenCodeAcpRuntime({
       directory: '/tmp',
-      session: createOpenCodeSessionFixture(),
-      messageBuffer: createOpenCodeMessageBufferFixture(),
+      machineId: 'machine-1',
+      session: createApiSessionClientFixture(),
+      messageBuffer: createMessageBufferFixture(),
       mcpServers: {},
-      permissionHandler: createOpenCodePermissionHandlerFixture(),
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange() {},
       getPermissionMode: () => permissionMode,
     });
@@ -42,14 +40,15 @@ describe('OpenCode ACP runtime permission mode wiring', () => {
   });
 
   it('passes undefined permissionMode when getPermissionMode is not provided', async () => {
-    const createCalls: OpenCodeRuntimeCreateCall[] = [];
-    const createSpy = createOpenCodeCatalogBackendSpy(createCalls);
+    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+    const createSpy = createCatalogAcpBackendSpy(createCalls);
     const runtime = createOpenCodeAcpRuntime({
       directory: '/tmp',
-      session: createOpenCodeSessionFixture(),
-      messageBuffer: createOpenCodeMessageBufferFixture(),
+      machineId: 'machine-1',
+      session: createApiSessionClientFixture(),
+      messageBuffer: createMessageBufferFixture(),
       mcpServers: {},
-      permissionHandler: createOpenCodePermissionHandlerFixture(),
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange() {},
     });
 

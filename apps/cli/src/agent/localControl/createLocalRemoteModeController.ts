@@ -1,6 +1,7 @@
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import type { AgentState } from '@/api/types';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { createAgentLocalControlState } from '@/agent/localControl/createAgentLocalControlState';
 
 type Mode = 'local' | 'remote';
 
@@ -27,29 +28,43 @@ export function createLocalRemoteModeController(params: {
   mountRemoteUi: () => void;
   unmountRemoteUi: () => Promise<void>;
   setRemoteUiAllowsSwitchToLocal: (allowed: boolean) => void;
+  buildAgentStateForMode?: (
+    currentState: AgentState,
+    nextMode: Mode,
+    context: Readonly<{ canSwitchToLocalFromRemote: boolean }>,
+  ) => AgentState;
 }) {
   let lastPublishedMode: Mode | null = null;
-  let switchHandlerRegistered = false;
 
   const publishModeState = async (nextMode: Mode): Promise<void> => {
-    if (lastPublishedMode !== nextMode) {
+    const canSwitchToLocalFromRemote =
+      nextMode === 'remote' ? (await params.resolveLocalSwitchAvailability()).ok : false;
+
+    if (lastPublishedMode !== null && lastPublishedMode !== nextMode) {
       params.session.sendSessionEvent({ type: 'switch', mode: nextMode });
-      lastPublishedMode = nextMode;
     }
+    lastPublishedMode = nextMode;
 
     updateAgentStateBestEffort(
       params.session,
-      (currentState) => ({
-        ...currentState,
-        controlledByUser: nextMode === 'local',
-      }),
+      (currentState) => (params.buildAgentStateForMode
+        ? params.buildAgentStateForMode(currentState, nextMode, { canSwitchToLocalFromRemote })
+        : {
+          ...currentState,
+          controlledByUser: nextMode === 'local',
+          localControl: createAgentLocalControlState({
+            attached: nextMode === 'local',
+            topology: 'exclusive',
+            canAttach: canSwitchToLocalFromRemote,
+          }),
+        }),
       '[localControl]',
       'publish_mode_state',
     );
     params.session.keepAlive(params.getThinking(), nextMode);
 
     if (nextMode === 'remote') {
-      params.setRemoteUiAllowsSwitchToLocal((await params.resolveLocalSwitchAvailability()).ok);
+      params.setRemoteUiAllowsSwitchToLocal(canSwitchToLocalFromRemote);
       params.mountRemoteUi();
     } else {
       params.setRemoteUiAllowsSwitchToLocal(false);
@@ -58,13 +73,11 @@ export function createLocalRemoteModeController(params: {
   };
 
   const registerRemoteSwitchHandler = (): void => {
-    if (switchHandlerRegistered) return;
-    switchHandlerRegistered = true;
     params.session.rpcHandlerManager.registerHandler('switch', async (requestParams: unknown) => {
       const to = resolveSwitchRequestTarget(requestParams);
 
       // Remote launcher is already in remote mode, so {to:'remote'} is a no-op.
-      if (to === 'remote') return false;
+      if (to === 'remote') return true;
       return await params.requestSwitchToLocalIfSupported();
     });
   };

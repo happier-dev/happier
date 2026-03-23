@@ -41,7 +41,7 @@ export async function stopExecutionRun(args: Readonly<{
     runId: run.runId,
     callId: run.callId,
     sidechainId: run.sidechainId,
-    backendId: run.backendId,
+    backendTarget: run.backendTarget,
     intent: run.intent,
     startedAtMs: run.startedAtMs,
     finishedAtMs,

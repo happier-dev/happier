@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,11 +11,14 @@ const useSetting = vi.fn((key: string) => {
   return null;
 });
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useRealtimeStatus: () => 'disconnected',
-  useRealtimeMode: () => 'idle',
-  useSetting: (key: string) => useSetting(key),
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useRealtimeStatus: () => 'disconnected',
+    useRealtimeMode: () => 'idle',
+    useSetting: (key: string) => useSetting(key),
+});
+});
 
 vi.mock('@/voice/local/localVoiceEngine', () => ({
   useLocalVoiceStatus: () => 'idle',
@@ -72,9 +77,7 @@ describe('VoiceSessionRuntime', () => {
       canStop: false,
     });
 
-    await act(async () => {
-      renderer.create(React.createElement(VoiceSessionRuntime));
-    });
+    await renderScreen(React.createElement(VoiceSessionRuntime));
 
     expect(getVoiceSessionSnapshot()).toEqual(snap);
   });
@@ -113,9 +116,7 @@ describe('VoiceSessionRuntime', () => {
     const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
     const { getVoiceSessionSnapshot } = await import('./voiceSessionStore');
 
-    await act(async () => {
-      renderer.create(React.createElement(VoiceSessionRuntime));
-    });
+    await renderScreen(React.createElement(VoiceSessionRuntime));
 
     expect(getVoiceSessionSnapshot().mode).toBe('idle');
 
@@ -176,9 +177,7 @@ describe('VoiceSessionRuntime', () => {
     const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
     const { getVoiceSessionSnapshot } = await import('./voiceSessionStore');
 
-    await act(async () => {
-      renderer.create(React.createElement(VoiceSessionRuntime));
-    });
+    await renderScreen(React.createElement(VoiceSessionRuntime));
 
     expect(getVoiceSessionSnapshot()).toEqual(snapB);
   });

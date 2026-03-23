@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,9 +19,7 @@ describe('RealtimeProvider.web', () => {
     const { RealtimeProvider } = await import('./RealtimeProvider.web');
 
     let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(React.createElement(RealtimeProvider, null, React.createElement('Child', null)));
-    });
+    tree = (await renderScreen(React.createElement(RealtimeProvider, null, React.createElement('Child', null)))).tree;
 
     await act(async () => {});
 

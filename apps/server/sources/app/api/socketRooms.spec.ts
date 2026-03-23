@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { getSocketRooms } from "./socketRooms";
 
 describe("getSocketRooms", () => {
-    it("always includes user room", () => {
+    it("includes the shared user room for user-scoped clients", () => {
         expect(getSocketRooms({ userId: "u1", clientType: "user-scoped" })).toEqual(["user:u1", "user-scoped:u1"]);
     });
 
@@ -17,7 +17,6 @@ describe("getSocketRooms", () => {
 
     it("includes machine room for machine-scoped clients", () => {
         expect(getSocketRooms({ userId: "u1", clientType: "machine-scoped", machineId: "m1" })).toEqual([
-            "user:u1",
             "machine:m1:u1",
         ]);
     });

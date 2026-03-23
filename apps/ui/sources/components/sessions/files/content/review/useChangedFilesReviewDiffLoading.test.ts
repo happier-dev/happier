@@ -5,6 +5,8 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import type { ScmDiffArea } from '@happier-dev/protocol';
 
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { renderScreen } from '@/dev/testkit';
+
 
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffFile: vi.fn(async (_sessionId: string, input: { path: string; area: ScmDiffArea }) => ({
@@ -55,10 +57,7 @@ async function renderHook(useValue: () => HookValue): Promise<{ getCurrent: () =
         return null;
     }
     let root: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-        root = renderer.create(React.createElement(Test));
-        await flushAsync();
-    });
+    root = (await renderScreen(React.createElement(Test))).tree;
     return {
         getCurrent: () => {
             if (!current) throw new Error('Hook did not render');
@@ -121,9 +120,9 @@ describe('useChangedFilesReviewDiffLoading', () => {
         expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(sessionScmDiffFile).mock.calls[0]?.[1]).toEqual({ path: 'a.ts', area: 'pending' });
 
-        expect(hook.getCurrent().getDiffState('a.ts').status).toBe('loaded');
-        expect(hook.getCurrent().getDiffState('b.ts').status).toBe('idle');
-        expect(hook.getCurrent().getDiffState('c.ts').status).toBe('idle');
+        expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('loaded');
+        expect(hook.getCurrent().diffStateSource.getDiffState('b.ts').status).toBe('idle');
+        expect(hook.getCurrent().diffStateSource.getDiffState('c.ts').status).toBe('idle');
         hook.unmount();
     });
 
@@ -156,9 +155,9 @@ describe('useChangedFilesReviewDiffLoading', () => {
         expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(sessionScmDiffFile).mock.calls[0]?.[1]).toEqual({ path: 'b.ts', area: 'pending' });
 
-        expect(hook.getCurrent().getDiffState('a.ts').status).toBe('idle');
-        expect(hook.getCurrent().getDiffState('b.ts').status).toBe('loaded');
-        expect(hook.getCurrent().getDiffState('b.ts').diff).toContain('b.ts');
+        expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('idle');
+        expect(hook.getCurrent().diffStateSource.getDiffState('b.ts').status).toBe('loaded');
+        expect(hook.getCurrent().diffStateSource.getDiffState('b.ts').diff).toContain('b.ts');
         hook.unmount();
     });
 
@@ -212,8 +211,8 @@ describe('useChangedFilesReviewDiffLoading', () => {
             await flushAsync(8);
         });
 
-        expect(hook.getCurrent().getDiffState('a.ts').status).toBe('loaded');
-        expect(hook.getCurrent().getDiffState('b.ts').status).toBe('loaded');
+        expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('loaded');
+        expect(hook.getCurrent().diffStateSource.getDiffState('b.ts').status).toBe('loaded');
         hook.unmount();
     });
 
@@ -245,8 +244,8 @@ describe('useChangedFilesReviewDiffLoading', () => {
         });
 
         expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(0);
-        expect(hook.getCurrent().getDiffState('a.ts').status).toBe('loaded');
-        expect(hook.getCurrent().getDiffState('a.ts').diff).toBe('cached-diff');
+        expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('loaded');
+        expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').diff).toBe('cached-diff');
         hook.unmount();
     });
 
@@ -275,18 +274,15 @@ describe('useChangedFilesReviewDiffLoading', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Test));
-            await flushAsync(16);
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
 
         await waitForCondition(() =>
-            current!.getDiffState('a.ts').status === 'loaded'
-            && current!.getDiffState('b.ts').status === 'loaded',
+            current!.diffStateSource.getDiffState('a.ts').status === 'loaded'
+            && current!.diffStateSource.getDiffState('b.ts').status === 'loaded',
         );
 
-        expect(current!.getDiffState('a.ts').status).toBe('loaded');
-        expect(current!.getDiffState('b.ts').status).toBe('loaded');
+        expect(current!.diffStateSource.getDiffState('a.ts').status).toBe('loaded');
+        expect(current!.diffStateSource.getDiffState('b.ts').status).toBe('loaded');
 
         requestedPaths = ['b.ts'];
         await act(async () => {
@@ -294,8 +290,8 @@ describe('useChangedFilesReviewDiffLoading', () => {
             await flushAsync(3);
         });
 
-        expect(current!.getDiffState('a.ts').status).toBe('loaded');
-        expect(current!.getDiffState('b.ts').status).toBe('loaded');
+        expect(current!.diffStateSource.getDiffState('a.ts').status).toBe('loaded');
+        expect(current!.diffStateSource.getDiffState('b.ts').status).toBe('loaded');
     });
 
     it('fetches diffs for newly requested paths when requestedPaths changes', async () => {
@@ -324,15 +320,12 @@ describe('useChangedFilesReviewDiffLoading', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Test));
-            await flushAsync(16);
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
 
         expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(sessionScmDiffFile).mock.calls[0]?.[1]).toEqual({ path: 'a.ts', area: 'pending' });
-        expect(current!.getDiffState('a.ts').status).toBe('loaded');
-        expect(current!.getDiffState('b.ts').status).toBe('idle');
+        expect(current!.diffStateSource.getDiffState('a.ts').status).toBe('loaded');
+        expect(current!.diffStateSource.getDiffState('b.ts').status).toBe('idle');
 
         requestedPaths = ['b.ts'];
         await act(async () => {
@@ -342,8 +335,8 @@ describe('useChangedFilesReviewDiffLoading', () => {
 
         expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(2);
         expect(vi.mocked(sessionScmDiffFile).mock.calls[1]?.[1]).toEqual({ path: 'b.ts', area: 'pending' });
-        await waitForCondition(() => current!.getDiffState('b.ts').status === 'loaded');
+        await waitForCondition(() => current!.diffStateSource.getDiffState('b.ts').status === 'loaded');
 
-        expect(current!.getDiffState('b.ts').status).toBe('loaded');
+        expect(current!.diffStateSource.getDiffState('b.ts').status).toBe('loaded');
     });
 });

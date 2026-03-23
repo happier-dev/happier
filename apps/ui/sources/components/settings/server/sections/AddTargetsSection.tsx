@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -57,7 +58,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 8,
         marginBottom: 8,
         ...Typography.mono(),
-        fontSize: 14,
+        ...SETTINGS_TEXT_INPUT_METRICS,
         color: theme.colors.input.text,
     },
     textInputValidating: {

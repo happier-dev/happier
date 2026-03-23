@@ -12,12 +12,12 @@ import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/proce
 import { encryptLegacyBase64, decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
-import { yarnCommand } from '../../src/testkit/process/commands';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { fetchJson } from '../../src/testkit/http';
 import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
+import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
+import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -119,9 +119,10 @@ class FakeAgent {
         await new Promise((r) => setTimeout(r, 25));
       }
       if (!steer) log({ kind: "primary_prompt_timeout_waiting_for_steer" });
+      const primaryContainsHello = primary.includes("hello");
       await this.connection.sessionUpdate({
         sessionId: params.sessionId,
-        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "primary=" + primary + "; steer=" + steer } },
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "primaryContainsHello=" + primaryContainsHello + "; steer=" + steer } },
       });
       return { stopReason: "end_turn" };
     }
@@ -165,18 +166,21 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
       HAPPIER_E2E_ACP_SDK_ENTRY: sdkEntry,
       HAPPIER_E2E_PROMPT_LOG: promptLogPath,
       HAPPIER_E2E_PRIMARY_MAX_MS: '8000',
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       PATH: `${fakeBinDir}${delimiter}${process.env.PATH ?? ''}`,
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
+    await ensureCliSharedDepsBuilt({ testDir, env: cliEnv });
+
+    const cliLaunchSpec = await resolveCliTestLaunchSpec(
+      { testDir, env: cliEnv },
+      { snapshotDir: resolve(join(testDir, 'cli-dist')), preferSourceEntrypoint: true },
+    );
 
     const proc: SpawnedProcess = spawnLoggedProcess({
-      command: yarnCommand(),
+      command: cliLaunchSpec.command,
       args: [
-        '-s',
-        'workspace',
-        '@happier-dev/cli',
-        'dev',
+        ...cliLaunchSpec.args,
         'codex',
         '--existing-session',
         sessionId,
@@ -186,7 +190,10 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
         'remote',
       ],
       cwd: repoRootDir(),
-      env: cliEnv,
+      env: {
+        ...cliEnv,
+        ...(cliLaunchSpec.env ?? {}),
+      },
       stdoutPath: resolve(join(testDir, 'cli.stdout.log')),
       stderrPath: resolve(join(testDir, 'cli.stderr.log')),
     });
@@ -195,14 +202,21 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
     const baselineAgentStateVersion = baseline.agentStateVersion;
 
     try {
-      // Wait until the CLI has attached (it registers a machine on first connect).
-      // If we post messages before that, the runner may miss the initial "new-message" update.
+      // Wait until the CLI has attached to the existing remote session.
+      // Machine registration is not a reliable attachment signal here because daemon startup is optional,
+      // but agentState flips once the session runtime is actually connected and ready to process messages.
       await waitFor(async () => {
-        const res = await fetchJson<any>(`${serverBaseUrl}/v1/machines`, {
-          headers: { Authorization: `Bearer ${auth.token}` },
-          timeoutMs: 15_000,
-        });
-        return res.status === 200 && Array.isArray(res.data) && res.data.length > 0;
+        const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+        const agentState = snap.agentState ? (decryptLegacyBase64(snap.agentState, secret) as any) : null;
+        return (
+          snap.agentStateVersion > baselineAgentStateVersion
+          && agentState
+          && typeof agentState === 'object'
+          && agentState.controlledByUser === false
+          && agentState.capabilities
+          && typeof agentState.capabilities === 'object'
+          && agentState.capabilities.inFlightSteer === true
+        );
       }, { timeoutMs: 45_000 });
 
       const localIdPrimary = `msg-${randomUUID()}`;
@@ -275,12 +289,12 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
           if (data.type !== 'message') continue;
           const msgText = (data as any).message;
           if (typeof msgText !== 'string') continue;
-          return msgText.includes('primary=hello') && msgText.includes('steer=steer-now');
-        }
+           return msgText.includes('primaryContainsHello=true') && msgText.includes('steer=steer-now');
+         }
         return false;
       }, { timeoutMs: 90_000 });
     } finally {
       await proc.stop().catch(() => {});
     }
-  });
+  }, 240_000);
 });

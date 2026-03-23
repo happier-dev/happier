@@ -11,7 +11,7 @@ import { reloadConfiguration } from '@/configuration';
 import type { Credentials } from '@/persistence';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { readSessionAttachFromEnv } from '@/agent/runtime/sessionAttach';
-import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { CommandHandler } from '@/cli/commandRegistry';
 
 import { handleResumeCommand } from './resume';
@@ -86,7 +86,7 @@ describe('happier resume', () => {
 
       const vendorResumeId = 'codex_vendor_session_1';
       const rawSession = {
-        ...makeSessionFixtureRow({
+        ...createSessionRecordFixture({
           id: 'sid_1',
           dataEncryptionKey: encodeBase64(envelope),
           metadata: encodeBase64(
@@ -165,7 +165,7 @@ describe('happier resume', () => {
 
       const vendorResumeId = 'claude_vendor_session_1';
       const rawSession = {
-        ...makeSessionFixtureRow({
+        ...createSessionRecordFixture({
           id: 'sid_plain_1',
           encryptionMode: 'plain',
           dataEncryptionKey: null,

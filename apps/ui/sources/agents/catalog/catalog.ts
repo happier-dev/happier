@@ -1,12 +1,13 @@
-import { AGENT_IDS, DEFAULT_AGENT_ID, type AgentId } from '@happier-dev/agents';
-
 import type { AgentCoreConfig, MachineLoginKey } from '@/agents/registry/registryCore';
 import {
+    AGENT_IDS,
+    DEFAULT_AGENT_ID,
     getAgentCore as getExpoAgentCore,
     isAgentId,
     resolveAgentIdFromCliDetectKey,
     resolveAgentIdFromConnectedServiceId,
     resolveAgentIdFromFlavor,
+    type AgentId,
 } from '@/agents/registry/registryCore';
 
 import type { AgentUiConfig } from '@/agents/registry/registryUi';
@@ -16,22 +17,17 @@ type AgentIconTintTheme = Parameters<RegistryUiModule['getAgentIconTintColor']>[
 import type { AgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import {
     AGENTS_UI_BEHAVIOR,
-    buildResumeCapabilityOptionsFromMaps,
     buildResumeCapabilityOptionsFromUiState,
     buildNewSessionOptionsFromUiState,
+    canSelectAgentWithoutDetectedCli,
     getNewSessionAgentInputExtraActionChips,
     buildSpawnEnvironmentVariablesFromUiState,
     buildResumeSessionExtrasFromUiState,
     buildSpawnSessionExtrasFromUiState,
     buildWakeResumeExtras,
     getAgentResumeExperimentsFromSettings,
-    getAllowExperimentalResumeByAgentIdFromUiState,
-    getAllowRuntimeResumeByAgentIdFromResults,
     getNewSessionPreflightIssues,
     getNewSessionRelevantInstallableDepKeys,
-    getResumePreflightIssues,
-    getResumePreflightPrefetchPlan,
-    getResumeRuntimeSupportPrefetchPlan,
 } from '@/agents/registry/registryUiBehavior';
 
 export { AGENT_IDS, DEFAULT_AGENT_ID };
@@ -54,12 +50,32 @@ export function getAgentCore(id: AgentId): AgentCoreConfig {
     return getExpoAgentCore(id);
 }
 
+export function writeAgentVendorResumeIdToMetadata<Metadata extends Record<string, unknown>>(
+    metadata: Metadata,
+    agentId: AgentId,
+    vendorResumeId: string,
+): Metadata {
+    const vendorResumeIdField = getAgentCore(agentId).resume.vendorResumeIdField;
+    if (!vendorResumeIdField) return metadata;
+    return {
+        ...metadata,
+        [vendorResumeIdField]: vendorResumeId,
+    };
+}
+
 export function getAgentUi(id: AgentId): AgentUiConfig {
     return registryUi().AGENTS_UI[id];
 }
 
 export function getAgentIconSource(agentId: AgentId): ReturnType<RegistryUiModule['getAgentIconSource']> {
     return registryUi().getAgentIconSource(agentId);
+}
+
+export function getAgentIconSvgXml(
+    agentId: AgentId,
+    theme: Parameters<RegistryUiModule['getAgentIconSvgXml']>[1],
+): ReturnType<RegistryUiModule['getAgentIconSvgXml']> {
+    return registryUi().getAgentIconSvgXml(agentId, theme);
 }
 
 export function getAgentIconTintColor(
@@ -99,15 +115,10 @@ export {
     resolveAgentIdFromCliDetectKey,
     resolveAgentIdFromConnectedServiceId,
     getAgentResumeExperimentsFromSettings,
-    getAllowExperimentalResumeByAgentIdFromUiState,
-    getAllowRuntimeResumeByAgentIdFromResults,
     buildResumeCapabilityOptionsFromUiState,
-    buildResumeCapabilityOptionsFromMaps,
-    getResumeRuntimeSupportPrefetchPlan,
-    getResumePreflightPrefetchPlan,
     getNewSessionPreflightIssues,
-    getResumePreflightIssues,
     buildNewSessionOptionsFromUiState,
+    canSelectAgentWithoutDetectedCli,
     getNewSessionAgentInputExtraActionChips,
     getNewSessionRelevantInstallableDepKeys,
     buildSpawnEnvironmentVariablesFromUiState,

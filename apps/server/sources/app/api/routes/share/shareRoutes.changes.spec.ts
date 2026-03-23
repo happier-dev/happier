@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
+
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { createInTxHarness } from "../../testkit/txHarness";
 
 vi.mock("@/app/share/accessControl", () => ({
@@ -51,41 +53,22 @@ vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-const dbSessionFindUnique = vi.fn();
-const dbAccountFindUnique = vi.fn();
-const dbSessionShareUpsert = vi.fn();
-const dbSessionShareFindFirst = vi.fn();
-const dbSessionShareUpdate = vi.fn();
+const dbMocks = createDbMocks({
+    session: ["findUnique"],
+    account: ["findUnique"],
+    sessionShare: ["upsert", "findFirst", "update"],
+} as const);
+const txDbMocks = createDbMocks({
+    sessionShare: ["upsert", "update", "findFirst", "delete"],
+} as const);
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        session: {
-            findUnique: (...args: any[]) => dbSessionFindUnique(...args),
-        },
-        account: {
-            findUnique: (...args: any[]) => dbAccountFindUnique(...args),
-        },
-        sessionShare: {
-            upsert: (...args: any[]) => dbSessionShareUpsert(...args),
-            findFirst: (...args: any[]) => dbSessionShareFindFirst(...args),
-            update: (...args: any[]) => dbSessionShareUpdate(...args),
-        },
-    },
+installDbModuleMock(() => ({
+    db: dbMocks.db,
 }));
-
-let txSessionShareUpsert: any;
-let txSessionShareUpdate: any;
-let txSessionShareFindFirst: any;
-let txSessionShareDelete: any;
 
 vi.mock("@/storage/inTx", () => {
     const harness = createInTxHarness(() => ({
-            sessionShare: {
-                upsert: (...args: any[]) => txSessionShareUpsert(...args),
-                update: (...args: any[]) => txSessionShareUpdate(...args),
-                findFirst: (...args: any[]) => txSessionShareFindFirst(...args),
-                delete: (...args: any[]) => txSessionShareDelete(...args),
-            },
+            sessionShare: txDbMocks.db.sessionShare,
         }));
     return { afterTx: harness.afterTx, inTx: harness.inTx };
 });
@@ -95,10 +78,12 @@ const ENCRYPTED_DATA_KEY = Buffer.from(Uint8Array.from([0, ...new Array(73).fill
 describe("shareRoutes (AccountChange integration)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        dbSessionFindUnique.mockResolvedValue({ id: "s1", encryptionMode: "e2ee" });
-        dbAccountFindUnique.mockResolvedValue({ id: "recipient" });
+        dbMocks.reset();
+        txDbMocks.reset();
+        dbMocks.db.session.findUnique.mockResolvedValue({ id: "s1", encryptionMode: "e2ee" });
+        dbMocks.db.account.findUnique.mockResolvedValue({ id: "recipient" });
 
-        txSessionShareUpsert = vi.fn(async () => ({
+        txDbMocks.db.sessionShare.upsert.mockResolvedValue({
             id: "share-1",
             sessionId: "s1",
             sharedWithUserId: "recipient",
@@ -109,8 +94,8 @@ describe("shareRoutes (AccountChange integration)", () => {
             sharedByUser: { id: "owner" },
             createdAt: new Date(1),
             updatedAt: new Date(1),
-        }));
-        txSessionShareUpdate = vi.fn(async () => ({
+        });
+        txDbMocks.db.sessionShare.update.mockResolvedValue({
             id: "share-1",
             sessionId: "s1",
             sharedWithUserId: "recipient",
@@ -119,23 +104,25 @@ describe("shareRoutes (AccountChange integration)", () => {
             sharedWithUser: { id: "recipient" },
             createdAt: new Date(1),
             updatedAt: new Date(2),
-        }));
-        txSessionShareFindFirst = vi.fn(async () => ({ id: "share-1", sessionId: "s1", sharedWithUserId: "recipient" }));
-        txSessionShareDelete = vi.fn(async () => ({}));
+        });
+        txDbMocks.db.sessionShare.findFirst.mockResolvedValue({ id: "share-1", sessionId: "s1", sharedWithUserId: "recipient" });
+        txDbMocks.db.sessionShare.delete.mockResolvedValue({});
 
-        dbSessionShareFindFirst.mockResolvedValue({ accessLevel: "edit", canApprovePermissions: false });
-        dbSessionShareUpdate.mockResolvedValue({} as any);
+        dbMocks.db.sessionShare.findFirst.mockResolvedValue({ accessLevel: "edit", canApprovePermissions: false });
+        dbMocks.db.sessionShare.update.mockResolvedValue({} as any);
     });
 
     it("POST marks owner+recipient share changes (and recipient session) and emits using latest recipient cursor", async () => {
         const { shareRoutes } = await import("./shareRoutes");
-        const app = createFakeRouteApp();
-        shareRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/sessions/:sessionId/shares",
+            registerRoutes(app) {
+                shareRoutes(app as any);
+            },
+        });
 
-        const handler = getRouteHandler(app, "POST", "/v1/sessions/:sessionId/shares");
-        const reply = createReplyStub();
-
-        await handler(
+        await route.invoke(
             {
                 userId: "owner",
                 params: { sessionId: "s1" },
@@ -145,7 +132,6 @@ describe("shareRoutes (AccountChange integration)", () => {
                     encryptedDataKey: ENCRYPTED_DATA_KEY,
                 },
             },
-            reply,
         );
 
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "owner", kind: "share", entityId: "s1" }));
@@ -165,8 +151,8 @@ describe("shareRoutes (AccountChange integration)", () => {
     });
 
     it("POST allows plaintext sessions without an encryptedDataKey", async () => {
-        dbSessionFindUnique.mockResolvedValue({ id: "s1", encryptionMode: "plain" });
-        txSessionShareUpsert = vi.fn(async (args: any) => ({
+        dbMocks.db.session.findUnique.mockResolvedValue({ id: "s1", encryptionMode: "plain" });
+        txDbMocks.db.sessionShare.upsert.mockImplementation(async (args: any) => ({
             id: "share-1",
             sessionId: "s1",
             sharedWithUserId: "recipient",
@@ -180,13 +166,15 @@ describe("shareRoutes (AccountChange integration)", () => {
         }));
 
         const { shareRoutes } = await import("./shareRoutes");
-        const app = createFakeRouteApp();
-        shareRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/sessions/:sessionId/shares",
+            registerRoutes(app) {
+                shareRoutes(app as any);
+            },
+        });
 
-        const handler = getRouteHandler(app, "POST", "/v1/sessions/:sessionId/shares");
-        const reply = createReplyStub();
-
-        await handler(
+        const { reply } = await route.invoke(
             {
                 userId: "owner",
                 params: { sessionId: "s1" },
@@ -195,11 +183,10 @@ describe("shareRoutes (AccountChange integration)", () => {
                     accessLevel: "edit",
                 },
             },
-            reply,
         );
 
         expect(reply.code).not.toHaveBeenCalledWith(400);
-        expect(txSessionShareUpsert).toHaveBeenCalledWith(
+        expect(txDbMocks.db.sessionShare.upsert).toHaveBeenCalledWith(
             expect.objectContaining({
                 create: expect.objectContaining({ encryptedDataKey: null }),
                 update: expect.objectContaining({ encryptedDataKey: null }),
@@ -209,19 +196,20 @@ describe("shareRoutes (AccountChange integration)", () => {
 
     it("PATCH marks owner+recipient share changes (and recipient session) and emits using latest recipient cursor", async () => {
         const { shareRoutes } = await import("./shareRoutes");
-        const app = createFakeRouteApp();
-        shareRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "PATCH",
+            path: "/v1/sessions/:sessionId/shares/:shareId",
+            registerRoutes(app) {
+                shareRoutes(app as any);
+            },
+        });
 
-        const handler = getRouteHandler(app, "PATCH", "/v1/sessions/:sessionId/shares/:shareId");
-        const reply = createReplyStub();
-
-        await handler(
+        await route.invoke(
             {
                 userId: "owner",
                 params: { sessionId: "s1", shareId: "share-1" },
                 body: { accessLevel: "admin", canApprovePermissions: true },
             },
-            reply,
         );
 
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "owner", kind: "share", entityId: "s1" }));
@@ -242,18 +230,19 @@ describe("shareRoutes (AccountChange integration)", () => {
 
     it("DELETE marks owner+recipient share changes (and recipient session) and emits using latest recipient cursor", async () => {
         const { shareRoutes } = await import("./shareRoutes");
-        const app = createFakeRouteApp();
-        shareRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "DELETE",
+            path: "/v1/sessions/:sessionId/shares/:shareId",
+            registerRoutes(app) {
+                shareRoutes(app as any);
+            },
+        });
 
-        const handler = getRouteHandler(app, "DELETE", "/v1/sessions/:sessionId/shares/:shareId");
-        const reply = createReplyStub();
-
-        await handler(
+        await route.invoke(
             {
                 userId: "owner",
                 params: { sessionId: "s1", shareId: "share-1" },
             },
-            reply,
         );
 
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "owner", kind: "share", entityId: "s1" }));

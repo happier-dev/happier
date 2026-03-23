@@ -6,11 +6,13 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { Typography } from '@/constants/Typography';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { SplitActionButtons } from '@/components/ui/forms/SplitActionButtons';
 
 
 export interface InlineAddExpanderProps {
     isOpen: boolean;
     onOpenChange: (isOpen: boolean) => void;
+    triggerTestID?: string;
 
     title: string;
     subtitle?: string;
@@ -33,6 +35,7 @@ export interface InlineAddExpanderProps {
 export function InlineAddExpander({
     isOpen,
     onOpenChange,
+    triggerTestID,
     title,
     subtitle,
     icon,
@@ -59,6 +62,7 @@ export function InlineAddExpander({
     return (
         <>
             <Item
+                testID={triggerTestID}
                 title={title}
                 subtitle={subtitle}
                 icon={icon}
@@ -79,46 +83,13 @@ export function InlineAddExpander({
 
                     <View style={{ height: 16 }} />
 
-                    <View style={styles.actionsRow}>
-                        <View style={{ flex: 1 }}>
-                            <Pressable
-                                onPress={onCancel}
-                                accessibilityRole="button"
-                                accessibilityLabel={cancelLabel}
-                                style={({ pressed }) => ({
-                                    backgroundColor: theme.colors.surface,
-                                    borderRadius: 10,
-                                    paddingVertical: 12,
-                                    alignItems: 'center',
-                                    opacity: pressed ? 0.85 : 1,
-                                })}
-                            >
-                                <Text style={{ color: theme.colors.text, ...Typography.default('semiBold') }}>
-                                    {cancelLabel}
-                                </Text>
-                            </Pressable>
-                        </View>
-
-                        <View style={{ flex: 1 }}>
-                            <Pressable
-                                onPress={onSave}
-                                disabled={saveDisabled}
-                                accessibilityRole="button"
-                                accessibilityLabel={saveLabel}
-                                style={({ pressed }) => ({
-                                    backgroundColor: theme.colors.button.primary.background,
-                                    borderRadius: 10,
-                                    paddingVertical: 12,
-                                    alignItems: 'center',
-                                    opacity: saveDisabled ? 0.5 : (pressed ? 0.85 : 1),
-                                })}
-                            >
-                                <Text style={{ color: theme.colors.button.primary.tint, ...Typography.default('semiBold') }}>
-                                    {saveLabel}
-                                </Text>
-                            </Pressable>
-                        </View>
-                    </View>
+                    <SplitActionButtons
+                        secondaryLabel={cancelLabel}
+                        onSecondaryPress={onCancel}
+                        primaryLabel={saveLabel}
+                        onPrimaryPress={onSave}
+                        primaryDisabled={saveDisabled}
+                    />
                 </View>
             ) : null}
         </>
@@ -138,9 +109,5 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 20,
         marginBottom: 12,
         ...Typography.default(),
-    },
-    actionsRow: {
-        flexDirection: 'row',
-        gap: 12,
     },
 }));

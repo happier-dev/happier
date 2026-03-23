@@ -6,6 +6,10 @@ let activeServerSnapshot = {
     generation: 1,
 };
 
+const frozenServerFeaturesTime = new Date('2026-02-13T00:00:00.000Z');
+const frozenServerFeaturesTimeAfterCooldown = new Date('2026-02-13T00:01:00.000Z');
+const frozenServerFeaturesTimeAfterErrorTtl = new Date('2026-02-13T00:00:06.000Z');
+
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => activeServerSnapshot,
 }));
@@ -26,6 +30,15 @@ function createResponse(status: number, payload: unknown) {
         status,
         json: async () => payload,
     } as Response;
+}
+
+function useFrozenServerFeaturesClock(now = frozenServerFeaturesTime): void {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+}
+
+function setFrozenServerFeaturesClock(now: Date): void {
+    vi.setSystemTime(now);
 }
 
 describe('serverFeaturesClient', () => {
@@ -152,8 +165,7 @@ describe('serverFeaturesClient', () => {
         const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-02-13T00:00:00.000Z'));
+        useFrozenServerFeaturesClock();
 
         const first = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
         const second = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
@@ -188,15 +200,14 @@ describe('serverFeaturesClient', () => {
         const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-02-13T00:00:00.000Z'));
+        useFrozenServerFeaturesClock();
 
         const first = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
         expect(first.status).toBe('unsupported');
         expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
 
         // After cooldown, a forced refresh should revalidate.
-        vi.setSystemTime(new Date('2026-02-13T00:01:00.000Z'));
+        setFrozenServerFeaturesClock(frozenServerFeaturesTimeAfterCooldown);
 
         const second = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
         expect(second.status).toBe('ready');
@@ -228,8 +239,7 @@ describe('serverFeaturesClient', () => {
         const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-02-13T00:00:00.000Z'));
+        useFrozenServerFeaturesClock();
 
         const first = await getServerFeaturesSnapshot({ timeoutMs: 50 });
         expect(first.status).toBe('error');
@@ -241,7 +251,7 @@ describe('serverFeaturesClient', () => {
         expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
 
         // After TTL, the client should retry.
-        vi.setSystemTime(new Date('2026-02-13T00:00:06.000Z'));
+        setFrozenServerFeaturesClock(frozenServerFeaturesTimeAfterErrorTtl);
         const third = await getServerFeaturesSnapshot({ timeoutMs: 50 });
         expect(third.status).toBe('ready');
         expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);

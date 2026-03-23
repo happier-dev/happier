@@ -1,7 +1,9 @@
 export interface VoiceSessionConfig {
     sessionId: string;
     initialContext?: string;
-    token: string;
+    token?: string;
+    signedUrl?: string;
+    textOnly?: boolean;
 }
 
 export interface VoiceSession {

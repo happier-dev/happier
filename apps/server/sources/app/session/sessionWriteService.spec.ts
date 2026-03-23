@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createEnvPatcher } from "@/testkit/env";
+import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
 
 let currentTx: any;
 
@@ -16,34 +18,33 @@ vi.mock("@/app/changes/markAccountChanged", () => ({
     markAccountChanged: (...args: any[]) => markAccountChanged(...args),
 }));
 
-const dbFindUnique = vi.fn();
-const dbSessionFindUnique = vi.fn();
-const dbSessionShareFindUnique = vi.fn();
-vi.mock("@/storage/db", () => ({
-    db: {
-        session: {
-            findUnique: (...args: any[]) => dbSessionFindUnique(...args),
-        },
-        sessionShare: {
-            findUnique: (...args: any[]) => dbSessionShareFindUnique(...args),
-        },
-        sessionMessage: {
-            findUnique: (...args: any[]) => dbFindUnique(...args),
-        },
-    },
-}));
+const dbMocks = createDbMocks({
+    session: ["findUnique"],
+    sessionShare: ["findUnique"],
+    sessionMessage: ["findUnique"],
+} as const);
+installDbModuleMock({ db: dbMocks.db });
 
-import { createSessionMessage, patchSession, updateSessionAgentState, updateSessionMetadata } from "./sessionWriteService";
-
-const createSessionMessageCompat = createSessionMessage as unknown as (params: any) => Promise<any>;
+let createSessionMessage: typeof import("./sessionWriteService").createSessionMessage;
+let patchSession: typeof import("./sessionWriteService").patchSession;
+let updateSessionAgentState: typeof import("./sessionWriteService").updateSessionAgentState;
+let updateSessionMetadata: typeof import("./sessionWriteService").updateSessionMetadata;
+let updateSessionReadCursor: typeof import("./sessionWriteService").updateSessionReadCursor;
 
 describe("sessionWriteService", () => {
+    const storagePolicyEnv = createEnvPatcher([
+        "HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY",
+    ]);
+
+    beforeAll(async () => {
+        ({ createSessionMessage, patchSession, updateSessionAgentState, updateSessionMetadata, updateSessionReadCursor } = await import("./sessionWriteService"));
+    });
+
     beforeEach(() => {
         getSessionParticipantUserIds.mockReset();
         markAccountChanged.mockReset();
-        dbFindUnique.mockReset();
-        dbSessionFindUnique.mockReset();
-        dbSessionShareFindUnique.mockReset();
+        dbMocks.reset();
+        storagePolicyEnv.restore();
 
         currentTx = {
             session: {
@@ -87,6 +88,7 @@ describe("sessionWriteService", () => {
                 ok: true,
                 didWrite: false,
                 didUpdate: false,
+                badgeAttentionChanged: false,
                 message: {
                     id: "m1",
                     seq: 4,
@@ -175,6 +177,7 @@ describe("sessionWriteService", () => {
                 ok: true,
                 didWrite: false,
                 didUpdate: true,
+                badgeAttentionChanged: false,
                 message: expect.objectContaining({ id: "m1", seq: 4, localId: "l1" }),
                 participantCursors: [
                     { accountId: "u1", cursor: 101 },
@@ -213,7 +216,17 @@ describe("sessionWriteService", () => {
             const updatedAt = new Date("2020-01-01T00:00:00.000Z");
 
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
-            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    seq: 9,
+                    lastViewedSessionSeq: 9,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
             currentTx.session.update.mockResolvedValue({ seq: 10 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m1",
@@ -241,6 +254,7 @@ describe("sessionWriteService", () => {
 
             expect(res.message.id).toBe("m1");
             expect(res.message.seq).toBe(10);
+            expect(res.badgeAttentionChanged).toBe(true);
             expect(res.participantCursors).toEqual([
                 { accountId: "u1", cursor: 101 },
                 { accountId: "u2", cursor: 102 },
@@ -266,9 +280,9 @@ describe("sessionWriteService", () => {
             currentTx.session.update.mockResolvedValue({ seq: 10 });
             currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
 
-            dbSessionFindUnique.mockResolvedValue({ accountId: "u1" });
-            dbSessionShareFindUnique.mockResolvedValue(null);
-            dbFindUnique.mockResolvedValue({
+            dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
                 id: "mExisting",
                 seq: 9,
                 localId: "l1",
@@ -289,6 +303,7 @@ describe("sessionWriteService", () => {
                 ok: true,
                 didWrite: false,
                 didUpdate: false,
+                badgeAttentionChanged: false,
                 message: {
                     id: "mExisting",
                     seq: 9,
@@ -308,9 +323,9 @@ describe("sessionWriteService", () => {
             currentTx.session.update.mockResolvedValue({ seq: 10 });
             currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
 
-            dbSessionFindUnique.mockResolvedValue({ accountId: "u1" });
-            dbSessionShareFindUnique.mockResolvedValue(null);
-            dbFindUnique.mockResolvedValue({
+            dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
                 id: "mExisting",
                 seq: 9,
                 localId: "l1",
@@ -344,6 +359,7 @@ describe("sessionWriteService", () => {
                 ok: true,
                 didWrite: false,
                 didUpdate: true,
+                badgeAttentionChanged: false,
                 message: {
                     id: "mExisting",
                     seq: 9,
@@ -369,8 +385,7 @@ describe("sessionWriteService", () => {
 
         it("rejects encrypted writes when the session encryptionMode is plain (with a stable code)", async () => {
             const createdAt = new Date("2020-01-01T00:00:00.000Z");
-            const prevStoragePolicy = process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
-            process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
@@ -396,49 +411,41 @@ describe("sessionWriteService", () => {
             expect(currentTx.session.update).not.toHaveBeenCalled();
             expect(currentTx.sessionMessage.create).not.toHaveBeenCalled();
             expect(markAccountChanged).not.toHaveBeenCalled();
-            if (typeof prevStoragePolicy === "string") process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = prevStoragePolicy;
-            else delete (process.env as any).HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
         });
 
         it("stores plain content when the session encryptionMode is plain and storagePolicy is optional", async () => {
             const createdAt = new Date("2020-01-01T00:00:00.000Z");
-            const prevStoragePolicy = process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
-            process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
 
-            try {
-                currentTx.sessionMessage.findUnique.mockResolvedValue(null);
-                currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
-                currentTx.sessionShare.findUnique.mockResolvedValue(null);
-                currentTx.session.update.mockResolvedValue({ seq: 1 });
-                currentTx.sessionMessage.create.mockResolvedValue({
-                    id: "m1",
-                    seq: 1,
-                    localId: null,
-                    content: { t: "plain", v: { type: "user", text: "hi" } },
-                    createdAt,
-                    updatedAt: createdAt,
-                });
-                getSessionParticipantUserIds.mockResolvedValue(["u1"]);
-                markAccountChanged.mockResolvedValueOnce(101);
+            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.update.mockResolvedValue({ seq: 1 });
+            currentTx.sessionMessage.create.mockResolvedValue({
+                id: "m1",
+                seq: 1,
+                localId: null,
+                content: { t: "plain", v: { type: "user", text: "hi" } },
+                createdAt,
+                updatedAt: createdAt,
+            });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(101);
 
-                const res = await createSessionMessageCompat({
+                const res = await createSessionMessage({
                     actorUserId: "u1",
                     sessionId: "s1",
                     content: { t: "plain", v: { type: "user", text: "hi" } },
-                });
+            });
 
-                expect(res.ok).toBe(true);
-                expect(currentTx.sessionMessage.create).toHaveBeenCalledWith(
-                    expect.objectContaining({
-                        data: expect.objectContaining({
-                            content: { t: "plain", v: { type: "user", text: "hi" } },
-                        }),
+            expect(res.ok).toBe(true);
+            expect(currentTx.sessionMessage.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        content: { t: "plain", v: { type: "user", text: "hi" } },
                     }),
-                );
-            } finally {
-                if (typeof prevStoragePolicy === "string") process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = prevStoragePolicy;
-                else delete (process.env as any).HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
-            }
+                }),
+            );
         });
     });
 
@@ -499,7 +506,19 @@ describe("sessionWriteService", () => {
 
     describe("updateSessionAgentState", () => {
         it("updates with CAS and marks participants", async () => {
-            currentTx.session.findUnique.mockResolvedValueOnce({ accountId: "u1" }).mockResolvedValueOnce({ agentStateVersion: 1, agentState: "a1" });
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    agentStateVersion: 1,
+                    agentState: "a1",
+                    seq: 2,
+                    lastViewedSessionSeq: 2,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             getSessionParticipantUserIds.mockResolvedValue(["u1"]);
@@ -517,6 +536,55 @@ describe("sessionWriteService", () => {
                 version: 2,
                 agentState: null,
                 participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: false,
+            });
+        });
+
+        it("persists pending permission and user action counts atomically with agentState", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    agentStateVersion: 1,
+                    agentState: "a1",
+                    seq: 2,
+                    lastViewedSessionSeq: 2,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const res = await updateSessionAgentState({
+                actorUserId: "u1",
+                sessionId: "s1",
+                expectedVersion: 1,
+                agentStateCiphertext: "a2",
+                pendingPermissionRequestCount: 2,
+                pendingUserActionRequestCount: 1,
+            });
+
+            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
+                where: { id: "s1", agentStateVersion: 1 },
+                data: {
+                    agentState: "a2",
+                    agentStateVersion: 2,
+                    pendingPermissionRequestCount: 2,
+                    pendingUserActionRequestCount: 1,
+                },
+            });
+            expect(res).toEqual({
+                ok: true,
+                version: 2,
+                agentState: "a2",
+                participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: true,
+                pendingPermissionRequestCount: 2,
+                pendingUserActionRequestCount: 1,
             });
         });
 
@@ -554,6 +622,73 @@ describe("sessionWriteService", () => {
             });
 
             expect(res).toEqual({ ok: false, error: "session-not-found" });
+        });
+    });
+
+    describe("updateSessionReadCursor", () => {
+        it("applies a monotonic max update and marks participants", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    seq: 8,
+                    lastViewedSessionSeq: 3,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const res = await updateSessionReadCursor({
+                actorUserId: "u1",
+                sessionId: "s1",
+                lastViewedSessionSeq: 9,
+            });
+
+            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
+                where: { id: "s1", lastViewedSessionSeq: { lt: 8 } },
+                data: { lastViewedSessionSeq: 8 },
+            });
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 8,
+                participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: true,
+            });
+        });
+
+        it("returns ok without marking participants when the incoming cursor does not advance", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    seq: 8,
+                    lastViewedSessionSeq: 5,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+
+            const res = await updateSessionReadCursor({
+                actorUserId: "u1",
+                sessionId: "s1",
+                lastViewedSessionSeq: 4,
+            });
+
+            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 5,
+                participantCursors: [],
+                badgeAttentionChanged: false,
+            });
         });
     });
 

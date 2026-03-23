@@ -7,6 +7,8 @@ import { stackExistsSync } from '../utils/stack/stacks.mjs';
 import { STACK_WRAPPER_PRESERVE_KEYS, scrubHappierStackEnv } from '../utils/env/scrub_env.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
 import { getStackRuntimeStatePath, isPidAlive, readStackRuntimeStateFile } from '../utils/stack/runtime_state.mjs';
+import { readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
+import { checkDaemonState } from '../daemon.mjs';
 
 const readExistingEnv = readTextOrEmpty;
 const STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS = [
@@ -83,7 +85,7 @@ export async function withStackEnv({ stackName, fn, extraEnv = {} }) {
   const stackEnv = parseEnvToObject(raw);
 
   const runtimeStatePath = getStackRuntimeStatePath(stackName);
-  const runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
+  const initialRuntimeState = await readStackRuntimeStateFile(runtimeStatePath);
 
   let env = {
     ...cleaned,
@@ -100,6 +102,22 @@ export async function withStackEnv({ stackName, fn, extraEnv = {} }) {
     env,
     stackName,
     cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
+  });
+
+  const runtimePortCandidate =
+    Number(env.HAPPIER_STACK_SERVER_PORT) > 0
+      ? Number(env.HAPPIER_STACK_SERVER_PORT)
+      : Number(initialRuntimeState?.ports?.server) > 0
+        ? Number(initialRuntimeState?.ports?.server)
+        : null;
+  const runtimeState = await readStackRuntimeStateWithDaemonSync({
+    runtimeStatePath,
+    cliHomeDir: (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString(),
+    internalServerUrl:
+      Number.isFinite(runtimePortCandidate) && runtimePortCandidate > 0 ? `http://127.0.0.1:${runtimePortCandidate}` : '',
+    env,
+  }, {
+    checkDaemonStateImpl: checkDaemonState,
   });
 
   // Runtime-only port overlay (ephemeral stacks): prefer stack.runtime.json ports when the stack

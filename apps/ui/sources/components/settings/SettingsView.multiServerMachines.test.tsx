@@ -1,26 +1,62 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual: any = await importOriginal();
-    return {
-        ...actual,
-        View: 'View',
-        Pressable: 'Pressable',
-        Text: 'Text',
-        ActivityIndicator: 'ActivityIndicator',
-        Platform: {
-            ...actual.Platform,
-            OS: 'web',
-            select: (options: any) => (options && 'default' in options ? options.default : undefined),
-        },
-        Linking: { canOpenURL: async () => false, openURL: async () => {} },
-    };
+const activeSelectionMachineGroupsState = vi.hoisted(() => ({
+    value: {
+        hasAnyVisibleMachines: true,
+        showMachinesGroupedByServer: true,
+        visibleMachineGroups: [
+            {
+                serverId: 'srv-a',
+                serverName: 'Server A',
+                status: 'idle',
+                machines: [
+                    {
+                        id: 'mach-a1',
+                        metadata: { displayName: 'Machine A1', host: 'a.local' },
+                    },
+                ],
+            },
+            {
+                serverId: 'srv-b',
+                serverName: 'Server B',
+                status: 'idle',
+                machines: [
+                    {
+                        id: 'mach-b1',
+                        metadata: { displayName: 'Machine B1', host: 'b.local' },
+                    },
+                ],
+            },
+        ],
+    },
+}));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Pressable: 'Pressable',
+                            Text: 'Text',
+                            ActivityIndicator: 'ActivityIndicator',
+                            Platform: {
+                                OS: 'web',
+                                select: (options: any) => (options && 'default' in options ? options.default : undefined),
+                            },
+                            Linking: {
+                                canOpenURL: async () => false,
+                                openURL: async () => {},
+                            },
+                        }
+    );
 });
 
 vi.mock('expo-image', () => ({
@@ -32,9 +68,13 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -65,8 +105,27 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ title, subtitle }: any) =>
-        React.createElement('Text', null, `${title}${subtitle ? ` ${subtitle}` : ''}`),
+    Item: (props: any) => React.createElement('Item', props),
+}));
+
+vi.mock('@/components/settings/server/hooks/useActiveSelectionMachineGroups', () => ({
+    useActiveSelectionMachineGroups: () => activeSelectionMachineGroupsState.value,
+}));
+
+vi.mock('@/components/settings/server/sections/ActiveSelectionMachinesSection', () => ({
+    ActiveSelectionMachinesSection: ({ visibleMachineGroups }: any) =>
+        React.createElement(
+            React.Fragment,
+            null,
+            visibleMachineGroups.flatMap((group: any) =>
+                group.machines.map((machine: any) =>
+                    React.createElement('Item', {
+                        key: `${group.serverId}-${machine.id}`,
+                        title: machine.metadata?.displayName ?? machine.metadata?.host ?? machine.id,
+                    }),
+                ),
+            ),
+        ),
 }));
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
@@ -82,13 +141,16 @@ vi.mock('@/track', () => ({
     trackWhatsNewClicked: vi.fn(),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => false),
-        prompt: vi.fn(async () => null),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(async () => false),
+            prompt: vi.fn(async () => null),
+        },
+    }).module;
+});
 
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
@@ -114,9 +176,10 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
     MachineCliGlyphs: 'MachineCliGlyphs',
@@ -143,71 +206,39 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: false }),
 }));
 
+vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
+    navigateWithBlurOnWeb: (fn: () => void) => fn(),
+}));
+
+vi.mock('@/utils/platform/deferOnWeb', () => ({
+    deferOnWeb: (fn: () => void) => fn(),
+}));
+
 afterEach(() => {
     routerPushSpy.mockClear();
 });
 
 describe('SettingsView (multi-server machines)', () => {
-    it('renders machines from all servers in the active group target', async () => {
-        const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
-        const scope = `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+    it('replaces the inline machines list with a dedicated machines settings entry', async () => {
+        const { SettingsView } = await import('./SettingsView');
 
-        try {
-            vi.resetModules();
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
 
-            const profiles = await import('@/sync/domains/server/serverProfiles');
-            const a = profiles.upsertServerProfile({ serverUrl: 'http://localhost:3013', name: 'Server A' });
-            const b = profiles.upsertServerProfile({ serverUrl: 'http://localhost:3012', name: 'Server B' });
-            profiles.setActiveServerId(a.id, { scope: 'device' });
+        const items = tree!.findAllByType('Item' as any);
+        const itemTitles = items.map((item: any) => String(item.props.title ?? ''));
 
-            const { getStorage } = await import('@/sync/domains/state/storage');
-            const store = getStorage();
-            store.getState().applySettingsLocal({
-                serverSelectionGroups: [{ id: 'grp', name: 'Group', serverIds: [a.id, b.id], presentation: 'grouped' }],
-                serverSelectionActiveTargetKind: 'group',
-                serverSelectionActiveTargetId: 'grp',
-            } as any);
+        expect(itemTitles).not.toContain('Machine A1');
+        expect(itemTitles).not.toContain('Machine B1');
+        expect(itemTitles).toContain('settings.machines');
 
-            // Populate per-server machine caches.
-            profiles.setActiveServerId(a.id, { scope: 'device' });
-            store.getState().applyMachines([{
-                id: 'mach-a1',
-                active: true,
-                createdAt: 1,
-                updatedAt: 1,
-                metadata: { host: 'a.local', displayName: 'Machine A1' },
-            } as any], true);
-            profiles.setActiveServerId(b.id, { scope: 'device' });
-            store.getState().applyMachines([{
-                id: 'mach-b1',
-                active: true,
-                createdAt: 2,
-                updatedAt: 2,
-                metadata: { host: 'b.local', displayName: 'Machine B1' },
-            } as any], true);
-            profiles.setActiveServerId(a.id, { scope: 'device' });
+        const machinesEntry = items.find((item: any) => item.props.title === 'settings.machines');
+        expect(machinesEntry).toBeTruthy();
 
-            const { SettingsView } = await import('./SettingsView');
+        await act(async () => {
+            await pressTestInstanceAsync(machinesEntry!);
+        });
 
-            let tree: renderer.ReactTestRenderer | null = null;
-            await act(async () => {
-                tree = renderer.create(React.createElement(SettingsView));
-            });
-
-            expect(JSON.stringify(tree!.toJSON())).toContain('Machine A1');
-            expect(JSON.stringify(tree!.toJSON())).toContain('Machine B1');
-            const groupTitles = tree!.root
-                .findAll((node) => String(node.type) === 'Title')
-                .map((node) => String((Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children) ?? ''));
-            expect(groupTitles).toContain('Server A');
-            expect(groupTitles).toContain('Server B');
-        } finally {
-            if (previousScope === undefined) {
-                delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
-            } else {
-                process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
-            }
-        }
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/machines');
     });
 });

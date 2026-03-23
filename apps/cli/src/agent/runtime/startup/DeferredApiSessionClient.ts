@@ -13,6 +13,7 @@ export type DeferredApiSessionTarget = Readonly<{
   sendSessionEvent: (event: unknown, id?: string) => void;
   sendClaudeSessionMessage: (message: unknown, meta?: unknown) => void;
   sendAgentMessage: (provider: unknown, body: unknown, opts?: unknown) => void;
+  sendTranscriptDraftDelta?: (provider: unknown, params: unknown) => void;
   sendCodexMessage: (body: unknown) => void;
   sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
   updateMetadata: (updater: (metadata: Metadata) => Metadata) => void | Promise<void>;
@@ -113,6 +114,19 @@ export class DeferredApiSessionClient {
       return;
     }
     this.pushBufferedCall((t) => t.sendAgentMessage(_provider, _body, _opts), { hint: 'sendAgentMessage' });
+  }
+
+  sendTranscriptDraftDelta(_provider: unknown, _params: unknown): void {
+    const target = this.target;
+    if (target && !this.flushInFlight) {
+      target.sendTranscriptDraftDelta?.(_provider, _params);
+      return;
+    }
+
+    if (this.cancelled) {
+      return;
+    }
+    this.pushBufferedCall((t) => t.sendTranscriptDraftDelta?.(_provider, _params), { hint: 'sendTranscriptDraftDelta' });
   }
 
   sendCodexMessage(_body: unknown): void {

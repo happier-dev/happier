@@ -29,6 +29,7 @@ test('hstack remote server setup installs hstack and runs self-host install', (t
   }
   assert.ok(log.includes('"bin":"ssh"'), `expected ssh invocations\n${log}`);
   assert.ok(log.includes('happier.dev/install'), `expected remote install script\n${log}`);
+  assert.ok(log.includes('HAPPIER_WITH_CLI=0'), `expected remote installer to skip companion cli install\n${log}`);
   assert.ok(log.includes('self-host'), `expected self-host install invocation\n${log}`);
   assert.ok(log.includes('--channel=stable'), `expected stable channel\n${log}`);
 });

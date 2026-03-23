@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AIBackendProfile } from '@/sync/domains/settings/settings';
-import { getProfileBackendSubtitle, getProfileSubtitle } from '@/components/profiles/profileListModel';
+import type { ProfileCompatibilitySummary } from '@/sync/domains/profiles/profileCompatibility';
+import { getProfileBackendSubtitle, getProfileSubtitle, type ProfileListStrings } from '@/components/profiles/profileListModel';
+import type { AgentId } from '@/agents/catalog/catalog';
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 describe('profileListModel', () => {
-    const strings = {
+    const strings: ProfileListStrings = {
         builtInLabel: 'Built-in',
         customLabel: 'Custom',
         agentLabelById: {
@@ -19,18 +21,21 @@ describe('profileListModel', () => {
             qwen: 'Qwen',
             kimi: 'Kimi',
             kilo: 'Kilo',
+            kiro: 'Kiro',
             pi: 'Pi',
             copilot: 'Copilot',
-        },
+        } as Record<AgentId, string>,
     };
 
     function buildProfile(params: {
         isBuiltIn?: boolean;
         compatibility?: Record<string, boolean>;
-    }): Pick<AIBackendProfile, 'compatibility' | 'isBuiltIn'> {
+        compatibilityByTargetKey?: Record<string, boolean>;
+    }): ProfileCompatibilitySummary {
         return {
             isBuiltIn: params.isBuiltIn ?? false,
             compatibility: params.compatibility ?? {},
+            compatibilityByTargetKey: params.compatibilityByTargetKey,
         };
     }
 
@@ -72,6 +77,26 @@ describe('profileListModel', () => {
             compatibility: { claude: true, codex: false, opencode: false, gemini: false, auggie: false, qwen: false, kimi: false },
         });
         expect(getProfileSubtitle({ profile, enabledAgentIds: ['claude', 'codex'], strings })).toBe('Built-in · Claude');
+    });
+
+    it('includes configured ACP backend titles when profile compatibility is target-keyed', () => {
+        const profile = {
+            ...buildProfile({}),
+            compatibilityByTargetKey: {
+                'acpBackend:custom-backend': true,
+                'agent:claude': false,
+            },
+        } satisfies ProfileCompatibilitySummary;
+
+        expect(getProfileSubtitle({
+            profile,
+            enabledAgentIds: ['claude', 'customAcp'],
+            backendEntries: [
+                { targetKey: 'agent:claude', title: 'Claude' },
+                { targetKey: 'acpBackend:custom-backend', title: 'Custom Backend' },
+            ],
+            strings,
+        })).toBe('Custom · Custom Backend');
     });
 
     it('builds custom subtitle without backend', () => {

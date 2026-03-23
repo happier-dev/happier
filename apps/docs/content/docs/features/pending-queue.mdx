@@ -12,7 +12,7 @@ Pending messages are:
 - **Session-wide**: anyone with edit access to a shared session can see and manage them.
 - **Ordered**: you control the order they will be processed.
 - **Editable**: you can edit, remove, or reorder them before they run.
-- **Encrypted**: pending content is stored on the server the same way transcript messages are (server stores ciphertext).
+- **Stored with the session**: pending content uses the same storage mode as the session transcript (encrypted by default, plaintext on deployments that use plaintext storage).
 
 Pending messages **do not affect “unread”** indicators. Instead, you’ll see a separate **pending count badge**.
 
@@ -63,6 +63,7 @@ Default behavior when everything is online:
 Safety fallback:
 
 - if the session is **offline**, **resuming**, or the agent is **not ready yet**, Happier may store the message in the **pending queue first** to avoid losing it.
+- if the session is currently under **local control** during an attach/local-control flow, Happier may queue the message until the session is ready to resume remote processing.
 
 ### Interrupt & send
 
@@ -94,3 +95,4 @@ If your setup doesn’t support pending queues, the app will fall back to the no
 - If you’re queuing multiple thoughts, use **Move up / Move down** to ensure the agent processes them in the intended order.
 - If you decide something is no longer relevant, **Remove** it before it runs.
 - If you need something handled immediately, **Send now** is the fastest path.
+- During local ↔ remote switching, a short queued state is normal and helps avoid losing messages.

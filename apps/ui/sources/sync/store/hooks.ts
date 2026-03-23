@@ -16,19 +16,26 @@ import type {
 } from '../domains/state/storageTypes';
 import type { DecryptedArtifact } from '../domains/artifacts/artifactTypes';
 import type { LocalSettings } from '../domains/settings/localSettings';
-import type { Message } from '../domains/messages/messageTypes';
+import type { AgentTextMessage, Message } from '../domains/messages/messageTypes';
 import type { Settings } from '../domains/settings/settings';
+import { settingsDefaults } from '../domains/settings/settings';
 import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
+import { deriveSessionListMeaningfulActivityAt } from '../domains/session/listing/deriveSessionListActivity';
 import { computeHasUnreadActivity } from '../domains/messages/unread';
-import { sync } from '../sync';
+import { buildTranscriptDraftMessages } from '../domains/messages/buildTranscriptDraftMessages';
+import { mergeTranscriptCommittedAndDraftMessages } from '../domains/messages/mergeTranscriptCommittedAndDraftMessages';
+import { resolveLastViewedSessionSeq } from '../domains/session/readCursor/resolveLastViewedSessionSeq';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
-import { getActiveServerSnapshot } from '../domains/server/serverRuntime';
+import { buildSessionMessageRouteId, resolveSessionMessageRouteId } from '../domains/messages/messageRouteIds';
+import { useApplyLocalSettings, useApplySettings } from './settingsWriters';
 
 import { getStorage } from '../domains/state/storageStore';
 import type { KnownEntitlements } from '../domains/state/storageStore';
 import type { ForkedTranscriptSnapshot } from '../domains/sessionFork/forkedTranscriptSnapshot';
 import { getForkedTranscriptSnapshotCached } from '../domains/sessionFork/forkedTranscriptSnapshot';
+import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
+import { resolveServerIdForSessionIdFromLocalState } from '../runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 
 export function useSessions() {
   return getStorage()(useShallow((state) => (state.isDataReady ? state.sessionsData : null)));
@@ -38,14 +45,26 @@ export function useSession(id: string): Session | null {
   return getStorage()(useShallow((state) => state.sessions[id] ?? null));
 }
 
+export function useSessionServerId(sessionId: string): string | null {
+  return getStorage()((state) => resolveServerIdForSessionIdFromLocalState({
+    sessions: state.sessions as Record<string, { serverId?: unknown } | null>,
+    sessionListViewDataByServerId: state.sessionListViewDataByServerId,
+  }, sessionId));
+}
+
 const emptyArray: unknown[] = [];
 const emptyRecord: Record<string, any> = {};
 const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
 const emptyActionDrafts: SessionActionDraft[] = [];
 
-function isVisibleMachine(machine: Machine): boolean {
-  const revokedAt = machine.revokedAt;
-  return !(typeof revokedAt === 'number' && Number.isFinite(revokedAt) && revokedAt > 0);
+function isAgentTextMessage(message: Message): message is AgentTextMessage {
+  return message.kind === 'agent-text';
+}
+
+function normalizeNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 export function useSessionMessages(
@@ -76,15 +95,37 @@ export function useSessionMessages(
 }
 
 export function useSessionTranscriptIds(sessionId: string): { ids: string[]; isLoaded: boolean } {
-  return getStorage()(
+  const snapshot = getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
       return {
-        ids: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
+        committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
+        committedMessagesById: session?.messagesById ?? (emptyRecord as Record<string, Message>),
+        draftsByLocalId: session?.draftsByLocalId ?? emptyRecord,
+        messagesVersion: session?.messagesVersion ?? 0,
         isLoaded: session?.isLoaded ?? false,
       };
     })
   );
+
+  const ids = React.useMemo(() => {
+    const draftMessages = buildTranscriptDraftMessages({
+      draftsByLocalId: snapshot.draftsByLocalId as Record<string, {
+        text: string;
+        segmentKind: 'assistant' | 'thinking';
+        sidechainId: string | null;
+        updatedAtMs: number;
+      }>,
+      sidechainId: null,
+    }).filter(isAgentTextMessage);
+    return mergeTranscriptCommittedAndDraftMessages({
+      committedIds: snapshot.committedIds as string[],
+      committedMessagesById: snapshot.committedMessagesById,
+      draftMessages,
+    }).ids;
+  }, [snapshot.committedIds, snapshot.committedMessagesById, snapshot.draftsByLocalId, snapshot.messagesVersion]);
+
+  return React.useMemo(() => ({ ids, isLoaded: snapshot.isLoaded }), [ids, snapshot.isLoaded]);
 }
 
 export function useForkedTranscriptSnapshot(sessionId: string): ForkedTranscriptSnapshot | null {
@@ -94,14 +135,34 @@ export function useForkedTranscriptSnapshot(sessionId: string): ForkedTranscript
 }
 
 export function useSessionMessagesById(sessionId: string): Record<string, Message> {
-  return getStorage()(
+  const snapshot = getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
-      // NOTE: For streaming performance, messagesById is mutated in-place in the store.
-      // Do not rely on the returned object's identity changing to detect updates.
-      return session?.messagesById ?? (emptyRecord as Record<string, Message>);
+      return {
+        committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
+        committedMessagesById: session?.messagesById ?? (emptyRecord as Record<string, Message>),
+        draftsByLocalId: session?.draftsByLocalId ?? emptyRecord,
+        messagesVersion: session?.messagesVersion ?? 0,
+      };
     })
   );
+
+  return React.useMemo(() => {
+    const draftMessages = buildTranscriptDraftMessages({
+      draftsByLocalId: snapshot.draftsByLocalId as Record<string, {
+        text: string;
+        segmentKind: 'assistant' | 'thinking';
+        sidechainId: string | null;
+        updatedAtMs: number;
+      }>,
+      sidechainId: null,
+    }).filter(isAgentTextMessage);
+    return mergeTranscriptCommittedAndDraftMessages({
+      committedIds: snapshot.committedIds as string[],
+      committedMessagesById: snapshot.committedMessagesById,
+      draftMessages,
+    }).messagesById;
+  }, [snapshot.committedIds, snapshot.committedMessagesById, snapshot.draftsByLocalId, snapshot.messagesVersion]);
 }
 
 export function useSessionMessagesVersion(sessionId: string, enabled: boolean = true): number {
@@ -112,6 +173,40 @@ export function useSessionMessagesVersion(sessionId: string, enabled: boolean = 
       return session?.messagesVersion ?? 0;
     })
   );
+}
+
+export function useSessionTranscriptDraftMessages(sessionId: string, sidechainId?: string | null): Message[] {
+  const draftsByLocalId = getStorage()(
+    useShallow((state) => state.sessionMessages[sessionId]?.draftsByLocalId ?? emptyRecord)
+  );
+  const version = useSessionMessagesVersion(sessionId, true);
+  const normalizedSidechainId = typeof sidechainId === 'string' && sidechainId.trim().length > 0 ? sidechainId.trim() : null;
+
+  return React.useMemo(() => {
+    return buildTranscriptDraftMessages({
+      draftsByLocalId: draftsByLocalId as Record<string, {
+        text: string;
+        segmentKind: 'assistant' | 'thinking';
+        sidechainId: string | null;
+        updatedAtMs: number;
+      }>,
+      sidechainId: normalizedSidechainId,
+    });
+  }, [draftsByLocalId, normalizedSidechainId, version]);
+}
+
+export function useSessionMessagesReducerState(sessionId: string) {
+  const snapshot = getStorage()(
+    useShallow((state) => {
+      const session = state.sessionMessages[sessionId];
+      return {
+        reducerState: session?.reducerState ?? null,
+        reducerVersion: (session as any)?.reducerVersion ?? 0,
+      };
+    })
+  );
+
+  return snapshot.reducerState;
 }
 
 export function useSessionLatestThinkingMessageId(sessionId: string): string | null {
@@ -136,12 +231,11 @@ export function useHasUnreadMessages(sessionId: string): boolean {
   return getStorage()((state) => {
     const session = state.sessions[sessionId];
     if (!session) return false;
-    const readState = session.metadata?.readStateV1;
     return computeHasUnreadActivity({
       sessionSeq: session.seq ?? 0,
       pendingActivityAt: 0,
-      lastViewedSessionSeq: readState?.sessionSeq,
-      lastViewedPendingActivityAt: readState?.pendingActivityAt,
+      lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
+      lastViewedPendingActivityAt: session.metadata?.readStateV1?.pendingActivityAt,
     });
   });
 }
@@ -161,6 +255,41 @@ export function useSessionPendingMessages(
   );
 }
 
+export function useSessionListMeaningfulActivityAt(sessionId: string): number | null {
+  return getStorage()(
+    useShallow((state) => {
+      const session = state.sessions[sessionId];
+      const transcript = state.sessionMessages[sessionId];
+      const pending = state.sessionPending[sessionId];
+
+      const latestCommittedMessageId =
+        transcript?.messageIdsOldestFirst?.length
+          ? transcript.messageIdsOldestFirst[transcript.messageIdsOldestFirst.length - 1] ?? null
+          : null;
+      const latestCommittedMessageCreatedAt =
+        latestCommittedMessageId != null
+          ? transcript?.messagesById?.[latestCommittedMessageId]?.createdAt ?? null
+          : null;
+
+      let latestPendingMessageCreatedAt: number | null = null;
+      const pendingMessages = pending?.messages ?? emptyArray;
+      for (const pendingMessage of pendingMessages as PendingMessage[]) {
+        const createdAt = pendingMessage?.createdAt;
+        if (typeof createdAt !== 'number' || !Number.isFinite(createdAt) || createdAt <= 0) continue;
+        latestPendingMessageCreatedAt =
+          latestPendingMessageCreatedAt == null ? createdAt : Math.max(latestPendingMessageCreatedAt, createdAt);
+      }
+
+      return deriveSessionListMeaningfulActivityAt({
+        sessionCreatedAt: session?.createdAt ?? null,
+        latestCommittedMessageCreatedAt,
+        latestThinkingActivityAt: transcript?.latestThinkingMessageActivityAtMs ?? null,
+        latestPendingMessageCreatedAt,
+      });
+    })
+  );
+}
+
 export function useSessionReviewCommentsDrafts(sessionId: string): ReviewCommentDraft[] {
   return getStorage()(
     useShallow((state) => state.reviewCommentsDraftsBySessionId[sessionId] ?? emptyReviewCommentDrafts)
@@ -174,12 +303,45 @@ export function useSessionActionDrafts(sessionId: string): SessionActionDraft[] 
 }
 
 export function useMessage(sessionId: string, messageId: string): Message | null {
-  return getStorage()(
-    useShallow((state) => {
-      const session = state.sessionMessages[sessionId];
-      return session?.messagesById?.[messageId] ?? session?.messagesMap?.[messageId] ?? null;
-    })
-  );
+  // NOTE:
+  // `messagesById` (and message objects within it) are intentionally mutated in-place for streaming
+  // performance. The store always creates a new session object when updating messages, so
+  // `useSessionMessagesById` (which uses `useShallow` on the session) will detect changes.
+  // We also subscribe to `messagesVersion` to ensure re-computation when messages are updated.
+  const messagesById = useSessionMessagesById(sessionId);
+  const version = useSessionMessagesVersion(sessionId, true);
+
+  return React.useMemo(() => {
+    return messagesById?.[messageId] ?? null;
+  }, [messageId, messagesById, version]);
+}
+
+export function useResolvedSessionMessageRouteId(sessionId: string, routeMessageId: string): string | null {
+  const messagesById = useSessionMessagesById(sessionId);
+  const version = useSessionMessagesVersion(sessionId, true);
+  const reducerState = useSessionMessagesReducerState(sessionId);
+
+  return React.useMemo(() => {
+    return resolveSessionMessageRouteId({
+      routeMessageId,
+      messagesById,
+      reducerState,
+    });
+  }, [messagesById, reducerState, routeMessageId, version]);
+}
+
+export function useSessionMessageRouteId(sessionId: string, messageId: string): string | null {
+  const messagesById = useSessionMessagesById(sessionId);
+  const version = useSessionMessagesVersion(sessionId, true);
+  const reducerState = useSessionMessagesReducerState(sessionId);
+
+  return React.useMemo(() => {
+    return buildSessionMessageRouteId({
+      messageId,
+      messagesById,
+      reducerState,
+    });
+  }, [messageId, messagesById, reducerState, version]);
 }
 
 export function useMessagesByIds(sessionId: string, messageIds: readonly string[]): Message[] {
@@ -212,24 +374,25 @@ export function useSessionUsage(sessionId: string) {
 }
 
 export function useSettings(): Settings {
-  return getStorage()(useShallow((state) => state.settings));
+  return getStorage()(useShallow((state) => state.settings ?? settingsDefaults));
 }
 
 export function useSettingMutable<K extends keyof Settings>(
   name: K
 ): [Settings[K], (value: Settings[K]) => void] {
+  const applySettings = useApplySettings();
   const setValue = React.useCallback(
     (value: Settings[K]) => {
-      sync.applySettings({ [name]: value });
+      applySettings({ [name]: value } as Partial<Settings>);
     },
-    [name]
+    [applySettings, name]
   );
   const value = useSetting(name);
   return [value, setValue];
 }
 
 export function useSetting<K extends keyof Settings>(name: K): Settings[K] {
-  return getStorage()(useShallow((state) => state.settings[name]));
+  return getStorage()(useShallow((state) => state.settings?.[name] ?? settingsDefaults[name]));
 }
 
 export function useLocalSettings(): LocalSettings {
@@ -238,20 +401,15 @@ export function useLocalSettings(): LocalSettings {
 
 export function useAllMachines(): Machine[] {
   return getStorage()(
+    useShallow((state) => (state.isDataReady ? resolveVisibleMachinesForActiveServerFromState(state) : []))
+  );
+}
+
+export function useMachineRecordValues(): Machine[] {
+  return getStorage()(
     useShallow((state) => {
       if (!state.isDataReady) return [];
-      const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-      const activeServerMachines = activeServerId ? state.machineListByServerId[activeServerId] : null;
-      const sourceMachines = Array.isArray(activeServerMachines)
-        ? activeServerMachines
-        : Object.values(state.machines);
-
-      return sourceMachines.filter(isVisibleMachine).sort((a, b) => {
-        // Keep offline machines visible (reduces confusion + avoids flicker when presence flaps).
-        if (a.active !== b.active) return a.active ? -1 : 1;
-        if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
-        return a.id.localeCompare(b.id);
-      });
+      return Object.values(state.machines);
     })
   );
 }
@@ -268,7 +426,10 @@ export function useMachineListByServerId(): Record<string, Machine[] | null> {
         continue;
       }
 
-      const visibleMachines = machines.filter(isVisibleMachine);
+      const visibleMachines = machines.filter((machine) => {
+        const revokedAt = machine.revokedAt;
+        return !(typeof revokedAt === 'number' && Number.isFinite(revokedAt) && revokedAt > 0);
+      });
       if (visibleMachines.length !== machines.length) {
         hasChanges = true;
         nextByServerId[serverId] = visibleMachines;
@@ -292,7 +453,7 @@ export function useMachine(machineId: string): Machine | null {
 
 export function useSessionListViewData(): SessionListViewItem[] | null {
   return getStorage()(
-    useShallow((state) => (state.isDataReady ? state.sessionListViewData : null))
+    useShallow((state) => state.sessionListViewData)
   );
 }
 
@@ -312,11 +473,12 @@ export function useAllSessions(): Session[] {
 export function useLocalSettingMutable<K extends keyof LocalSettings>(
   name: K
 ): [LocalSettings[K], (value: LocalSettings[K]) => void] {
+  const applyLocalSettings = useApplyLocalSettings();
   const setValue = React.useCallback(
     (value: LocalSettings[K]) => {
-      getStorage().getState().applyLocalSettings({ [name]: value });
+      applyLocalSettings({ [name]: value } as Partial<LocalSettings>);
     },
-    [name]
+    [applyLocalSettings, name]
   );
   const value = useLocalSetting(name);
   return [value, setValue];

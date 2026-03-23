@@ -4,8 +4,29 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 describe('copilot/acp/backend', () => {
-  it('builds stable AcpBackendOptions for Copilot ACP spawn', async () => {
+  it('fails closed when the Copilot CLI is unavailable', async () => {
     vi.stubEnv('HAPPIER_COPILOT_PATH', undefined);
+    vi.stubEnv('HAPPIER_HOME_DIR', await mkdtemp(join(tmpdir(), 'happier-copilot-home-')));
+    vi.stubEnv('PATH', '');
+
+    const mod = await import('./backend');
+
+    expect(() =>
+      mod.buildCopilotAcpBackendOptions({
+        cwd: '/tmp',
+        env: {},
+      }),
+    ).toThrow(/system install/i);
+  });
+
+  it('builds stable AcpBackendOptions for Copilot ACP spawn', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-copilot-path-'));
+    const fake = join(dir, 'copilot');
+    await writeFile(fake, '#!/bin/sh\necho hi\n', 'utf8');
+    await chmod(fake, 0o755);
+    vi.stubEnv('HAPPIER_COPILOT_PATH', fake);
+    vi.stubEnv('HAPPIER_HOME_DIR', await mkdtemp(join(tmpdir(), 'happier-copilot-home-')));
+    vi.stubEnv('PATH', '');
 
     const mod = await import('./backend');
 
@@ -19,7 +40,7 @@ describe('copilot/acp/backend', () => {
 
     expect(opts.agentName).toBe('copilot');
     expect(opts.cwd).toBe('/tmp');
-    expect(opts.command).toBe('copilot');
+    expect(opts.command).toBe(fake);
     expect(opts.args).toEqual(['--acp', '--yolo']);
     expect(opts.env).toEqual({
       NODE_ENV: 'development',
@@ -47,5 +68,21 @@ describe('copilot/acp/backend', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
-});
 
+  it('resolves copilot from options.env PATH when process PATH is empty', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-copilot-path-'));
+    const fake = join(dir, 'copilot');
+    try {
+      await writeFile(fake, '#!/bin/sh\necho hi\n', 'utf8');
+      await chmod(fake, 0o755);
+      vi.stubEnv('HAPPIER_COPILOT_PATH', undefined);
+      vi.stubEnv('PATH', '');
+
+      const mod = await import('./backend');
+      const opts = mod.buildCopilotAcpBackendOptions({ cwd: dir, env: { PATH: dir } });
+      expect(opts.command).toBe(fake);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

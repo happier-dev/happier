@@ -1,10 +1,13 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
+import type { SessionChangeSet } from '@happier-dev/protocol';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 import { useChangedFilesData, type UseChangedFilesDataResult } from './useChangedFilesData';
+import { renderScreen } from '@/dev/testkit';
+
 
 // Align with React test-renderer act requirements in this suite.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -57,7 +60,7 @@ function makeSnapshot(): ScmWorkingSnapshot {
 }
 
 describe('useChangedFilesData', () => {
-    it('can skip attribution computation for repository-only surfaces', () => {
+    it('can skip attribution computation for repository-only surfaces', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         function Test() {
@@ -84,9 +87,7 @@ describe('useChangedFilesData', () => {
         }
 
         let root: renderer.ReactTestRenderer;
-        act(() => {
-            root = renderer.create(<Test />);
-        });
+        root = (await renderScreen(<Test />)).tree;
 
         expect(latest).not.toBeNull();
         if (!latest) {
@@ -102,7 +103,7 @@ describe('useChangedFilesData', () => {
         });
     });
 
-    it('includes inferred session attribution when reliability is high', () => {
+    it('includes inferred session attribution when reliability is high', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         function Test() {
@@ -119,9 +120,7 @@ describe('useChangedFilesData', () => {
         }
 
         let root: renderer.ReactTestRenderer;
-        act(() => {
-            root = renderer.create(<Test />);
-        });
+        root = (await renderScreen(<Test />)).tree;
 
         expect(latest).not.toBeNull();
         if (!latest) {
@@ -139,7 +138,7 @@ describe('useChangedFilesData', () => {
         });
     });
 
-    it('suppresses inferred attribution when multiple sessions are active', () => {
+    it('suppresses inferred attribution when multiple sessions are active', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         function Test() {
@@ -156,9 +155,7 @@ describe('useChangedFilesData', () => {
         }
 
         let root: renderer.ReactTestRenderer;
-        act(() => {
-            root = renderer.create(<Test />);
-        });
+        root = (await renderScreen(<Test />)).tree;
 
         expect(latest).not.toBeNull();
         if (!latest) {
@@ -175,7 +172,7 @@ describe('useChangedFilesData', () => {
         });
     });
 
-    it('keeps session view toggle available in limited mode when direct attribution exists', () => {
+    it('keeps session view toggle available in limited mode when direct attribution exists', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         function Test() {
@@ -201,9 +198,7 @@ describe('useChangedFilesData', () => {
         }
 
         let root: renderer.ReactTestRenderer;
-        act(() => {
-            root = renderer.create(<Test />);
-        });
+        root = (await renderScreen(<Test />)).tree;
 
         expect(latest).not.toBeNull();
         if (!latest) {
@@ -214,6 +209,110 @@ describe('useChangedFilesData', () => {
         expect(result.showSessionViewToggle).toBe(true);
         expect(result.sessionAttributedFiles).toHaveLength(1);
         expect(result.sessionAttributedFiles[0]?.confidence).toBe('high');
+        act(() => {
+            root!.unmount();
+        });
+    });
+
+    it('prefers provider-backed session change sets over inferred attribution', async () => {
+        let latest: UseChangedFilesDataResult | null = null;
+
+        const sessionChangeSet: SessionChangeSet = {
+            sessionId: 's1',
+            turns: [],
+            files: [{
+                filePath: 'src/a.ts',
+                changeKind: 'modified',
+                oldText: 'a\n',
+                newText: 'b\n',
+                source: 'provider_native',
+                confidence: 'exact',
+                provider: 'codex',
+                turns: ['turn_1'],
+            }],
+            rolledBackTurnIds: [],
+            confidenceSummary: {
+                source: 'provider_native',
+                confidence: 'exact',
+            },
+        };
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: [],
+                operationLog: [],
+                projectSessionIds: ['s1', 's2'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                sessionChangeSet,
+            });
+            return null;
+        }
+
+        let root: renderer.ReactTestRenderer;
+        root = (await renderScreen(<Test />)).tree;
+
+        expect(latest).not.toBeNull();
+        if (!latest) throw new Error('Expected hook result');
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.sessionAttributedFiles).toHaveLength(1);
+        expect(result.sessionAttributedFiles[0]?.confidence).toBe('high');
+        expect(result.repositoryOnlyFiles).toHaveLength(0);
+        expect(result.showSessionViewToggle).toBe(true);
+        act(() => {
+            root!.unmount();
+        });
+    });
+
+    it('derives a latest-turn scope from provider-backed turn change sets', async () => {
+        let latest: UseChangedFilesDataResult | null = null;
+
+        const latestTurnChangeSet: SessionChangeSet = {
+            sessionId: 's1',
+            turns: [],
+            files: [{
+                filePath: 'src/a.ts',
+                changeKind: 'modified',
+                oldText: 'b\n',
+                newText: 'c\n',
+                source: 'provider_native',
+                confidence: 'exact',
+                provider: 'codex',
+                turns: ['turn_2'],
+            }],
+            rolledBackTurnIds: [],
+            confidenceSummary: {
+                source: 'provider_native',
+                confidence: 'exact',
+            },
+        };
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: [],
+                operationLog: [],
+                projectSessionIds: ['s1', 's2'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                latestTurnChangeSet,
+            });
+            return null;
+        }
+
+        let root: renderer.ReactTestRenderer;
+        root = (await renderScreen(<Test />)).tree;
+
+        expect(latest).not.toBeNull();
+        if (!latest) throw new Error('Expected hook result');
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.showTurnViewToggle).toBe(true);
+        expect(result.turnAttributedFiles).toHaveLength(1);
+        expect(result.turnAttributedFiles[0]?.confidence).toBe('high');
+        expect(result.turnRepositoryOnlyFiles).toHaveLength(0);
         act(() => {
             root!.unmount();
         });

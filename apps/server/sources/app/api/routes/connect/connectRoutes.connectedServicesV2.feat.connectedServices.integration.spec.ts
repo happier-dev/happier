@@ -1,38 +1,18 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
+import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
 import { auth } from "@/app/auth/auth";
-import { initEncrypt } from "@/modules/encrypt";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import tweetnacl from "tweetnacl";
 import { openBoxBundle } from "@happier-dev/protocol";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+
 
 function createTestApp() {
     const app = Fastify();
@@ -52,61 +32,29 @@ function createTestApp() {
 }
 
 describe("connectRoutes (connected services v2) sealed credential endpoints (integration)", () => {
-    const envBackup = { ...process.env };
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-connected-services-v2-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = { ...process.env };
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await initEncrypt();
-        await auth.init();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-connected-services-v2-",
+            initAuth: true,
+            initEncrypt: true,
+        });
     }, 120_000);
 
     afterAll(async () => {
-        await db.$disconnect();
-        process.env = envBackup;
-        await rm(baseDir, { recursive: true, force: true });
+        await harness.close();
     });
-
-    const restoreEnv = (base: NodeJS.ProcessEnv) => {
-        for (const key of Object.keys(process.env)) {
-            if (!(key in base)) {
-                delete (process.env as any)[key];
-            }
-        }
-        for (const [key, value] of Object.entries(base)) {
-            if (typeof value === "string") {
-                process.env[key] = value;
-            }
-        }
-    };
-
     afterEach(async () => {
         await closeTrackedApps();
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
         vi.unstubAllGlobals();
         await db.serviceAccountToken.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
     });
 
     it("does not register v2 connected service routes when HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED=0", async () => {
-        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED = "0";
+        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: "0" });
         const user = await db.account.create({ data: { publicKey: "pk-csv2-disabled" }, select: { id: true } });
 
         const app = createTestApp();
@@ -156,7 +104,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("rejects sealed ciphertext longer than CONNECTED_SERVICE_CREDENTIAL_MAX_LEN", async () => {
-        process.env.CONNECTED_SERVICE_CREDENTIAL_MAX_LEN = "4";
+        harness.resetEnv({ CONNECTED_SERVICE_CREDENTIAL_MAX_LEN: "4" });
         const user = await db.account.create({ data: { publicKey: "pk-csv2-max-len" }, select: { id: true } });
 
         const app = createTestApp();
@@ -331,8 +279,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
 
     it("returns connect_oauth_timeout when token exchange times out", async () => {
-        const envBackup = process.env.HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS;
-        process.env.HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS = "1000";
+        harness.resetEnv({ HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS: "1000" });
         try {
             const user = await db.account.create({ data: { publicKey: "pk-csv2-oauth-timeout" }, select: { id: true } });
 
@@ -368,11 +315,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             expect(res.statusCode).toBe(400);
             expect(res.json()).toEqual({ error: "connect_oauth_timeout" });
         } finally {
-            if (typeof envBackup === "string") {
-                process.env.HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS = envBackup;
-            } else {
-                delete (process.env as any).HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS;
-            }
+            harness.resetEnv();
         }
     });
 

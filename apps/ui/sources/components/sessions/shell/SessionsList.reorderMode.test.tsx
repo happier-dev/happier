@@ -1,6 +1,7 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,34 +9,46 @@ vi.mock('react-native-gesture-handler', () => ({
     Swipeable: 'Swipeable',
 }));
 
+vi.mock('react-native-reanimated', () => ({
+    default: { View: (props: any) => React.createElement('Animated.View', props) },
+    useSharedValue: (init: any) => ({ value: init }),
+    useAnimatedStyle: (fn: () => any) => fn(),
+}));
+
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-let capturedPressables: any[] = [];
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ...rest }: any) => {
-            return React.createElement(
-                'FlatList',
-                { ...rest },
-                ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
-                (data ?? []).map((item: any, index: number) => {
-                    const key = keyExtractor ? keyExtractor(item, index) : String(index);
-                    return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-                }),
-            );
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'web',
+                                    },
+                                    FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ...rest }: any) => {
+                                            return React.createElement(
+                                                'FlatList',
+                                                { ...rest },
+                                                ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
+                                                (data ?? []).map((item: any, index: number) => {
+                                                    const key = keyExtractor ? keyExtractor(item, index) : String(index);
+                                                    return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+                                                }),
+                                            );
+                                        },
+                                }
+    );
 });
 
-vi.mock('expo-router', () => ({
-    usePathname: () => '',
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: vi.fn(), replace: vi.fn(), back: vi.fn() },
+        pathname: '',
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: 'RecoveryKeyReminderBanner',
@@ -54,9 +67,10 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     formatPathRelativeToHome: (path: string) => path,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 let pinnedSessionKeysV1: string[] = [];
 const setPinnedSessionKeysV1 = vi.fn();
@@ -64,8 +78,10 @@ let sessionListGroupOrderV1: Record<string, string[]> = {};
 const setSessionListGroupOrderV1 = vi.fn();
 let sessionTagsV1: Record<string, string[]> = {};
 const setSessionTagsV1 = vi.fn();
+const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((params: any) => ({ gesture: undefined, animatedStyle: params ? {} : {} })));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
+    useAllMachines: () => [],
     useSetting: (key: string) => {
         if (key === 'compactSessionView') return false;
         if (key === 'compactSessionViewMinimal') return false;
@@ -107,63 +123,42 @@ vi.mock('@/utils/system/requestReview', () => ({
     requestReview: requestReviewSpy,
 }));
 
-vi.mock('./SessionGroupDragList', () => ({
-    SessionGroupDragList: 'SessionGroupDragList',
+vi.mock('./useSessionInlineDrag', () => ({
+    useSessionInlineDrag: (params: any) => useSessionInlineDragSpy(params),
 }));
 
 vi.mock('./SessionItem', () => ({
     SessionItem: (props: any) => React.createElement('SessionItem', props),
 }));
 
-describe('SessionsList (reorder mode)', () => {
+describe('SessionsList (inline reorder)', () => {
     it('does not trigger store-review prompts automatically when the list renders', async () => {
         requestReviewSpy.mockClear();
         const { SessionsList } = await import('./SessionsList');
 
-        await act(async () => {
-            renderer.create(<SessionsList />);
-        });
+        await renderScreen(<SessionsList />);
 
         expect(requestReviewSpy).not.toHaveBeenCalled();
     });
 
-    it('enters reorder mode from a row handle and exits after a reorder completes', async () => {
+    it('renders SessionItem rows with reorder drag props', async () => {
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
-        setSessionListGroupOrderV1.mockClear();
+        useSessionInlineDragSpy.mockClear();
 
         const { SessionsList } = await import('./SessionsList');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        expect((tree as any).root.findAllByType('SessionGroupDragList')).toHaveLength(0);
+        tree = (await renderScreen(<SessionsList />)).tree;
 
         const items = (tree as any).root.findAllByType('SessionItem');
-        expect(items.length).toBeGreaterThan(0);
-        expect(typeof items[0]?.props?.onRequestReorder).toBe('function');
-
-        await act(async () => {
-            items[0].props.onRequestReorder();
-        });
-        expect((tree as any).root.findAllByType('SessionGroupDragList')).toHaveLength(1);
-
-        await act(async () => {
-            const group = (tree as any).root.findByType('SessionGroupDragList');
-            group.props.onReorderKeys(['server_a:sess_b', 'server_a:sess_a']);
-        });
-        expect((tree as any).root.findAllByType('SessionGroupDragList')).toHaveLength(0);
-        expect(setSessionListGroupOrderV1).toHaveBeenCalledTimes(1);
-
-        const itemsAfter = (tree as any).root.findAllByType('SessionItem');
-        expect(itemsAfter.length).toBeGreaterThan(0);
-
-        await act(async () => {
-            itemsAfter[0].props.onRequestReorder();
-        });
-        expect((tree as any).root.findAllByType('SessionGroupDragList')).toHaveLength(1);
+        expect(items.length).toBe(2);
+        // reorderHandleGesture is passed from SessionListRow.
+        // reorderDragStyle is no longer passed (Animated.View is in SessionListRow).
+        expect(items[0].props).toHaveProperty('reorderHandleGesture');
+        // isBeingDragged is passed from SessionListRow
+        expect(items[0].props.isBeingDragged).toBe(false);
+        expect(useSessionInlineDragSpy).toHaveBeenCalledWith(expect.objectContaining({ rowHeight: 84 }));
     });
 });

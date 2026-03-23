@@ -32,7 +32,7 @@ export function defaultDevClientIdentity({ user = null } = {}) {
     // Keep the dev-client bundle id stable so EAS Android signing credentials (keystore) can be
     // provisioned once and reused across runs. This also matches the default development variant
     // bundle id in apps/ui/app.config.js.
-    iosBundleId: 'dev.happier.app.dev',
+    iosBundleId: 'dev.happier.app.development',
     scheme: 'happier-dev',
   };
 }

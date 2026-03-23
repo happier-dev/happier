@@ -1,18 +1,26 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { formatSecretKeyForBackup } from '@/auth/recovery/secretKeyBackup';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest } from './account.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: vi.fn(), back: vi.fn() },
+    });
+    return routerMock.module;
+});
 
 vi.mock('expo-camera', () => ({
     useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })],
@@ -43,12 +51,18 @@ const modalMocks = vi.hoisted(() => ({
     prompt: vi.fn(),
     confirm: vi.fn(),
 }));
-vi.mock('@/modal', () => ({ Modal: modalMocks }));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: modalMocks,
+    }).module;
+});
 
 describe('Settings → Account (secret key copy)', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+        standardCleanup();
     });
 
     it('allows copying the secret key without revealing it', async () => {
@@ -70,37 +84,18 @@ describe('Settings → Account (secret key copy)', () => {
         modalMocks.alert.mockClear();
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+        const screen = await renderScreen(<AccountScreen />);
+        const secretKeyItem = screen.findByTestId('settings-account-secret-key-item');
+        const copyButton = screen.findByTestId('settings-account-secret-key-copy');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
-            await act(async () => {});
+        expect(secretKeyItem).toBeTruthy();
+        expect(copyButton).toBeTruthy();
 
-            const secretKeyItems =
-                tree?.root.findAll((n) => {
-                    if (typeof n.props?.onPress !== 'function') return false;
-                    if (!n.props?.rightElement) return false;
-                    const iconName = n.props?.icon?.props?.name;
-                    return typeof iconName === 'string' && iconName.startsWith('eye');
-                }) ?? [];
-            expect(secretKeyItems.length).toBeGreaterThan(0);
+        await act(async () => {
+            await copyButton!.props.onPress();
+        });
 
-            const secretKeyItem = secretKeyItems[0]!;
-            expect(secretKeyItem.props.rightElement).toBeTruthy();
-            expect(typeof secretKeyItem.props.rightElement.props?.onPress).toBe('function');
-
-            await act(async () => {
-                await secretKeyItem.props.rightElement.props.onPress();
-            });
-
-            const expected = formatSecretKeyForBackup('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
-            expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith(expected);
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const expected = formatSecretKeyForBackup('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+        expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith(expected);
     });
 });

@@ -9,6 +9,12 @@ Note: the GitHub repo default branch is `dev` and may be unstable. If you want a
 
 This mode is **repo-local** (stackless): it creates an isolated per-checkout stack under `~/.happier/stacks/<repo-stack>/...` and does **not** require you to pick a stack name.
 
+Important: repo-local mode is still a **source-backed** flow.
+
+- `yarn tui`, `yarn dev`, and repo-local `yarn start` run from this checkout directly.
+- If you want stack-local production artifacts (`web + server + daemon`) and an activated runtime snapshot, use a **named stack** with `hstack stack build <name> --activate-runtime`.
+- This is the right choice when you want a second stack pointed at the same checkout but insulated from source rebuild churn.
+
 ## Prerequisites
 
 - Node + Corepack enabled
@@ -105,6 +111,17 @@ By default, `yarn build` writes the web UI export into your stack base dir:
 
 ```text
 ~/.happier/stacks/<repo-stack>/ui
+```
+
+This is only the web bundle. Repo-local mode does **not** currently assemble a stack-local runtime snapshot for the server and daemon.
+
+If you need that level of isolation, use a named stack instead:
+
+```bash
+hstack stack new prod-dev --repo=/absolute/path/to/this/checkout
+hstack stack build prod-dev --activate-runtime
+hstack stack env prod-dev set HAPPIER_STACK_RUNTIME_MODE=prefer
+hstack stack start prod-dev --runtime
 ```
 
 ## OS Service (Autostart)

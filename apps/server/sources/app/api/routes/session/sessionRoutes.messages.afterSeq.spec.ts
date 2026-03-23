@@ -1,21 +1,15 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
     catchupFetchesInc,
     catchupReturnedInc,
     checkSessionAccess,
-    createSessionRouteReply,
-    preloadSessionRoutes,
-    registerSessionRoutesAndGetHandler,
+    createSessionRouteTestBuilder,
     resetSessionRouteMocks,
     sessionMessageFindMany,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v1 messages pagination", () => {
-    beforeAll(async () => {
-        await preloadSessionRoutes();
-    }, 120_000);
-
     beforeEach(() => {
         resetSessionRouteMocks();
         checkSessionAccess.mockReset();
@@ -34,17 +28,11 @@ describe("sessionRoutes v1 messages pagination", () => {
             { id: "m5", seq: 5, localId: null, sidechainId: null, content: { t: "encrypted", c: "c5" }, createdAt: t0, updatedAt: t0 },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                query: { afterSeq: 2, limit: 2 },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions/:sessionId/messages");
+        const { response: res } = await route.invoke({
+            params: { sessionId: "s1" },
+            query: { afterSeq: 2, limit: 2 },
+        });
 
         expect(catchupFetchesInc).toHaveBeenCalledWith({ type: "session-messages-afterSeq" });
         expect(catchupReturnedInc).toHaveBeenCalledWith({ type: "session-messages-afterSeq" }, 2);
@@ -76,17 +64,11 @@ describe("sessionRoutes v1 messages pagination", () => {
             { id: "m3", seq: 3, localId: null, sidechainId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                query: { afterSeq: 2, limit: 2 },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions/:sessionId/messages");
+        const { response: res } = await route.invoke({
+            params: { sessionId: "s1" },
+            query: { afterSeq: 2, limit: 2 },
+        });
 
         expect(catchupFetchesInc).toHaveBeenCalledWith({ type: "session-messages-afterSeq" });
         expect(catchupReturnedInc).toHaveBeenCalledWith({ type: "session-messages-afterSeq" }, 1);
@@ -111,17 +93,11 @@ describe("sessionRoutes v1 messages pagination", () => {
             { id: "m3", seq: 3, localId: null, sidechainId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                query: { limit: 2 },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions/:sessionId/messages");
+        const { response: res } = await route.invoke({
+            params: { sessionId: "s1" },
+            query: { limit: 2 },
+        });
 
         expect(catchupFetchesInc).not.toHaveBeenCalled();
         expect(catchupReturnedInc).not.toHaveBeenCalled();
@@ -154,17 +130,11 @@ describe("sessionRoutes v1 messages pagination", () => {
             { id: "m3", seq: 3, localId: null, sidechainId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                query: { beforeSeq: 5, limit: 50 },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions/:sessionId/messages");
+        const { response: res } = await route.invoke({
+            params: { sessionId: "s1" },
+            query: { beforeSeq: 5, limit: 50 },
+        });
 
         expect(catchupFetchesInc).not.toHaveBeenCalled();
         expect(catchupReturnedInc).not.toHaveBeenCalled();
@@ -197,17 +167,11 @@ describe("sessionRoutes v1 messages pagination", () => {
             { id: "m1", seq: 1, localId: null, sidechainId: null, content: { t: "encrypted", c: "c1" }, createdAt: t0, updatedAt: t0 },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                query: { limit: 50, scope: "all" },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions/:sessionId/messages");
+        const { response: res } = await route.invoke({
+            params: { sessionId: "s1" },
+            query: { limit: 50, scope: "all" },
+        });
 
         expect(sessionMessageFindMany).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -235,17 +199,11 @@ describe("sessionRoutes v1 messages pagination", () => {
             { id: "m1", seq: 1, localId: null, sidechainId: "sc-1", content: { t: "encrypted", c: "c1" }, createdAt: t0, updatedAt: t0 },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
-        const reply = createSessionRouteReply();
-
-        await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                query: { limit: 50, scope: "sidechain", sidechainId: "sc-1" },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions/:sessionId/messages");
+        await route.invoke({
+            params: { sessionId: "s1" },
+            query: { limit: 50, scope: "sidechain", sidechainId: "sc-1" },
+        });
 
         expect(sessionMessageFindMany).toHaveBeenCalledWith(
             expect.objectContaining({

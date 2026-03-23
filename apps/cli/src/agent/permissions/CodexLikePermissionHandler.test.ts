@@ -71,6 +71,47 @@ describe('CodexLikePermissionHandler', () => {
     expect(result.decision).toBe('denied');
   });
 
+  it('does not auto-approve AskUserQuestion in plan mode', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+    handler.setPermissionMode('plan');
+
+    const promise = handler.handleToolCall('tool-ask', 'AskUserQuestion', {
+      questions: [
+        {
+          header: 'Export Shape',
+          question: 'Which session export behavior should the plan target?',
+          options: [{ label: 'Single JSON', description: 'Portable JSON export' }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(session.agentState.requests['tool-ask']).toEqual(
+      expect.objectContaining({
+        tool: 'AskUserQuestion',
+        kind: 'user_action',
+      }),
+    );
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({
+      id: 'tool-ask',
+      approved: true,
+      answers: {
+        'Which session export behavior should the plan target?': 'Single JSON',
+      },
+    });
+
+    await expect(promise).resolves.toEqual({
+      decision: 'approved',
+      answers: {
+        'Which session export behavior should the plan target?': 'Single JSON',
+      },
+    });
+  });
+
   it('prompts for write-like tools in safe-yolo mode', async () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
@@ -96,6 +137,15 @@ describe('CodexLikePermissionHandler', () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
     handler.setPermissionMode('yolo');
+
+    const result = await handler.handleToolCall('tool-1', 'Write', { path: '/tmp/x', content: 'hi' });
+    expect(result.decision).toBe('approved_for_session');
+  });
+
+  it('auto-approves write-like tools in bypassPermissions mode', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+    handler.setPermissionMode('bypassPermissions');
 
     const result = await handler.handleToolCall('tool-1', 'Write', { path: '/tmp/x', content: 'hi' });
     expect(result.decision).toBe('approved_for_session');
@@ -181,5 +231,101 @@ describe('CodexLikePermissionHandler', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+
+  it('auto-approves Happier tools shell-bridge bash commands in default mode', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+
+    const result = await handler.handleToolCall('tool-1', 'Bash', {
+      command:
+        `TSX_TSCONFIG_PATH='/Users/leeroy/Documents/Development/happier/dev/apps/cli/tsconfig.json' ` +
+        `'/Users/leeroy/.nvm/versions/node/v22.14.0/bin/node' --import ` +
+        `'/Users/leeroy/Documents/Development/happier/dev/node_modules/tsx/dist/esm/index.mjs' ` +
+        `'/Users/leeroy/Documents/Development/happier/dev/apps/cli/src/index.ts' tools call ` +
+        `--session-id cmmfivqgm002d8o1ug15b02o1 --directory /tmp/workspace --source happier ` +
+        `--tool change_title --args-json '{"title":"Kimi Fresh QA Title"}' --json`,
+    });
+
+    expect(result.decision).toBe('approved');
+    expect(session.agentState.requests['tool-1']).toBeUndefined();
+    expect(session.agentState.completedRequests['tool-1']).toEqual(
+      expect.objectContaining({
+        tool: 'Bash',
+        status: 'approved',
+        decision: 'approved',
+      }),
+    );
+  });
+
+  it('auto-approves Happier tools shell-bridge bash commands even in read-only mode', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+    handler.setPermissionMode('read-only');
+
+    const result = await handler.handleToolCall('tool-1', 'bash', {
+      command:
+        `TSX_TSCONFIG_PATH='/Users/leeroy/Documents/Development/happier/dev/apps/cli/tsconfig.json' ` +
+        `'/Users/leeroy/.nvm/versions/node/v22.14.0/bin/node' --import ` +
+        `'/Users/leeroy/Documents/Development/happier/dev/node_modules/tsx/dist/esm/index.mjs' ` +
+        `'/Users/leeroy/Documents/Development/happier/dev/apps/cli/src/index.ts' tools list ` +
+        `--session-id cmmfivqgm002d8o1ug15b02o1 --directory /tmp/workspace --json`,
+    });
+
+    expect(result.decision).toBe('approved');
+    expect(session.agentState.requests['tool-1']).toBeUndefined();
+    expect(session.agentState.completedRequests['tool-1']).toEqual(
+      expect.objectContaining({
+        tool: 'bash',
+        status: 'approved',
+        decision: 'approved',
+      }),
+    );
+  });
+
+  it('prompts for Happier shell-bridge calls with non-vetted custom sources in default mode', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+
+    const promise = handler.handleToolCall('tool-1', 'bash', {
+      command:
+        `happier tools call --session-id cmmfivqgm002d8o1ug15b02o1 --directory /tmp/workspace ` +
+        `--source qa_marker_stdio_20260306 --tool get_marker --args-json '{}' --json`,
+    });
+
+    expect(session.agentState.requests['tool-1']).toEqual(
+      expect.objectContaining({
+        tool: 'bash',
+      }),
+    );
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({ id: 'tool-1', approved: true, decision: 'approved' });
+
+    await expect(promise).resolves.toEqual({ decision: 'approved' });
+  });
+
+  it('prompts for non-vetted internal Happier shell-bridge tools in default mode', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+
+    const promise = handler.handleToolCall('tool-1', 'bash', {
+      command:
+        `happier tools call --session-id cmmfivqgm002d8o1ug15b02o1 --directory /tmp/workspace ` +
+        `--source happier --tool action_execute --args-json '{"actionId":"dangerous.action"}' --json`,
+    });
+
+    expect(session.agentState.requests['tool-1']).toEqual(
+      expect.objectContaining({
+        tool: 'bash',
+      }),
+    );
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({ id: 'tool-1', approved: false, decision: 'denied' });
+
+    await expect(promise).resolves.toEqual({ decision: 'denied' });
   });
 });

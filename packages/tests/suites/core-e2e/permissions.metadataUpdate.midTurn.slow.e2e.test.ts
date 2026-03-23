@@ -13,7 +13,6 @@ import { decryptLegacyBase64, encryptLegacyBase64 } from '../../src/testkit/mess
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { yarnCommand } from '../../src/testkit/process/commands';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
@@ -162,6 +161,7 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
       HAPPIER_SERVER_URL: server.baseUrl,
       HAPPIER_WEBAPP_URL: server.baseUrl,
       HAPPIER_SESSION_ATTACH_FILE: attachFile,
+      HAPPIER_SESSION_AUTOSTART_DAEMON: '0',
       HAPPIER_E2E_PROVIDERS: '1',
       HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
       HAPPIER_CODEX_ACP_BIN: fakeAgentPath,
@@ -170,8 +170,6 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
       HAPPIER_E2E_PERMISSION_LOG: permissionLogPath,
       HAPPIER_E2E_PERMISSION_DELAY_MS: '2500',
     };
-
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
 
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),

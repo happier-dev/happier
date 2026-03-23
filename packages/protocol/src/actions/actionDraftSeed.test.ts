@@ -1,28 +1,47 @@
 import { describe, expect, it } from 'vitest';
+import { buildActionDraftSeedInput, getActionSpec } from './index.js';
 
 describe('buildActionDraftSeedInput', () => {
-  it('seeds backend selection + required selects for review.start', async () => {
-    const { buildActionDraftSeedInput, getActionSpec } = await import('./index.js');
+  it('requires explicit engine selection for review.start drafts', () => {
     const spec = getActionSpec('review.start');
 
-    const seed = buildActionDraftSeedInput(spec, { defaultBackendId: 'codex', instructions: 'Please review.' });
-    expect(seed).toMatchObject({
-      engineIds: ['codex'],
+    const seed = buildActionDraftSeedInput(spec, {
+      defaultBackendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      defaultBackendId: 'codex',
       instructions: 'Please review.',
-      changeType: 'committed',
+    });
+    expect(seed).toMatchObject({
+      instructions: 'Please review.',
+      changeType: 'uncommitted',
       base: { kind: 'none' },
+    });
+    expect(seed).not.toHaveProperty('engineIds');
+  });
+
+  it('seeds backend selection for subagents.plan.start and uses textarea instructions', () => {
+    const spec = getActionSpec('subagents.plan.start');
+
+    const seed = buildActionDraftSeedInput(spec, {
+      defaultBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      defaultBackendId: 'claude',
+      instructions: 'Make a plan.',
+    });
+    expect(seed).toMatchObject({
+      backendTargetKeys: ['agent:claude'],
+      instructions: 'Make a plan.',
     });
   });
 
-  it('seeds backend selection for plan.start and uses textarea instructions', async () => {
-    const { buildActionDraftSeedInput, getActionSpec } = await import('./index.js');
-    const spec = getActionSpec('plan.start');
+  it('preserves configured ACP backend targets for backendTargetKeys fields', () => {
+    const spec = getActionSpec('subagents.plan.start');
 
-    const seed = buildActionDraftSeedInput(spec, { defaultBackendId: 'claude', instructions: 'Make a plan.' });
+    const seed = buildActionDraftSeedInput(spec, {
+      defaultBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      instructions: 'Make a plan.',
+    });
     expect(seed).toMatchObject({
-      backendIds: ['claude'],
+      backendTargetKeys: ['acpBackend:review-bot'],
       instructions: 'Make a plan.',
     });
   });
 });
-

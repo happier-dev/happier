@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { ActivityIndicator, Image, Pressable, View } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, View } from 'react-native';
+import { SvgXml } from 'react-native-svg';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { decodeBase64 } from '@/encryption/base64';
 
 type FileStateProps = {
     theme: any;
@@ -105,6 +107,23 @@ export function FileErrorState({ theme, filePath, error, onRetry }: FileStatePro
 }
 
 export function FileBinaryState({ theme, filePath, imagePreviewUri }: FileStateProps & { filePath: string; imagePreviewUri?: string | null }) {
+    const svgXml = React.useMemo(() => {
+        if (Platform.OS === 'web') return null;
+        if (typeof imagePreviewUri !== 'string') return null;
+        if (!imagePreviewUri.startsWith('data:image/svg+xml')) return null;
+        const base64Index = imagePreviewUri.indexOf('base64,');
+        if (base64Index < 0) return null;
+        const base64 = imagePreviewUri.slice(base64Index + 'base64,'.length);
+        if (!base64) return null;
+        try {
+            const bytes = decodeBase64(base64, 'base64');
+            const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+            return decoded.includes('<svg') ? decoded : null;
+        } catch {
+            return null;
+        }
+    }, [imagePreviewUri]);
+
     return (
         <View
             style={{
@@ -129,12 +148,16 @@ export function FileBinaryState({ theme, filePath, imagePreviewUri }: FileStateP
                         marginBottom: 14,
                     }}
                 >
-                    <Image
-                        source={{ uri: imagePreviewUri }}
-                        resizeMode="contain"
-                        style={{ width: '100%', height: '100%' }}
-                        accessibilityLabel={t('files.binaryFile')}
-                    />
+                    {svgXml ? (
+                        <SvgXml xml={svgXml} width="100%" height="100%" />
+                    ) : (
+                        <Image
+                            source={{ uri: imagePreviewUri }}
+                            resizeMode="contain"
+                            style={{ width: '100%', height: '100%' }}
+                            accessibilityLabel={t('files.binaryFile')}
+                        />
+                    )}
                 </View>
             ) : null}
             <Text

@@ -10,11 +10,13 @@ import { layout } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
 
 
 interface ChatHeaderViewProps {
     title: string;
     subtitle?: string;
+    badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
     onAvatarPress?: () => void;
     avatarId?: string;
@@ -29,6 +31,7 @@ interface ChatHeaderViewProps {
 export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     title,
     subtitle,
+    badges,
     onBackPress,
     onAvatarPress,
     avatarId,
@@ -41,6 +44,9 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
     const headerHeight = useHeaderHeight();
+    const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
+    const backButtonTestId = resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-header-back');
+    const avatarButtonTestId = resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-header-avatar');
 
     const handleBackPress = () => {
         if (onBackPress) {
@@ -56,7 +62,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                 <View style={[styles.content, { height: headerHeight }, constrainWidth ? null : { maxWidth: '100%' }]}>
                 <Pressable
                     onPress={handleBackPress}
-                    testID="session-header-back"
+                    testID={backButtonTestId}
                     accessibilityRole="button"
                     accessibilityLabel={t('common.back')}
                     style={styles.backButton}
@@ -70,19 +76,49 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                 </Pressable>
                 
                 <View style={styles.titleContainer}>
-                    <Text
-                        numberOfLines={1}
-                        ellipsizeMode="tail"
-                        style={[
-                            styles.title,
-                            {
-                                color: theme.colors.header.tint,
-                                ...Typography.default('semiBold')
-                            }
-                        ]}
-                    >
-                        {title}
-                    </Text>
+                    <View style={styles.titleRow}>
+                        <Text
+                            numberOfLines={1}
+                            ellipsizeMode="tail"
+                            style={[
+                                styles.title,
+                                {
+                                    color: theme.colors.header.tint,
+                                    ...Typography.default('semiBold')
+                                }
+                            ]}
+                        >
+                            {title}
+                        </Text>
+                        {badges && badges.length > 0 ? (
+                            badges.map((badge, index) => (
+                                <View
+                                    key={`${badge}:${index}`}
+                                    style={[
+                                        styles.badge,
+                                        {
+                                            backgroundColor: theme.colors.surfaceHigh,
+                                            borderColor: theme.colors.divider,
+                                        },
+                                    ]}
+                                    testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-header-badge:${index}`)}
+                                >
+                                    <Text
+                                        numberOfLines={1}
+                                        style={[
+                                            styles.badgeText,
+                                            {
+                                                color: theme.colors.textSecondary,
+                                                ...Typography.default('semiBold'),
+                                            },
+                                        ]}
+                                    >
+                                        {badge}
+                                    </Text>
+                                </View>
+                            ))
+                        ) : null}
+                    </View>
                     {subtitle && (
                         <Text
                             numberOfLines={1}
@@ -112,7 +148,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                         onPress={onAvatarPress}
                         hitSlop={15}
                         style={styles.avatarButton}
-                        testID="session-header-avatar"
+                        testID={avatarButtonTestId}
                         accessibilityRole="button"
                         accessibilityLabel={t('sessionInfo.title')}
                     >
@@ -155,6 +191,12 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'flex-start',
     },
+    titleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        width: '100%',
+    },
     title: {
         fontSize: Platform.select({
             ios: 15,
@@ -162,13 +204,23 @@ const styles = StyleSheet.create({
             default: 16
         }),
         fontWeight: '600',
-        marginBottom: 1,
-        width: '100%',
+        flexShrink: 1,
     },
     subtitle: {
         fontSize: 12,
         fontWeight: '400',
         lineHeight: 14,
+        marginTop: 1,
+    },
+    badge: {
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+    },
+    badgeText: {
+        fontSize: 9,
+        lineHeight: 12,
     },
     avatarButton: {
         width: 44,

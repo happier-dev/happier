@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import {
     sessionScmRemoteFetch,
@@ -88,7 +89,7 @@ export function useFilesScmOperations(input: {
     const commitMessageGeneratorBackendId = React.useMemo(() => {
         return typeof scmCommitMessageGeneratorBackendId === 'string' && scmCommitMessageGeneratorBackendId.trim().length > 0
             ? scmCommitMessageGeneratorBackendId.trim()
-            : 'claude';
+            : DEFAULT_AGENT_ID;
     }, [scmCommitMessageGeneratorBackendId]);
 
     const generateCommitMessageSuggestion = React.useCallback(async () => {

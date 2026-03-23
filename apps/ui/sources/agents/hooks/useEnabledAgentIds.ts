@@ -6,9 +6,9 @@ import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import type { AgentId } from '@/agents/registry/registryCore';
 
 export function useEnabledAgentIds(): AgentId[] {
-    const backendEnabledById = useSetting('backendEnabledById');
+    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
 
     return React.useMemo(() => {
-        return getEnabledAgentIds({ backendEnabledById });
-    }, [backendEnabledById]);
+        return getEnabledAgentIds({ backendEnabledByTargetKey });
+    }, [backendEnabledByTargetKey]);
 }

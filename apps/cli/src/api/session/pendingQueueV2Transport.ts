@@ -11,6 +11,11 @@ export type PendingQueueMaterializeNextResult = {
     didWrite: boolean;
 };
 
+type PendingQueueWriteBody = Readonly<
+    | { localId: string; ciphertext: string }
+    | { localId: string; content: { t: 'plain'; v: unknown } }
+>;
+
 type PendingQueueSocketMaterializeResult =
     | { ok: true; didMaterialize: true; localId: string | null; didWrite: boolean }
     | { ok: true; didMaterialize: false }
@@ -59,6 +64,25 @@ export async function discardPendingQueueV2Messages(params: {
     return discarded;
 }
 
+export async function enqueuePendingQueueV2MessageViaHttp(params: {
+    token: string;
+    sessionId: string;
+    body: PendingQueueWriteBody;
+}): Promise<void> {
+    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+    await axios.post(
+        `${serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`,
+        params.body,
+        {
+            headers: {
+                Authorization: `Bearer ${params.token}`,
+                'Content-Type': 'application/json',
+            },
+            timeout: 10_000,
+        },
+    );
+}
+
 async function tryMaterializeNextViaSocket(params: {
     socket: Socket<ServerToClientEvents, ClientToServerEvents>;
     sessionId: string;
@@ -83,7 +107,7 @@ async function tryMaterializeNextViaHttp(params: {
     try {
         const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
         const response = await axios.post(
-            `${serverUrl}/v2/sessions/${params.sessionId}/pending/materialize-next`,
+            `${serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending/materialize-next`,
             {},
             {
                 headers: {
@@ -103,6 +127,26 @@ async function tryMaterializeNextViaHttp(params: {
     } catch {
         return { ok: false };
     }
+}
+
+export async function materializeNextPendingQueueV2MessageViaHttp(params: {
+    token: string;
+    sessionId: string;
+}): Promise<PendingQueueMaterializeNextResult | null> {
+    const res = await tryMaterializeNextViaHttp(params);
+    if (!res.ok) return null;
+    if (!res.didMaterialize) {
+        return {
+            didMaterialize: false,
+            localId: null,
+            didWrite: false,
+        };
+    }
+    return {
+        didMaterialize: true,
+        localId: res.localId,
+        didWrite: res.didWrite,
+    };
 }
 
 export async function materializeNextPendingQueueV2Message(params: {

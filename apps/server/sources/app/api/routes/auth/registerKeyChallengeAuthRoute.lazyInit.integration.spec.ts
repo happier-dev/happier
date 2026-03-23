@@ -60,7 +60,7 @@ describe("registerKeyChallengeAuthRoute (lazy auth init) (integration)", () => {
         });
 
         await app.close();
-        harness.restoreEnv();
+        harness.resetEnv();
     });
 
     it("does not touch account updatedAt when content keys are not provided", async () => {
@@ -117,6 +117,6 @@ describe("registerKeyChallengeAuthRoute (lazy auth init) (integration)", () => {
         expect(afterSecond!.updatedAt.getTime()).toBe(afterFirst!.updatedAt.getTime());
 
         await app.close();
-        harness.restoreEnv();
+        harness.resetEnv();
     });
 });

@@ -45,8 +45,9 @@ function runTsc(tsconfigPath) {
 }
 
 // Build shared packages (dist/ is the runtime contract).
-runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
+// Protocol must build first because agents consumes @happier-dev/protocol dist/types.
 runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
+runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
 
 // Sanity check: ensure protocol dist entry exists.
 const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');

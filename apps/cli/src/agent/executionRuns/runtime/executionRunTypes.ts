@@ -1,11 +1,12 @@
-import type { ExecutionRunDisplay, ExecutionRunIntent, ExecutionRunResumeHandle } from '@happier-dev/protocol';
+import type { BackendTargetRefV1, ExecutionRunDisplay, ExecutionRunIntent, ExecutionRunResumeHandle } from '@happier-dev/protocol';
 
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 
 export type ExecutionRunManagerStartParams = Readonly<{
   sessionId: string;
   intent: ExecutionRunIntent;
-  backendId: string;
+  backendTarget: BackendTargetRefV1;
+  accountSettings?: Readonly<Record<string, unknown>> | null;
   instructions?: string;
   /**
    * Intent-scoped configuration. The execution-run substrate treats this as opaque,
@@ -17,6 +18,9 @@ export type ExecutionRunManagerStartParams = Readonly<{
   retentionPolicy: 'ephemeral' | 'resumable';
   runClass: 'bounded' | 'long_lived';
   ioMode: 'request_response' | 'streaming';
+  profileId?: string | null;
+  // Internal runtime override for bounded-run timeouts. Not part of the public RPC contract.
+  boundedTimeoutMs?: number;
   resumeHandle?: ExecutionRunResumeHandle | null;
   parentRunId?: string;
   parentCallId?: string;
@@ -26,8 +30,11 @@ export type ExecutionRunManagerStartParams = Readonly<{
   commitIsolation?: boolean;
   idleTtlSeconds?: number;
   initialContext?: string;
+  initialContextMode?: 'bootstrap' | 'first_turn';
   verbosity?: 'short' | 'balanced';
   bootstrapMode?: 'ready_handshake' | 'none';
+  bootstrapTimeoutMs?: number;
+  disabledActionIds?: readonly string[];
   transcript?: Readonly<{ persistenceMode?: 'ephemeral' | 'persistent'; epoch?: number }>;
 }>;
 
@@ -44,13 +51,20 @@ export type ExecutionRunState = Readonly<{
   sessionId: string;
   depth: number;
   intent: ExecutionRunManagerStartParams['intent'];
+  backendTarget: BackendTargetRefV1;
   backendId: string;
   instructions: string;
+  intentInput?: unknown;
   display?: ExecutionRunDisplay;
   permissionMode: string;
   retentionPolicy: ExecutionRunManagerStartParams['retentionPolicy'];
   runClass: ExecutionRunManagerStartParams['runClass'];
   ioMode: ExecutionRunManagerStartParams['ioMode'];
+  /**
+   * Cumulative backend turn count for long-lived runs.
+   * Persisted in run state so resuming cannot reset enforcement (for example maxTurns).
+   */
+  turnCount?: number;
   status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timeout';
   startedAtMs: number;
   finishedAtMs?: number;
@@ -60,13 +74,17 @@ export type ExecutionRunState = Readonly<{
   latestToolResult?: unknown;
   resumeHandle?: ExecutionRunResumeHandle | null;
   voiceAgentConfig?: Readonly<{
+    profileId?: string | null;
     chatModelId: string;
     commitModelId: string;
     commitIsolation: boolean;
     permissionPolicy: 'no_tools' | 'read_only';
     idleTtlSeconds: number;
     initialContext: string;
+    initialContextMode: 'bootstrap' | 'first_turn';
     verbosity: 'short' | 'balanced';
+    bootstrapTimeoutMs?: number;
+    disabledActionIds: readonly string[];
     transcript: Readonly<{ persistenceMode: 'ephemeral' | 'persistent'; epoch: number }>;
   }>;
 }>;
@@ -83,4 +101,3 @@ export type ExecutionRunActionResult = Readonly<{
   updatedToolResult?: unknown;
   result?: unknown;
 }>;
-

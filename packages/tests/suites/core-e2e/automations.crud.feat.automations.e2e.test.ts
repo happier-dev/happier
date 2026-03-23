@@ -40,7 +40,7 @@ describe('core e2e: automation CRUD + run history', () => {
 
   it('supports create/edit/delete and reflects run state in automation history', async () => {
     const testDir = run.testDir('automations-crud');
-    server = await startServerLight({ testDir });
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const auth = await createTestAuth(server.baseUrl);
 
     const machineId = 'machine-crud-1';

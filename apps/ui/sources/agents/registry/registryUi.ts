@@ -11,12 +11,19 @@ import { AUGGIE_UI } from '@/agents/providers/auggie/ui';
 import { QWEN_UI } from '@/agents/providers/qwen/ui';
 import { KIMI_UI } from '@/agents/providers/kimi/ui';
 import { KILO_UI } from '@/agents/providers/kilo/ui';
+import { KIRO_UI } from '@/agents/providers/kiro/ui';
+import { CUSTOM_ACP_UI } from '@/agents/providers/customAcp/ui';
 import { PI_UI } from '@/agents/providers/pi/ui';
 import { COPILOT_UI } from '@/agents/providers/copilot/ui';
 
+export type AgentIconSvgXmlResolver = (
+    theme: UnistylesThemes[keyof UnistylesThemes],
+) => string;
+
 export type AgentUiConfig = Readonly<{
     id: AgentId;
-    icon: ImageSourcePropType;
+    icon: ImageSourcePropType | null;
+    svgIconXml: AgentIconSvgXmlResolver | null;
     /**
      * Optional tint for the icon (Codex icon is monochrome and should match text color).
      */
@@ -43,12 +50,22 @@ export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze
     qwen: QWEN_UI,
     kimi: KIMI_UI,
     kilo: KILO_UI,
+    kiro: KIRO_UI,
+    customAcp: CUSTOM_ACP_UI,
     pi: PI_UI,
     copilot: COPILOT_UI,
 });
 
-export function getAgentIconSource(agentId: AgentId): ImageSourcePropType {
+export function getAgentIconSource(agentId: AgentId): ImageSourcePropType | null {
     return AGENTS_UI[agentId].icon;
+}
+
+export function getAgentIconSvgXml(
+    agentId: AgentId,
+    theme: UnistylesThemes[keyof UnistylesThemes],
+): string | null {
+    const resolveSvgXml = AGENTS_UI[agentId].svgIconXml;
+    return resolveSvgXml ? resolveSvgXml(theme) : null;
 }
 
 export function getAgentIconTintColor(agentId: AgentId, theme: UnistylesThemes[keyof UnistylesThemes]): string | undefined {

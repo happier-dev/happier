@@ -9,6 +9,7 @@ export const agent = {
   getCliCommandHandler: async () => (await import('@/backends/qwen/cli/command')).handleQwenCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/qwen/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/qwen/cli/detect')).cliDetect,
+  getCliAuthSpec: async () => (await import('@/backends/qwen/cli/auth/qwenCliAuthSpec')).qwenCliAuthSpec,
   vendorResumeSupport: AGENTS_CORE.qwen.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createQwenBackend } = await import('@/backends/qwen/acp/backend');
@@ -16,4 +17,3 @@ export const agent = {
   },
   checklists,
 } satisfies AgentCatalogEntry;
-

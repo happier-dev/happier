@@ -1,27 +1,30 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const scrollIntoViewSpy = vi.fn();
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'web', select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android },
-        AppState: { addEventListener: () => ({ remove: () => {} }) },
-        Text: (props: any) => React.createElement('Text', props, props.children),
-        View: React.forwardRef((props: any, ref: any) => {
-            React.useImperativeHandle(ref, () => ({ scrollIntoView: scrollIntoViewSpy }));
-            return React.createElement('View', props, props.children);
-        }),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                View: React.forwardRef((props: any, ref: any) => {
+                    React.useImperativeHandle(ref, () => ({ scrollIntoView: scrollIntoViewSpy }));
+                    return React.createElement('View', props, props.children);
+                }),
+                Text: (props: any) => React.createElement('Text', props, props.children),
+            }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: () => ({}) },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
@@ -77,9 +80,7 @@ describe('SelectableMenuResults (web)', () => {
         ] as any;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(SelectableMenuResults, {
+        tree = (await renderScreen(React.createElement(SelectableMenuResults, {
                     categories,
                     selectedIndex: 0,
                     onSelectionChange: () => {},
@@ -87,9 +88,7 @@ describe('SelectableMenuResults (web)', () => {
                     rowVariant: 'slim',
                     emptyLabel: 'empty',
                     rowKind: 'item',
-                }),
-            );
-        });
+                }))).tree;
 
         act(() => {
             tree?.update(
@@ -120,9 +119,7 @@ describe('SelectableMenuResults (web)', () => {
         ] as any;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(SelectableMenuResults, {
+        tree = (await renderScreen(React.createElement(SelectableMenuResults, {
                     categories,
                     selectedIndex: 0,
                     onSelectionChange: () => {},
@@ -130,9 +127,7 @@ describe('SelectableMenuResults (web)', () => {
                     rowVariant: 'slim',
                     emptyLabel: 'empty',
                     rowKind: 'item',
-                }),
-            );
-        });
+                }))).tree;
 
         act(() => {
             tree?.update(

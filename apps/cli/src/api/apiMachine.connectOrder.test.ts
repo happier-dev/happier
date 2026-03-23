@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 const callOrder = vi.hoisted(() => [] as string[]);
 
-const socketHandlers = vi.hoisted(() => new Map<string, (...args: any[]) => void>());
 const ioMock = vi.hoisted(() => vi.fn());
 
 vi.mock('socket.io-client', () => ({
@@ -51,28 +51,13 @@ vi.mock('./rpc/RpcHandlerManager', () => {
 describe('ApiMachineClient connect ordering', () => {
   afterEach(() => {
     callOrder.length = 0;
-    socketHandlers.clear();
     ioMock.mockReset();
     vi.resetModules();
   });
 
   it('registers RPC handlers before publishing daemon state on connect', async () => {
-    const fakeSocket: any = {
-      on: (event: string, handler: (...args: any[]) => void) => {
-        socketHandlers.set(event, handler);
-        return fakeSocket;
-      },
-      emit: vi.fn(),
-      emitWithAck: vi.fn(),
-      close: vi.fn(),
-      io: { on: vi.fn() },
-      connect: () => {
-        const onConnect = socketHandlers.get('connect');
-        if (onConnect) onConnect();
-      },
-    };
-
-    ioMock.mockReturnValue(fakeSocket);
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(ioMock, machineSocket);
 
     const { ApiMachineClient } = await import('./apiMachine');
     const client = new ApiMachineClient('token', {

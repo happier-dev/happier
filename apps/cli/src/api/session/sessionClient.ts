@@ -16,10 +16,13 @@ import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { registerEphemeralTaskHandlers } from '@/rpc/handlers/ephemeralTasks';
 import { createExecutionRunBackend } from '@/agent/executionRuns/runtime/createExecutionRunBackend';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
+import { readCredentials } from '@/persistence';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
 import { addDiscardedCommittedMessageLocalIds } from '../queue/discardedCommittedMessageLocalIds';
 import { fetchSessionSnapshotUpdateFromServer, shouldSyncSessionSnapshotOnConnect } from './snapshotSync';
-import { createSessionScopedSocket, createUserScopedSocket } from './sockets';
+import { createUserScopedSocket } from './sockets';
 import { isToolTraceEnabled, recordAcpToolTraceEventIfNeeded, recordClaudeToolTraceEvents, recordCodexToolTraceEventIfNeeded } from './toolTrace';
 import { updateSessionAgentStateWithAck, updateSessionMetadataWithAck } from './stateUpdates';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -42,9 +45,34 @@ import { isV2ChangesSyncEnabled, runSessionChangesSyncOnConnect } from './sessio
 import { handleSessionNewMessageUpdate } from './sessionNewMessageUpdate';
 import { handleSessionStateUpdate } from './sessionStateUpdateHandling';
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from './sessionMessageTypes';
-import { consumeDaemonInitialPromptFromEnv } from '@/agent/runtime/daemonInitialPrompt';
+import { buildDaemonInitialPromptLocalId, consumeDaemonInitialPromptFromEnv } from '@/agent/runtime/daemonInitialPrompt';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { createKeyedSingleFlightScheduler, type KeyedSingleFlightScheduler } from './transcriptRecoveryScheduler';
+import {
+    createManagedConnectionSupervisor,
+    DEFAULT_MANAGED_CONNECTION_POLICY,
+    type ManagedConnectionState,
+    type ManagedConnectionSupervisor,
+} from '@happier-dev/connection-supervisor';
+import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
+import { createSessionSocketTransport } from './connection/createSessionSocketTransport';
+import { connectionState } from '@/api/offline/serverConnectionErrors';
+import {
+    executeExecutionRunAction,
+    getExecutionRun,
+    listExecutionRuns,
+    sendExecutionRunMessage,
+    startExecutionRun,
+    stopExecutionRun,
+} from '@/session/services/executionRuns';
+
+function resolveSessionSocketMachineIdForBootstrap(metadata: Metadata | null): string | undefined {
+    if (!metadata || typeof metadata.machineId !== 'string') {
+        return undefined;
+    }
+    const machineId = metadata.machineId.trim();
+    return machineId.length > 0 ? machineId : undefined;
+}
 
 export class ApiSessionClient extends EventEmitter {
     private static readonly STARTUP_MESSAGE_CATCH_UP_RETRY_DELAYS_MS = [250, 1_000, 2_500] as const;
@@ -55,7 +83,7 @@ export class ApiSessionClient extends EventEmitter {
     private metadataVersion: number;
     private agentState: AgentState | null;
     private agentStateVersion: number;
-    private socket: Socket<ServerToClientEvents, ClientToServerEvents>;
+    private socket!: Socket<ServerToClientEvents, ClientToServerEvents>;
     private userSocket: Socket<ServerToClientEvents, ClientToServerEvents>;
     private pendingMessages: UserMessage[] = [];
     private pendingMessageCallback: ((message: UserMessage) => void) | null = null;
@@ -65,10 +93,23 @@ export class ApiSessionClient extends EventEmitter {
     private metadataLock = new AsyncLock();
     private encryptionKey: Uint8Array;
     private encryptionVariant: 'legacy' | 'dataKey';
+    private sessionConnectionSupervisor: ManagedConnectionSupervisor | null = null;
+    private currentConnectionState: ManagedConnectionState = {
+        phase: 'idle',
+        reason: null,
+        attempt: 0,
+        nextRetryAt: null,
+        lastConnectedAt: null,
+        lastDisconnectedAt: null,
+        lastErrorMessage: null,
+    };
+    private queuedDisconnectedSessionMessages = new Map<string, { message: string | { t: 'plain'; v: unknown }; localId: string; sidechainId: string | null }>();
     private readonly sessionEncryptionMode: 'e2ee' | 'plain';
     private disconnectedSendLogged = false;
     private readonly pendingMaterializedLocalIds = new Set<string>();
+    private readonly committedLocalIdsAwaitingEcho = new Set<string>();
     private readonly pendingQueueMaterializedLocalIds = new Set<string>();
+    private readonly committedLocalIdCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private pendingWakeSeq = 0;
     private readonly pendingCommitRetryAttemptsByLocalId = new Map<string, number>();
     private userSocketDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -79,6 +120,7 @@ export class ApiSessionClient extends EventEmitter {
     private readonly toolCallInputByProviderAndId = new Map<string, unknown>();
     private readonly receivedMessageIds = new Set<string>();
     private lastObservedMessageSeq = 0;
+    private lastObservedUserMessageSeq = 0;
     private hasConnectedOnce = false;
     private changesSyncInFlight: Promise<void> | null = null;
     private accountIdPromise: Promise<string> | null = null;
@@ -87,10 +129,44 @@ export class ApiSessionClient extends EventEmitter {
     private startupMessageCatchUpStarted = false;
     private startupMessageCatchUpRetryIndex = 0;
     private startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    private startupMessageCatchUpInitialAfterSeq = 0;
     private readonly startedByDaemonProcess: boolean;
+    private readonly transcriptStorage: 'persisted' | 'direct';
     private readonly materializationRecoveryScheduler: KeyedSingleFlightScheduler;
     private readonly transcriptRecoveryErrorStateByLocalId = new Map<string, { lastLoggedAt: number; suppressed: number }>();
     private messageCommitQueueTail: Promise<unknown> = Promise.resolve();
+    readonly executionRuns = {
+        start: async (request: unknown) =>
+            await startExecutionRun({
+                ...this.getExecutionRunServiceContext(),
+                request,
+            }),
+        list: async (request: unknown) =>
+            await listExecutionRuns({
+                ...this.getExecutionRunServiceContext(),
+                request,
+            }),
+        get: async (request: unknown) =>
+            await getExecutionRun({
+                ...this.getExecutionRunServiceContext(),
+                request,
+            }),
+        send: async (request: unknown) =>
+            await sendExecutionRunMessage({
+                ...this.getExecutionRunServiceContext(),
+                request,
+            }),
+        stop: async (request: unknown) =>
+            await stopExecutionRun({
+                ...this.getExecutionRunServiceContext(),
+                request,
+            }),
+        action: async (request: unknown) =>
+            await executeExecutionRunAction({
+                ...this.getExecutionRunServiceContext(),
+                request,
+            }),
+    } as const;
 
     /**
      * Returns the latest known agentState (may be stale if socket is disconnected).
@@ -100,27 +176,58 @@ export class ApiSessionClient extends EventEmitter {
         return this.agentState;
     }
 
+    private getExecutionRunServiceContext() {
+        return {
+            token: this.token,
+            sessionId: this.sessionId,
+            mode: this.sessionEncryptionMode,
+            ctx: {
+                encryptionKey: this.encryptionKey,
+                encryptionVariant: this.encryptionVariant,
+            },
+        } as const;
+    }
+
     private logSendWhileDisconnected(context: string, details?: Record<string, unknown>): void {
         if (this.socket.connected || this.disconnectedSendLogged) return;
         this.disconnectedSendLogged = true;
         logger.debug(
-            `[API] Socket not connected; emitting ${context} anyway (socket.io should buffer until reconnection).`,
+            `[API] Socket not connected; queueing ${context} until supervised reconnect.`,
             details
         );
     }
 
-    constructor(token: string, session: Session) {
-        super()
-        this.token = token;
-        this.sessionId = session.id;
-        this.metadata = session.metadata;
-        this.metadataVersion = session.metadataVersion;
-        this.agentState = session.agentState;
-        this.agentStateVersion = session.agentStateVersion;
-        this.encryptionKey = session.encryptionKey;
-        this.encryptionVariant = session.encryptionVariant;
-        this.sessionEncryptionMode = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
-        this.daemonInitialPrompt = consumeDaemonInitialPromptFromEnv();
+	    constructor(token: string, session: Session) {
+	        super()
+	        this.token = token;
+	        this.sessionId = session.id;
+	        this.metadata = session.metadata;
+	        this.metadataVersion = session.metadataVersion;
+	        this.agentState = session.agentState;
+	        this.agentStateVersion = session.agentStateVersion;
+            this.lastObservedMessageSeq =
+                typeof session.seq === 'number' && Number.isFinite(session.seq) && session.seq >= 0
+                    ? Math.trunc(session.seq)
+                    : 0;
+	        if (session.encryptionMode === 'plain') {
+	            this.sessionEncryptionMode = 'plain';
+	            // Plaintext sessions should not require encryption materials. Keep dummy values for
+	            // legacy surfaces that still accept encryption key args; they must branch on
+	            // `sessionEncryptionMode` and never encrypt/decrypt.
+	            this.encryptionKey = new Uint8Array(32);
+	            this.encryptionVariant = 'dataKey';
+	        } else {
+	            this.sessionEncryptionMode = 'e2ee';
+	            this.encryptionKey = session.encryptionKey;
+	            this.encryptionVariant = session.encryptionVariant;
+	        }
+	        this.transcriptStorage = (() => {
+	            const raw = typeof process.env.HAPPIER_TRANSCRIPT_STORAGE === 'string'
+	                ? process.env.HAPPIER_TRANSCRIPT_STORAGE.trim().toLowerCase()
+	                : '';
+	            return raw === 'direct' ? 'direct' : 'persisted';
+	        })();
+	        this.daemonInitialPrompt = consumeDaemonInitialPromptFromEnv();
         this.materializationRecoveryScheduler = createKeyedSingleFlightScheduler({
             delayMs: configuration.transcriptRecoveryDelayMs,
             maxConcurrent: configuration.transcriptRecoveryMaxConcurrent,
@@ -137,6 +244,7 @@ export class ApiSessionClient extends EventEmitter {
             scopePrefix: this.sessionId,
             encryptionKey: this.encryptionKey,
             encryptionVariant: this.encryptionVariant,
+            encryptionMode: this.sessionEncryptionMode,
             logger: (msg, data) => logger.debug(msg, data)
         });
         const resolvedFlavor = typeof (this.metadata as any)?.flavor === 'string' ? String((this.metadata as any).flavor).trim() : '';
@@ -145,6 +253,7 @@ export class ApiSessionClient extends EventEmitter {
 
         registerSessionHandlers(this.rpcHandlerManager, this.metadata.path, {
             getSessionMetadata: () => this.getMetadataSnapshot(),
+            enqueueSessionUserMessage: (request) => this.enqueueSessionUserMessage(request),
         });
 
         const transcriptWriter = {
@@ -154,19 +263,32 @@ export class ApiSessionClient extends EventEmitter {
             appendAssistantText: (text: string, meta: Record<string, unknown>) => {
                 this.sendAgentMessage(parentProvider as any, { type: 'message', message: text }, { meta });
             },
+            appendUserTextCommitted: async (text: string, meta: Record<string, unknown>) => {
+                await this.sendUserTextMessageCommitted(text, { localId: randomUUID(), meta });
+            },
+            appendAssistantTextCommitted: async (text: string, meta: Record<string, unknown>) => {
+                await this.sendAgentMessageCommitted(parentProvider as any, { type: 'message', message: text }, { localId: randomUUID(), meta });
+            },
         };
 
-        const executionBudgetRegistry = new ExecutionBudgetRegistry({
-            maxConcurrentExecutionRuns: configuration.executionRunsMaxConcurrentPerSession,
-            maxConcurrentEphemeralTasks: configuration.ephemeralTasksMaxConcurrentPerSession,
-            ...(typeof configuration.executionBudgetMaxConcurrentTotalPerSession === 'number'
-              ? { maxConcurrentTotal: configuration.executionBudgetMaxConcurrentTotalPerSession }
-              : {}),
-            ...(configuration.executionBudgetMaxConcurrentByClass
-              && Object.keys(configuration.executionBudgetMaxConcurrentByClass).length > 0
-              ? { maxConcurrentByClass: configuration.executionBudgetMaxConcurrentByClass }
-              : {}),
-        });
+        const hasBudgetCaps =
+            configuration.executionRunsMaxConcurrentPerSession !== null
+            || configuration.ephemeralTasksMaxConcurrentPerSession !== null
+            || typeof configuration.executionBudgetMaxConcurrentTotalPerSession === 'number'
+            || (configuration.executionBudgetMaxConcurrentByClass && Object.keys(configuration.executionBudgetMaxConcurrentByClass).length > 0);
+        const executionBudgetRegistry = hasBudgetCaps
+            ? new ExecutionBudgetRegistry({
+                maxConcurrentExecutionRuns: configuration.executionRunsMaxConcurrentPerSession,
+                maxConcurrentEphemeralTasks: configuration.ephemeralTasksMaxConcurrentPerSession,
+                ...(typeof configuration.executionBudgetMaxConcurrentTotalPerSession === 'number'
+                    ? { maxConcurrentTotal: configuration.executionBudgetMaxConcurrentTotalPerSession }
+                    : {}),
+                ...(configuration.executionBudgetMaxConcurrentByClass
+                    && Object.keys(configuration.executionBudgetMaxConcurrentByClass).length > 0
+                    ? { maxConcurrentByClass: configuration.executionBudgetMaxConcurrentByClass }
+                    : {}),
+            })
+            : undefined;
 
         // Always register execution-run RPC methods so callers never see "RPC method not available".
         // Feature gating is enforced inside the handler implementations.
@@ -175,31 +297,65 @@ export class ApiSessionClient extends EventEmitter {
             cwd: this.metadata?.path ?? process.cwd(),
             serverUrl: configuration.serverUrl,
             parentProvider,
-            createBackend: ({ backendId, permissionMode, modelId, start }) =>
-                createExecutionRunBackend({ cwd: this.metadata?.path ?? process.cwd(), backendId, permissionMode, modelId, start }),
+            createBackend: ({ backendId, backendTarget, permissionMode, modelId, accountSettings, start }) =>
+                createExecutionRunBackend({
+                    cwd: this.metadata?.path ?? process.cwd(),
+                    backendId,
+                    backendTarget,
+                    permissionMode,
+                    modelId,
+                    accountSettings,
+                    start,
+                }),
             sendAcp: (provider, body, opts) => this.sendAgentMessage(provider as any, body as any, opts),
+            streamedTranscriptSession: {
+                sendAgentMessageCommitted: (provider, body, opts) => this.sendAgentMessageCommitted(provider as any, body as any, opts),
+                sendTranscriptDraftDelta: (provider, params) => this.sendTranscriptDraftDelta(provider as any, params),
+            },
             transcriptWriter,
             budgetRegistry: executionBudgetRegistry,
+            onExecutionRunPublicStateUpdated: (run) => {
+                try {
+                    if (!this.socket.connected) {
+                        return;
+                    }
+                    this.socket.emit('execution-run-updated', { sid: this.sessionId, run });
+                } catch {
+                    // best effort
+                }
+            },
             policy: {
                 maxConcurrentRuns: configuration.executionRunsMaxConcurrentPerSession,
                 boundedTimeoutMs: configuration.executionRunsBoundedTimeoutMs,
+                reviewBoundedTimeoutMs: configuration.executionRunsReviewBoundedTimeoutMs,
                 maxTurns: configuration.executionRunsMaxTurns,
                 maxDepth: configuration.executionRunsMaxDepth,
+            },
+            resolveAccountSettings: async () => {
+                const activeSettings = getActiveAccountSettingsSnapshot()?.settings ?? null;
+                if (activeSettings) return activeSettings;
+                const credentials = await readCredentials();
+                if (!credentials) return null;
+                const context = await bootstrapAccountSettingsContext({ credentials, mode: 'fast' });
+                return context.settings ?? null;
             },
         });
 
         registerEphemeralTaskHandlers(this.rpcHandlerManager, {
           workingDirectory: this.metadata?.path ?? process.cwd(),
-          createBackend: ({ backendId, permissionMode }) =>
-            createExecutionRunBackend({ cwd: this.metadata?.path ?? process.cwd(), backendId, permissionMode }),
+          createBackend: ({ backendId, permissionMode, backendTarget }) =>
+            createExecutionRunBackend({
+              cwd: this.metadata?.path ?? process.cwd(),
+              backendId,
+              permissionMode,
+              ...(backendTarget ? { backendTarget } : {}),
+            }),
           budgetRegistry: executionBudgetRegistry,
         });
 
         //
         // Create socket
         //
-
-        this.socket = createSessionScopedSocket({ token: this.token, sessionId: this.sessionId });
 
         // A user-scoped socket is used to observe our own materialized pending-queue messages.
         //
@@ -214,57 +370,80 @@ export class ApiSessionClient extends EventEmitter {
         //
         // Handlers
         //
-
-        this.socket.on('connect', () => {
-            logger.debug('Socket connected successfully');
-            this.disconnectedSendLogged = false;
-            this.rpcHandlerManager.onSocketConnect(this.socket);
-
-            const isReconnect = this.hasConnectedOnce;
-            this.hasConnectedOnce = true;
-            void this.syncChangesOnConnect({ reason: isReconnect ? 'reconnect' : 'connect' });
-
-            // Resumed sessions (inactive-session-resume) start with metadataVersion/agentStateVersion = -1.
-            // If the user performed session mutations before this agent connected, the corresponding
-            // updates happened "in the past" and won't be replayed over the socket. Syncing a snapshot
-            // here ensures we start from a consistent metadata/agentState baseline.
-            if (shouldSyncSessionSnapshotOnConnect({ metadataVersion: this.metadataVersion, agentStateVersion: this.agentStateVersion })) {
-                void this.syncSessionSnapshotFromServer({ reason: 'connect' });
-            }
-        })
-
-        // Set up global RPC request handler
-        this.socket.on(SOCKET_RPC_EVENTS.REQUEST, async (data: { method: string, params: string }, callback: (response: string) => void) => {
-            callback(await this.rpcHandlerManager.handleRequest(data));
-        })
-
-        this.socket.on('disconnect', (reason) => {
-            logger.debug('[API] Socket disconnected:', reason);
-            this.rpcHandlerManager.onSocketDisconnect();
-        })
-
-        this.socket.on('connect_error', (error) => {
-            logger.debug('[API] Socket connection error:', error);
-            this.rpcHandlerManager.onSocketDisconnect();
-        })
-
-        // Server events
-        this.socket.on('update', (data: Update) => this.handleUpdate(data, { source: 'session-scoped' }));
         this.userSocket.on('update', (data: Update) => this.handleUpdate(data, { source: 'user-scoped' }));
         // Broadcast-safe session events are optional hints; ignore unless explicitly used.
-        this.socket.on('session', () => {});
         this.userSocket.on('session', () => {});
 
-        // DEATH
-        this.socket.on('error', (error) => {
-            logger.debug('[API] Socket error:', error);
+        let currentTransportSocket: typeof this.socket | null = null;
+        this.sessionConnectionSupervisor = createManagedConnectionSupervisor({
+            ...DEFAULT_MANAGED_CONNECTION_POLICY,
+            createTransport: () => {
+                const { socket, transport } = createSessionSocketTransport({
+                    token: this.token,
+                    sessionId: this.sessionId,
+                    machineId: resolveSessionSocketMachineIdForBootstrap(this.metadata),
+                });
+                this.socket = socket;
+                currentTransportSocket = socket;
+                this.installSessionSocketEventHandlers(socket);
+                return transport;
+            },
+            probeReadiness: createLoopbackReadinessProbe({
+                serverUrl: configuration.apiServerUrl,
+                token: this.token,
+            }),
+            onStateChange: (state) => {
+                this.currentConnectionState = state;
+            },
+            onConnected: async () => {
+                logger.debug('Socket connected successfully');
+                this.disconnectedSendLogged = false;
+                connectionState.recover();
+                this.rpcHandlerManager.onSocketConnect(this.socket);
+
+                const isReconnect = this.hasConnectedOnce;
+                this.hasConnectedOnce = true;
+
+                if (this.shouldKeepUserSocketConnected()) {
+                    this.kickUserSocketConnect();
+                }
+
+                await this.syncChangesOnConnect({ reason: isReconnect ? 'reconnect' : 'connect' }).catch((error) => {
+                    logger.debug('[API] Session changes sync on connect failed (non-fatal)', { error });
+                });
+
+                if (shouldSyncSessionSnapshotOnConnect({ metadataVersion: this.metadataVersion, agentStateVersion: this.agentStateVersion })) {
+                    void this.syncSessionSnapshotFromServer({ reason: 'connect' });
+                }
+
+                await this.flushQueuedSessionMessagesOnReconnect().catch((error) => {
+                    logger.debug('[API] Failed to replay queued session messages on reconnect', { error });
+                });
+            },
+            onDisconnected: async ({ event }) => {
+                logger.debug('[API] Socket disconnected:', event.reason ?? 'unknown');
+                if (this.socket === currentTransportSocket) {
+                    this.rpcHandlerManager.onSocketDisconnect();
+                    try {
+                        this.userSocket.disconnect();
+                    } catch {
+                        // ignore
+                    }
+                }
+            },
+            onAuthFailed: async () => {
+                if (this.socket === currentTransportSocket) {
+                    this.rpcHandlerManager.onSocketDisconnect();
+                    try {
+                        this.userSocket.disconnect();
+                    } catch {
+                        // ignore
+                    }
+                }
+            },
         });
 
-        //
-        // Connect (after short delay to give a time to add handlers)
-        //
-
-        this.socket.connect();
+        void this.sessionConnectionSupervisor.start();
     }
 
     private debugTranscriptRecoveryFetchError(localId: string, error: unknown): void {
@@ -302,6 +481,8 @@ export class ApiSessionClient extends EventEmitter {
                     encryptionVariant: this.encryptionVariant,
                     currentMetadataVersion: this.metadataVersion,
                     currentAgentStateVersion: this.agentStateVersion,
+                    currentMetadata: this.metadata,
+                    currentAgentState: this.agentState,
                 });
 
                 if (this.closed) return;
@@ -321,17 +502,25 @@ export class ApiSessionClient extends EventEmitter {
             }
         })();
 
-        this.snapshotSyncInFlight = p.finally(() => {
-            if (this.snapshotSyncInFlight === p) {
+        const inFlight = p.finally(() => {
+            if (this.snapshotSyncInFlight === inFlight) {
                 this.snapshotSyncInFlight = null;
             }
         });
+        this.snapshotSyncInFlight = inFlight;
 
         return this.snapshotSyncInFlight;
     }
 
     private kickUserSocketConnect(): void {
         if (this.closed) return;
+        if (
+            !this.socket?.connected
+            && this.currentConnectionState.phase !== 'online'
+            && this.currentConnectionState.phase !== 'connecting'
+        ) {
+            return;
+        }
         if (this.userSocketDisconnectTimer) {
             clearTimeout(this.userSocketDisconnectTimer);
             this.userSocketDisconnectTimer = null;
@@ -346,17 +535,14 @@ export class ApiSessionClient extends EventEmitter {
 
     private maybeScheduleUserSocketDisconnect(): void {
         if (this.closed) return;
-        if (this.pendingMessageCallback) return;
-        if (this.pendingMaterializedLocalIds.size > 0) return;
-        if (this.pendingQueueMaterializedLocalIds.size > 0) return;
+        if (this.shouldKeepUserSocketConnected()) return;
         if (!this.userSocket.connected) return;
         if (this.userSocketDisconnectTimer) return;
 
         // Short idle grace to avoid thrashing if multiple pending items get materialized back-to-back.
         this.userSocketDisconnectTimer = setTimeout(() => {
             this.userSocketDisconnectTimer = null;
-            if (this.pendingMaterializedLocalIds.size > 0) return;
-            if (this.pendingQueueMaterializedLocalIds.size > 0) return;
+            if (this.shouldKeepUserSocketConnected()) return;
             if (!this.userSocket.connected) return;
             try {
                 this.userSocket.disconnect();
@@ -368,12 +554,77 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private hasMaterializedLocalId(localId: string): boolean {
-        return this.pendingMaterializedLocalIds.has(localId) || this.pendingQueueMaterializedLocalIds.has(localId);
+        return this.pendingMaterializedLocalIds.has(localId)
+            || this.committedLocalIdsAwaitingEcho.has(localId)
+            || this.pendingQueueMaterializedLocalIds.has(localId);
+    }
+
+    private shouldKeepUserSocketConnected(): boolean {
+        return this.pendingMessageCallback !== null
+            || this.pendingMaterializedLocalIds.size > 0
+            || this.committedLocalIdsAwaitingEcho.size > 0
+            || this.pendingQueueMaterializedLocalIds.size > 0
+            || this.queuedDisconnectedSessionMessages.size > 0;
+    }
+
+    private queueSessionMessageUntilReconnect(params: { message: string | { t: 'plain'; v: unknown }; localId: string; sidechainId: string | null }): void {
+        if (this.closed) return;
+        this.queuedDisconnectedSessionMessages.set(params.localId, params);
+    }
+
+    private async flushQueuedSessionMessagesOnReconnect(): Promise<void> {
+        if (this.closed) return;
+        if (!this.socket.connected) return;
+        if (this.queuedDisconnectedSessionMessages.size === 0) return;
+
+        const queued = [...this.queuedDisconnectedSessionMessages.values()];
+        this.queuedDisconnectedSessionMessages.clear();
+        for (const params of queued) {
+            await this.enqueueMessageCommit(() =>
+                this.commitSessionMessage({
+                    message: params.message,
+                    localId: params.localId,
+                    sidechainId: params.sidechainId,
+                    requireCommit: false,
+                }),
+            );
+        }
+    }
+
+    private hasSelfEchoSuppressedLocalId(localId: string): boolean {
+        return this.pendingMaterializedLocalIds.has(localId)
+            || this.committedLocalIdsAwaitingEcho.has(localId);
+    }
+
+    private hasPendingQueueMaterializedLocalId(localId: string): boolean {
+        return this.pendingQueueMaterializedLocalIds.has(localId);
+    }
+
+    private markCommittedLocalIdAwaitingEcho(localId: string): void {
+        this.pendingMaterializedLocalIds.delete(localId);
+        this.committedLocalIdsAwaitingEcho.add(localId);
+        const existingTimer = this.committedLocalIdCleanupTimers.get(localId) ?? null;
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+        }
+        const timer = setTimeout(() => {
+            this.committedLocalIdCleanupTimers.delete(localId);
+            this.committedLocalIdsAwaitingEcho.delete(localId);
+            this.maybeScheduleUserSocketDisconnect();
+        }, configuration.transcriptRecoveryMaxWaitMs);
+        timer.unref?.();
+        this.committedLocalIdCleanupTimers.set(localId, timer);
     }
 
     private deleteMaterializedLocalId(localId: string): void {
         this.pendingMaterializedLocalIds.delete(localId);
+        this.committedLocalIdsAwaitingEcho.delete(localId);
         this.pendingQueueMaterializedLocalIds.delete(localId);
+        const cleanupTimer = this.committedLocalIdCleanupTimers.get(localId) ?? null;
+        if (cleanupTimer) {
+            clearTimeout(cleanupTimer);
+            this.committedLocalIdCleanupTimers.delete(localId);
+        }
         this.materializationRecoveryScheduler.cancel(localId);
         this.transcriptRecoveryErrorStateByLocalId.delete(localId);
         this.maybeScheduleUserSocketDisconnect();
@@ -388,6 +639,18 @@ export class ApiSessionClient extends EventEmitter {
                 return;
             }
 
+            if (
+                (data.body as any)?.t === 'message-updated'
+                && (data.body as any)?.sid === this.sessionId
+            ) {
+                const updatedLocalId = typeof (data.body as any)?.message?.localId === 'string'
+                    ? (data.body as any).message.localId
+                    : null;
+                if (updatedLocalId && this.hasSelfEchoSuppressedLocalId(updatedLocalId)) {
+                    this.deleteMaterializedLocalId(updatedLocalId);
+                }
+            }
+
             const newMessageHandlingResult = handleSessionNewMessageUpdate({
                 update: data,
                 sessionId: this.sessionId,
@@ -395,14 +658,16 @@ export class ApiSessionClient extends EventEmitter {
                 encryptionVariant: this.encryptionVariant,
                 receivedMessageIds: this.receivedMessageIds,
                 lastObservedMessageSeq: this.lastObservedMessageSeq,
-                hasMaterializedLocalId: (localId) => this.hasMaterializedLocalId(localId),
+                lastObservedUserMessageSeq: this.lastObservedUserMessageSeq,
+                hasSelfEchoSuppressedLocalId: (localId) => this.hasSelfEchoSuppressedLocalId(localId),
+                hasPendingQueueMaterializedLocalId: (localId) => this.hasPendingQueueMaterializedLocalId(localId),
                 deleteMaterializedLocalId: (localId) => this.deleteMaterializedLocalId(localId),
                 pendingMessageCallback: this.pendingMessageCallback,
                 pendingMessages: this.pendingMessages,
                 shouldDeliverUserMessageToAgentQueue: (message, update) => {
                     if (!update?.id?.startsWith('catchup-')) return true;
+                    if (message.meta?.source === 'daemon-initial-prompt') return true;
                     if (this.lastObservedMessageSeq > 0) return true;
-                    if (this.shouldRunStartupTranscriptCatchUp()) return true;
 
                     const attachedAtMs = this.userMessageCallbackAttachedAtMs;
                     if (typeof attachedAtMs !== 'number' || !Number.isFinite(attachedAtMs)) return true;
@@ -418,13 +683,19 @@ export class ApiSessionClient extends EventEmitter {
             });
             if (newMessageHandlingResult.handled) {
                 this.lastObservedMessageSeq = newMessageHandlingResult.lastObservedMessageSeq;
+                this.lastObservedUserMessageSeq = Math.max(
+                    this.lastObservedUserMessageSeq,
+                    newMessageHandlingResult.lastObservedUserMessageSeq,
+                );
                 return;
             }
 
+            let shouldEmitMetadataUpdated = false;
             const stateUpdateResult = handleSessionStateUpdate({
                 update: data,
                 updateSource: opts.source,
                 sessionId: this.sessionId,
+                sessionEncryptionMode: this.sessionEncryptionMode,
                 metadata: this.metadata,
                 metadataVersion: this.metadataVersion,
                 agentState: this.agentState,
@@ -432,7 +703,9 @@ export class ApiSessionClient extends EventEmitter {
                 pendingWakeSeq: this.pendingWakeSeq,
                 encryptionKey: this.encryptionKey,
                 encryptionVariant: this.encryptionVariant,
-                onMetadataUpdated: () => this.emit('metadata-updated'),
+                onMetadataUpdated: () => {
+                    shouldEmitMetadataUpdated = true;
+                },
                 onWarning: (message) => logger.debug(message),
             });
             if (stateUpdateResult.handled) {
@@ -441,6 +714,9 @@ export class ApiSessionClient extends EventEmitter {
                 this.agentState = stateUpdateResult.agentState;
                 this.agentStateVersion = stateUpdateResult.agentStateVersion;
                 this.pendingWakeSeq = stateUpdateResult.pendingWakeSeq;
+                if (shouldEmitMetadataUpdated) {
+                    this.emit('metadata-updated');
+                }
                 return;
             }
 
@@ -505,7 +781,6 @@ export class ApiSessionClient extends EventEmitter {
 
     private scheduleNextStartupMessageCatchUpRetry(): void {
         if (this.closed) return;
-        if (this.lastObservedMessageSeq > 0) return;
         if (this.startupMessageCatchUpRetryTimer) return;
         if (!this.shouldRunStartupTranscriptCatchUp()) return;
 
@@ -515,19 +790,19 @@ export class ApiSessionClient extends EventEmitter {
         logger.debug('[API] Scheduling startup transcript catch-up retry', {
             delayMs,
             retryIndex: this.startupMessageCatchUpRetryIndex,
+            startupMessageCatchUpInitialAfterSeq: this.startupMessageCatchUpInitialAfterSeq,
             lastObservedMessageSeq: this.lastObservedMessageSeq,
         });
         this.startupMessageCatchUpRetryTimer = setTimeout(() => {
             this.startupMessageCatchUpRetryTimer = null;
             if (this.closed) return;
-            if (this.lastObservedMessageSeq > 0) return;
 
             this.startupMessageCatchUpRetryIndex += 1;
             logger.debug('[API] Running startup transcript catch-up retry', {
                 retryIndex: this.startupMessageCatchUpRetryIndex,
-                afterSeq: this.lastObservedMessageSeq,
+                afterSeq: this.startupMessageCatchUpInitialAfterSeq,
             });
-            void this.catchUpSessionMessages(this.lastObservedMessageSeq)
+            void this.catchUpSessionMessages(this.startupMessageCatchUpInitialAfterSeq)
                 .catch((error) => {
                     logger.debug('[API] Startup transcript catch-up retry failed (non-fatal)', { error });
                 })
@@ -547,7 +822,6 @@ export class ApiSessionClient extends EventEmitter {
         if (this.closed) return;
         if (this.changesSyncInFlight) {
             await this.changesSyncInFlight.catch(() => {});
-            return;
         }
 
         const p = runSessionChangesSyncOnConnect({
@@ -565,7 +839,9 @@ export class ApiSessionClient extends EventEmitter {
         try {
             await p;
         } finally {
-            this.changesSyncInFlight = null;
+            if (this.changesSyncInFlight === p) {
+                this.changesSyncInFlight = null;
+            }
         }
     }
 
@@ -587,15 +863,18 @@ export class ApiSessionClient extends EventEmitter {
         const update: Update = {
             id: `recovered-${localId}`,
             seq: 0,
-            createdAt: Date.now(),
+            createdAt: found.createdAt,
             body: {
                 t: 'new-message',
                 sid: this.sessionId,
                 message: {
                     id: found.id,
                     seq: found.seq,
-                    localId: found.localId ?? undefined,
                     content: found.content,
+                    localId: found.localId,
+                    sidechainId: found.sidechainId,
+                    createdAt: found.createdAt,
+                    updatedAt: found.updatedAt,
                 },
             },
         } as Update;
@@ -635,26 +914,23 @@ export class ApiSessionClient extends EventEmitter {
         if (!this.daemonInitialPromptSeeded && typeof this.daemonInitialPrompt === 'string') {
             this.daemonInitialPromptSeeded = true;
             const initialPrompt = this.daemonInitialPrompt;
+            const initialPromptLocalId = buildDaemonInitialPromptLocalId(this.sessionId);
             this.daemonInitialPrompt = null;
-
-            // Seed the runtime queue immediately so daemon-started sessions process the initial prompt
-            // even though transcript echo messages with source/sentFrom=cli are intentionally ignored.
-            callback({
-                role: 'user',
-                content: { type: 'text', text: initialPrompt },
-                createdAt: Date.now(),
+            void this.enqueueSessionUserMessage({
+                text: initialPrompt,
+                ...(initialPromptLocalId ? { localId: initialPromptLocalId } : {}),
                 meta: {
                     source: 'daemon-initial-prompt',
                     sentFrom: 'cli',
                 },
             });
-            this.sendUserTextMessage(initialPrompt);
         }
 
         if (!this.startupMessageCatchUpStarted) {
             this.startupMessageCatchUpStarted = true;
             this.startupMessageCatchUpRetryIndex = 0;
-            void this.catchUpSessionMessages(this.lastObservedMessageSeq)
+            this.startupMessageCatchUpInitialAfterSeq = this.lastObservedMessageSeq;
+            void this.catchUpSessionMessages(this.startupMessageCatchUpInitialAfterSeq)
                 .catch((error) => {
                     logger.debug('[API] Initial transcript catch-up failed (non-fatal)', { error });
                 })
@@ -818,7 +1094,13 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private async commitSessionMessage(
-        params: { message: string | { t: 'plain'; v: unknown }; localId: string; requireCommit: boolean },
+        params: {
+            message: string | { t: 'plain'; v: unknown };
+            localId: string;
+            sidechainId: string | null;
+            requireCommit: boolean;
+            markAsUserMessage?: boolean;
+        },
     ): Promise<void> {
         const localId = params.localId;
         if (localId.length === 0) {
@@ -827,20 +1109,74 @@ export class ApiSessionClient extends EventEmitter {
             }
             return;
         }
+        if (this.transcriptStorage === 'direct') {
+            if (!this.socket.connected) {
+                if (params.requireCommit) {
+                    throw new Error('Socket not connected');
+                }
+                this.queueSessionMessageUntilReconnect({
+                    message: params.message,
+                    localId,
+                    sidechainId: params.sidechainId,
+                });
+                return;
+            }
+
+            if (!params.requireCommit) {
+                this.pendingMaterializedLocalIds.add(localId);
+            }
+
+            const ack = await (async () => {
+                try {
+                    const raw = await this.socket
+                        .timeout(7_500)
+                        .emitWithAck('message', {
+                            sid: this.sessionId,
+                            message: params.message,
+                            localId,
+                            echoToSender: true,
+                            sidechainId: params.sidechainId,
+                        }) as unknown;
+
+                    const parsed = MessageAckResponseSchema.safeParse(raw);
+                    return parsed.success ? parsed.data : null;
+                } catch {
+                    return null;
+                }
+            })();
+
+            if (ack && ack.ok === true) {
+                this.pendingCommitRetryAttemptsByLocalId.delete(localId);
+                this.markCommittedLocalIdAwaitingEcho(localId);
+                this.lastObservedMessageSeq = Math.max(this.lastObservedMessageSeq, ack.seq);
+                if (params.markAsUserMessage === true) {
+                    this.lastObservedUserMessageSeq = Math.max(this.lastObservedUserMessageSeq, ack.seq);
+                }
+                return;
+            }
+            if (ack && ack.ok === false) {
+                this.pendingCommitRetryAttemptsByLocalId.delete(localId);
+                if (!params.requireCommit) {
+                    this.deleteMaterializedLocalId(localId);
+                }
+                throw new Error(ack.error);
+            }
+            if (!params.requireCommit) {
+                this.scheduleCommitRetry({ message: params.message, localId, sidechainId: params.sidechainId });
+                return;
+            }
+            throw new Error('Message send not confirmed');
+        }
 
         if (!this.socket.connected) {
             if (params.requireCommit) {
                 throw new Error('Socket not connected');
             }
-            this.pendingMaterializedLocalIds.add(localId);
-            this.socket.emit('message', {
-                sid: this.sessionId,
+            this.queueSessionMessageUntilReconnect({
                 message: params.message,
                 localId,
-                echoToSender: true,
+                sidechainId: params.sidechainId,
             });
-            this.scheduleMaterializationRecovery(localId);
-            this.scheduleCommitRetry({ message: params.message, localId });
             return;
         }
 
@@ -854,6 +1190,7 @@ export class ApiSessionClient extends EventEmitter {
                         message: params.message,
                         localId,
                         echoToSender: true,
+                        sidechainId: params.sidechainId,
                     }) as unknown;
 
                 const parsed = MessageAckResponseSchema.safeParse(raw);
@@ -865,9 +1202,12 @@ export class ApiSessionClient extends EventEmitter {
 
         if (ack && ack.ok === true) {
             this.pendingCommitRetryAttemptsByLocalId.delete(localId);
-            this.deleteMaterializedLocalId(localId);
+            this.markCommittedLocalIdAwaitingEcho(localId);
             // ACK confirms persistence. Do not inject a synthetic update here: outbound sends are not prompts.
             this.lastObservedMessageSeq = Math.max(this.lastObservedMessageSeq, ack.seq);
+            if (params.markAsUserMessage === true) {
+                this.lastObservedUserMessageSeq = Math.max(this.lastObservedUserMessageSeq, ack.seq);
+            }
             return;
         }
 
@@ -889,7 +1229,7 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         this.scheduleMaterializationRecovery(localId);
-        this.scheduleCommitRetry({ message: params.message, localId });
+        this.scheduleCommitRetry({ message: params.message, localId, sidechainId: params.sidechainId });
     }
 
     private enqueueMessageCommit<T>(fn: () => Promise<T>): Promise<T> {
@@ -901,7 +1241,7 @@ export class ApiSessionClient extends EventEmitter {
         return queued;
     }
 
-    private scheduleCommitRetry(params: { message: string | { t: 'plain'; v: unknown }; localId: string }): void {
+    private scheduleCommitRetry(params: { message: string | { t: 'plain'; v: unknown }; localId: string; sidechainId: string | null }): void {
         const localId = params.localId;
         if (!localId) return;
         if (!this.pendingMaterializedLocalIds.has(localId)) return;
@@ -923,6 +1263,7 @@ export class ApiSessionClient extends EventEmitter {
                 this.commitSessionMessage({
                     message: params.message,
                     localId,
+                    sidechainId: params.sidechainId,
                     requireCommit: false,
                 }),
             ).catch(() => {
@@ -946,13 +1287,17 @@ export class ApiSessionClient extends EventEmitter {
     private commitSessionMessageBestEffort(params: {
         message: string | { t: 'plain'; v: unknown };
         localId: string;
+        sidechainId: string | null;
         logErrorMessage: string;
+        markAsUserMessage?: boolean;
     }): void {
         void this.enqueueMessageCommit(() =>
             this.commitSessionMessage({
                 message: params.message,
                 localId: params.localId,
+                sidechainId: params.sidechainId,
                 requireCommit: false,
+                markAsUserMessage: params.markAsUserMessage,
             }),
         ).catch((error) => {
             logger.debug(params.logErrorMessage, { error });
@@ -979,6 +1324,13 @@ export class ApiSessionClient extends EventEmitter {
         if (isToolTraceEnabled()) {
             recordClaudeToolTraceEvents({ sessionId: this.sessionId, body });
         }
+
+        const sidechainId = (() => {
+            const raw = (body as any)?.sidechainId;
+            if (typeof raw !== 'string') return null;
+            const trimmed = raw.trim();
+            return trimmed.length > 0 ? trimmed : null;
+        })();
 
         let content: MessageContent;
 
@@ -1015,6 +1367,7 @@ export class ApiSessionClient extends EventEmitter {
         this.commitSessionMessageBestEffort({
             message: payload,
             localId,
+            sidechainId,
             logErrorMessage: '[SOCKET] Failed to commit Claude session message (non-fatal)',
         });
 
@@ -1067,6 +1420,7 @@ export class ApiSessionClient extends EventEmitter {
         this.commitSessionMessageBestEffort({
             message: payload,
             localId,
+            sidechainId: null,
             logErrorMessage: '[SOCKET] Failed to commit Codex message (non-fatal)',
         });
 
@@ -1078,7 +1432,7 @@ export class ApiSessionClient extends EventEmitter {
                     sessionId: this.sessionId,
                     body: normalizedBody,
                 });
-                if (report) {
+                if (report && this.socket.connected) {
                     this.socket.emit('usage-report', report);
                 }
             } catch (error) {
@@ -1096,6 +1450,7 @@ export class ApiSessionClient extends EventEmitter {
         normalizedBody: ACPMessageData;
         content: ReturnType<typeof buildAcpAgentMessageEnvelope>;
         localId: string;
+        sidechainId: string | null;
     } {
         const normalizedBody = normalizeAcpSessionMessageBody({
             provider: params.provider,
@@ -1105,12 +1460,18 @@ export class ApiSessionClient extends EventEmitter {
             toolCallInputByProviderAndId: this.toolCallInputByProviderAndId,
         });
         const localId = typeof params.localId === 'string' && params.localId.length > 0 ? params.localId : randomUUID();
+        const sidechainId = (() => {
+            const raw = normalizedBody.sidechainId;
+            if (typeof raw !== 'string') return null;
+            const trimmed = raw.trim();
+            return trimmed ? trimmed : null;
+        })();
         const content = buildAcpAgentMessageEnvelope({
             provider: params.provider,
             body: normalizedBody,
             meta: params.meta,
         });
-        return { normalizedBody, content, localId };
+        return { normalizedBody, content, localId, sidechainId };
     }
 
     /**
@@ -1125,7 +1486,7 @@ export class ApiSessionClient extends EventEmitter {
         body: ACPMessageData,
         opts?: { localId?: string; meta?: Record<string, unknown> },
     ) {
-        const { normalizedBody, content, localId } = this.prepareAcpAgentMessage({
+        const { normalizedBody, content, localId, sidechainId } = this.prepareAcpAgentMessage({
             provider,
             body,
             meta: opts?.meta,
@@ -1147,6 +1508,7 @@ export class ApiSessionClient extends EventEmitter {
         this.commitSessionMessageBestEffort({
             message: payload,
             localId,
+            sidechainId,
             logErrorMessage: '[SOCKET] Failed to commit agent message (non-fatal)',
         });
 
@@ -1158,13 +1520,64 @@ export class ApiSessionClient extends EventEmitter {
                     sessionId: this.sessionId,
                     body: normalizedBody,
                 });
-                if (report) {
+                if (report && this.socket.connected) {
                     this.socket.emit('usage-report', report);
                 }
             } catch (error) {
                 logger.debug('[SOCKET] Failed to send token_count usage report (non-fatal)', error);
             }
         }
+    }
+
+    sendTranscriptDraftDelta(
+        provider: ACPProvider,
+        params: {
+            localId: string;
+            segmentKind: 'assistant' | 'thinking';
+            sidechainId?: string | null;
+            deltaText: string;
+            createdAtMs?: number;
+        },
+    ): void {
+        const localId = typeof params.localId === 'string' ? params.localId.trim() : '';
+        const deltaText = typeof params.deltaText === 'string' ? params.deltaText : '';
+        if (!localId || !deltaText) return;
+
+        const sidechainId =
+            params.sidechainId === null || params.sidechainId === undefined
+                ? null
+                : typeof params.sidechainId === 'string'
+                    ? params.sidechainId.trim() || null
+                    : null;
+
+        const body: ACPMessageData =
+            params.segmentKind === 'assistant'
+                ? { type: 'message', message: deltaText, ...(sidechainId ? { sidechainId } : {}) }
+                : { type: 'thinking', text: deltaText, ...(sidechainId ? { sidechainId } : {}) };
+
+        const { content } = this.prepareAcpAgentMessage({
+            provider,
+            body,
+            localId,
+        });
+
+        const delta = this.buildOutboundSessionMessagePayload(content);
+        const createdAt = typeof params.createdAtMs === 'number' && Number.isFinite(params.createdAtMs) && params.createdAtMs >= 0
+            ? Math.trunc(params.createdAtMs)
+            : Date.now();
+
+        if (!this.socket.connected) {
+            return;
+        }
+
+        this.socket.emit('transcript-draft', {
+            sid: this.sessionId,
+            localId,
+            segmentKind: params.segmentKind,
+            sidechainId,
+            delta,
+            createdAt,
+        });
     }
 
     sendUserTextMessage(text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) {
@@ -1176,6 +1589,8 @@ export class ApiSessionClient extends EventEmitter {
         this.commitSessionMessageBestEffort({
             message: payload,
             localId,
+            sidechainId: null,
+            markAsUserMessage: true,
             logErrorMessage: '[SOCKET] Failed to commit user message (non-fatal)',
         });
     }
@@ -1187,8 +1602,43 @@ export class ApiSessionClient extends EventEmitter {
         const content = this.buildUserTextMessageContent(text, opts.meta);
         const payload = this.buildOutboundSessionMessagePayload(content);
         await this.enqueueMessageCommit(() =>
-            this.commitSessionMessage({ message: payload, localId: opts.localId, requireCommit: true }),
+            this.commitSessionMessage({
+                message: payload,
+                localId: opts.localId,
+                sidechainId: null,
+                requireCommit: true,
+                markAsUserMessage: true,
+            }),
         );
+    }
+
+    private enqueueSessionUserMessage(params: Readonly<{
+        text: string;
+        localId?: string;
+        meta?: Record<string, unknown>;
+    }>): void {
+        const text = String(params.text ?? '');
+        if (text.length === 0) return;
+        const localId = typeof params.localId === 'string' && params.localId.length > 0 ? params.localId : randomUUID();
+
+        const message: UserMessage = {
+            role: 'user',
+            content: { type: 'text', text },
+            createdAt: Date.now(),
+            localId,
+            meta: params.meta && typeof params.meta === 'object' ? params.meta : {},
+        };
+
+        if (this.pendingMessageCallback) {
+            this.pendingMessageCallback(message);
+        } else {
+            this.pendingMessages.push(message);
+        }
+
+        this.sendUserTextMessage(text, {
+            localId,
+            ...(params.meta && typeof params.meta === 'object' ? { meta: params.meta } : {}),
+        });
     }
 
     async sendAgentMessageCommitted(
@@ -1196,7 +1646,7 @@ export class ApiSessionClient extends EventEmitter {
         body: ACPMessageData,
         opts: { localId: string; meta?: Record<string, unknown> },
     ): Promise<void> {
-        const { normalizedBody, content, localId } = this.prepareAcpAgentMessage({
+        const { normalizedBody, content, localId, sidechainId } = this.prepareAcpAgentMessage({
             provider,
             body,
             meta: opts?.meta,
@@ -1209,7 +1659,7 @@ export class ApiSessionClient extends EventEmitter {
 
         const payload = this.buildOutboundSessionMessagePayload(content);
         await this.enqueueMessageCommit(() =>
-            this.commitSessionMessage({ message: payload, localId, requireCommit: true }),
+            this.commitSessionMessage({ message: payload, localId, sidechainId, requireCommit: true }),
         );
     }
 
@@ -1250,6 +1700,7 @@ export class ApiSessionClient extends EventEmitter {
         this.commitSessionMessageBestEffort({
             message: payload,
             localId,
+            sidechainId: null,
             logErrorMessage: '[SOCKET] Failed to commit session event (non-fatal)',
         });
     }
@@ -1271,7 +1722,14 @@ export class ApiSessionClient extends EventEmitter {
         // When thinking=true, session-alive must be reliable: it's the only durable way
         // for UIs that connect mid-turn to learn that the session is actively running.
         if (thinking) {
+            if (!this.socket.connected) {
+                return;
+            }
             this.socket.emit('session-alive', payload);
+            return;
+        }
+
+        if (!this.socket.connected) {
             return;
         }
 
@@ -1290,6 +1748,9 @@ export class ApiSessionClient extends EventEmitter {
      * Send session death message
      */
     sendSessionDeath() {
+        if (!this.socket.connected) {
+            return;
+        }
         this.socket.emit('session-end', { sid: this.sessionId, time: Date.now() });
     }
 
@@ -1320,6 +1781,9 @@ export class ApiSessionClient extends EventEmitter {
             }
         }
         logger.debugLargeJson('[SOCKET] Sending usage data:', usageReport)
+        if (!this.socket.connected) {
+            return;
+        }
         this.socket.emit('usage-report', usageReport);
     }
 
@@ -1413,6 +1877,10 @@ export class ApiSessionClient extends EventEmitter {
         return this.lastObservedMessageSeq;
     }
 
+    getLastObservedUserMessageSeq(): number {
+        return this.lastObservedUserMessageSeq;
+    }
+
     async close() {
         logger.debug('[API] socket.close() called');
         this.closed = true;
@@ -1425,14 +1893,36 @@ export class ApiSessionClient extends EventEmitter {
             this.userSocketDisconnectTimer = null;
         }
         this.pendingMaterializedLocalIds.clear();
+        this.committedLocalIdsAwaitingEcho.clear();
         this.pendingQueueMaterializedLocalIds.clear();
+        this.queuedDisconnectedSessionMessages.clear();
+        for (const timer of this.committedLocalIdCleanupTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.committedLocalIdCleanupTimers.clear();
         this.pendingCommitRetryAttemptsByLocalId.clear();
         try {
             this.userSocket.close();
         } catch {
             // ignore
         }
-        this.socket.close();
+        await this.sessionConnectionSupervisor?.stop();
+    }
+
+    private installSessionSocketEventHandlers(socket: Socket<ServerToClientEvents, ClientToServerEvents>): void {
+        socket.on(SOCKET_RPC_EVENTS.REQUEST, async (data: { method: string, params: unknown }, callback: (response: unknown) => void) => {
+            callback(await this.rpcHandlerManager.handleRequest(data));
+        });
+
+        socket.on('connect_error', (error) => {
+            logger.debug('[API] Socket connection error:', error);
+        });
+
+        socket.on('update', (data: Update) => this.handleUpdate(data, { source: 'session-scoped' }));
+        socket.on('session', () => {});
+        socket.on('error', (error) => {
+            logger.debug('[API] Socket error:', error);
+        });
     }
 
     async listPendingMessageQueueV2LocalIds(): Promise<string[]> {
@@ -1491,14 +1981,21 @@ export class ApiSessionClient extends EventEmitter {
                 }
 
                 const nextMetadata = addDiscardedCommittedMessageLocalIds(current, uniqueNew);
+                const metadataPayload =
+                    this.sessionEncryptionMode === 'plain'
+                        ? JSON.stringify(nextMetadata)
+                        : encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, nextMetadata));
                 const answer = await this.socket.emitWithAck('update-metadata', {
                     sid: this.sessionId,
                     expectedVersion: this.metadataVersion,
-                    metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, nextMetadata)),
+                    metadata: metadataPayload,
                 });
 
                 if (answer.result === 'success') {
-                    this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
+                    this.metadata =
+                        this.sessionEncryptionMode === 'plain'
+                            ? JSON.parse(String(answer.metadata ?? 'null'))
+                            : decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
                     this.metadataVersion = answer.version;
                     addedCount = uniqueNew.length;
                     return;
@@ -1507,7 +2004,10 @@ export class ApiSessionClient extends EventEmitter {
                 if (answer.result === 'version-mismatch') {
                     if (answer.version > this.metadataVersion) {
                         this.metadataVersion = answer.version;
-                        this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
+                        this.metadata =
+                            this.sessionEncryptionMode === 'plain'
+                                ? JSON.parse(String(answer.metadata ?? 'null'))
+                                : decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
                     }
                     throw new Error('Metadata version mismatch');
                 }

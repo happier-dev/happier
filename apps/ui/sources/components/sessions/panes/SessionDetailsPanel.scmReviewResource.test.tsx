@@ -1,31 +1,21 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    View: 'View',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: { create: (value: any) => value },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                            Platform: {
+                                                            OS: 'web',
+                                                        },
+                                                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -81,9 +71,10 @@ vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
     SessionFileDetailsView: () => React.createElement('SessionFileDetailsView'),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('SessionDetailsPanel (scm review resource)', () => {
     it('renders SessionScmReviewDetailsView for scmReview tabs', async () => {
@@ -91,9 +82,7 @@ describe('SessionDetailsPanel (scm review resource)', () => {
         reviewViewSpy.mockClear();
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
 
         expect(tree).toBeTruthy();
         expect(reviewViewSpy).toHaveBeenCalledTimes(1);

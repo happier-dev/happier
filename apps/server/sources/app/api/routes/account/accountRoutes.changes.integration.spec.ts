@@ -1,12 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
-import { createInTxHarness } from "../../testkit/txHarness";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const emitUpdate = vi.fn();
-const buildUpdateAccountUpdate = vi.fn((_userId: string, _profile: any, updSeq: number, updId: string) => ({
-    id: updId,
-    seq: updSeq,
-    body: { t: "update-account" },
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
+import { accountRoutes } from "./accountRoutes";
+
+const { emitUpdate, buildUpdateAccountUpdate, randomKeyNaked, markAccountChanged } = vi.hoisted(() => ({
+    emitUpdate: vi.fn(),
+    buildUpdateAccountUpdate: vi.fn((_userId: string, _profile: any, updSeq: number, updId: string) => ({
+        id: updId,
+        seq: updSeq,
+        body: { t: "update-account" },
+    })),
+    randomKeyNaked: vi.fn(() => "upd-id"),
+    markAccountChanged: vi.fn(async () => 444),
 }));
 
 vi.mock("@/app/events/eventRouter", () => ({
@@ -14,61 +21,84 @@ vi.mock("@/app/events/eventRouter", () => ({
     buildUpdateAccountUpdate,
 }));
 
-const randomKeyNaked = vi.fn(() => "upd-id");
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
 
-const markAccountChanged = vi.fn(async () => 444);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-let txAccountFindUnique: any;
-let txAccountUpdateMany: any;
-
-vi.mock("@/storage/inTx", () => {
-    const harness = createInTxHarness(() => ({
-            account: {
-                findUnique: (...args: any[]) => txAccountFindUnique(...args),
-                updateMany: (...args: any[]) => txAccountUpdateMany(...args),
-            },
-        }));
-    return { afterTx: harness.afterTx, inTx: harness.inTx };
-});
-
-vi.mock("@/storage/db", () => ({ db: {} }));
-
 describe("accountRoutes (AccountChange integration)", () => {
+    let harness: LightSqliteHarness;
+
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-account-changes-", initAuth: false });
+    }, 120_000);
+
+    afterAll(async () => {
+        await harness.close();
+    });
+
+    beforeEach(() => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        harness.resetEnv();
+    });
+
+    afterEach(async () => {
+        harness.resetEnv();
+        await harness.resetDbTables([
+            () => db.accountChange.deleteMany(),
+            () => db.repeatKey.deleteMany(),
+            () => db.account.deleteMany(),
+        ]);
+    });
+
     it("marks account settings change and emits update using returned cursor", async () => {
-        txAccountFindUnique = vi.fn(async () => ({ settings: "old", settingsVersion: 1, publicKey: "pub", encryptionMode: "e2ee" }));
-        txAccountUpdateMany = vi.fn(async () => ({ count: 1 }));
+        const account = await db.account.create({
+            data: {
+                publicKey: "pub",
+                encryptionMode: "e2ee",
+                settings: "old",
+                settingsVersion: 1,
+            },
+            select: { id: true },
+        });
 
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = createFakeRouteApp();
-        accountRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: "/v1/account/settings",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: { settings: "new", expectedVersion: 1 },
+                });
 
-        const handler = getRouteHandler(app, "POST", "/v1/account/settings");
-        const reply = createReplyStub();
-
-        const response = await handler(
-            { userId: "u1", body: { settings: "new", expectedVersion: 1 } },
-            reply,
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toEqual({ success: true, version: 2 });
+            },
         );
+
+        const stored = await db.account.findUnique({
+            where: { id: account.id },
+            select: { settings: true, settingsVersion: true },
+        });
+        expect(stored).toEqual({ settings: "new", settingsVersion: 2 });
 
         expect(markAccountChanged).toHaveBeenCalledWith(
             expect.anything(),
-            expect.objectContaining({ accountId: "u1", kind: "account", entityId: "self" }),
+            expect.objectContaining({ accountId: account.id, kind: "account", entityId: "self" }),
         );
 
         expect(emitUpdate).toHaveBeenCalledTimes(1);
         expect(emitUpdate).toHaveBeenCalledWith(
             expect.objectContaining({
-                userId: "u1",
+                userId: account.id,
                 payload: expect.objectContaining({
                     seq: 444,
                     body: expect.objectContaining({ t: "update-account" }),
                 }),
             }),
         );
-        expect(response).toEqual({ success: true, version: 2 });
     });
 });

@@ -1,54 +1,55 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => ({
-    Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
-    View: 'View',
-    Text: 'Text',
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    Animated: {
-        Value: class {
-            constructor(_v: any) {}
-            setValue(_v: any) {}
-            interpolate(_cfg: any) { return 0; }
-        },
-        timing: () => ({ start: (cb?: any) => cb?.({ finished: true }) }),
-        View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-    },
-    Easing: {
-        bezier: () => (t: number) => t,
-        linear: (t: number) => t,
-    },
-}));
+const ensureSidechainMessagesLoadedMock = vi.fn();
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#111',
-                textSecondary: '#555',
-                surfaceHigh: '#eee',
-                surfaceHighest: '#fff',
-                surfacePressedOverlay: '#ddd',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (input: any) => {
-            const theme = {
-                colors: {
-                    text: '#111',
-                    textSecondary: '#555',
-                    surfaceHigh: '#eee',
-                    surfaceHighest: '#fff',
-                    surfacePressedOverlay: '#ddd',
+let settings: Record<string, unknown> = {};
+let inferred = { normalizedToolName: 'UnknownTool', source: 'original' };
+
+installToolShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            Animated: {
+                Value: class {
+                    constructor(_value: unknown) {}
+                    setValue(_value: unknown) {}
+                    interpolate(_config: unknown) {
+                        return 0;
+                    }
                 },
-            };
-            return typeof input === 'function' ? input(theme, {}) : input;
-        },
+                timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
+                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+            },
+            Easing: {
+                bezier: () => (t: number) => t,
+                linear: (t: number) => t,
+            },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => settings[key],
+            },
+        });
+    },
+});
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
     },
 }));
 
@@ -62,10 +63,9 @@ vi.mock('@/components/tools/catalog', () => ({
 }));
 
 vi.mock('@/components/tools/normalization/core/normalizeToolCallForRendering', () => ({
-    normalizeToolCallForRendering: (t: any) => t,
+    normalizeToolCallForRendering: (tool: any) => tool,
 }));
 
-let inferred: { normalizedToolName: string; source: string } = { normalizedToolName: 'UnknownTool', source: 'original' };
 vi.mock('@/components/tools/normalization/policy/toolNameInference', () => ({
     inferToolNameForRendering: () => inferred,
 }));
@@ -103,37 +103,21 @@ vi.mock('@/components/tools/shell/presentation/ToolError', () => ({
     ToolError: () => React.createElement('ToolError'),
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
-}));
-
-vi.mock('@/text', () => ({
-    t: (_key: string) => _key,
-}));
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return {
+        ...createTextModuleMock(),
+        Text: (props: any) => React.createElement('Text', props, props.children),
+        TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
+    };
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: [],
+    DEFAULT_AGENT_ID: 'claude',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
-
-let settings: Record<string, any> = {};
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => settings[key],
-}));
-
-function collectRenderedText(tree: renderer.ReactTestRenderer): string {
-    return tree.root
-        .findAllByType('Text')
-        .map((node) => (node.props as any).children)
-        .flat()
-        .filter((v) => typeof v === 'string')
-        .join(' ');
-}
 
 describe('ToolTimelineRow (title fallback)', () => {
     beforeEach(() => {
@@ -149,6 +133,10 @@ describe('ToolTimelineRow (title fallback)', () => {
         inferred = { normalizedToolName: 'UnknownTool', source: 'original' };
     });
 
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('does not use description as title when inference did not fall back', async () => {
         const { ToolTimelineRow } = await import('./ToolTimelineRow');
         const tool: any = {
@@ -162,17 +150,15 @@ describe('ToolTimelineRow (title fallback)', () => {
             result: {},
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} />);
-        });
+        const screen = await renderScreen(React.createElement(ToolTimelineRow, { tool, metadata: null }));
 
-        expect(collectRenderedText(tree!)).toContain('UnknownTool');
-        expect(collectRenderedText(tree!)).not.toContain('Execute');
+        expect(screen.getTextContent()).toContain('UnknownTool');
+        expect(screen.getTextContent()).not.toContain('Execute');
     });
 
     it('uses description as title when inference fell back and tool is unknown', async () => {
         inferred = { normalizedToolName: 'SomeInferredTool', source: 'description' };
+
         const { ToolTimelineRow } = await import('./ToolTimelineRow');
         const tool: any = {
             name: 'UnknownTool',
@@ -185,11 +171,8 @@ describe('ToolTimelineRow (title fallback)', () => {
             result: {},
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} />);
-        });
+        const screen = await renderScreen(React.createElement(ToolTimelineRow, { tool, metadata: null }));
 
-        expect(collectRenderedText(tree!)).toContain('Search files');
+        expect(screen.getTextContent()).toContain('Search files');
     });
 });

@@ -125,3 +125,50 @@ export async function createGitRepoForPartialStagingFixture(params: { repoDir: s
   );
   await writeFile(resolve(join(params.repoDir, 'src', 'untracked.txt')), 'untracked file\n', 'utf8');
 }
+
+export async function createGitRepoForBranchPublishAndStashFixture(params: { repoDir: string; remoteDir: string }) {
+  await initGitRepo({ repoDir: params.repoDir });
+
+  // Ensure consistent default branch name for e2e.
+  try {
+    execGit(params.repoDir, ['branch', '-m', 'main']);
+  } catch {
+    // ignore
+  }
+
+  await writeFile(resolve(join(params.repoDir, 'README.md')), '# ui-e2e\n', 'utf8');
+  await writeFile(resolve(join(params.repoDir, 'src', 'app.txt')), 'baseline\n', 'utf8');
+
+  execGit(params.repoDir, ['add', '.']);
+  execGit(params.repoDir, ['commit', '-m', 'chore: initial']);
+
+  await mkdir(resolve(params.remoteDir), { recursive: true });
+  execGit(params.remoteDir, ['init', '--bare']);
+
+  execGit(params.repoDir, ['remote', 'add', 'origin', resolve(params.remoteDir)]);
+}
+
+export async function createGitRepoForBringChangesFixture(params: { repoDir: string; targetBranchName?: string }) {
+  const targetBranchName = params.targetBranchName ?? 'bring-target';
+
+  await initGitRepo({ repoDir: params.repoDir });
+
+  try {
+    execGit(params.repoDir, ['branch', '-m', 'main']);
+  } catch {
+    // ignore
+  }
+
+  await writeFile(resolve(join(params.repoDir, 'README.md')), '# ui-e2e\nmain baseline\n', 'utf8');
+  await writeFile(resolve(join(params.repoDir, 'src', 'app.txt')), 'baseline\n', 'utf8');
+
+  execGit(params.repoDir, ['add', '.']);
+  execGit(params.repoDir, ['commit', '-m', 'chore: initial']);
+
+  execGit(params.repoDir, ['checkout', '-b', targetBranchName]);
+  await writeFile(resolve(join(params.repoDir, 'README.md')), '# ui-e2e\ntarget branch baseline\n', 'utf8');
+  execGit(params.repoDir, ['add', 'README.md']);
+  execGit(params.repoDir, ['commit', '-m', 'feat: target branch baseline']);
+
+  execGit(params.repoDir, ['checkout', 'main']);
+}

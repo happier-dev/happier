@@ -37,11 +37,17 @@ export function normalizeChangeTitleResult(rawOutput: unknown): UnknownRecord {
     const contentText =
         coerceTextFromContentBlocks((record as any).content) ??
         (Array.isArray((record as any).content) ? coerceTextFromContentBlocks((record as any).content) : null);
-    const message = typeof contentText === 'string' ? contentText : typeof (record as any).message === 'string' ? (record as any).message : null;
+    const message =
+        typeof contentText === 'string'
+            ? contentText
+            : typeof (record as any).message === 'string'
+                ? (record as any).message
+                : typeof (record as any).stdout === 'string'
+                    ? (record as any).stdout
+                    : null;
 
     const title = message ? extractQuotedTitle(message) : null;
     if (title) return { ...record, title };
     if (message) return { ...record, message };
     return { ...record };
 }
-

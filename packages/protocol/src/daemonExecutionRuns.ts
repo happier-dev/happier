@@ -5,10 +5,12 @@ import {
   ExecutionRunDisplaySchema,
   ExecutionRunIntentSchema,
   ExecutionRunIoModeSchema,
+  normalizeLegacyExecutionRunBackendTargetInput,
   ExecutionRunResumeHandleSchema,
   ExecutionRunRetentionPolicySchema,
   ExecutionRunStatusSchema,
 } from './executionRuns.js';
+import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
 
 /**
  * Daemon-scoped execution run listing.
@@ -18,7 +20,7 @@ import {
  * if session processes crash or the machine reboots.
  */
 
-export const DaemonExecutionRunMarkerSchema = z.object({
+const DaemonExecutionRunMarkerSchemaCore = z.object({
   // Safety/filtering: only accept markers for the current happyHomeDir.
   happyHomeDir: z.string().min(1),
 
@@ -30,7 +32,7 @@ export const DaemonExecutionRunMarkerSchema = z.object({
   callId: z.string().min(1),
   sidechainId: z.string().min(1),
   intent: ExecutionRunIntentSchema,
-  backendId: z.string().min(1),
+  backendTarget: BackendTargetRefSchema,
   display: ExecutionRunDisplaySchema.optional(),
 
   runClass: ExecutionRunClassSchema,
@@ -47,6 +49,10 @@ export const DaemonExecutionRunMarkerSchema = z.object({
   errorCode: z.string().max(200).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
 }).passthrough();
+export const DaemonExecutionRunMarkerSchema = z.preprocess(
+  normalizeLegacyExecutionRunBackendTargetInput,
+  DaemonExecutionRunMarkerSchemaCore,
+);
 export type DaemonExecutionRunMarker = z.infer<typeof DaemonExecutionRunMarkerSchema>;
 
 export const DaemonExecutionRunProcessInfoSchema = z.object({
@@ -58,9 +64,13 @@ export const DaemonExecutionRunProcessInfoSchema = z.object({
 }).passthrough();
 export type DaemonExecutionRunProcessInfo = z.infer<typeof DaemonExecutionRunProcessInfoSchema>;
 
-export const DaemonExecutionRunEntrySchema = DaemonExecutionRunMarkerSchema.extend({
+const DaemonExecutionRunEntrySchemaCore = DaemonExecutionRunMarkerSchemaCore.extend({
   process: DaemonExecutionRunProcessInfoSchema.optional(),
 }).passthrough();
+export const DaemonExecutionRunEntrySchema = z.preprocess(
+  normalizeLegacyExecutionRunBackendTargetInput,
+  DaemonExecutionRunEntrySchemaCore,
+);
 export type DaemonExecutionRunEntry = z.infer<typeof DaemonExecutionRunEntrySchema>;
 
 export const DaemonExecutionRunListRequestSchema = z.object({}).passthrough();
