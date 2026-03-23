@@ -2,18 +2,25 @@ import * as React from 'react';
 import { InteractionManager } from 'react-native';
 
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { resolveDaemonCapabilitiesCacheKeySalt } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 
 export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
     enabled: boolean;
     serverId?: string | null;
-    machines: ReadonlyArray<{ id: string }>;
-    favoriteMachineItems: ReadonlyArray<{ id: string }>;
-    recentMachines: ReadonlyArray<{ id: string }>;
+    machines: ReadonlyArray<{ id: string; daemonStateVersion?: number }>;
+    favoriteMachineItems: ReadonlyArray<{ id: string; daemonStateVersion?: number }>;
+    recentMachines: ReadonlyArray<{ id: string; daemonStateVersion?: number }>;
     selectedMachineId: string | null;
     isMachineOnline: (machine: any) => boolean;
     staleMs: number;
     request: any;
-    prefetchMachineCapabilitiesIfStale: (args: { machineId: string; serverId?: string | null; staleMs: number; request: any }) => Promise<any> | void;
+    prefetchMachineCapabilitiesIfStale: (args: {
+        machineId: string;
+        serverId?: string | null;
+        cacheKeySalt?: string | number | null;
+        staleMs: number;
+        request: any;
+    }) => Promise<any> | void;
 }>): void {
     // One-time prefetch of machine capabilities for the wizard machine list.
     // This keeps machine glyphs responsive (cache-only in the list) without
@@ -48,6 +55,7 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
                         Promise.resolve().then(() => params.prefetchMachineCapabilitiesIfStale({
                             machineId,
                             serverId: params.serverId,
+                            cacheKeySalt: resolveDaemonCapabilitiesCacheKeySalt(machine),
                             staleMs: params.staleMs,
                             request: params.request,
                         })),
@@ -74,6 +82,7 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
                 Promise.resolve().then(() => params.prefetchMachineCapabilitiesIfStale({
                     machineId: params.selectedMachineId!,
                     serverId: params.serverId,
+                    cacheKeySalt: resolveDaemonCapabilitiesCacheKeySalt(machine),
                     staleMs: params.staleMs,
                     request: params.request,
                 })),

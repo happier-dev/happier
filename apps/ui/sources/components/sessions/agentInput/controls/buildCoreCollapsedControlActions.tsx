@@ -135,12 +135,14 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
     }
 
     if (opts.onResumeClick) {
+        const resumeAgentLabel = t(getAgentCore(opts.agentType ?? opts.agentId).displayNameKey);
+        const resumeChipTitle = t('newSession.resume.chipOptional', { agent: resumeAgentLabel });
         controlActionsById.resume = [{
             id: 'resume',
             label: formatResumeChipLabel({
                 resumeSessionId: opts.resumeSessionId,
-                labelTitle: t('newSession.resume.title'),
-                labelOptional: t('newSession.resume.optional'),
+                labelTitle: resumeChipTitle,
+                labelOptional: resumeChipTitle,
             }),
             icon: <Ionicons name={RESUME_CHIP_ICON_NAME} size={RESUME_CHIP_ICON_SIZE} color={opts.tint} />,
             onPress: () => {

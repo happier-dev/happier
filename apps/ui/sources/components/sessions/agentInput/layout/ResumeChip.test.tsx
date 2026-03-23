@@ -1,7 +1,6 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -37,8 +36,7 @@ describe('ResumeChip', () => {
     it('does not emit raw text nodes under Pressable when icons render as text on web', async () => {
         const { ResumeChip } = await import('./ResumeChip');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<ResumeChip
+        const screen = await renderScreen(<ResumeChip
                     onPress={() => {}}
                     showLabel={false}
                     resumeSessionId={null}
@@ -47,27 +45,9 @@ describe('ResumeChip', () => {
                     labelOptional="Optional"
                     pressableStyle={() => ({})}
                     textStyle={{}}
-                />)).tree;
+                />);
 
-        const badNodes: Array<{ parent: string | null; value: string }> = [];
-        const walk = (node: any, parentType: string | null) => {
-            if (node == null) return;
-            if (typeof node === 'string') {
-                if (parentType !== 'Text' && node.trim().length > 0) badNodes.push({ parent: parentType, value: node });
-                return;
-            }
-            if (Array.isArray(node)) {
-                for (const child of node) walk(child, parentType);
-                return;
-            }
-            const nextParent = typeof node.type === 'string' ? node.type : parentType;
-            const children = Array.isArray(node.children) ? node.children : [];
-            for (const child of children) walk(child, nextParent);
-        };
-
-        walk(tree.toJSON(), null);
-
-        expect(badNodes).toEqual([]);
-        expect(tree.root.findByProps({ testID: 'agent-input-resume-chip' })).toBeTruthy();
+        expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
+        expect(screen.findByTestId('agent-input-resume-chip')).toBeTruthy();
     });
 });

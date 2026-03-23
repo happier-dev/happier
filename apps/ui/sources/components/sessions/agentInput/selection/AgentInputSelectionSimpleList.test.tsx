@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -47,27 +46,24 @@ describe('AgentInputSelectionSimpleList', () => {
         const { AgentInputSelectionSimpleList } = await import('./AgentInputSelectionSimpleList');
         const onSelect = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<AgentInputSelectionSimpleList
-                    title="Mode"
-                    options={[
-                        { id: 'build', label: 'Build', subtitle: 'Default behavior' },
-                        { id: 'plan', label: 'Plan', subtitle: 'Think first' },
-                    ]}
-                    selectedOptionId="build"
-                    onSelect={onSelect}
-                />)).tree;
+        const screen = await renderScreen(
+            <AgentInputSelectionSimpleList
+                title="Mode"
+                options={[
+                    { id: 'build', label: 'Build', subtitle: 'Default behavior' },
+                    { id: 'plan', label: 'Plan', subtitle: 'Think first' },
+                ]}
+                selectedOptionId="build"
+                onSelect={onSelect}
+            />,
+        );
 
-        expect(tree).not.toBeNull();
-        const root = tree!.root;
+        expect(screen.tree.toJSON()).not.toBeNull();
+        expect(screen.findByProps({ children: 'Mode' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'agent-input-simple-option:plan' })).toBeTruthy();
+        expect(screen.findAllByType('Ionicons')).toHaveLength(1);
 
-        expect(root.findByProps({ children: 'Mode' })).toBeTruthy();
-        expect(root.findByProps({ testID: 'agent-input-simple-option:plan' })).toBeTruthy();
-        expect(root.findAllByType('Ionicons')).toHaveLength(1);
-
-        await act(async () => {
-            root.findByProps({ testID: 'agent-input-simple-option:plan' }).props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-simple-option:plan');
 
         expect(onSelect).toHaveBeenCalledWith('plan');
     });

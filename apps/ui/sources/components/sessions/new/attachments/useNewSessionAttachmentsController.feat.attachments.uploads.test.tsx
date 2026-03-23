@@ -4,6 +4,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import type { PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
+import { installNewSessionScreenModelCommonModuleMocks } from '@/components/sessions/new/hooks/newSessionScreenModelTestHelpers';
 import { clearAllNewSessionAttachmentDrafts } from './newSessionAttachmentDraftStore';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,17 +42,7 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (callback: () => void) => callback(),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
+installNewSessionScreenModelCommonModuleMocks();
 
 type HookValue = ReturnType<typeof import('./useNewSessionAttachmentsController').useNewSessionAttachmentsController>;
 

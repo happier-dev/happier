@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -194,8 +194,8 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
   useHasMeaningfulScmStatus: () => false,
 }));
 
-function findMultiTextInput(tree: renderer.ReactTestRenderer) {
-  const nodes = tree.root.findAllByType('MultiTextInput' as any);
+function findMultiTextInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
+  const nodes = screen.findAll((node) => (node.type as any) === 'MultiTextInput');
   expect(nodes.length).toBe(1);
   return nodes[0]!;
 }
@@ -207,9 +207,7 @@ describe('AgentInput (history navigation)', () => {
 
   it('does not send on Enter when sending is disabled', async () => {
     const { AgentInput } = await import('./AgentInput');
-    let tree: renderer.ReactTestRenderer;
-
-    tree = (await renderScreen(<AgentInput
+    const screen = await renderScreen(<AgentInput
           value="draft"
           onChangeText={mocks.onChangeText}
           placeholder="p"
@@ -219,9 +217,9 @@ describe('AgentInput (history navigation)', () => {
           isSendDisabled={true}
           disabled={false}
           showAbortButton={false}
-        />)).tree;
+        />);
 
-    const input = findMultiTextInput(tree!);
+    const input = findMultiTextInput(screen);
 
     let handled: any = null;
     await act(async () => {
@@ -237,9 +235,7 @@ describe('AgentInput (history navigation)', () => {
     mocks.historyMoveUp.mockReturnValue('previous message');
 
     const { AgentInput } = await import('./AgentInput');
-    let tree: renderer.ReactTestRenderer;
-
-    tree = (await renderScreen(<AgentInput
+    const screen = await renderScreen(<AgentInput
           value="draft"
           onChangeText={mocks.onChangeText}
           placeholder="p"
@@ -250,9 +246,9 @@ describe('AgentInput (history navigation)', () => {
           metadata={null}
           disabled={false}
           showAbortButton={false}
-        />)).tree;
+        />);
 
-    const input = findMultiTextInput(tree!);
+    const input = findMultiTextInput(screen);
     // Ensure AgentInput has selection state set to start-of-input.
     await act(async () => {
       input.props.onStateChange?.({ text: 'draft', selection: { start: 0, end: 0 } });
@@ -272,9 +268,7 @@ describe('AgentInput (history navigation)', () => {
     mocks.historyMoveUp.mockReturnValue('previous message');
 
     const { AgentInput } = await import('./AgentInput');
-    let tree: renderer.ReactTestRenderer;
-
-    tree = (await renderScreen(<AgentInput
+    const screen = await renderScreen(<AgentInput
           value="draft"
           onChangeText={mocks.onChangeText}
           placeholder="p"
@@ -285,9 +279,9 @@ describe('AgentInput (history navigation)', () => {
           metadata={null}
           disabled={false}
           showAbortButton={false}
-        />)).tree;
+        />);
 
-    const input = findMultiTextInput(tree!);
+    const input = findMultiTextInput(screen);
     await act(async () => {
       input.props.onStateChange?.({ text: 'draft', selection: { start: 2, end: 2 } });
     });

@@ -342,7 +342,7 @@ describe('AgentInput (machine chip)', () => {
     });
 
     it('exposes a stable testID for the connection status text (UI e2e locator)', async () => {
-        tree = (await renderScreen(React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: '',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -355,12 +355,10 @@ describe('AgentInput (machine chip)', () => {
                         dotColor: '#0a0',
                         isPulsing: false,
                     },
-                }))).tree;
+                }));
 
-        const matches = tree?.root.findAll(
-            (node) => String(node.type) === 'Text' && node.props?.testID === 'agent-input-connection-status-text'
-        );
-        expect(matches).toHaveLength(1);
-        expect(collectText(matches?.[0]?.props?.children).join(' ')).toContain('online');
+        const connectionStatus = screen.findByTestId('agent-input-connection-status-text');
+        expect(connectionStatus).toBeTruthy();
+        expect(collectText(connectionStatus?.props?.children).join(' ')).toContain('online');
     });
 });

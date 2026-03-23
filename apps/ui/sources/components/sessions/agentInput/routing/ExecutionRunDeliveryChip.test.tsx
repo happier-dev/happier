@@ -1,5 +1,4 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -71,15 +70,14 @@ describe('ExecutionRunDeliveryChip', () => {
             popoverAnchorRef: { current: null },
         } as const;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<ExecutionRunDeliveryChip
+        const screen = await renderScreen(<ExecutionRunDeliveryChip
                     ctx={ctx}
                     recipient={{ kind: 'agent_team_broadcast', teamId: 'probe' }}
                     delivery="steer_if_supported"
                     onDeliveryChange={() => {}}
-                />)).tree;
+                />);
 
-        expect(tree!.toJSON()).toBeNull();
+        expect(screen.tree.toJSON()).toBeNull();
         expect(capturedSimpleOptionsPopoverProps).toBeNull();
     });
 
@@ -96,19 +94,16 @@ describe('ExecutionRunDeliveryChip', () => {
             popoverAnchorRef: externalAnchorRef,
         } as const;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<ExecutionRunDeliveryChip
+        const screen = await renderScreen(<ExecutionRunDeliveryChip
                     ctx={ctx}
                     recipient={{ kind: 'execution_run', runId: 'run_1' }}
                     delivery="interrupt"
                     onDeliveryChange={() => {}}
-                />)).tree;
+                />);
 
         expect(asSimpleOptionsPopoverProps(capturedSimpleOptionsPopoverProps)?.open).toBe(false);
 
-        act(() => {
-            tree!.root.findByProps({ testID: 'agent-input-delivery-chip' }).props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-delivery-chip');
 
         const pickerProps = asSimpleOptionsPopoverProps(capturedSimpleOptionsPopoverProps);
         expect(pickerProps?.open).toBe(true);
@@ -142,9 +137,7 @@ describe('ExecutionRunDeliveryChip', () => {
                     onDeliveryChange={onDeliveryChange}
                 />);
 
-        act(() => {
-            asSimpleOptionsPopoverProps(capturedSimpleOptionsPopoverProps)?.onSelect('prompt');
-        });
+        asSimpleOptionsPopoverProps(capturedSimpleOptionsPopoverProps)?.onSelect('prompt');
 
         expect(onDeliveryChange).toHaveBeenCalledWith('prompt');
     });

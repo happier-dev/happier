@@ -182,8 +182,10 @@ async function setupHarness(options?: Readonly<{
 describe('useCreateNewSession (ACP mode seeding)', () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-02-05T00:00:00.000Z'));
+    vi.useFakeTimers({
+      now: new Date('2026-02-05T00:00:00.000Z'),
+      toFake: ['Date'],
+    });
   });
 
   afterEach(() => {

@@ -202,13 +202,10 @@ async function setupHarness() {
 describe('useCreateNewSession configured ACP backend spawning', () => {
     beforeEach(() => {
         vi.resetModules();
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-03-08T00:00:00.000Z'));
         applySettingsMock.mockReset();
     });
 
     afterEach(() => {
-        vi.useRealTimers();
         vi.restoreAllMocks();
     });
 

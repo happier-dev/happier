@@ -22,6 +22,7 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
             gap={8}
             maxHeightCap={props.maxHeightCap}
             maxWidthCap={props.maxWidthCap}
+            edgePadding={{ horizontal: 16 }}
             closeOnAnchorPress={false}
             portal={{
                 // IMPORTANT:
@@ -34,7 +35,7 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
                 anchorAlign: 'start',
             }}
             onRequestClose={props.onRequestClose}
-            backdrop={{ style: { backgroundColor: 'transparent' } }}
+            backdrop={{ style: { backgroundColor: 'transparent' }, blockOutsidePointerEvents: true }}
             containerStyle={{ paddingHorizontal: 0 }}
         >
             {props.children}

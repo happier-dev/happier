@@ -353,12 +353,9 @@ async function setupUseCreateNewSessionHarness() {
 describe('useCreateNewSession permission seeding', () => {
     beforeEach(() => {
         vi.resetModules();
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-02-05T00:00:00.000Z'));
     });
 
     afterEach(() => {
-        vi.useRealTimers();
         vi.restoreAllMocks();
     });
 

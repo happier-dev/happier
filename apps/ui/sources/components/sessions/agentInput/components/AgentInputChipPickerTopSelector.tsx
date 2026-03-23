@@ -1,12 +1,10 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { usePopoverBoundaryRef } from '@/components/ui/popover';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 
 import type {
     AgentInputChipPickerOption,
@@ -20,8 +18,25 @@ export type AgentInputChipPickerTopSelectorProps = Readonly<{
     onFocusOption: (optionId: string) => void;
 }>;
 
+const PICKER_ICON_SIZE = 18;
+
+function normalizePickerIcon(icon: React.ReactNode): React.ReactNode {
+    if (!icon) return undefined;
+
+    const resizedIcon = React.isValidElement(icon) && icon.type !== React.Fragment
+        ? React.cloneElement(icon as React.ReactElement<Record<string, unknown>>, {
+            size: PICKER_ICON_SIZE,
+        })
+        : icon;
+
+    return (
+        <View style={iconStyles.iconWrapper}>
+            {normalizeNodeForView(resizedIcon)}
+        </View>
+    );
+}
+
 export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSelectorProps) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const [open, setOpen] = React.useState(false);
     const popoverBoundaryRef = usePopoverBoundaryRef();
@@ -34,7 +49,7 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                     title: option.label,
                     subtitle: option.subtitle,
                     category: section.label,
-                    icon: option.icon,
+                    icon: normalizePickerIcon(option.icon),
                     disabled: option.disabled,
                 })),
             ),
@@ -50,6 +65,16 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
     }, [props.focusedOptionId, props.sections]);
 
     const subtitle = focusedOption?.subtitle ?? focusedOption?.sectionLabel ?? null;
+    const itemTrigger = React.useMemo(() => ({
+        title: focusedOption?.label ?? '',
+        icon: normalizePickerIcon(focusedOption?.icon),
+        subtitleFormatter: () => subtitle,
+        showSelectedDetail: false,
+        itemProps: {
+            testID: 'agent-input-chip-picker.top-selector-trigger',
+            style: styles.triggerItem,
+        },
+    }), [focusedOption?.icon, focusedOption?.label, styles.triggerItem, subtitle]);
 
     return (
         <View testID="agent-input-chip-picker.top-selector" style={styles.container}>
@@ -63,34 +88,7 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                 variant="selectable"
                 matchTriggerWidth
                 popoverBoundaryRef={popoverBoundaryRef}
-                popoverPortalWebTarget="body"
-                trigger={({ toggle }) => (
-                    <Pressable
-                        testID="agent-input-chip-picker.top-selector-trigger"
-                        accessibilityRole="button"
-                        onPress={toggle}
-                        style={({ pressed }) => [
-                            styles.trigger,
-                            open ? styles.triggerOpen : null,
-                            pressed ? styles.triggerPressed : null,
-                        ]}
-                    >
-                        {focusedOption?.icon ? (
-                            <View style={styles.icon}>
-                                {focusedOption.icon}
-                            </View>
-                        ) : null}
-                        <View style={styles.textBlock}>
-                            <Text style={styles.title}>{focusedOption?.label ?? ''}</Text>
-                            {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-                        </View>
-                        <Ionicons
-                            name={open ? 'chevron-up' : 'chevron-down'}
-                            size={18}
-                            color={theme.colors.textSecondary}
-                        />
-                    </Pressable>
-                )}
+                itemTrigger={itemTrigger}
             />
         </View>
     );
@@ -100,44 +98,16 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: {
         width: '100%',
     },
-    trigger: {
-        minHeight: 44,
-        width: '100%',
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 10,
+    triggerItem: {
+        paddingHorizontal: 0,
     },
-    triggerOpen: {
-        borderColor: theme.colors.button.primary.background,
-        backgroundColor: theme.colors.groupped.background,
-    },
-    triggerPressed: {
-        opacity: 0.82,
-    },
-    icon: {
-        width: 18,
-        height: 18,
+}));
+
+const iconStyles = StyleSheet.create({
+    iconWrapper: {
+        width: PICKER_ICON_SIZE,
+        height: PICKER_ICON_SIZE,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    textBlock: {
-        flex: 1,
-        gap: 1,
-    },
-    title: {
-        fontSize: 13,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
-    },
-    subtitle: {
-        fontSize: 11,
-        color: theme.colors.textSecondary,
-    },
-}));
+});

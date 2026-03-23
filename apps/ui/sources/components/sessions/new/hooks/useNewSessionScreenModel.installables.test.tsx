@@ -9,7 +9,7 @@ import {
 } from '@/dev/testkit';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 
-import { useNewSessionScreenModel } from './useNewSessionScreenModel';
+import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -94,6 +94,12 @@ const testSettingsDefaults = vi.hoisted(() => ({
     installablesPolicyByMachineId: {},
     sessionWindowsRemoteSessionLaunchMode: 'hidden' as 'hidden' | 'windows_terminal' | 'console',
     backendEnabledByTargetKey: {} as Record<string, boolean>,
+    mcpServersSettingsV1: {
+        v: 1,
+        strictMode: false,
+        servers: [],
+        bindings: [],
+    },
     acpCatalogSettingsV1: {
         v: 2 as const,
         backends: [],
@@ -159,6 +165,7 @@ const persistedDraft = vi.hoisted(() => ({
 const initialHookFlushOptions = { cycles: 2, turns: 2 } as const;
 
 async function renderNewSessionScreenModel() {
+    const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
     return renderHook<any>(() => useNewSessionScreenModel() as any, {
         flushOptions: initialHookFlushOptions,
     });
@@ -171,27 +178,96 @@ async function invokeHookAction(action: () => void | Promise<void>) {
     await flushHookEffects({ cycles: 1, turns: 2 });
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'web',
-                                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-                                    },
-                                    Text: 'Text',
-                                    TextInput: 'TextInput',
-                                    View: 'View',
-                                    Pressable: 'Pressable',
-                                    Dimensions: {
-                                        get: () => ({ width: 900, height: 800 }),
-                                    },
-                                    InteractionManager: {
-                                        runAfterInteractions: () => ({ cancel: () => {} }),
-                                    },
-                                    useWindowDimensions: () => ({ width: 900, height: 800 }),
-                                }
-    );
+installNewSessionScreenModelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+            },
+            Text: 'Text',
+            TextInput: 'TextInput',
+            View: 'View',
+            Pressable: 'Pressable',
+            Dimensions: {
+                get: () => ({ width: 900, height: 800 }),
+            },
+            InteractionManager: {
+                runAfterInteractions: () => ({ cancel: () => {} }),
+            },
+            useWindowDimensions: () => ({ width: 900, height: 800 }),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: '#000',
+                    textSecondary: '#666',
+                    shadow: { color: '#000' },
+                    modal: { border: '#ddd' },
+                    button: { primary: { background: '#00f', tint: '#fff' } },
+                    groupped: { sectionTitle: '#999', background: '#fff' },
+                    input: { background: '#fff', placeholder: '#999' },
+                    radio: { active: '#00f' },
+                    divider: '#ddd',
+                    surface: '#fff',
+                    surfaceHigh: '#f2f2f2',
+                    surfaceHighest: '#e9e9e9',
+                    surfacePressed: '#ececec',
+                    surfacePressedOverlay: '#eee',
+                    surfaceSelected: '#f7f7f7',
+                    accent: { blue: '#00f' },
+                    textDestructive: '#c00',
+                },
+            },
+            rt: { themeName: 'light' },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                show: modalShowMock,
+                alert: modalAlertMock,
+                prompt: vi.fn(async () => null),
+                confirm: vi.fn(async () => false),
+            },
+        }).module;
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { push: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() },
+            params: {},
+            navigation: {},
+            pathname: '/new',
+        });
+        return expoRouterMock.module;
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/createPartialStorageModuleMock');
+        return createPartialStorageModuleMock(importOriginal, {
+            // Boundary fixture: this suite only consumes the machine id + metadata shape.
+            useAllMachines: (() => machineState.value as any) as any,
+            storage: Object.assign((selector: (state: ReturnType<typeof getMockStorageState>) => unknown) => selector(getMockStorageState()), {
+                getState: () => getMockStorageState(),
+            }) as any,
+            useSetting: (key: string) => (settingsRuntimeState.current as any)?.[key] ?? (testSettingsDefaults as any)[key],
+            useSettingMutable: (key: string) => [
+                (settingsRuntimeState.current as any)?.[key] ?? (testSettingsDefaults as any)[key],
+                vi.fn(),
+            ],
+            // Boundary fixture: the suite overrides only the settings fields it actually reads.
+            useSettings: (() => (settingsRuntimeState.current ?? testSettingsDefaults) as any) as any,
+        });
+    },
 });
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -202,53 +278,9 @@ vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 0,
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                shadow: { color: '#000' },
-                modal: { border: '#ddd' },
-                button: { primary: { background: '#00f', tint: '#fff' } },
-                groupped: { sectionTitle: '#999', background: '#fff' },
-                input: { background: '#fff', placeholder: '#999' },
-                radio: { active: '#00f' },
-                divider: '#ddd',
-                surface: '#fff',
-                surfaceHigh: '#f2f2f2',
-                surfaceHighest: '#e9e9e9',
-                surfacePressed: '#ececec',
-                surfacePressedOverlay: '#eee',
-                surfaceSelected: '#f7f7f7',
-                accent: { blue: '#00f' },
-                textDestructive: '#c00',
-            },
-        },
-        rt: { themeName: 'light' },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() },
-        params: {},
-        navigation: {},
-        pathname: '/new',
-    });
-    return expoRouterMock.module;
-});
 
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: (_fn: any) => {},
@@ -261,24 +293,6 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
         loadNewSessionDraft: () => persistedDraft,
         saveNewSessionDraft: () => {},
     };
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/createPartialStorageModuleMock');
-    return createPartialStorageModuleMock(importOriginal, {
-        // Boundary fixture: this suite only consumes the machine id + metadata shape.
-        useAllMachines: (() => machineState.value as any) as any,
-        storage: Object.assign((selector: (state: ReturnType<typeof getMockStorageState>) => unknown) => selector(getMockStorageState()), {
-            getState: () => getMockStorageState(),
-        }) as any,
-        useSetting: (key: string) => (settingsRuntimeState.current as any)?.[key] ?? (testSettingsDefaults as any)[key],
-        useSettingMutable: (key: string) => [
-            (settingsRuntimeState.current as any)?.[key] ?? (testSettingsDefaults as any)[key],
-            vi.fn(),
-        ],
-        // Boundary fixture: the suite overrides only the settings fields it actually reads.
-        useSettings: (() => (settingsRuntimeState.current ?? testSettingsDefaults) as any) as any,
-    });
 });
 
 vi.mock('@/sync/sync', () => ({
@@ -384,18 +398,6 @@ vi.mock('@/components/sessions/new/modules/useNewSessionConnectedServices', () =
         connectedServicesAuthChip: null,
     }),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: modalShowMock,
-            alert: modalAlertMock,
-            prompt: vi.fn(async () => null),
-            confirm: vi.fn(async () => false),
-        },
-    }).module;
-});
 
 vi.mock('@/components/sessions/new/modules/profileHelpers', () => ({
     useProfileMap: (profiles: Array<{ id: string }>) => new Map(profiles.map((profile) => [profile.id, profile])),
@@ -531,6 +533,8 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionWizardProps', () => ({
         };
     },
 }));
+
+const useNewSessionScreenModelModulePromise = import('./useNewSessionScreenModel');
 
 describe('useNewSessionScreenModel (installables)', () => {
     beforeEach(() => {
@@ -1351,7 +1355,12 @@ describe('useNewSessionScreenModel (installables)', () => {
         const storageChip = chips.find((chip: { key: string }) => chip.key === 'new-session-storage');
         expect(storageChip).toBeTruthy();
         expect(storageChip?.controlId).toBe('storage');
-        expect(typeof storageChip?.collapsedAction).toBe('function');
+        expect(storageChip?.collapsedAction).toBeUndefined();
+        expect(storageChip?.collapsedOptionsPopover?.selectedOptionId).toBe('direct');
+        expect(storageChip?.collapsedOptionsPopover?.options.map((option: { id: string }) => option.id)).toEqual([
+            'persisted',
+            'direct',
+        ]);
 
         const chipScreen = await renderScreen(storageChip.render({
             chipStyle: () => null,

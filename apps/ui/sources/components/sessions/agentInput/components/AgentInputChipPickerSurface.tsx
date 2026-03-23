@@ -6,7 +6,6 @@ import {
     AgentInputChipPickerPanel,
     type AgentInputChipPickerOption,
 } from './AgentInputChipPickerPanel';
-import { agentInputChipPickerHasDetailPane } from './AgentInputChipPickerTypes';
 
 export type AgentInputChipPickerSurfaceProps = Readonly<{
     title: string;
@@ -22,11 +21,6 @@ export type AgentInputChipPickerSurfaceProps = Readonly<{
 }>;
 
 export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfaceProps) {
-    const hasDetailPane = React.useMemo(
-        () => agentInputChipPickerHasDetailPane(props.options),
-        [props.options],
-    );
-
     const panel = (
         <AgentInputChipPickerPanel
             title={props.title}
@@ -48,7 +42,7 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
         <AgentInputPopoverSurface
             testID={props.testID}
             maxHeight={props.maxHeight}
-            scrollEnabled={hasDetailPane}
+            scrollEnabled
             keyboardShouldPersistTaps="handled"
         >
             {panel}

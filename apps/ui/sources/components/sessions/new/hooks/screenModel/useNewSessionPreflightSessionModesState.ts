@@ -150,7 +150,10 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
             const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
 
             setProbePhase(cached ? 'refreshing' : 'loading');
-            const list = await runDynamicSessionModeProbeDedupe(preflightModesKey, async () => {
+            const attempt = await runDynamicSessionModeProbeDedupe<Readonly<{
+                list: PreflightSessionModeList;
+                cacheable: boolean;
+            }> | null>(preflightModesKey, async () => {
                 const res = await machineCapabilitiesInvoke(
                     params.selectedMachineId!,
                     {
@@ -171,8 +174,10 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                 if (!res.supported) return null;
                 if (!res.response.ok) return null;
 
-                const raw = res.response.result as any;
-                const modesRaw = raw?.availableModes;
+                const result = res.response.result;
+                if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+                const rec = result as Record<string, unknown>;
+                const modesRaw = (rec as { availableModes?: unknown }).availableModes;
                 if (!Array.isArray(modesRaw) || modesRaw.length === 0) return null;
 
                 const parsed: PreflightSessionModeList = {
@@ -185,13 +190,23 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                         })),
                 };
                 if (parsed.availableModes.length === 0) return null;
-                return parsed;
+                const source = typeof rec.source === 'string' ? rec.source : null;
+                const cacheable = source !== 'static';
+                return { list: parsed, cacheable };
             });
 
             if (cancelled) return;
             const commitNowMs = Date.now();
-            if (list) {
+            const list = attempt?.list ?? null;
+            if (list && attempt?.cacheable !== false) {
                 writeDynamicSessionModeProbeCacheSuccess(preflightModesKey, list, commitNowMs);
+                setPreflightModes(list);
+                setRefreshedAt(commitNowMs);
+                setProbePhase('idle');
+                return;
+            }
+            if (list && attempt?.cacheable === false && !cached) {
+                writeDynamicSessionModeProbeCacheError(preflightModesKey, commitNowMs);
                 setPreflightModes(list);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');

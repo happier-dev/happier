@@ -60,15 +60,15 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                Pressable: 'Pressable',
-                                ScrollView: 'ScrollView',
-                                View: 'View',
-                                Dimensions: {
-                                    get: () => ({ width: 900, height: 800 }),
-                                    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                                },
-                                useWindowDimensions: () => ({ width: 900, height: 800 }),
-                            }
+                                        Pressable: 'Pressable',
+                                        ScrollView: 'ScrollView',
+                                        View: 'View',
+                                        Dimensions: {
+                                            get: () => ({ width: 900, height: 800 }),
+                                            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                                        },
+                                        useWindowDimensions: () => ({ width: 900, height: 800 }),
+                                    }
     );
 });
 

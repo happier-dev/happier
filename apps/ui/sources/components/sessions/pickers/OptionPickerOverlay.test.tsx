@@ -8,6 +8,20 @@ import { Text } from '@/components/ui/text/Text';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const mockEnv = vi.hoisted(() => ({
+    windowWidth: 800,
+}));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 900 }),
+        Dimensions: {
+            get: () => ({ width: mockEnv.windowWidth, height: 900, scale: 1, fontScale: 1 }),
+        },
+    });
+});
+
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
@@ -16,6 +30,30 @@ vi.mock('@/text', async () => {
 });
 
 describe('OptionPickerOverlay', () => {
+    it('uses a single option-card column on narrow screens', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        mockEnv.windowWidth = 390;
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[
+                        { value: 'default', label: 'Default', description: 'd' },
+                        { value: 'fast', label: 'Fast', description: 'f' },
+                        { value: 'balanced', label: 'Balanced', description: 'b' },
+                        { value: 'deep', label: 'Deep', description: 'x' },
+                    ]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue={false}
+                    onSelect={() => {}}
+                />);
+
+        expect(screen.findByTestId('model-picker-overlay-column:0')).toBeTruthy();
+        expect(screen.findByTestId('model-picker-overlay-column:1')).toBeNull();
+    });
+
     it('selects a named option', async () => {
         const onSelect = vi.fn();
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
@@ -259,10 +297,6 @@ describe('OptionPickerOverlay', () => {
         }
 
         expect(titleRow).toBeTruthy();
-        const titleRowStyle = Array.isArray(titleRow.props.style)
-            ? Object.assign({}, ...titleRow.props.style.filter(Boolean))
-            : titleRow.props.style;
-        expect(titleRowStyle).toMatchObject({ minHeight: 28 });
     });
 
     it('renders selected model controls inside the selected model card and routes option changes', async () => {

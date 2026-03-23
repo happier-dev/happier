@@ -6,7 +6,7 @@ import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { getModelOptionsForAgentTypeOrPreflight, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
-import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
+import { parsePreflightModelListFromProbeModelsResult } from '@/sync/domains/models/parsePreflightModelListFromProbeModelsResult';
 import {
     DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS,
     readDynamicModelProbeCache,
@@ -145,7 +145,10 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
             const hasExisting = Boolean(preflightModelsRef.current);
             setProbePhase(hasExisting ? 'refreshing' : 'loading');
-            const list = await runDynamicModelProbeDedupe(preflightModelsKey, async () => {
+            const attempt = await runDynamicModelProbeDedupe<Readonly<{
+                list: PreflightModelList;
+                cacheable: boolean;
+            }> | null>(preflightModelsKey, async () => {
                 const res = await machineCapabilitiesInvoke(params.selectedMachineId!, {
                     id: `cli.${agentType}` as any,
                     method: 'probeModels',
@@ -162,32 +165,32 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 if (!res.supported) return null;
                 if (!res.response.ok) return null;
 
-                const raw = res.response.result as any;
-                const modelsRaw = raw?.availableModels;
-                const supportsFreeformRaw = raw?.supportsFreeform;
-                if (!Array.isArray(modelsRaw)) return null;
+                const list = parsePreflightModelListFromProbeModelsResult(res.response.result);
+                if (!list) return null;
 
-                const parsed: PreflightModelList = {
-                    availableModels: modelsRaw
-                        .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
-                        .map((m: any) => ({
-                            id: String(m.id),
-                            name: String(m.name),
-                            ...(typeof m.description === 'string' ? { description: m.description } : {}),
-                            ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0
-                                ? { modelOptions: m.modelOptions as readonly AcpConfigOption[] }
-                                : {}),
-                        })),
-                    supportsFreeform: Boolean(supportsFreeformRaw),
-                };
-                if (parsed.availableModels.length === 0 && parsed.supportsFreeform !== true) return null;
-                return parsed;
+                const result = res.response.result;
+                const source = result && typeof result === 'object' && !Array.isArray(result)
+                    ? (typeof (result as Record<string, unknown>).source === 'string' ? (result as Record<string, unknown>).source : null)
+                    : null;
+                // When the CLI probe returns a static fallback (dynamic probe failed), do not persist it
+                // for a full day. Persisting it long-lived is what causes “Thinking/Speed only appear after refresh”.
+                const cacheable = source !== 'static';
+                return { list, cacheable };
             });
 
             if (cancelled) return;
             const commitNowMs = Date.now();
-            if (list) {
+            const list = attempt?.list ?? null;
+            if (list && attempt?.cacheable !== false) {
                 writeDynamicModelProbeCacheSuccess(preflightModelsKey, list, commitNowMs);
+                setPreflightModels(list);
+                setRefreshedAt(commitNowMs);
+                setProbePhase('idle');
+                return;
+            }
+            if (list && attempt?.cacheable === false && !cached) {
+                // Show the list (useful fallback) but retry soon; do not persist across app restarts.
+                writeDynamicModelProbeCacheError(preflightModelsKey, commitNowMs);
                 setPreflightModels(list);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');

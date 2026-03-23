@@ -221,8 +221,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   railScroll: {
-    width: 112,
-    maxWidth: "21%",
+    width: 150,
+    maxWidth: "25%",
     backgroundColor: theme.colors.groupped.background,
     borderRightWidth: 1,
     borderRightColor: theme.colors.divider,

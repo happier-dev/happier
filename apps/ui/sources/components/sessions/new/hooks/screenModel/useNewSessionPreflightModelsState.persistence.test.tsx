@@ -9,7 +9,32 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: any, _request: any, _options: any) => ({
+type ProbeModelsResult = Readonly<{
+  provider?: string;
+  source?: 'dynamic' | 'static';
+  availableModels: Array<{
+    id: string;
+    name: string;
+    modelOptions?: Array<{
+      id: string;
+      name: string;
+      type: string;
+      currentValue: string;
+      options?: Array<{ value: string; name: string }>;
+    }>;
+  }>;
+  supportsFreeform: boolean;
+}>;
+
+type ProbeResponse = Readonly<{
+  supported: true;
+  response: Readonly<{
+    ok: true;
+    result: ProbeModelsResult;
+  }>;
+}>;
+
+const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: any, _request: any, _options: any): Promise<ProbeResponse> => ({
   supported: true as const,
   response: {
     ok: true as const,
@@ -113,6 +138,66 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
     expect(latestPreflightModelsAfterReload).toEqual(latestPreflightModels);
   });
 
+  it('does not persist static fallback probe results across module reloads', async () => {
+    vi.resetModules();
+    resetDynamicModelProbeCacheForTests();
+    machineCapabilitiesInvokeMock.mockClear();
+
+    machineCapabilitiesInvokeMock.mockResolvedValue({
+      supported: true as const,
+      response: {
+        ok: true as const,
+        result: {
+          provider: 'codex',
+          source: 'static',
+          availableModels: [{ id: 'm1', name: 'Model 1', modelOptions: [] }],
+          supportsFreeform: false,
+        },
+      },
+    });
+
+    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+    function Harness() {
+      useNewSessionPreflightModelsState({
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+      }).preflightModels;
+      return null;
+    }
+
+    let root1!: renderer.ReactTestRenderer;
+    root1 = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      root1.unmount();
+    });
+
+    // Simulate app restart: module registry cleared, in-memory cache gone.
+    vi.resetModules();
+
+    const { useNewSessionPreflightModelsState: useNewSessionPreflightModelsState2 } = await import('./useNewSessionPreflightModelsState');
+
+    function Harness2() {
+      useNewSessionPreflightModelsState2({
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+      }).preflightModels;
+      return null;
+    }
+
+    let root2!: renderer.ReactTestRenderer;
+    root2 = (await renderScreen(React.createElement(Harness2))).tree;
+    await act(async () => {
+      root2.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+  });
+
   it('ignores legacy persisted model-option cache entries after the model-option contract changes', async () => {
     vi.resetModules();
     machineCapabilitiesInvokeMock.mockClear();
@@ -144,7 +229,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
     (globalThis as Record<string, unknown>).window = { localStorage };
     (globalThis as Record<string, unknown>).document = {};
     localStorage.setItem('dynamic-model-probe-cache-v1', JSON.stringify({
-      version: 2,
+      version: 3,
       entries: {
         [cacheKey]: {
           updatedAt: Date.now(),

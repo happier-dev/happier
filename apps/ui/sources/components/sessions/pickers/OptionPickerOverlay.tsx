@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { ActivityIndicator, Pressable, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -54,9 +54,12 @@ export type OptionPickerOverlayProps = Readonly<{
     probe?: OptionPickerProbeState;
 }>;
 
+const MOBILE_SINGLE_COLUMN_WIDTH = 560;
+
 export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const { width: windowWidth } = useWindowDimensions();
     const [query, setQuery] = React.useState('');
     const optionValues = React.useMemo(() => {
         return new Set(props.options.map((option) => option.value));
@@ -106,7 +109,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
             return haystack.includes(normalizedQuery);
         });
     }, [normalizedQuery, props.options, showSearch]);
-    const optionColumnCount = filteredOptions.length <= 1 ? 1 : 2;
+    const optionColumnCount = filteredOptions.length <= 1 || windowWidth < MOBILE_SINGLE_COLUMN_WIDTH ? 1 : 2;
 
     const renderSelectedOptionControls = React.useCallback(() => {
         if ((props.selectedOptionControls?.length ?? 0) === 0) {
@@ -209,7 +212,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     const selectedTileValue = customEditorVisible ? null : props.selectedValue;
     return (
         <View testID="model-picker-overlay" style={styles.section}>
-            <View style={styles.header}>
+            <View style={styles.row}>
                 <View style={styles.titleRow}>
                     <Text style={styles.title}>{props.title}</Text>
                     {props.headerAccessory ? (
@@ -280,7 +283,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
             {(filteredOptions.length > 0 || props.canEnterCustomValue) ? (
                 <>
                         {showSearch ? (
-                            <View style={styles.searchContainer}>
+                            <View style={[styles.searchContainer, styles.row]}>
                                 <TextInput
                                     testID="model-picker-overlay-search"
                                     value={query}
@@ -295,9 +298,13 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                     ) : null}
 
                     {filteredOptions.length > 0 ? (
-                        <View style={styles.cardsGrid}>
+                        <View testID="model-picker-overlay-grid" style={styles.cardsGrid}>
                             {Array.from({ length: optionColumnCount }, (_, colIdx) => (
-                                <View key={colIdx} style={styles.cardsColumn}>
+                                <View
+                                    key={colIdx}
+                                    testID={`model-picker-overlay-column:${colIdx}`}
+                                    style={styles.cardsColumn}
+                                >
                                     {filteredOptions
                                         .filter((_, i) => i % optionColumnCount === colIdx)
                                         .map((option) => {
@@ -412,7 +419,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 0,
         gap: 6,
     },
-    header: {
+    row: {
         gap: 0,
         paddingLeft: 7,
     },
@@ -422,9 +429,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'space-between',
         paddingHorizontal: 0,
         paddingBottom: 0,
-        // The refresh button is absolutely positioned; reserve its vertical space so
-        // the effective summary block can't overlap and steal clicks on web.
-        minHeight: 28,
     },
     headerAccessory: {
         flexShrink: 0,
@@ -494,6 +498,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     optionCardSelected: {
         backgroundColor: theme.colors.surfaceSelected,
+        shadowColor: theme.colors.shadow?.color ?? '#000000',
+        shadowOffset: { width: 0, height: 0.33 },
+        shadowOpacity: theme.colors.shadow?.opacity ?? 0.1,
+        shadowRadius: 0,
+        elevation: 1
     },
     optionCardPressed: {
         opacity: 0.86,
@@ -507,7 +516,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     optionCardTitle: {
         flex: 1,
         fontSize: 12,
-        color: theme.colors.text,
+        color: theme.colors.textSecondary,
     },
     optionCardTitleSelected: {
         fontWeight: '600',

@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 
-import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { renderHook, renderScreen } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import type { Router } from 'expo-router';
 
@@ -241,16 +240,14 @@ describe('useNewSessionAgentInputPresentation', () => {
             popoverAnchorRef: { current: null },
             toggleCollapsedPopover: vi.fn(),
         });
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<React.Fragment>{chipUi}</React.Fragment>);
-        });
-        expect(tree.toJSON()).not.toBeNull();
-        const pressable = tree.root.find((node) => node.props?.testID === 'new-session-link-file-chip');
+        if (!React.isValidElement(chipUi)) {
+            throw new Error('Expected chip renderer to return an element');
+        }
+        const screen = await renderScreen(chipUi);
+        expect(screen.findByTestId('new-session-link-file-chip')).toBeTruthy();
 
-        await act(async () => {
-            pressable.props.onPress?.();
-        });
+        await screen.pressByTestIdAsync('new-session-link-file-chip');
+        await Promise.resolve();
 
         expect(openMachinePathBrowserModalSpy).toHaveBeenCalled();
         const updater = setSessionPrompt.mock.calls.at(-1)?.[0];

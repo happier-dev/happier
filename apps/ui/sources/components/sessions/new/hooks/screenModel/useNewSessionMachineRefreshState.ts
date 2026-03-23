@@ -8,6 +8,7 @@ import { prefetchMachineCapabilities, prefetchMachineCapabilitiesIfStale } from 
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
+import { resolveDaemonCapabilitiesCacheKeySalt } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 
 type RecentMachinePath = Readonly<{
     machineId: string;
@@ -33,13 +34,15 @@ export function useNewSessionMachineRefreshState(params: Readonly<{
         params.refreshMachineEnvPresence();
 
         if (params.selectedMachineId) {
+            const selectedMachine = params.machines.find((machine) => machine.id === params.selectedMachineId) ?? null;
             fireAndForget(prefetchMachineCapabilities({
                 machineId: params.selectedMachineId,
                 serverId: params.capabilityServerId,
-                request: CAPABILITIES_REQUEST_NEW_SESSION,
+                cacheKeySalt: resolveDaemonCapabilitiesCacheKeySalt(selectedMachine),
+                request: { ...CAPABILITIES_REQUEST_NEW_SESSION, bypassCache: true },
             }), { tag: 'NewSessionScreenModel.prefetchMachineCapabilities' });
         }
-    }, [params.capabilityServerId, params.refreshMachineEnvPresence, params.selectedMachineId]);
+    }, [params.capabilityServerId, params.machines, params.refreshMachineEnvPresence, params.selectedMachineId]);
 
     const recentMachines = React.useMemo(() => {
         if (params.machines.length === 0) return [];

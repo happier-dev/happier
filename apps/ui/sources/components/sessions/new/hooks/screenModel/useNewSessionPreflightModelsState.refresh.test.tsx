@@ -161,8 +161,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(false);
 
         await act(async () => {
-            vi.advanceTimersByTime(DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS + 1);
-            await vi.runOnlyPendingTimersAsync();
+            await vi.advanceTimersByTimeAsync(DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS + 1);
         });
 
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);

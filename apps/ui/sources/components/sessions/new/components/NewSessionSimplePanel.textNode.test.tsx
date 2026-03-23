@@ -287,6 +287,58 @@ vi.mock('@/utils/platform/deferOnWeb', async () => {
 });
 
 describe('NewSessionSimplePanel', () => {
+    it('anchors the composer to the bottom on narrow mobile web layouts', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        mockEnv.windowWidth = 390;
+
+        const screen = await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={20}
+                newSessionSidePadding={16}
+                newSessionBottomPadding={8}
+                containerStyle={{}}
+                sessionPrompt="hello"
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate={true}
+                isCreating={false}
+                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                sessionPromptInputMaxHeight={200}
+                agentInputExtraActionChips={[]}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+            />,
+        );
+
+        const keyboardView = screen.findByType('KeyboardAvoidingView');
+        const allViews = screen.findAllByType('View');
+
+        expect(keyboardView.props.style).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                justifyContent: 'flex-end',
+            }),
+        ]));
+        expect(allViews.some((view) => view.props.style?.marginTop === 'auto')).toBe(true);
+    });
+
     it('does not render the legacy visible session type selector even when the feature flag is enabled', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 

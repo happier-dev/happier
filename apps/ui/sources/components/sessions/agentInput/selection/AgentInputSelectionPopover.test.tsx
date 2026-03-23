@@ -57,6 +57,7 @@ describe('AgentInputSelectionPopover', () => {
         expect(capturedPopoverProps.current?.boundaryRef).toBeNull();
         expect(capturedPopoverProps.current?.maxHeightCap).toBe(480);
         expect(capturedPopoverProps.current?.maxWidthCap).toBe(512);
+        expect(capturedPopoverProps.current?.edgePadding).toEqual({ horizontal: 16 });
         expect(capturedPopoverProps.current?.portal).toEqual({
             web: true,
             native: true,
@@ -65,7 +66,7 @@ describe('AgentInputSelectionPopover', () => {
         });
         expect(capturedPopoverProps.current?.closeOnAnchorPress).toBe(false);
         expect(capturedPopoverProps.current?.containerStyle).toEqual({ paddingHorizontal: 0 });
-        expect(capturedPopoverProps.current?.backdrop).toEqual({ style: { backgroundColor: 'transparent' } });
+        expect(capturedPopoverProps.current?.backdrop).toEqual({ style: { backgroundColor: 'transparent' }, blockOutsidePointerEvents: true });
         expect(renderContent).toHaveBeenCalledWith({ maxHeight: 312 });
         expect(tree).toBeTruthy();
         expect(tree!.root.findByProps({ testID: 'content:312' })).toBeTruthy();

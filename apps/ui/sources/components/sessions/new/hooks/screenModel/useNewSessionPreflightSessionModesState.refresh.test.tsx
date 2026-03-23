@@ -88,8 +88,7 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
         expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode1')).toBe(false);
 
         await act(async () => {
-            vi.advanceTimersByTime(DYNAMIC_SESSION_MODE_PROBE_ERROR_BACKOFF_MS + 1);
-            await vi.runOnlyPendingTimersAsync();
+            await vi.advanceTimersByTimeAsync(DYNAMIC_SESSION_MODE_PROBE_ERROR_BACKOFF_MS + 1);
         });
 
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
@@ -99,4 +98,3 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
         vi.useRealTimers();
     });
 });
-

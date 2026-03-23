@@ -5,6 +5,7 @@ import type { FlushHookEffectsOptions } from '@/dev/testkit';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit';
+import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -367,35 +368,86 @@ const settingsState = {
     },
 };
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            Platform: {
-                                                                get OS() {
-                                                                            return platformOsState.value;
-                                                                        },
-                                                                select: (options: any) => options?.[platformOsState.value] ?? options?.default ?? options?.ios ?? options?.android,
-                                                            },
-                                                            View: 'View',
-                                                            Text: 'Text',
-                                                            Pressable: 'Pressable',
-                                                            Dimensions: {
-                                                                get: () => ({ width: 900, height: 800 }),
-                                                            },
-                                                            InteractionManager: {
-                                                                runAfterInteractions: (fn: () => void) => {
-                                                                    interactionQueueState.callbacks.push(fn);
-                                                                    return {
-                                                                        cancel: () => {
-                                                                            interactionQueueState.callbacks = interactionQueueState.callbacks.filter((callback) => callback !== fn);
-                                                                        },
-                                                                    };
-                                                                },
-                                                            },
-                                                            useWindowDimensions: () => ({ width: 900, height: 800 }),
-                                                        }
-    );
+installNewSessionScreenModelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                get OS() {
+                    return platformOsState.value;
+                },
+                select: (options: any) => options?.[platformOsState.value] ?? options?.default ?? options?.ios ?? options?.android,
+            },
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            Dimensions: {
+                get: () => ({ width: 900, height: 800 }),
+            },
+            InteractionManager: {
+                runAfterInteractions: (fn: () => void) => {
+                    interactionQueueState.callbacks.push(fn);
+                    return {
+                        cancel: () => {
+                            interactionQueueState.callbacks = interactionQueueState.callbacks.filter((callback) => callback !== fn);
+                        },
+                    };
+                },
+            },
+            useWindowDimensions: () => ({ width: 900, height: 800 }),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                dark: false,
+                colors: {
+                    accent: { blue: '#00f' },
+                    input: { placeholder: '#999' },
+                    text: '#000',
+                    textSecondary: '#666',
+                    button: { primary: { background: '#00f', tint: '#fff' } },
+                    groupped: { sectionTitle: '#999', background: '#fff' },
+                    divider: '#ddd',
+                    surface: '#fff',
+                    surfaceHigh: '#f5f5f5',
+                    surfaceHighest: '#f0f0f0',
+                    surfaceSelected: '#eef4ff',
+                    surfacePressed: '#eee',
+                    surfacePressedOverlay: '#eee',
+                    modal: { border: '#ddd' },
+                    radio: { active: '#00f' },
+                    shadow: { color: '#000', opacity: 0.2 },
+                    textDestructive: '#c00',
+                },
+            },
+            rt: { themeName: 'light' },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { push: routerPushMock, replace: vi.fn(), back: vi.fn(), setParams: routerSetParamsMock },
+            params: () => searchParamsState.value as Record<string, string | string[] | undefined>,
+            navigation: {},
+            pathname: '/new',
+        });
+        return expoRouterMock.module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                show: modalShowMock,
+                alert: modalAlertMock,
+            },
+        }).module;
+    },
 });
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -405,40 +457,6 @@ vi.mock('react-native-safe-area-context', () => ({
 vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 0,
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            dark: false,
-            colors: {
-                accent: { blue: '#00f' },
-                input: { placeholder: '#999' },
-                text: '#000',
-                textSecondary: '#666',
-                button: { primary: { background: '#00f', tint: '#fff' } },
-                groupped: { sectionTitle: '#999', background: '#fff' },
-                divider: '#ddd',
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                surfaceHighest: '#f0f0f0',
-                surfaceSelected: '#eef4ff',
-                surfacePressed: '#eee',
-                surfacePressedOverlay: '#eee',
-                modal: { border: '#ddd' },
-                radio: { active: '#00f' },
-                shadow: { color: '#000', opacity: 0.2 },
-                textDestructive: '#c00',
-            },
-        },
-        rt: { themeName: 'light' },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -453,22 +471,40 @@ vi.mock('@/components/automations/editor/AutomationSettingsForm', () => ({
     AutomationSettingsForm: (props: Record<string, unknown>) => React.createElement('AutomationSettingsForm', props),
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: routerPushMock, replace: vi.fn(), back: vi.fn(), setParams: routerSetParamsMock },
-        params: () => searchParamsState.value as Record<string, string | string[] | undefined>,
-        navigation: {},
-        pathname: '/new',
-    });
-    return expoRouterMock.module;
-});
-
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: (fn: any) => {
         focusEffectRef.current.push(fn);
     },
 }));
+
+function installNewSessionScreenModelStorageMock() {
+    vi.doMock('@/sync/domains/state/storage', async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useAllMachines: () => ([
+                createMachineFixture({ id: 'machine-1', metadata: { displayName: 'Machine One', host: 'one', homeDir: '/home/one' } as any }),
+                createMachineFixture({ id: 'machine-2', metadata: { displayName: 'Machine Two', host: 'two', homeDir: '/home/two' } as any }),
+            ]),
+            useMachineListByServerId: () => ({}),
+            useMachineListStatusByServerId: () => ({}),
+            storage: Object.assign((selector: (state: ReturnType<typeof getMockStorageState>) => unknown) => React.useSyncExternalStore(
+                (listener: () => void) => {
+                    storageSubscriptionState.listeners.add(listener);
+                    return () => {
+                        storageSubscriptionState.listeners.delete(listener);
+                    };
+                },
+                () => selector(getMockStorageState()),
+                () => selector(getMockStorageState()),
+            ), {
+                getState: () => getMockStorageState(),
+            }) as unknown as typeof import('@/sync/domains/state/storage').storage,
+            useSetting: (key: string) => ({ ...settingsDefaults, ...settingsState } as any)[key],
+            useSettingMutable: (key: string) => [(settingsState as any)[key], vi.fn()],
+            useSettings: () => ({ ...settingsDefaults, ...settingsState }) as unknown as import('@/sync/domains/settings/settings').Settings,
+        });
+    });
+}
 
 vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
     const actual = await importOriginal<any>();
@@ -478,33 +514,6 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
         saveNewSessionDraft: (draft: unknown) => saveNewSessionDraftMock(draft),
         clearNewSessionDraft: () => clearNewSessionDraftMock(),
     };
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useAllMachines: () => ([
-        createMachineFixture({ id: 'machine-1', metadata: { displayName: 'Machine One', host: 'one', homeDir: '/home/one' } as any }),
-        createMachineFixture({ id: 'machine-2', metadata: { displayName: 'Machine Two', host: 'two', homeDir: '/home/two' } as any }),
-    ]),
-    useMachineListByServerId: () => ({}),
-    useMachineListStatusByServerId: () => ({}),
-    storage: Object.assign((selector: (state: ReturnType<typeof getMockStorageState>) => unknown) => React.useSyncExternalStore(
-        (listener: () => void) => {
-            storageSubscriptionState.listeners.add(listener);
-            return () => {
-                storageSubscriptionState.listeners.delete(listener);
-            };
-        },
-        () => selector(getMockStorageState()),
-        () => selector(getMockStorageState()),
-    ), {
-        getState: () => getMockStorageState(),
-    }) as unknown as typeof import('@/sync/domains/state/storage').storage,
-    useSetting: (key: string) => ({ ...settingsDefaults, ...settingsState } as any)[key],
-    useSettingMutable: (key: string) => [(settingsState as any)[key], vi.fn()],
-    useSettings: () => ({ ...settingsDefaults, ...settingsState }) as unknown as import('@/sync/domains/settings/settings').Settings,
-});
 });
 
 vi.mock('@/scm/scmRepositoryService', () => ({
@@ -707,16 +716,6 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: modalShowMock,
-            alert: modalAlertMock,
-        },
-    }).module;
-});
-
 vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
     tryShowDaemonUnavailableAlertForRpcError: (args: unknown) => tryShowDaemonUnavailableAlertForRpcErrorMock(args),
 }));
@@ -814,6 +813,8 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
 vi.mock('@/utils/sessions/tempDataStore', () => ({
     getTempData: () => tempSessionDataState.value,
 }));
+
+installNewSessionScreenModelStorageMock();
 
 const useNewSessionScreenModelModulePromise = import('./useNewSessionScreenModel');
 
@@ -1668,8 +1669,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(routerPushMock).toHaveBeenCalledWith(expect.objectContaining({
             pathname: '/new/pick/profile-edit',
         }));
-        expect(interactionQueueState.callbacks).toHaveLength(1);
-        expect(saveNewSessionDraftMock).not.toHaveBeenCalled();
+        expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             (useCreateNewSessionArgsRef.current?.disableDraftPersistence as (() => void) | undefined)?.();
@@ -1682,7 +1682,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
 
         expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
-        expect(saveNewSessionDraftMock).not.toHaveBeenCalled();
+        expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(1);
     });
 
     it('keeps the default environment selected even when a workspace graph still carries a legacy default profile', async () => {
@@ -2687,17 +2687,12 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             popoverAnchorRef: { current: null },
         }) as React.ReactElement<{ children?: React.ReactNode }>;
 
-        const chipElement = renderChip();
-        const renderedChildren = React.Children.toArray(chipElement.props.children);
-        expect(renderedChildren).toHaveLength(2);
-        const pickerPopover = renderedChildren[1] as React.ReactElement<{
-            open?: boolean;
-            options?: ReadonlyArray<{ id: string }>;
-        }> | undefined;
-        expect(pickerPopover?.props?.open).toBe(false);
-        expect(pickerPopover?.props?.options?.map((option) => option.id)).toEqual([
+        // The checkout chip exposes its pickable options via `collapsedOptionsPopover`.
+        const optionIds = (getCheckoutChip()?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+        expect(optionIds).toEqual([
             'current_path',
             'create_git_worktree',
+            '__existing_worktree__',
         ]);
         expect(model?.simpleProps?.selectedWorkspaceId).toBeUndefined();
         expect(model?.simpleProps?.selectedWorkspaceLocationId).toBeUndefined();
@@ -2747,16 +2742,11 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             popoverAnchorRef: { current: null },
         }) as React.ReactElement<{ children?: React.ReactNode }>;
 
-        const renderedChildren = React.Children.toArray(renderChip().props.children);
-        expect(renderedChildren).toHaveLength(2);
-        const pickerPopover = renderedChildren[1] as React.ReactElement<{
-            open?: boolean;
-            options?: ReadonlyArray<{ id: string }>;
-        }> | undefined;
-        expect(pickerPopover?.props?.open).toBe(false);
-        expect(pickerPopover?.props?.options?.map((option) => option.id)).toEqual([
+        const optionIds = (checkoutChip?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+        expect(optionIds).toEqual([
             'current_path',
             'create_git_worktree',
+            '__existing_worktree__',
         ]);
     });
 

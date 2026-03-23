@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -47,12 +46,13 @@ describe('AgentInputPopoverSurface', () => {
     it('applies the shared surface contract when scroll is disabled', async () => {
         capturedFloatingOverlayProps = null;
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        tree = (await renderScreen(<AgentInputPopoverSurface maxHeight={123} scrollEnabled={false}>
-                    <Child />
-                </AgentInputPopoverSurface>)).tree;
+        const screen = await renderScreen(
+            <AgentInputPopoverSurface maxHeight={123} scrollEnabled={false}>
+                <Child />
+            </AgentInputPopoverSurface>,
+        );
 
-        expect(tree!.root.findAllByType('FloatingOverlay')).toHaveLength(1);
+        expect(screen.findByType('FloatingOverlay')).not.toBeNull();
         expect(capturedFloatingOverlayProps).toEqual(expect.objectContaining({
             maxHeight: 123,
             scrollEnabled: false,

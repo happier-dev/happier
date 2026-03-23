@@ -6,6 +6,10 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+
+import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,17 +22,29 @@ async function setupHarness() {
     errorMessage: 'Daemon RPC is not available',
   }));
 
-  vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
+  installNewSessionScreenModelCommonModuleMocks({
+    text: () =>
+      createTextModuleMock({
         translate: (key: string, params?: Record<string, unknown>) => {
-      if (key === 'status.lastSeen') return `status.lastSeen:${String(params?.time ?? '')}`;
-      if (key === 'time.minutesAgo') return `time.minutesAgo:${String(params?.count ?? '')}`;
-      if (key === 'time.hoursAgo') return `time.hoursAgo:${String(params?.count ?? '')}`;
-      return key;
-    },
-    });
-});
+          if (key === 'status.lastSeen') return `status.lastSeen:${String(params?.time ?? '')}`;
+          if (key === 'time.minutesAgo') return `time.minutesAgo:${String(params?.count ?? '')}`;
+          if (key === 'time.hoursAgo') return `time.hoursAgo:${String(params?.count ?? '')}`;
+          return key;
+        },
+      }),
+    storage: async () =>
+      createStorageModuleStub({
+        storage: {
+          getState: () => ({
+            settings: {},
+            machines: { m1: { id: 'm1' } },
+            updateSessionPermissionMode: vi.fn(),
+            updateSessionModelMode: vi.fn(),
+            updateSessionDraft: vi.fn(),
+          }),
+        },
+      }),
+  });
   vi.doMock('@/modal', () => ({ Modal: { alert: modalAlertSpy, confirm: vi.fn(async () => false) } }));
   vi.doMock('@/sync/sync', () => ({
     sync: {
@@ -44,20 +60,6 @@ async function setupHarness() {
   vi.doMock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => vi.fn(),
   }));
-  vi.doMock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-      getState: () => ({
-        settings: {},
-        machines: { m1: { id: 'm1' } },
-        updateSessionPermissionMode: vi.fn(),
-        updateSessionModelMode: vi.fn(),
-        updateSessionDraft: vi.fn(),
-      }),
-    },
-});
-});
   vi.doMock('@/sync/domains/state/persistence', () => ({
     clearNewSessionDraft: vi.fn(),
     loadSettings: () => ({ settings: {}, version: null }),

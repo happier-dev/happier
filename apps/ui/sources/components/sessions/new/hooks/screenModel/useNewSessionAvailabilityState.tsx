@@ -16,7 +16,7 @@ import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentIns
 import { getInstallablesRegistryEntries } from '@/capabilities/installablesRegistry';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
-import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
+import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { isProfileCompatibleWithBackendTarget } from '@/sync/domains/profiles/profileCompatibility';
 import {
@@ -54,9 +54,10 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     allProfiles: ReadonlyArray<AIBackendProfile>;
 }>) {
     const cliAvailability = useCLIDetection(params.selectedMachineId, { autoDetect: false, serverId: params.capabilityServerId });
-    const { state: selectedMachineCapabilities } = useMachineCapabilitiesCache({
+    const { state: selectedMachineCapabilities } = useDaemonScopedMachineCapabilitiesCache({
         machineId: params.selectedMachineId,
         serverId: params.capabilityServerId,
+        daemonStateVersion: params.selectedMachine?.daemonStateVersion ?? 0,
         enabled: false,
         request: CAPABILITIES_REQUEST_NEW_SESSION,
     });

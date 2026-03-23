@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 
 import { Platform } from 'react-native';
 
@@ -31,51 +31,42 @@ describe('createAttachmentActionChip', () => {
             expect(chip.collapsedContentPopover).toBeTruthy();
 
             const toggleCollapsedPopover = vi.fn();
-            const ui = chip.render({
-                chipStyle: () => ({}),
-                showLabel: true,
-                iconColor: '#000',
-                textStyle: {},
-                countTextStyle: {},
-                chipAnchorRef: { current: null },
-                popoverAnchorRef: { current: null },
-                toggleCollapsedPopover,
-            });
+            const screen = await renderScreen(
+                <React.Fragment>
+                    {chip.render({
+                        chipStyle: () => ({}),
+                        showLabel: true,
+                        iconColor: '#000',
+                        textStyle: {},
+                        countTextStyle: {},
+                        chipAnchorRef: { current: null },
+                        popoverAnchorRef: { current: null },
+                        toggleCollapsedPopover,
+                    })}
+                </React.Fragment>,
+            );
 
-            let tree!: renderer.ReactTestRenderer;
-            await act(async () => {
-                tree = renderer.create(<React.Fragment>{ui}</React.Fragment>);
-            });
-            expect(tree.toJSON()).not.toBeNull();
-            const pressables = tree.root.findAll((node) => node.props?.testID === 'agent-input-attachments-chip');
-            expect(pressables).toHaveLength(1);
-            const pressable = pressables[0]!;
-            await act(async () => {
-                pressable.props.onPress?.();
-            });
+            expect(screen.tree.toJSON()).not.toBeNull();
+            await screen.pressByTestIdAsync('agent-input-attachments-chip');
             expect(toggleCollapsedPopover).toHaveBeenCalledWith('attachments-add');
 
             const requestClose = vi.fn();
             const renderContent = chip.collapsedContentPopover!.renderContent;
-            expect(typeof renderContent).toBe('function');
-            const contentNode = (renderContent as any)({ requestClose, maxHeight: 420 });
-            let contentTree!: renderer.ReactTestRenderer;
-            await act(async () => {
-                contentTree = renderer.create(<React.Fragment>{contentNode as any}</React.Fragment>);
-            });
+            if (typeof renderContent !== 'function') {
+                throw new Error('Expected collapsedContentPopover.renderContent to be a function');
+            }
+            const contentScreen = await renderScreen(
+                <React.Fragment>
+                    {renderContent({ requestClose, maxHeight: 420 }) as React.ReactNode}
+                </React.Fragment>,
+            );
 
-            const addImageRow = contentTree.root.find((node) => node.props?.testID === 'attachments-action-add-image');
-            await act(async () => {
-                addImageRow.props.onPress?.();
-            });
+            await contentScreen.pressByTestIdAsync('attachments-action-add-image');
             expect(onPickImage).toHaveBeenCalled();
             expect(requestClose).toHaveBeenCalled();
 
             requestClose.mockClear();
-            const addFileRow = contentTree.root.find((node) => node.props?.testID === 'attachments-action-add-file');
-            await act(async () => {
-                addFileRow.props.onPress?.();
-            });
+            await contentScreen.pressByTestIdAsync('attachments-action-add-file');
             expect(onPickFile).toHaveBeenCalled();
             expect(requestClose).toHaveBeenCalled();
         } finally {
@@ -98,27 +89,22 @@ describe('createAttachmentActionChip', () => {
 
             expect(chip.collapsedContentPopover).toBeFalsy();
 
-            const ui = chip.render({
-                chipStyle: () => ({}),
-                showLabel: true,
-                iconColor: '#000',
-                textStyle: {},
-                countTextStyle: {},
-                chipAnchorRef: { current: null },
-                popoverAnchorRef: { current: null },
-                toggleCollapsedPopover: vi.fn(),
-            });
-            let tree!: renderer.ReactTestRenderer;
-            await act(async () => {
-                tree = renderer.create(<React.Fragment>{ui}</React.Fragment>);
-            });
-            expect(tree.toJSON()).not.toBeNull();
-            const pressables = tree.root.findAll((node) => node.props?.testID === 'agent-input-attachments-chip');
-            expect(pressables).toHaveLength(1);
-            const pressable = pressables[0]!;
-            await act(async () => {
-                pressable.props.onPress?.();
-            });
+            const screen = await renderScreen(
+                <React.Fragment>
+                    {chip.render({
+                        chipStyle: () => ({}),
+                        showLabel: true,
+                        iconColor: '#000',
+                        textStyle: {},
+                        countTextStyle: {},
+                        chipAnchorRef: { current: null },
+                        popoverAnchorRef: { current: null },
+                        toggleCollapsedPopover: vi.fn(),
+                    })}
+                </React.Fragment>,
+            );
+            expect(screen.tree.toJSON()).not.toBeNull();
+            await screen.pressByTestIdAsync('agent-input-attachments-chip');
             expect(onPickFile).toHaveBeenCalled();
         } finally {
             (Platform as any).OS = originalOs;

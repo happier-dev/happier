@@ -41,6 +41,11 @@ installNewSessionComponentsCommonModuleMocks({
                 text: '#111',
                 textSecondary: '#666',
                 textDestructive: '#d00',
+                input: {
+                    background: '#fafafa',
+                    text: '#111',
+                    placeholder: '#999',
+                },
                 button: {
                     primary: {
                         background: '#00f',
@@ -56,14 +61,9 @@ vi.mock('@react-navigation/native', () => ({
     useFocusEffect: () => undefined,
 }));
 
-vi.mock('@/components/ui/forms/MultiTextInput', () => ({
-    MultiTextInput: React.forwardRef((props: Record<string, unknown>, _ref) =>
-        React.createElement('MultiTextInput', props, null)),
-}));
-
 vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
 vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
-vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text']));
+vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
 
 vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'claude',

@@ -168,6 +168,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         onPress: params.onResumePress,
         blurInput: params.blurInput,
         showLabel: params.showChipLabels,
+        agentLabel: params.agentLabel,
         resumeSessionId: params.resumeSessionId,
         resumeIsChecking: params.resumeIsChecking,
         tint: params.tint,

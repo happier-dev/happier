@@ -1,6 +1,5 @@
 import React from 'react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { ReactTestInstance } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -25,12 +24,19 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('./ResumeChip', () => ({
-    ResumeChip: (props: Record<string, unknown>) => React.createElement('ResumeChip', props, null),
+    ResumeChip: (props: Record<string, unknown>) =>
+        React.createElement('Pressable', { ...props, testID: 'agent-input-resume-chip' }, null),
 }));
 
 function hasFlexGrowOne(value: unknown): boolean {
     if (!value || typeof value !== 'object') return false;
     return (value as { flexGrow?: number }).flexGrow === 1;
+}
+
+function toArray<T>(value: T | readonly T[] | undefined): readonly T[] {
+    if (Array.isArray(value)) return value;
+    if (value == null) return [];
+    return [value] as readonly T[];
 }
 
 describe('PathAndResumeRow', () => {
@@ -51,25 +57,29 @@ describe('PathAndResumeRow', () => {
         };
 
         const screen = await renderScreen(React.createElement(PathAndResumeRow, {
-                    styles,
-                    showChipLabels: true,
-                    iconColor: '#000',
-                    currentPath: '/Users/leeroy/Development/happy-local',
-                    onPathClick: () => {},
-                    emptyPathLabel: 'Select Path',
-                    resumeSessionId: null,
-                    onResumeClick: () => {},
-                    resumeLabelTitle: 'Resume session',
-                    resumeLabelOptional: 'Resume: Optional',
-                }));
+            styles,
+            showChipLabels: true,
+            iconColor: '#000',
+            currentPath: '/Users/leeroy/Development/happy-local',
+            onPathClick: () => {},
+            emptyPathLabel: 'Select Path',
+            resumeSessionId: null,
+            onResumeClick: () => {},
+            resumeLabelTitle: 'Resume session',
+            resumeLabelOptional: 'Resume: Optional',
+        }));
 
         const row = screen.findByTestId('agentInput-pathResumeRow');
         expect(row).toBeTruthy();
 
-        const pathChipPressable = row?.findAllByType('Pressable')?.[0] as ReactTestInstance | undefined;
+        const actionButtonsLeft = toArray(row?.props?.children)[0];
+        const rowChildren = React.Children.toArray(actionButtonsLeft?.props?.children);
+        const pathChipPressable = rowChildren.find((child) => (
+            React.isValidElement(child) && (child.props as any)?.testID === 'agent-input-path-chip'
+        )) as React.ReactElement | undefined;
         expect(pathChipPressable).toBeTruthy();
 
-        const styleFn = pathChipPressable?.props.style as ((input: { pressed: boolean }) => unknown) | undefined;
+        const styleFn = (pathChipPressable?.props as any)?.style as ((input: { pressed: boolean }) => unknown) | undefined;
         expect(typeof styleFn).toBe('function');
 
         const computed = styleFn?.({ pressed: false });
@@ -88,17 +98,17 @@ describe('PathAndResumeRow', () => {
         };
 
         const screen = await renderScreen(React.createElement(PathAndResumeRow, {
-                    styles,
-                    showChipLabels: true,
-                    iconColor: '#000',
-                    currentPath: '',
-                    onPathClick: () => {},
-                    emptyPathLabel: 'Select Path',
-                    resumeSessionId: null,
-                    onResumeClick: undefined,
-                    resumeLabelTitle: 'Resume session',
-                    resumeLabelOptional: 'Resume: Optional',
-                }));
+            styles,
+            showChipLabels: true,
+            iconColor: '#000',
+            currentPath: '',
+            onPathClick: () => {},
+            emptyPathLabel: 'Select Path',
+            resumeSessionId: null,
+            onResumeClick: undefined,
+            resumeLabelTitle: 'Resume session',
+            resumeLabelOptional: 'Resume: Optional',
+        }));
 
         const pathChip = screen.findByTestId('agent-input-path-chip');
         expect(pathChip?.props?.testID).toBe('agent-input-path-chip');
@@ -115,24 +125,26 @@ describe('PathAndResumeRow', () => {
         };
 
         const screen = await renderScreen(React.createElement(PathAndResumeRow, {
-                    styles,
-                    leadingControls: [
-                        React.createElement('Pressable', { key: 'machine', testID: 'agent-input-machine-chip' }),
-                    ],
-                    showChipLabels: true,
-                    iconColor: '#000',
-                    currentPath: '/Users/leeroy/Development/happy-local',
-                    onPathClick: () => {},
-                    emptyPathLabel: 'Select Path',
-                    resumeSessionId: 'session-1',
-                    onResumeClick: () => {},
-                    resumeLabelTitle: 'Resume session',
-                    resumeLabelOptional: 'Resume: Optional',
-                }));
+            styles,
+            leadingControls: [
+                React.createElement('Pressable', { key: 'machine', testID: 'agent-input-machine-chip' }),
+            ],
+            showChipLabels: true,
+            iconColor: '#000',
+            currentPath: '/Users/leeroy/Development/happy-local',
+            onPathClick: () => {},
+            emptyPathLabel: 'Select Path',
+            resumeSessionId: 'session-1',
+            onResumeClick: () => {},
+            resumeLabelTitle: 'Resume session',
+            resumeLabelOptional: 'Resume: Optional',
+        }));
 
         const row = screen.findByTestId('agentInput-pathResumeRow');
-        const pressables = row?.findAllByType('Pressable') ?? [];
-        const testIds = pressables.map((node) => node.props.testID).filter(Boolean);
+        const actionButtonsLeft = toArray(row?.props?.children)[0];
+        const testIds = React.Children.toArray(actionButtonsLeft?.props?.children)
+            .map((node) => (React.isValidElement(node) ? (node.props as any)?.testID : null))
+            .filter(Boolean) as string[];
 
         expect(testIds.slice(0, 2)).toEqual(['agent-input-machine-chip', 'agent-input-path-chip']);
     });
@@ -150,22 +162,22 @@ describe('PathAndResumeRow', () => {
         const resumeChipAnchorRef = React.createRef<any>();
 
         const screen = await renderScreen(React.createElement(PathAndResumeRow, {
-                    styles,
-                    showChipLabels: true,
-                    iconColor: '#000',
-                    currentPath: '/workspace',
-                    pathChipAnchorRef,
-                    onPathClick: () => {},
-                    emptyPathLabel: 'Select Path',
-                    resumeSessionId: 'session-1',
-                    resumeChipAnchorRef,
-                    onResumeClick: () => {},
-                    resumeLabelTitle: 'Resume session',
-                    resumeLabelOptional: 'Resume: Optional',
-                }));
+            styles,
+            showChipLabels: true,
+            iconColor: '#000',
+            currentPath: '/workspace',
+            pathChipAnchorRef,
+            onPathClick: () => {},
+            emptyPathLabel: 'Select Path',
+            resumeSessionId: 'session-1',
+            resumeChipAnchorRef,
+            onResumeClick: () => {},
+            resumeLabelTitle: 'Resume session',
+            resumeLabelOptional: 'Resume: Optional',
+        }));
 
         const pathChip = screen.findByTestId('agent-input-path-chip');
-        const resumeChip = screen.findByType('ResumeChip');
+        const resumeChip = screen.findByTestId('agent-input-resume-chip');
 
         expect(pathChip?.props.__ref).toBe(pathChipAnchorRef);
         expect(resumeChip?.props.anchorRef).toBe(resumeChipAnchorRef);

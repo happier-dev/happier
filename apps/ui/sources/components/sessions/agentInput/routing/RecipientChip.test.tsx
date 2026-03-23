@@ -3,25 +3,22 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
-
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedSimpleOptionsPopoverProps: any = null;
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                    OS: 'web',
-                                    select: (options: any) => (options && typeof options === 'object' ? options.web ?? options.default : undefined),
-                                },
-                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('Pressable', props, props.children),
-                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('View', props, props.children),
-                                }
-    );
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'web',
+            select: (options: any) => (options && typeof options === 'object' ? options.web ?? options.default : undefined),
+        },
+        Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+            React.createElement('Pressable', props, props.children),
+        View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+            React.createElement('View', props, props.children),
+    });
 });
 
 vi.mock('@expo/vector-icons', () => ({

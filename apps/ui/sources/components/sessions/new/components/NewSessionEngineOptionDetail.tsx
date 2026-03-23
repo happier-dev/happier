@@ -61,12 +61,14 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,
+        probeContext: props.capabilityProbeContext ?? null,
     });
     const { configOptions } = useNewSessionPreflightConfigOptionsState({
         backendTarget: props.backendTarget,
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,
+        probeContext: props.capabilityProbeContext ?? null,
     });
 
     const [selectedModelId, setSelectedModelId] = React.useState(() => normalizeSelectedOptionId(props.selectedModelId));

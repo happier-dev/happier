@@ -100,7 +100,7 @@ export function createCheckoutActionChip(params: Readonly<{
                 options: params.pickerOptions,
                 selectedOptionId: params.selectedOptionId,
                 onSelect: params.onApplyOption,
-                maxHeightCap: 560,
+                maxHeightCap: 620,
                 maxWidthCap: 620,
                 railWidth: 176,
                 railMaxWidth: '32%',

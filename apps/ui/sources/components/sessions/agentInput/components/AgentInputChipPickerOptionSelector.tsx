@@ -166,6 +166,11 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   optionRowFocused: {
     backgroundColor: theme.colors.surface,
+    shadowColor: theme.colors.shadow?.color ?? '#000000',
+    shadowOffset: { width: 0, height: 0.33 },
+    shadowOpacity: theme.colors.shadow?.opacity ?? 0.1,
+    shadowRadius: 0,
+    elevation: 1
   },
   optionRowPressed: {
     opacity: 0.82,
@@ -199,6 +204,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     marginTop: 1,
     fontSize: 11,
     lineHeight: 14,
-    color: theme.colors.textSecondary,
+    color: theme.colors.textTertiary,
   },
 }));

@@ -57,7 +57,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('AgentInputChipPickerTopSelector', () => {
-    it('forwards the surrounding popover boundary and body portal to the nested dropdown menu', async () => {
+    it('uses the shared item trigger while forwarding the surrounding popover boundary', async () => {
         const { AgentInputChipPickerTopSelector } = await import('./AgentInputChipPickerTopSelector');
         capturedDropdownMenuProps = null;
 
@@ -67,7 +67,7 @@ describe('AgentInputChipPickerTopSelector', () => {
                             id: 'providers',
                             label: 'Providers',
                             options: [
-                                { id: 'codex', label: 'Codex' },
+                                { id: 'codex', label: 'Codex', subtitle: 'OpenAI', icon: React.createElement('EngineIcon', { size: 24 }) },
                                 { id: 'claude', label: 'Claude' },
                             ],
                         },
@@ -77,9 +77,32 @@ describe('AgentInputChipPickerTopSelector', () => {
                     onFocusOption={() => undefined}
                 />);
 
-        expect(capturedDropdownMenuProps).toEqual(expect.objectContaining({
+        const dropdownMenuProps = capturedDropdownMenuProps as any;
+
+        expect(dropdownMenuProps).toEqual(expect.objectContaining({
             popoverBoundaryRef: boundaryRef,
-            popoverPortalWebTarget: 'body',
         }));
+        expect(dropdownMenuProps.trigger).toBeUndefined();
+        expect(dropdownMenuProps.itemTrigger).toEqual(expect.objectContaining({
+            title: 'Codex',
+            icon: expect.any(Object),
+            subtitleFormatter: expect.any(Function),
+            showSelectedDetail: false,
+            itemProps: expect.objectContaining({
+                testID: 'agent-input-chip-picker.top-selector-trigger',
+                style: expect.objectContaining({
+                    paddingHorizontal: 0,
+                }),
+            }),
+        }));
+        expect(dropdownMenuProps.itemTrigger.subtitleFormatter()).toBe('OpenAI');
+        expect(dropdownMenuProps.items[0]).toEqual(expect.objectContaining({
+            icon: expect.any(Object),
+        }));
+
+        const triggerIconChild = (dropdownMenuProps.itemTrigger.icon as any).props.children;
+        expect(triggerIconChild.props.size).toBe(18);
+        const menuIconChild = (dropdownMenuProps.items[0].icon as any).props.children;
+        expect(menuIconChild.props.size).toBe(18);
     });
 });

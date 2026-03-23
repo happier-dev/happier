@@ -734,11 +734,12 @@ describe('AgentInput (action menu popover props)', () => {
         expect(captured.last).toBeNull();
     });
 
-    it('routes the checkout/worktree chip through the shared simple-options popover anchored to the chip', async () => {
+    it('routes the checkout/worktree chip through the shared chip-picker popover anchored to the chip', async () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedSimpleOptionsPopover.last = null;
+        capturedChipPickerPopover.last = null;
         const { AgentInput } = await import('./AgentInput');
         const { createCheckoutActionChip } = await import('./definitions/createCheckoutActionChip');
 
@@ -775,13 +776,13 @@ describe('AgentInput (action menu popover props)', () => {
 
         await screen.pressByTestIdAsync('new-session-checkout-chip');
 
-        const simpleOptionsPopoverProps = capturedSimpleOptionsPopover.last as (Record<string, unknown> & {
+        const chipPickerPopoverProps = capturedChipPickerPopover.last as (Record<string, unknown> & {
             open?: boolean;
             anchorRef?: unknown;
         }) | null;
 
-        expect(simpleOptionsPopoverProps?.open).toBe(true);
-        expect(simpleOptionsPopoverProps?.anchorRef).toStrictEqual(chip.props.ref);
+        expect(chipPickerPopoverProps?.open).toBe(true);
+        expect(chipPickerPopoverProps?.anchorRef).toStrictEqual(chip.props.ref);
     });
 
 });

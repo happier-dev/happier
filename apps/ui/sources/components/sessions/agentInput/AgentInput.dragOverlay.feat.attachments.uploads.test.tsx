@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -115,17 +115,16 @@ describe('AgentInput (attachments drag overlay)', () => {
 
         lastMultiTextInputProps = null;
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(AgentInput, {
-                    value: '',
-                    placeholder: 'placeholder',
-                    onChangeText: () => { },
-                    onSend: () => { },
-                    autocompletePrefixes: [],
-                    autocompleteSuggestions: async () => [],
-                    onAttachmentsAdded: () => { },
-                    hasSendableAttachments: false,
-                }))).tree;
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: '',
+            placeholder: 'placeholder',
+            onChangeText: () => { },
+            onSend: () => { },
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            onAttachmentsAdded: () => { },
+            hasSendableAttachments: false,
+        }));
 
         expect(lastMultiTextInputProps).not.toBeNull();
 
@@ -133,7 +132,10 @@ describe('AgentInput (attachments drag overlay)', () => {
             lastMultiTextInputProps?.onFileDragActiveChange?.(true);
         });
 
-        const overlay = tree!.root.findByProps({ testID: 'agent-input-drop-overlay' });
+        const overlay = screen.findByTestId('agent-input-drop-overlay');
+        if (!overlay) {
+            throw new Error('expected agent-input-drop-overlay to render');
+        }
         expect(overlay.props.pointerEvents).toBe('none');
         expect(overlay.props.style.backgroundColor).toBe('rgba(0, 0, 0, 0.45)');
     }, 120_000);

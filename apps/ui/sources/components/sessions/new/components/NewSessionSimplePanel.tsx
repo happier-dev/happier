@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ViewStyle } from 'react-native';
-import { Platform, View } from 'react-native';
+import { Platform, View, useWindowDimensions } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
@@ -11,6 +11,8 @@ import { Text } from '@/components/ui/text/Text';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import type { CreatedSessionFollowUpContext } from '../hooks/useCreateNewSession';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
+
+const MOBILE_WEB_BOTTOM_ANCHORED_WIDTH = 520;
 
 export type NewSessionSimplePanelProps = Readonly<{
     popoverBoundaryRef: React.RefObject<View>;
@@ -71,6 +73,10 @@ export type NewSessionSimplePanelProps = Readonly<{
 }>;
 
 export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.ReactElement {
+    const { width: windowWidth } = useWindowDimensions();
+    const shouldBottomAnchor =
+        Platform.OS !== 'web' || windowWidth < MOBILE_WEB_BOTTOM_ANCHORED_WIDTH;
+
     const {
         attachmentsUploadsEnabled,
         filePickerRef,
@@ -96,16 +102,16 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
             keyboardVerticalOffset={Platform.OS === 'ios' ? props.headerHeight + props.safeAreaBottom + 16 : 0}
             style={[
                 props.containerStyle,
-                ...(Platform.OS === 'web'
+                ...(shouldBottomAnchor
                     ? [
                         {
-                            justifyContent: 'center' as const,
+                            justifyContent: 'flex-end' as const,
                             paddingTop: 0,
                         },
                     ]
                     : [
                         {
-                            justifyContent: 'flex-end' as const,
+                            justifyContent: 'center' as const,
                             paddingTop: 0,
                         },
                     ]),
@@ -116,9 +122,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                 style={{
                     flex: 1,
                     width: '100%',
-                    // Keep the content centered on web. Without this, the boundary wrapper (flex:1)
-                    // can cause the inner content to stick to the top even when the modal is centered.
-                    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+                    justifyContent: shouldBottomAnchor ? 'flex-end' : 'center',
                 }}
             >
                 <PopoverPortalTargetProvider>
@@ -128,7 +132,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                                 width: '100%',
                                 alignSelf: 'center',
                                 paddingTop: props.safeAreaTop + props.newSessionTopPadding,
-                                ...(Platform.OS !== 'web' ? { marginTop: 'auto' } : {}),
+                                ...(shouldBottomAnchor ? { marginTop: 'auto' } : {}),
                             }}
                         >
                             {/* AgentInput with inline chips - sticky at bottom */}

@@ -7,20 +7,17 @@ import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { renderScreen } from '@/dev/testkit';
 
-
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: createPassThroughComponent('View'),
-                            Platform: {
-                                OS: 'ios',
-                                select: <T,>(values: { ios?: T; default?: T }) => values.ios ?? values.default,
-                            },
-                        }
-    );
+    return createReactNativeWebMock({
+        View: createPassThroughComponent('View'),
+        Platform: {
+            OS: 'ios',
+            select: <T,>(values: { ios?: T; default?: T }) => values.ios ?? values.default,
+        },
+    });
 });
 
 vi.mock('react-native-unistyles', async () => await createUnistylesMock({
