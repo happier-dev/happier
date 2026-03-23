@@ -1,26 +1,23 @@
-import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installSessionActionsCommonModuleMocks,
+    resetSessionActionsCommonModuleMockState,
+} from './sessionActionsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+installSessionActionsCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: (key: string) => {
+                if (key === 'embeddedTerminalDockLocation') return 'bottom';
+                return null;
+            },
+        });
+    },
 });
 
 const openBottomSpy = vi.fn();
@@ -65,22 +62,20 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: (key: string) => {
-        if (key === 'embeddedTerminalDockLocation') return 'bottom';
-        return null;
-    },
-});
-});
-
 describe('SessionHeaderTerminalButton', () => {
-    it('opens terminal in the bottom pane when docked to bottom', async () => {
+    beforeEach(() => {
+        resetSessionActionsCommonModuleMockState();
         openBottomSpy.mockClear();
         closeBottomSpy.mockClear();
         setBottomTabSpy.mockClear();
+        openRightSpy.mockClear();
+        closeRightSpy.mockClear();
+        setRightTabSpy.mockClear();
+        pane.scopeState.bottom.isOpen = false;
+        pane.scopeState.bottom.activeTabId = null;
+    });
 
+    it('opens terminal in the bottom pane when docked to bottom', async () => {
         const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
 
         const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />);
@@ -94,9 +89,6 @@ describe('SessionHeaderTerminalButton', () => {
     });
 
     it('closes the bottom pane when terminal is already open there', async () => {
-        openBottomSpy.mockClear();
-        closeBottomSpy.mockClear();
-
         pane.scopeState.bottom.isOpen = true;
         pane.scopeState.bottom.activeTabId = 'terminal';
 

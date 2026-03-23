@@ -3,6 +3,10 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
 import { changeTextTestInstance, findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import {
+    installSessionActionsCommonModuleMocks,
+    resetSessionActionsCommonModuleMockState,
+} from './sessionActionsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -13,57 +17,65 @@ const updateSessionActionDraftInput = vi.fn();
 const setSessionActionDraftStatus = vi.fn();
 const deleteSessionActionDraft = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    Text: 'Text',
-                    Pressable: 'Pressable',
-                    TextInput: 'TextInput',
-                    Platform: {
-                        OS: 'web',
-                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null,
-                    },
-                    AppState: {
-                        addEventListener: () => ({ remove: () => {} }),
-                    },
-                    Dimensions: {
-                        get: () => ({ width: 1200, height: 800 }),
-                    },
-                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-      colors: {
-        surface: '#111',
-        text: '#eee',
-        textSecondary: '#aaa',
-        divider: '#333',
-        status: { error: '#f00' },
-        button: { primary: { background: '#0a0', tint: '#000' } },
-      },
+installSessionActionsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            TextInput: 'TextInput',
+            Platform: {
+                OS: 'web',
+                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            Dimensions: {
+                get: () => ({ width: 1200, height: 800 }),
+            },
+        });
     },
-    });
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-  Text: 'Text',
-  TextInput: 'TextInput',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, params?: any) => {
-    if (key === 'session.actionsDraft.validation.requiredField') {
-      return `${String(params?.field ?? 'Field')} is required.`;
-    }
-    return key;
-  } });
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: any) => {
+                if (key === 'session.actionsDraft.validation.requiredField') {
+                    return `${String(params?.field ?? 'Field')} is required.`;
+                }
+                return key;
+            },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#111',
+                    text: '#eee',
+                    textSecondary: '#aaa',
+                    divider: '#333',
+                    status: { error: '#f00' },
+                    button: { primary: { background: '#0a0', tint: '#000' } },
+                },
+            },
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSession: () => ({ id: 's1', metadata: {} }),
+            storage: {
+                getState: () => ({
+                    updateSessionActionDraftInput,
+                    setSessionActionDraftStatus,
+                    deleteSessionActionDraft,
+                }),
+            },
+        });
+    },
 });
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
@@ -97,22 +109,9 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   }),
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSession: () => ({ id: 's1', metadata: {} }),
-    storage: {
-    getState: () => ({
-      updateSessionActionDraftInput,
-      setSessionActionDraftStatus,
-      deleteSessionActionDraft,
-    }),
-  },
-});
-});
-
 describe('SessionActionDraftCard', () => {
   beforeEach(() => {
+    resetSessionActionsCommonModuleMockState();
     vi.resetModules();
     executeSpy.mockClear();
     updateSessionActionDraftInput.mockClear();

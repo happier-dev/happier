@@ -1,66 +1,32 @@
-import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     findTestInstanceByTypeContainingText,
     findTestInstanceByTypeWithProps,
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import {
+    installSessionActionsCommonModuleMocks,
+    resetSessionActionsCommonModuleMockState,
+} from './sessionActionsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-                }
-    );
+installSessionActionsCommonModuleMocks({
+    text: () =>
+        createTextModuleMock({
+            translate: (key: string, values?: Record<string, unknown>) =>
+                key === 'session.openSubagents' && values && typeof values.count === 'number'
+                    ? `session.openSubagents:${values.count}`
+                    : key,
+        }),
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@/components/ui/icons/DependabotIcon', () => ({
     DependabotIcon: 'DependabotIcon',
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                header: { tint: '#000' },
-                text: '#000',
-                textSecondary: '#666',
-                accent: {
-                    blue: '#007AFF',
-                    green: '#34C759',
-                    orange: '#FF9500',
-                    yellow: '#FFCC00',
-                    red: '#FF3B30',
-                    indigo: '#5856D6',
-                    purple: '#AF52DE',
-                },
-            },
-        },
-    });
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, values?: Record<string, unknown>) =>
-        key === 'session.openSubagents' && values && typeof values.count === 'number'
-            ? `session.openSubagents:${values.count}`
-            : key });
-});
 
 const openRightSpy = vi.fn();
 const setRightTabSpy = vi.fn();
@@ -91,10 +57,13 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 }));
 
 describe('SessionHeaderSubagentsButton', () => {
-    it('opens the right panel on the agents tab when pressed', async () => {
+    beforeEach(() => {
+        resetSessionActionsCommonModuleMockState();
         openRightSpy.mockClear();
         setRightTabSpy.mockClear();
+    });
 
+    it('opens the right panel on the agents tab when pressed', async () => {
         const modulePromise = import('./SessionHeaderSubagentsButton');
         await expect(modulePromise).resolves.toHaveProperty('SessionHeaderSubagentsButton');
         const { SessionHeaderSubagentsButton } = await modulePromise;

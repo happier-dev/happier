@@ -2,6 +2,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import {
+  installSessionActionsCommonModuleMocks,
+  resetSessionActionsCommonModuleMockState,
+} from './sessionActionsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -38,6 +42,54 @@ const storageState = vi.hoisted(() => ({
   },
 }));
 
+installSessionActionsCommonModuleMocks({
+  reactNative: async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+      Pressable: (props: any) =>
+        React.createElement(
+          'Pressable',
+          props,
+          typeof props.children === 'function' ? props.children({ pressed: false }) : props.children,
+        ),
+      View: (props: any) => React.createElement('View', props, props.children),
+      Platform: {
+        OS: 'web',
+      },
+      AppState: {
+        currentState: 'active',
+        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+      },
+    });
+  },
+  storage: async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+      storage: {
+        getState: () => storageState.current,
+        subscribe: () => () => {},
+      },
+      useSettings: () => storageState.current.settings,
+      useSetting: (key: string) => {
+        if (key === 'actionsSettingsV1') return actionsSettingsState.current;
+        if (key === 'sessionReplayEnabled') return true;
+        if (key === 'voice') return voiceSettingState.current;
+        return null;
+      },
+    });
+  },
+  unistyles: async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+      theme: {
+        colors: {
+          header: { tint: '#fff' },
+        },
+      },
+    });
+  },
+});
+
 vi.mock('react', async () => {
   const actual = await vi.importActual<typeof import('react')>('react');
   return {
@@ -46,27 +98,6 @@ vi.mock('react', async () => {
     useState: actual.useState,
   };
 });
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Pressable: (props: any) => React.createElement('Pressable', props, typeof props.children === 'function' ? props.children({ pressed: false }) : props.children),
-                                    View: (props: any) => React.createElement('View', props, props.children),
-                                    Platform: {
-                                        OS: 'web',
-                                    },
-                                    AppState: {
-                                        currentState: 'active',
-                                        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                                    },
-                                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
-}));
 
 vi.mock('@happier-dev/protocol', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
@@ -89,44 +120,6 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => {
       },
     ],
   };
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-        colors: {
-          header: { tint: '#fff' },
-        },
-      },
-    });
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: {
-    push: vi.fn(),
-  },
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-    getState: () => storageState.current,
-    subscribe: () => () => {},
-  },
-    useSettings: () => storageState.current.settings,
-    useSetting: (key: string) => {
-    if (key === 'actionsSettingsV1') return actionsSettingsState.current;
-    if (key === 'sessionReplayEnabled') return true;
-    if (key === 'voice') return voiceSettingState.current;
-    return null;
-  },
-});
 });
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
@@ -153,21 +146,11 @@ vi.mock('@/sync/domains/actions/buildActionDraftInput', () => ({
   buildActionDraftInput: buildActionDraftInputMock,
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
 vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (promise: Promise<unknown>, _opts?: unknown) => {
     fireAndForgetMock(promise);
   },
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: (...args: unknown[]) => createDefaultActionExecutorMock(...args),
@@ -215,6 +198,7 @@ vi.mock('@/voice/agent/teleportVoiceAgentToSessionRoot', () => ({
 
 describe('SessionHeaderActionMenu handoff', () => {
   beforeEach(() => {
+    resetSessionActionsCommonModuleMockState();
     runSessionHandoffPickerFlowMock.mockReset();
     createDefaultActionExecutorMock.mockReset();
     resolveServerIdForSessionIdFromLocalCacheMock.mockReset();
