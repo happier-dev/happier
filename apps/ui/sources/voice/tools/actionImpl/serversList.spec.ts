@@ -1,25 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createStorageModuleStub } from '../../../dev/testkit/mocks/storage';
+import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
 const getActiveServerSnapshot = vi.fn();
 const getServerProfileById = vi.fn();
-const state: any = {
-  settings: {
-    voice: {
-      privacy: {
-        shareDeviceInventory: true,
-      },
+const state = vi.hoisted(() => ({
+    settings: {
+        voice: {
+            privacy: {
+                shareDeviceInventory: true,
+            },
+        },
     },
-  },
-  sessionListViewDataByServerId: {},
+    sessionListViewDataByServerId: {},
+})) as {
+    settings: {
+        voice: {
+            privacy: {
+                shareDeviceInventory: boolean;
+            };
+        };
+    };
+    sessionListViewDataByServerId: Record<string, unknown[]>;
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-            getState: () => state,
-        } as typeof import('@/sync/domains/state/storage').storage,
-});
+installVoiceToolActionImplCommonModuleMocks({
+    storage: async () => {
+        return createStorageModuleStub({
+            storage: {
+                getState: () => state,
+            } as typeof import('@/sync/domains/state/storage').storage,
+        });
+    },
 });
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({

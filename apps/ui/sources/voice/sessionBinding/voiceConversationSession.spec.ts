@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { flushHookEffects } from '@/dev/testkit';
+
 type TestState = {
   settings: any;
   machines: Record<string, any>;
@@ -247,7 +249,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
 
       const pending = ensureVoiceConversationSessionForVoiceHome();
-      await vi.runAllTimersAsync();
+      await flushHookEffects({ runAllTimers: true, cycles: 1, turns: 0 });
 
       await expect(pending).resolves.toBe('late-session');
       expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('late-session', { forceRefresh: true });

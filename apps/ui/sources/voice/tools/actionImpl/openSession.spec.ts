@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
 const setActiveServerAndSwitch = vi.fn(async (_params: any) => true);
 const routerNavigate = vi.fn();
@@ -63,13 +64,23 @@ const state: any = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installVoiceToolActionImplCommonModuleMocks({
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-            getState: () => state,
-        } as typeof import('@/sync/domains/state/storage').storage,
-});
+      storage: {
+        getState: () => state,
+      } as typeof import('@/sync/domains/state/storage').storage,
+    });
+  },
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+      router: {
+        navigate: (path: any, options: any) => routerNavigate(path, options),
+      },
+    }).module;
+  },
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -89,16 +100,6 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 vi.mock('./sessionTargets', () => ({
   setPrimaryActionSessionId: (params: any) => setPrimaryActionSessionForVoiceTool(params),
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: {
-    navigate: (path: any, options: any) => routerNavigate(path, options),
-  },
-    });
-    return expoRouterMock.module;
-});
 
 describe('openSessionForVoiceTool', () => {
   beforeEach(() => {

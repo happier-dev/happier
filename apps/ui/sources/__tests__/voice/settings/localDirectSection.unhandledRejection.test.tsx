@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit';
+import { createExpoVectorIconsMock } from '@/dev/testkit/mocks/icons';
 
 type PlatformSelectOptions<T> = {
     web?: T;
@@ -28,9 +29,7 @@ vi.mock('react-native', async () => {
     );
 });
 
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
-}));
+vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -79,7 +78,6 @@ describe('LocalDirectSection', () => {
     process.on('unhandledRejection', unhandledSpy);
 
     modalPrompt.mockRejectedValueOnce(new Error('boom'));
-
     const { LocalDirectSection } = await import('@/voice/settings/panels/LocalDirectSection');
 
     try {

@@ -2,6 +2,7 @@ import React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { installLocalTtsCommonModuleMocks } from './localTtsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,15 +11,15 @@ const modalAlertSpy = vi.fn();
 const prepareKokoroTtsSpy = vi.fn();
 const getModelPackInstallSummarySpy = vi.fn();
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: vi.fn(),
-            confirm: vi.fn(),
-            alert: (...args: any[]) => modalAlertSpy(...args),
-        },
-    }).module;
+installLocalTtsCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+            },
+        }).module;
+    },
 });
 
 vi.mock('@/voice/kokoro/runtime/synthesizeKokoroWav', () => ({

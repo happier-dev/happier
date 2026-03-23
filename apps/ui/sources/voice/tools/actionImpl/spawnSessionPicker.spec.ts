@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
 const modalShow = vi.fn();
 const machineSpawnNewSession = vi.fn();
@@ -13,27 +14,29 @@ const state: any = {
   },
 };
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: (cfg: any) => modalShow(cfg),
-        },
-    }).module;
+installVoiceToolActionImplCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                show: (cfg: any) => modalShow(cfg),
+            },
+        }).module;
+    },
+
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => state,
+            } as typeof import('@/sync/domains/state/storage').storage,
+        });
+    },
 });
 
 vi.mock('@/voice/pickers/VoiceSessionSpawnPickerModal', () => ({
   VoiceSessionSpawnPickerModal: () => null,
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-            getState: () => state,
-        } as typeof import('@/sync/domains/state/storage').storage,
-});
-});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a' }),

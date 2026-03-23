@@ -3,33 +3,26 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installLocalTtsCommonModuleMocks } from '../../localTtsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
+const promptSpy = vi.fn();
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-const promptSpy = vi.fn();
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: (...args: any[]) => promptSpy(...args),
-            alert: vi.fn(),
-        },
-    }).module;
+installLocalTtsCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: (...args: any[]) => promptSpy(...args),
+            },
+        }).module;
+    },
 });
 
 vi.mock('@/sync/sync', () => ({

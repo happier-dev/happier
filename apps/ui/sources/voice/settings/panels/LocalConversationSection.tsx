@@ -131,10 +131,10 @@ export function LocalConversationSection(props: {
       iconColor: theme.colors.textSecondary,
       probe: {
         phase: preflightModels.probe.phase,
-        onRefresh: preflightModels.probe.refresh,
+        onRefresh: preflightModels.probe.onRefresh,
       },
     });
-  }, [preflightModels.modelOptions, preflightModels.probe.phase, preflightModels.probe.refresh, selectedAgentIdForModelOptions, theme.colors.textSecondary]);
+  }, [preflightModels.modelOptions, preflightModels.probe.onRefresh, preflightModels.probe.phase, selectedAgentIdForModelOptions, theme.colors.textSecondary]);
 
   const modelIdMenuItems = React.useMemo(() => {
     return [
@@ -902,7 +902,7 @@ export function LocalConversationSection(props: {
             items={modelIdMenuItems}
             onSelect={(id) => {
               if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
-                preflightModels.probe.refresh();
+                preflightModels.probe.onRefresh();
                 setOpenMenu(null);
                 return;
               }
@@ -995,7 +995,7 @@ export function LocalConversationSection(props: {
             items={modelIdMenuItems}
             onSelect={(id) => {
               if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
-                preflightModels.probe.refresh();
+                preflightModels.probe.onRefresh();
                 setOpenMenu(null);
                 return;
               }

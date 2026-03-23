@@ -1,5 +1,6 @@
 import { AGENT_IDS, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { buildBackendTargetKey, parseBackendTargetKey } from '@happier-dev/protocol';
+import { getAgentStaticModels } from '@happier-dev/agents';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -11,6 +12,8 @@ import {
   writeDynamicModelProbeCacheSuccess,
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
+import { parsePreflightModelListFromProbeModelsResult } from '@/sync/domains/models/parsePreflightModelListFromProbeModelsResult';
+import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -20,25 +23,6 @@ function titleCaseId(id: string): string {
   const trimmed = id.trim();
   if (!trimmed) return '';
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
-}
-
-function humanizeModelLabel(id: string): string {
-  const trimmed = id.trim();
-  if (!trimmed) return '';
-  if (trimmed === 'default') return 'Default';
-  const dottedVersions = trimmed.replace(/(\d)[-_](\d)/g, '$1.$2');
-  const words = dottedVersions
-    .replace(/[_-]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .filter((word) => word.length > 0);
-  if (words.length === 0) return trimmed;
-  return words
-    .map((word) => {
-      if (/^\d/.test(word)) return word;
-      return word.charAt(0).toUpperCase() + word.slice(1);
-    })
-    .join(' ');
 }
 
 function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
@@ -209,7 +193,10 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
     }
 
     if (cacheKey) {
-      const list = await runDynamicModelProbeDedupe(cacheKey, async () => {
+      const attempt = await runDynamicModelProbeDedupe<Readonly<{
+        list: PreflightModelList;
+        cacheable: boolean;
+      }> | null>(cacheKey, async () => {
         const res = await machineCapabilitiesInvoke(
           machineId,
           {
@@ -226,27 +213,19 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
         if (!res.supported) return null;
         if (!res.response.ok) return null;
 
-        const raw = res.response.result as any;
-        const modelsRaw = raw?.availableModels;
-        const supportsFreeformRaw = raw?.supportsFreeform;
-        if (!Array.isArray(modelsRaw) || modelsRaw.length === 0) return null;
-
-        const parsed = {
-          availableModels: modelsRaw
-            .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
-            .map((m: any) => ({
-              id: String(m.id),
-              name: String(m.name),
-              ...(typeof m.description === 'string' ? { description: m.description } : {}),
-            })),
-          supportsFreeform: Boolean(supportsFreeformRaw),
-        };
-        if (parsed.availableModels.length === 0) return null;
-        return parsed;
+        const list = parsePreflightModelListFromProbeModelsResult(res.response.result);
+        if (!list) return null;
+        const result = res.response.result;
+        const source = result && typeof result === 'object' && !Array.isArray(result)
+          ? (typeof (result as Record<string, unknown>).source === 'string' ? (result as Record<string, unknown>).source : null)
+          : null;
+        const cacheable = source !== 'static';
+        return { list, cacheable };
       });
 
       const commitNowMs = Date.now();
-      if (list) {
+      const list = attempt?.list ?? null;
+      if (list && attempt?.cacheable !== false) {
         writeDynamicModelProbeCacheSuccess(cacheKey, list, commitNowMs);
         const dynamic = list.availableModels.map((m) => ({
           modelId: String(m.id),
@@ -254,6 +233,32 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
           ...(typeof m.description === 'string' ? { description: m.description } : {}),
         }));
 
+        const withDefault = [{ modelId: 'default', label: 'Default' }, ...dynamic.filter((m) => m.modelId !== 'default')];
+        const seen = new Set<string>();
+        const items = withDefault.filter((m) => {
+          const id = String(m.modelId ?? '').trim();
+          if (!id) return false;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+
+        return {
+          agentId,
+          machineId,
+          items: limit ? items.slice(0, limit) : items,
+          supportsFreeform: list.supportsFreeform === true,
+          source: 'preflight' as const,
+        };
+      }
+
+      if (list && attempt?.cacheable === false && !cached) {
+        writeDynamicModelProbeCacheError(cacheKey, commitNowMs);
+        const dynamic = list.availableModels.map((m) => ({
+          modelId: String(m.id),
+          label: String(m.name),
+          ...(typeof m.description === 'string' ? { description: m.description } : {}),
+        }));
         const withDefault = [{ modelId: 'default', label: 'Default' }, ...dynamic.filter((m) => m.modelId !== 'default')];
         const seen = new Set<string>();
         const items = withDefault.filter((m) => {
@@ -303,15 +308,21 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
     }
   }
 
-  const allowed = ['default', ...core.model.allowedModes].map((m) => String(m));
   const seen = new Set<string>();
-  const items = allowed.filter((m) => {
-    const id = m.trim();
+  const items = [
+    { modelId: 'default', label: 'Default' },
+    ...getAgentStaticModels(agentId).map((model) => ({
+      modelId: String(model.id),
+      label: String(model.name),
+      ...(typeof model.description === 'string' ? { description: model.description } : {}),
+    })),
+  ].filter((item) => {
+    const id = String(item.modelId ?? '').trim();
     if (!id) return false;
     if (seen.has(id)) return false;
     seen.add(id);
     return true;
-  }).map((modelId) => ({ modelId, label: humanizeModelLabel(modelId) }));
+  });
 
   return {
     agentId,

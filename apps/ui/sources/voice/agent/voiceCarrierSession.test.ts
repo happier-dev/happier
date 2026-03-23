@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { flushHookEffects } from '@/dev/testkit';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 const spawnSession = vi.fn();
@@ -349,7 +350,7 @@ describe('voiceConversationSession', () => {
       });
 
       await expect(ensureVoiceConversationSessionId()).resolves.toBe('sys_voice');
-      await vi.advanceTimersByTimeAsync(5_100);
+      await flushHookEffects({ cycles: 1, advanceTimersMs: 5_100 });
       expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
         machineId: 'm_other',
         directory: '/tmp/other/voice-agent',

@@ -17,27 +17,33 @@ import {
 let localVoiceEngine: typeof import('./localVoiceEngine');
 
 async function waitForAudioPlayer() {
-    for (let i = 0; i < 10_000; i++) {
-        if (createdAudioPlayers.length > 0) return;
-        await Promise.resolve();
-    }
-    throw new Error('Timed out waiting for TTS audio player');
+    await vi.waitFor(() => {
+        expect(createdAudioPlayers.length).toBeGreaterThan(0);
+    });
 }
 
 async function waitForVoiceStatus(getStatus: () => string, expectedStatus: string) {
-    for (let i = 0; i < 10_000; i++) {
-        if (getStatus() === expectedStatus) return;
-        await Promise.resolve();
-    }
-    throw new Error(`Timed out waiting for voice status: ${expectedStatus}`);
+    await vi.waitFor(() => {
+        expect(getStatus()).toBe(expectedStatus);
+    });
 }
 
 async function waitForDeleteAsyncCall() {
-    for (let i = 0; i < 10_000; i++) {
-        if (deleteAsync.mock.calls.length > 0) return;
-        await Promise.resolve();
-    }
-    throw new Error('Timed out waiting for native TTS temp-file cleanup');
+    await vi.waitFor(() => {
+        expect(deleteAsync.mock.calls.length).toBeGreaterThan(0);
+    });
+}
+
+async function expectPromiseToStayPending(promise: Promise<unknown>) {
+    await vi.waitFor(async () => {
+        const settled = await Promise.race([
+            promise.then(() => true),
+            new Promise<boolean>((resolve) => {
+                setTimeout(() => resolve(false), 0);
+            }),
+        ]);
+        expect(settled).toBe(false);
+    });
 }
 
 describe('local voice engine TTS behavior', () => {
@@ -158,11 +164,7 @@ describe('local voice engine TTS behavior', () => {
         const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
 
-        let resolved = false;
         const stopPromise = toggleLocalVoiceTurn('s1');
-        stopPromise.then(() => {
-            resolved = true;
-        });
 
         // Wait for speech to start.
         await waitForVoiceStatus(() => getLocalVoiceState().status, 'speaking');
@@ -170,8 +172,7 @@ describe('local voice engine TTS behavior', () => {
         expect(expoSpeechSpeak).toHaveBeenCalled();
 
         // Should not resolve until onDone fires.
-        for (let i = 0; i < 10; i++) await Promise.resolve();
-        expect(resolved).toBe(false);
+        await expectPromiseToStayPending(stopPromise);
 
         if (!onDoneRef.current) {
             throw new Error('Expected Expo Speech onDone callback');
@@ -378,20 +379,13 @@ describe('local voice engine TTS behavior', () => {
         const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
 
-        let resolved = false;
         const stopPromise = toggleLocalVoiceTurn('s1');
-        stopPromise.then(() => {
-            resolved = true;
-        });
 
         await waitForAudioPlayer();
         expect(createdAudioPlayers.length).toBeGreaterThan(0);
         expect(getLocalVoiceState().status).toBe('speaking');
 
-        for (let i = 0; i < 10; i++) {
-            await Promise.resolve();
-        }
-        expect(resolved).toBe(false);
+        await expectPromiseToStayPending(stopPromise);
 
         createdAudioPlayers[0].__emit('playbackStatusUpdate', { didJustFinish: true });
         await stopPromise;

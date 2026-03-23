@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
 const voiceTargetState = {
     primaryActionSessionId: null as string | null,
@@ -38,13 +39,15 @@ const state: any = {
     getProjectForSession: () => null,
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-            getState: () => state,
-        } as typeof import('@/sync/domains/state/storage').storage,
-});
+installVoiceToolActionImplCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => state,
+            } as typeof import('@/sync/domains/state/storage').storage,
+        });
+    },
 });
 
 vi.mock('@/voice/runtime/voiceTargetStore', () => ({

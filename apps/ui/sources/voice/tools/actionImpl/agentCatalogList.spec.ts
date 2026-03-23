@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
-import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
+import {
+  readDynamicModelProbeCache,
+  resetDynamicModelProbeCacheForTests,
+} from '@/sync/domains/models/dynamicModelProbeCache';
+import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 
 const machineCapabilitiesInvoke = vi.fn();
 
@@ -113,15 +117,15 @@ describe('agent catalog voice tools', () => {
     expect(models?.items).toHaveLength(2);
   });
 
-  it('humanizes static model labels instead of returning raw mode ids', async () => {
+  it('uses curated static model labels instead of returning raw mode ids', async () => {
     const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
 
     const models: any = await listAgentModelsForVoiceTool({ agentId: 'claude', limit: 3 });
 
     expect(models?.items?.map((item: any) => item.label)).toEqual([
       'Default',
-      'Claude Opus 4.6',
-      'Claude Sonnet 4.6',
+      'Opus 4.6',
+      'Sonnet 4.6',
     ]);
   });
 
@@ -133,7 +137,21 @@ describe('agent catalog voice tools', () => {
         result: {
           availableModels: [
             { id: 'default', name: 'Default' },
-            { id: 'claude-opus', name: 'Claude Opus', description: 'Opus' },
+            {
+              id: 'claude-opus',
+              name: 'Claude Opus',
+              description: 'Opus',
+              modelOptions: [{
+                id: 'reasoning_effort',
+                name: 'Thinking',
+                type: 'select',
+                currentValue: 'medium',
+                options: [
+                  { value: 'low', name: 'Low' },
+                  { value: 'medium', name: 'Medium' },
+                ],
+              }],
+            },
           ],
           supportsFreeform: true,
         },
@@ -146,6 +164,34 @@ describe('agent catalog voice tools', () => {
     expect(res?.items?.map((m: any) => m.modelId)).toEqual(['default', 'claude-opus']);
     expect(res.supportsFreeform).toBe(true);
     expect(res.source).toBe('preflight');
+
+    const cacheKey = buildDynamicModelProbeCacheKey({
+      machineId: 'm1',
+      targetKey: buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' }),
+      serverId: 'server-a',
+      cwd: null,
+    });
+    expect(cacheKey).toBeTruthy();
+    const cacheEntry = cacheKey ? readDynamicModelProbeCache(cacheKey) : null;
+    expect(cacheEntry?.kind).toBe('success');
+    expect(cacheEntry?.kind === 'success' ? cacheEntry.value.availableModels : []).toEqual([
+      { id: 'default', name: 'Default' },
+      {
+        id: 'claude-opus',
+        name: 'Claude Opus',
+        description: 'Opus',
+        modelOptions: [{
+          id: 'reasoning_effort',
+          name: 'Thinking',
+          type: 'select',
+          currentValue: 'medium',
+          options: [
+            { value: 'low', name: 'Low' },
+            { value: 'medium', name: 'Medium' },
+          ],
+        }],
+      },
+    ]);
   });
 
   it('caches dynamic model probes per machine/agent so repeated calls do not re-invoke the probe', async () => {

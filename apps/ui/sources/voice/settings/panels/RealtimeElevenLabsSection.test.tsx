@@ -12,12 +12,12 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            Linking: {
-                canOpenURL: async () => true,
-                openURL: async () => {},
-            },
-            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        }
+                    Linking: {
+                        canOpenURL: async () => true,
+                        openURL: async () => {},
+                    },
+                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                }
     );
 });
 
