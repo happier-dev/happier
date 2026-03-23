@@ -227,6 +227,29 @@ describe('NewSessionEngineOptionDetail', () => {
         expect(lastModelPickerOverlayProps.canEnterCustomValue).toBe(true);
     });
 
+    it('adds a description to the CLI settings option when other models include descriptions', async () => {
+        modelOptionsState.value = [
+            { value: 'default', label: 'Use CLI settings', description: '' },
+            { value: 'model-1', label: 'Model 1', description: 'A described model' },
+        ];
+
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+        />);
+
+        const defaultOption = (lastModelPickerOverlayProps?.options ?? []).find((o: any) => o.value === 'default');
+        expect(defaultOption).toBeTruthy();
+        expect(typeof defaultOption.description).toBe('string');
+        expect(String(defaultOption.description).trim().length).toBeGreaterThan(0);
+    });
+
     it('still renders the model section when only custom model entry is available', async () => {
         modelOptionsState.value = [];
         preflightModelsState.value = {

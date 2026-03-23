@@ -1,11 +1,11 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 
@@ -165,9 +165,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('shows a daemon-unavailable alert with a Retry action', async () => {
     const { useCreateNewSession, modalAlertSpy } = await setupHarness();
 
-    let handleCreateSession: () => Promise<void> = async () => {
-      throw new Error('expected handleCreateSession to be set');
-    };
     const setIsCreating = vi.fn();
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
@@ -178,8 +175,8 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       refresh: () => {},
     };
 
-    function Test() {
-      const hook = useCreateNewSession({
+    const hook = await renderHook(() =>
+      useCreateNewSession({
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -205,19 +202,15 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         selectedMachineCapabilities: {},
         targetServerId: null,
         allowedTargetServerIds: undefined,
-      });
-      handleCreateSession = hook.handleCreateSession as any;
-      return null;
-    }
+      }),
+    );
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(Test))).tree;
-
+    let createPromise: Promise<void> | void | null = null;
     await act(async () => {
-      const p = handleCreateSession();
-      await vi.runAllTimersAsync();
-      await p;
+      createPromise = hook.getCurrent().handleCreateSession();
     });
+    await flushHookEffects({ runAllTimers: true });
+    await createPromise;
 
     expect(modalAlertSpy).toHaveBeenCalled();
     const args = modalAlertSpy.mock.calls[0] ?? [];
@@ -227,15 +220,13 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(Array.isArray(args[2])).toBe(true);
     const buttons = args[2] as any[];
     expect(buttons.some((b) => b?.text === 'common.retry' && typeof b?.onPress === 'function')).toBe(true);
-    await act(async () => {
-      tree?.unmount();
-    });
+    await hook.unmount();
   });
 
   it('uses the latest selectedPath immediately after a rerender (no stale ref window)', async () => {
     const { useCreateNewSession, machineSpawnNewSessionSpy } = await setupHarness();
 
-    let createPromise: Promise<void> | null = null;
+    let createPromise: Promise<void> | void | null = null;
 
     const setIsCreating = vi.fn();
     const settings = { experiments: false } as unknown as Settings;
@@ -247,76 +238,64 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       refresh: () => {},
     };
 
-    function Test(props: { selectedPath: string; triggerCreate: boolean }) {
-      const hook = useCreateNewSession({
-        router: { push: vi.fn(), replace: vi.fn() },
-        selectedMachineId: 'm1',
-        selectedPath: props.selectedPath,
-        selectedMachine: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox' } },
-        setIsCreating,
-        setIsResumeSupportChecking: vi.fn(),
-        settings,
-        useProfiles: false,
-        selectedProfileId: null,
-        profileMap: new Map(),
-        recentMachinePaths: [],
-        agentType: 'opencode' as any,
-        permissionMode: 'default' as PermissionMode,
-        modelMode: 'default' as ModelMode,
-        sessionPrompt: '',
-        resumeSessionId: '',
-        agentNewSessionOptions: null,
-        machineEnvPresence,
-        secrets: [],
-        secretBindingsByProfileId: {},
-        selectedSecretIdByProfileIdByEnvVarName: {},
-        sessionOnlySecretValueByProfileIdByEnvVarName: {},
-        selectedMachineCapabilities: {},
-        targetServerId: null,
-        allowedTargetServerIds: undefined,
-      });
+    const hook = await renderHook(
+      ({ selectedPath, triggerCreate }: { selectedPath: string; triggerCreate: boolean }) => {
+        const createHook = useCreateNewSession({
+          router: { push: vi.fn(), replace: vi.fn() },
+          selectedMachineId: 'm1',
+          selectedPath,
+          selectedMachine: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox' } },
+          setIsCreating,
+          setIsResumeSupportChecking: vi.fn(),
+          settings,
+          useProfiles: false,
+          selectedProfileId: null,
+          profileMap: new Map(),
+          recentMachinePaths: [],
+          agentType: 'opencode' as any,
+          permissionMode: 'default' as PermissionMode,
+          modelMode: 'default' as ModelMode,
+          sessionPrompt: '',
+          resumeSessionId: '',
+          agentNewSessionOptions: null,
+          machineEnvPresence,
+          secrets: [],
+          secretBindingsByProfileId: {},
+          selectedSecretIdByProfileIdByEnvVarName: {},
+          sessionOnlySecretValueByProfileIdByEnvVarName: {},
+          selectedMachineCapabilities: {},
+          targetServerId: null,
+          allowedTargetServerIds: undefined,
+        });
 
-      // Simulate the user clicking "Start New Session" immediately after the path
-      // rerender commits, before passive effects flush.
-      React.useLayoutEffect(() => {
-        if (!props.triggerCreate) return;
-        createPromise = (hook.handleCreateSession as any)();
-      }, [props.triggerCreate, hook.handleCreateSession]);
+        // Simulate the user clicking "Start New Session" immediately after the path
+        // rerender commits, before passive effects flush.
+        React.useLayoutEffect(() => {
+          if (!triggerCreate) return;
+          createPromise = createHook.handleCreateSession();
+        }, [triggerCreate, createHook.handleCreateSession]);
 
-      return null;
-    }
+        return createHook;
+      },
+      { initialProps: { selectedPath: '', triggerCreate: false } },
+    );
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Test, { selectedPath: '', triggerCreate: false }));
-    });
+    await hook.rerender({ selectedPath: '/tmp', triggerCreate: true });
 
-    await act(async () => {
-      tree!.update(React.createElement(Test, { selectedPath: '/tmp', triggerCreate: true }));
-    });
-
-    await act(async () => {
-      const p = createPromise;
-      if (!p) throw new Error('expected createPromise to be assigned');
-      await vi.runAllTimersAsync();
-      await p;
-    });
+    if (!createPromise) throw new Error('expected createPromise to be assigned');
+    await flushHookEffects({ runAllTimers: true });
+    await createPromise;
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     const arg = machineSpawnNewSessionSpy.mock.calls[0]?.[0] as any;
     expect(arg?.directory).toBe('/tmp');
 
-    await act(async () => {
-      tree?.unmount();
-    });
+    await hook.unmount();
   });
 
   it('does not retry after unmount when the alert Retry action is pressed', async () => {
     const { useCreateNewSession, modalAlertSpy, machineSpawnNewSessionSpy } = await setupHarness();
 
-    let handleCreateSession: () => Promise<void> = async () => {
-      throw new Error('expected handleCreateSession to be set');
-    };
     const setIsCreating = vi.fn();
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
@@ -327,8 +306,8 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       refresh: () => {},
     };
 
-    function Test() {
-      const hook = useCreateNewSession({
+    const hook = await renderHook(() =>
+      useCreateNewSession({
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -354,19 +333,13 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         selectedMachineCapabilities: {},
         targetServerId: null,
         allowedTargetServerIds: undefined,
-      });
-      handleCreateSession = hook.handleCreateSession as any;
-      return null;
-    }
-
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(Test))).tree;
+      }),
+    );
 
     await act(async () => {
-      const p = handleCreateSession();
-      await vi.runAllTimersAsync();
-      await p;
+      await hook.getCurrent().handleCreateSession();
     });
+    await flushHookEffects({ runAllTimers: true });
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     expect(modalAlertSpy).toHaveBeenCalled();
@@ -375,14 +348,12 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     const retry = buttons.find((b) => b?.text === 'common.retry');
     expect(typeof retry?.onPress).toBe('function');
 
-    await act(async () => {
-      tree?.unmount();
-    });
+    await hook.unmount();
 
     await act(async () => {
       retry.onPress();
-      await vi.runAllTimersAsync();
     });
+    await flushHookEffects({ runAllTimers: true });
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
   });
@@ -396,9 +367,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       errorMessage: 'Daemon RPC is not available',
     });
 
-    let handleCreateSession: () => Promise<void> = async () => {
-      throw new Error('expected handleCreateSession to be set');
-    };
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
       isPreviewEnvSupported: false,
@@ -408,8 +376,8 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       refresh: () => {},
     };
 
-    function Test() {
-      const hook = useCreateNewSession({
+    const hook = await renderHook(() =>
+      useCreateNewSession({
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
         selectedPath: '/tmp',
@@ -435,18 +403,13 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         selectedMachineCapabilities: {},
         targetServerId: null,
         allowedTargetServerIds: undefined,
-      });
-      handleCreateSession = hook.handleCreateSession as any;
-      return null;
-    }
-
-    await renderScreen(React.createElement(Test));
+      }),
+    );
 
     await act(async () => {
-      const p = handleCreateSession();
-      await vi.runAllTimersAsync();
-      await p;
+      await hook.getCurrent().handleCreateSession();
     });
+    await flushHookEffects({ runAllTimers: true });
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     expect(modalAlertSpy).toHaveBeenCalled();
@@ -464,7 +427,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     const { useCreateNewSession, machineSpawnNewSessionSpy } = await setupHarness();
 
-    let createPromise: Promise<void> | null = null;
+    let createPromise: Promise<void> | void | null = null;
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
       isPreviewEnvSupported: false,
@@ -474,61 +437,54 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       refresh: () => {},
     };
 
-    function Test(props: { triggerCreate: boolean }) {
-      const hook = useCreateNewSession({
-        router: { push: vi.fn(), replace: vi.fn() },
-        selectedMachineId: 'm1',
-        selectedPath: '/tmp',
-        selectedMachine: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox' } },
-        setIsCreating: vi.fn(),
-        setIsResumeSupportChecking: vi.fn(),
-        settings,
-        useProfiles: false,
-        selectedProfileId: null,
-        profileMap: new Map(),
-        recentMachinePaths: [],
-        agentType: 'opencode' as any,
-        permissionMode: 'default' as PermissionMode,
-        modelMode: 'default' as ModelMode,
-        sessionPrompt: '',
-        resumeSessionId: '',
-        agentNewSessionOptions: null,
-        machineEnvPresence,
-        secrets: [],
-        secretBindingsByProfileId: {},
-        selectedSecretIdByProfileIdByEnvVarName: {},
-        sessionOnlySecretValueByProfileIdByEnvVarName: {},
-        selectedMachineCapabilities: {},
-        targetServerId: null,
-        allowedTargetServerIds: undefined,
-      });
+    const hook = await renderHook(
+      ({ triggerCreate }: { triggerCreate: boolean }) => {
+        const createHook = useCreateNewSession({
+          router: { push: vi.fn(), replace: vi.fn() },
+          selectedMachineId: 'm1',
+          selectedPath: '/tmp',
+          selectedMachine: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox' } },
+          setIsCreating: vi.fn(),
+          setIsResumeSupportChecking: vi.fn(),
+          settings,
+          useProfiles: false,
+          selectedProfileId: null,
+          profileMap: new Map(),
+          recentMachinePaths: [],
+          agentType: 'opencode' as any,
+          permissionMode: 'default' as PermissionMode,
+          modelMode: 'default' as ModelMode,
+          sessionPrompt: '',
+          resumeSessionId: '',
+          agentNewSessionOptions: null,
+          machineEnvPresence,
+          secrets: [],
+          secretBindingsByProfileId: {},
+          selectedSecretIdByProfileIdByEnvVarName: {},
+          sessionOnlySecretValueByProfileIdByEnvVarName: {},
+          selectedMachineCapabilities: {},
+          targetServerId: null,
+          allowedTargetServerIds: undefined,
+        });
 
-      React.useLayoutEffect(() => {
-        if (!props.triggerCreate) return;
-        createPromise = (hook.handleCreateSession as any)();
-      }, [props.triggerCreate, hook.handleCreateSession]);
+        React.useLayoutEffect(() => {
+          if (!triggerCreate) return;
+          createPromise = createHook.handleCreateSession();
+        }, [triggerCreate, createHook.handleCreateSession]);
 
-      return null;
-    }
+        return createHook;
+      },
+      { initialProps: { triggerCreate: true } },
+    );
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Test, { triggerCreate: true }));
-    });
-
-    await act(async () => {
-      const p = createPromise;
-      if (!p) throw new Error('expected createPromise to be assigned');
-      await vi.runAllTimersAsync();
-      await p;
-    });
+    if (!createPromise) throw new Error('expected createPromise to be assigned');
+    await flushHookEffects({ runAllTimers: true });
+    await createPromise;
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     const arg = machineSpawnNewSessionSpy.mock.calls[0]?.[0] as any;
     expect(arg?.directory).toBe('/tmp');
 
-    await act(async () => {
-      tree?.unmount();
-    });
+    await hook.unmount();
   });
 });

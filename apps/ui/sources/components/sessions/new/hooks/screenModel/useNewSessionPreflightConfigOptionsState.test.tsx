@@ -90,4 +90,46 @@ describe('useNewSessionPreflightConfigOptionsState', () => {
             params: expect.objectContaining({ runtimeKindOverride: 'appServer' }),
         });
     });
+
+    it('does not re-probe when probeContext identity changes but content is stable', async () => {
+        vi.resetModules();
+
+        // Intentionally never resolves to avoid setState loops influencing the test outcome.
+        const pending = new Promise<never>(() => undefined);
+        const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: string, _request: unknown) => pending as never);
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        const { useNewSessionPreflightConfigOptionsState } = await import('./useNewSessionPreflightConfigOptionsState');
+
+        function Harness() {
+            const [_tick, setTick] = React.useState(0);
+            React.useEffect(() => {
+                setTick(1);
+            }, []);
+
+            useNewSessionPreflightConfigOptionsState({
+                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+                // Inline object creation simulates callers that don't memoize probeContext.
+                probeContext: {
+                    cacheKeySuffixParts: ['appServer'],
+                    capabilityParams: { runtimeKindOverride: 'appServer' },
+                },
+            } as any);
+            return null;
+        }
+
+        let root!: renderer.ReactTestRenderer;
+        root = (await renderScreen(React.createElement(Harness))).tree;
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            root.unmount();
+        });
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+    });
 });

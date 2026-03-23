@@ -43,17 +43,18 @@ export default function ResumePickerScreen() {
 
     const headerTitle = t('newSession.resume.pickerTitle');
     const headerBackTitle = t('common.cancel');
+    const screenOptions = React.useMemo(() => {
+        return {
+            headerShown: true,
+            title: headerTitle,
+            headerTitle,
+            headerBackTitle,
+        };
+    }, [headerBackTitle, headerTitle]);
 
     return (
         <>
-            <Stack.Screen
-                options={{
-                    headerShown: true,
-                    title: headerTitle,
-                    headerTitle,
-                    headerBackTitle,
-                }}
-            />
+            <Stack.Screen options={screenOptions} />
             <NewSessionResumeSelectionContent
                 value={inputValue}
                 onChangeValue={setInputValue}

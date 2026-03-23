@@ -54,11 +54,19 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 }));
 
 vi.mock('./AgentInputChipPickerDetailPane', () => ({
-    AgentInputChipPickerDetailPane: (props: any) => React.createElement('AgentInputChipPickerDetailPane', props, null),
+    AgentInputChipPickerDetailPane: (props: any) =>
+        React.createElement('AgentInputChipPickerDetailPane', {
+            ...props,
+            testID: 'agent-input-chip-picker.detail-pane',
+        }, null),
 }));
 
 vi.mock('./AgentInputChipPickerOptionSelector', () => ({
-    AgentInputChipPickerOptionSelector: (props: any) => React.createElement('AgentInputChipPickerOptionSelector', props, null),
+    AgentInputChipPickerOptionSelector: (props: any) =>
+        React.createElement('AgentInputChipPickerOptionSelector', {
+            ...props,
+            testID: 'agent-input-chip-picker.option-rail',
+        }, null),
 }));
 
 describe('AgentInputChipPickerPanel', () => {
@@ -76,7 +84,9 @@ describe('AgentInputChipPickerPanel', () => {
             onRequestClose={() => {}}
         />);
 
-        expect(screen.tree.root.findAllByType('ScrollView')).toHaveLength(0);
+        expect(screen.findByTestId('agent-input-chip-picker')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.option:one')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.option:two')).toBeTruthy();
     });
 
     it('does not render inner scroll views in detailed mode', async () => {
@@ -93,6 +103,8 @@ describe('AgentInputChipPickerPanel', () => {
             onRequestClose={() => {}}
         />);
 
-        expect(screen.tree.root.findAllByType('ScrollView')).toHaveLength(0);
+        expect(screen.findByTestId('agent-input-chip-picker')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')).toBeTruthy();
     });
 });

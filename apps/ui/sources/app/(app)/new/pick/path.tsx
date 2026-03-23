@@ -122,6 +122,7 @@ export default React.memo(function PathPickerScreen() {
     const headerRight = React.useCallback(() => {
         return (
             <Pressable
+                testID="new-session-path-picker-confirm"
                 onPress={() => handleSelectPath()}
                 style={({ pressed }) => ({
                     opacity: pressed ? 0.7 : 1,

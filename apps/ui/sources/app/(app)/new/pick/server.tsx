@@ -5,6 +5,11 @@ import { Platform, useWindowDimensions } from 'react-native';
 import { NewSessionServerSelectionContent } from '@/components/sessions/new/components/NewSessionServerSelectionContent';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
+const serverPickerScreenOptions = {
+    headerShown: false,
+    presentation: Platform.OS === 'ios' ? ('containedModal' as const) : undefined,
+};
+
 export default React.memo(function ServerPickerScreen() {
     const router = useRouter();
     const navigation = useNavigation();
@@ -13,12 +18,7 @@ export default React.memo(function ServerPickerScreen() {
 
     return (
         <>
-            <Stack.Screen
-                options={{
-                    headerShown: false,
-                    presentation: Platform.OS === 'ios' ? ('containedModal' as const) : undefined,
-                }}
-            />
+            <Stack.Screen options={serverPickerScreenOptions} />
             <NewSessionServerSelectionContent
                 maxHeight={maxHeight}
                 onClose={() => safeRouterBack({ router, navigation, fallbackHref: '/new' })}

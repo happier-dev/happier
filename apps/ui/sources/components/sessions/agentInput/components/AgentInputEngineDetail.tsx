@@ -91,6 +91,26 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
       (option) => option.id === props.selectedSessionModeId,
     )?.name ?? "";
 
+  const resolvedModelOptions = React.useMemo(() => {
+    const options = props.modelOptions ?? [];
+    const shouldShowDescriptions = options.some(
+      (option) =>
+        option.value !== "default" &&
+        typeof option.description === "string" &&
+        option.description.trim().length > 0,
+    );
+
+    if (!shouldShowDescriptions) return options;
+
+    return options.map((option) => {
+      if (option.value !== "default") return option;
+      if (typeof option.description === "string" && option.description.trim().length > 0) {
+        return option;
+      }
+      return { ...option, description: t("agentInput.model.configureInCli") };
+    });
+  }, [props.modelOptions]);
+
   const sections: Record<"model" | "mode" | "config", React.ReactNode | null> =
     {
       model: hasModelSection
@@ -105,7 +125,7 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
                 t("agentInput.model.useCliSettings")
               }
               notes={props.modelNotes ?? []}
-              options={props.modelOptions ?? []}
+              options={resolvedModelOptions}
               selectedValue={props.selectedModelId ?? "default"}
               emptyText={
                 props.modelEmptyText ?? t("agentInput.model.configureInCli")

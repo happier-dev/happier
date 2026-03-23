@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 import { Platform } from 'react-native';
+import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -12,6 +13,15 @@ vi.mock('@/text', async () => {
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
+
+function assertSingleCollapsedAction(
+    action: ActionListItem | readonly ActionListItem[] | undefined,
+): asserts action is ActionListItem {
+    expect(Array.isArray(action)).toBe(false);
+    if (!action || Array.isArray(action)) {
+        throw new Error('expected a single collapsed action');
+    }
+}
 
 describe('createAttachmentActionChip', () => {
     it('on iOS it opens a chooser popover (image vs file) instead of launching a picker immediately', async () => {
@@ -104,7 +114,8 @@ describe('createAttachmentActionChip', () => {
                 dismiss,
                 blurInput,
             });
-            if (!collapsed || Array.isArray(collapsed) || typeof collapsed.onPress !== 'function') {
+            assertSingleCollapsedAction(collapsed);
+            if (typeof collapsed.onPress !== 'function') {
                 throw new Error('Expected web attach chip to expose a single collapsedAction with onPress');
             }
 
@@ -128,6 +139,47 @@ describe('createAttachmentActionChip', () => {
             expect(screen.tree.toJSON()).not.toBeNull();
             await screen.pressByTestIdAsync('agent-input-attachments-chip');
             expect(onPickFile).toHaveBeenCalled();
+        } finally {
+            (Platform as any).OS = originalOs;
+        }
+    });
+
+    it('on web it ignores duplicate attach triggers within the same tick (prevents reopening the picker)', async () => {
+        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
+        const originalOs = Platform.OS;
+        (Platform as any).OS = 'web';
+
+        try {
+            const onPickFile = vi.fn();
+            const onPickImage = vi.fn();
+            const chip = createAttachmentActionChip({
+                onPickFile,
+                onPickImage,
+            } as any);
+
+            const screen = await renderScreen(
+                <React.Fragment>
+                    {chip.render({
+                        chipStyle: () => ({}),
+                        showLabel: true,
+                        iconColor: '#000',
+                        textStyle: {},
+                        countTextStyle: {},
+                        chipAnchorRef: { current: null },
+                        popoverAnchorRef: { current: null },
+                        toggleCollapsedPopover: vi.fn(),
+                    })}
+                </React.Fragment>,
+            );
+
+            await screen.pressByTestIdAsync('agent-input-attachments-chip');
+            await screen.pressByTestIdAsync('agent-input-attachments-chip');
+            expect(onPickFile).toHaveBeenCalledTimes(1);
+
+            // Next tick should allow opening again.
+            await Promise.resolve();
+            await screen.pressByTestIdAsync('agent-input-attachments-chip');
+            expect(onPickFile).toHaveBeenCalledTimes(2);
         } finally {
             (Platform as any).OS = originalOs;
         }
