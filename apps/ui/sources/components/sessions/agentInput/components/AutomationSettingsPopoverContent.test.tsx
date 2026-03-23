@@ -28,6 +28,7 @@ vi.mock('react-native-unistyles', async () => await createUnistylesMock({
         colors: {
             groupped: { background: '#f5f5f5', sectionTitle: '#666' },
             input: { background: '#fff', placeholder: '#888' },
+            surface: '#ffffff',
             divider: '#ddd',
             text: '#111',
             textSecondary: '#666',
@@ -41,6 +42,7 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
 vi.mock('@/components/ui/lists/Item', () => createPassThroughModule(['Item']));
+vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
 vi.mock('@/components/ui/lists/ItemGroupColumns', () => createPassThroughModule(['ItemGroupColumns', 'ItemGroupColumn']));
 vi.mock('@/components/ui/forms/FieldItem', () => createPassThroughModule(['FieldItem']));
 vi.mock('@/components/ui/forms/Switch', () => createPassThroughModule(['Switch']));
@@ -50,7 +52,7 @@ vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'Tex
 vi.mock('@/text', () => createTextModuleMock());
 
 describe('AutomationSettingsPopoverContent', () => {
-    it('renders the automation settings form inside the popover instead of a toggle-only row', async () => {
+    it('renders an enable toggle header and renders details only when automation is enabled', async () => {
         const { AutomationSettingsPopoverContent } = await import('./AutomationSettingsPopoverContent');
         const screen = await renderScreen(<AutomationSettingsPopoverContent
             value={{
@@ -65,7 +67,11 @@ describe('AutomationSettingsPopoverContent', () => {
             onChange={() => {}}
         />);
 
-        const form = screen.findByProps({ variant: 'new-session', showEnabledToggle: true });
+        const enableItem = screen.findByType('Item' as any);
+        const toggle = enableItem.props.rightElement;
+        expect(toggle?.props?.value).toBe(true);
+
+        const form = screen.findByProps({ variant: 'new-session', showEnabledToggle: false });
         expect(form.props.value).toMatchObject({
             enabled: true,
             name: 'Nightly',
@@ -75,22 +81,5 @@ describe('AutomationSettingsPopoverContent', () => {
             cronExpr: '0 * * * *',
             timezone: 'UTC',
         });
-
-        const [container, contentContainer] = screen.findAllByType('View' as any);
-        expect(container).toBeDefined();
-        expect(contentContainer).toBeDefined();
-
-        const contentStyle = Array.isArray(contentContainer.props.style)
-            ? Object.assign({}, ...contentContainer.props.style.filter(Boolean))
-            : contentContainer.props.style;
-        expect(contentStyle?.paddingTop).toBe(16);
-        expect(contentStyle?.paddingBottom).toBe(16);
-
-        const containerStyle = Array.isArray(container.props.style)
-            ? Object.assign({}, ...container.props.style.filter(Boolean))
-            : container.props.style;
-        expect(containerStyle?.width).toBe('100%');
-        expect(containerStyle?.maxWidth).toBe('100%');
-        expect(containerStyle?.backgroundColor).toBeDefined();
     });
 });

@@ -2,55 +2,58 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                    OS: 'ios',
-                                    select: (v: any) => v?.ios ?? v?.default ?? v?.web ?? v?.native ?? v?.android,
-                                },
-                                }
-    );
+installAgentInputCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (v: any) => v?.ios ?? v?.default ?? v?.web ?? v?.native ?? v?.android,
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'profiles') return [];
+                if (key === 'agentInputEnterToSend') return true;
+                if (key === 'agentInputActionBarLayout') return 'wrap';
+                if (key === 'agentInputChipDensity') return 'labels';
+                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
+                return null;
+            },
+            useSettings: () => ({
+                profiles: [],
+                agentInputEnterToSend: true,
+                agentInputActionBarLayout: 'wrap',
+                agentInputChipDensity: 'labels',
+                sessionPermissionModeApplyTiming: 'immediate',
+            }),
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesVersion: () => 0,
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionMessagesReducerState: () => null,
+        });
+    },
 });
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'profiles') return [];
-        if (key === 'agentInputEnterToSend') return true;
-        if (key === 'agentInputActionBarLayout') return 'wrap';
-        if (key === 'agentInputChipDensity') return 'labels';
-        if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-        return null;
-    },
-    useSettings: () => ({
-        profiles: [],
-        agentInputEnterToSend: true,
-        agentInputActionBarLayout: 'wrap',
-        agentInputChipDensity: 'labels',
-        sessionPermissionModeApplyTiming: 'immediate',
-    }),
-    useSessionMessagesById: () => ({}),
-    useSessionMessagesVersion: () => 0,
-    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-    useSessionMessagesReducerState: () => null,
-});
-});
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
     useUserMessageHistory: () => ({ reset: () => {}, moveUp: () => {}, moveDown: () => {}, setText: () => {} }),
@@ -160,11 +163,6 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
 vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
     OptionPickerOverlay: () => null,
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 
 vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     computeSessionModePickerControl: () => null,

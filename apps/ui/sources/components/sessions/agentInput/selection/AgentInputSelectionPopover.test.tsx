@@ -58,7 +58,7 @@ describe('AgentInputSelectionPopover', () => {
         expect(capturedPopoverProps.current?.maxHeightCap).toBe(480);
         expect(capturedPopoverProps.current?.maxWidthCap).toBe(512);
         expect(capturedPopoverProps.current?.portal).toEqual({
-            web: { target: 'body' },
+            web: true,
             native: true,
             matchAnchorWidth: false,
             anchorAlign: 'start',

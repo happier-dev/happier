@@ -94,8 +94,8 @@ describe('AgentInputChipPickerPopover', () => {
             anchorRef={anchorRef}
             title="Pick"
             options={[
-                { id: 'one', label: 'One' },
-                { id: 'two', label: 'Two' },
+                { id: 'one', label: 'One', icon: React.createElement('View', { testID: 'agent-input-chip-picker.icon:one' }) } as any,
+                { id: 'two', label: 'Two', icon: React.createElement('View', { testID: 'agent-input-chip-picker.icon:two' }) } as any,
             ]}
             selectedOptionId="one"
             onSelect={onSelect}
@@ -104,6 +104,9 @@ describe('AgentInputChipPickerPopover', () => {
 
         expect(capturedSelectionPopoverProps?.anchorRef).toBe(anchorRef);
         expect(capturedSelectionPopoverProps?.maxWidthCap).toBe(720);
+
+        expect(screen.findByTestId('agent-input-chip-picker.icon:one')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.icon:two')).toBeTruthy();
 
         expect(screen.findByTestId('agent-input-chip-picker.option:two')).toBeTruthy();
         await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
@@ -126,34 +129,71 @@ describe('AgentInputChipPickerPopover', () => {
                 {
                     id: 'one',
                     label: 'Primary',
+                    icon: React.createElement('View', { testID: 'agent-input-chip-picker.icon:primary' }),
                     sectionId: 'linked',
                     sectionLabel: 'Linked',
                     detailDescription: 'Primary checkout',
-                },
+                } as any,
                 {
                     id: 'two',
                     label: 'Feature',
+                    icon: React.createElement('View', { testID: 'agent-input-chip-picker.icon:feature' }),
                     sectionId: 'linked',
                     sectionLabel: 'Linked',
                     detailDescription: 'Feature checkout',
                     onSelectImmediate: () => {
                         onSelect('two');
                     },
-                },
+                } as any,
             ]}
             selectedOptionId="one"
             onSelect={onSelect}
             onRequestClose={onRequestClose}
         />);
 
+        expect(screen.findByTestId('agent-input-chip-picker.icon:primary')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.icon:feature')).toBeTruthy();
+
         expect(screen.findByTestId('agent-input-chip-picker.option:two')).toBeTruthy();
         await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
 
         expect(onSelect).toHaveBeenCalledWith('two');
-        expect(onRequestClose).not.toHaveBeenCalled();
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
         expect(capturedPopoverSurfaceProps?.scrollEnabled).toBe(true);
 
         expect(screen.findByTestId('agent-input-chip-picker.apply')).toBeNull();
+    });
+
+    it('selects and closes when choosing a detail list option', async () => {
+        const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
+        const onSelect = vi.fn();
+        const onRequestClose = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerPopover
+            open
+            anchorRef={{ current: { nodeType: 'View' } } as any}
+            title="Pick"
+            options={[
+                {
+                    id: 'existing',
+                    label: 'Existing Worktree',
+                    detailDescription: 'Pick an existing worktree',
+                    detailSelectOptions: [
+                        { id: 'worktree:a', label: 'feature/a', subtitle: '/repo/.worktrees/feature-a' },
+                        { id: 'worktree:b', label: 'feature/b', subtitle: '/repo/.worktrees/feature-b' },
+                    ],
+                },
+            ]}
+            selectedOptionId="existing"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
+
+        expect(screen.findByTestId('agent-input-chip-picker.detailSelectOption:worktree:b')).toBeTruthy();
+        await screen.pressByTestIdAsync('agent-input-chip-picker.detailSelectOption:worktree:b');
+
+        expect(onSelect).toHaveBeenCalledWith('worktree:b');
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
     });
 
     it('does not fall back to generic selection for focus-only detailed options', async () => {

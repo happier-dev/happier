@@ -45,6 +45,7 @@ const ScrollViewWithWheel = ScrollView as unknown as React.ComponentType<
 import { Metadata } from '@/sync/domains/state/storageTypes';
 import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -1210,7 +1211,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 hapticsLight();
                 props.onModelModeChange?.(value);
             }}
-            onSubmitCustomModel={canEnterCustomModel ? submitCustomModel : undefined}
+            onSubmitCustomValue={canEnterCustomModel ? submitCustomModel : undefined}
             selectedModelOptionControls={selectedModelOptionControls}
             onSelectModelOptionValue={
                 props.onAcpConfigOptionChange
@@ -1284,6 +1285,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return [{
             id: `engine:${props.agentType}`,
             label: props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
+            icon: <AgentIcon agentId={props.agentType} size={12} />,
             renderDetailContent: () => renderResolvedEngineDetail('carded'),
         }];
     }, [

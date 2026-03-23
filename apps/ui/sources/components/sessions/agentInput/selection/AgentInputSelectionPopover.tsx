@@ -24,7 +24,11 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
             maxWidthCap={props.maxWidthCap}
             closeOnAnchorPress={false}
             portal={{
-                web: { target: 'body' },
+                // IMPORTANT:
+                // Do not force portaling to `document.body`. In Expo Router web modals, Radix focus/pointer
+                // management will block interaction with inputs rendered outside the modal subtree.
+                // Let Popover pick the best target (screen-local modal host from PopoverPortalTargetProvider).
+                web: true,
                 native: true,
                 matchAnchorWidth: false,
                 anchorAlign: 'start',

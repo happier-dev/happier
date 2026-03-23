@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -39,91 +40,9 @@ const messagesByIdRef: Record<string, any> = {
 
 const permissionRequests = [{ id: permissionId, tool: 'write_file', arguments: {} }];
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: (props: any) => React.createElement('View', props, props.children),
-                                    Text: (props: any) => React.createElement('Text', props, props.children),
-                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-                                    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, null),
-                                    Platform: {
-                                    OS: 'ios',
-                                    select: (v: any) => v.ios,
-                                },
-                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
-                                    Dimensions: {
-                                            get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-                                        },
-                                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                input: { background: '#fff' },
-                accent: { indigo: '#5856D6' },
-                box: {
-                    error: { background: '#ffecec', border: '#ffa39e', text: '#a8071a' },
-                    warning: { background: '#fff7e6', border: '#ffd591', text: '#ad6800' },
-                },
-                button: {
-                    primary: { background: '#000', tint: '#fff' },
-                    secondary: { tint: '#000', surface: '#fff' },
-                },
-                radio: { active: '#000', inactive: '#ddd' },
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                success: '#0a0',
-                warning: '#f90',
-                warningCritical: '#f00',
-                textDestructive: '#a00',
-                surfacePressed: '#eee',
-                surfacePressedOverlay: '#eee',
-                surface: '#fff',
-                shadow: { color: '#000' },
-                overlay: {
-                    scrim: 'rgba(0, 0, 0, 0.45)',
-                    scrimStrong: 'rgba(0, 0, 0, 0.6)',
-                    text: '#FFFFFF',
-                    textSecondary: 'rgba(255, 255, 255, 0.9)',
-                },
-                permission: {
-                    acceptEdits: '#0a0',
-                    bypass: '#0a0',
-                    plan: '#0a0',
-                    readOnly: '#0a0',
-                    safeYolo: '#0a0',
-                    yolo: '#0a0',
-                },
-                surfaceHighest: '#fafafa',
-                groupped: { background: '#fff' },
-                header: { background: '#fff', tint: '#000' },
-                textLink: '#00f',
-                agentEventText: '#666',
-            },
-        },
-    });
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: () => null,
-    Octicons: () => null,
-}));
-
 vi.mock('expo-image', () => ({
     Image: () => null,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -139,15 +58,6 @@ vi.mock('@/components/ui/theme/haptics', () => ({
     hapticsError: () => {},
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: () => {},
-        },
-    }).module;
-});
-
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 920 },
 }));
@@ -156,33 +66,119 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}), mono: () => ({}), header: () => ({}) },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'profiles') return [];
-        if (key === 'agentInputEnterToSend') return true;
-        if (key === 'agentInputActionBarLayout') return 'wrap';
-        if (key === 'agentInputChipDensity') return 'labels';
-        if (key === 'agentInputHistoryScope') return 'perSession';
-        if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-        if (key === 'permissionPromptSurface') return 'composer';
-        return null;
+installAgentInputCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: any) => React.createElement('View', props, props.children),
+            Text: (props: any) => React.createElement('Text', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+            ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, null),
+            Platform: {
+                OS: 'ios',
+                select: (v: any) => v.ios,
+            },
+            useWindowDimensions: () => ({ width: 800, height: 600 }),
+            Dimensions: {
+                get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+            },
+        });
     },
-    useSettings: () => ({
-        profiles: [],
-        agentInputEnterToSend: true,
-        agentInputActionBarLayout: 'wrap',
-        agentInputChipDensity: 'labels',
-        agentInputHistoryScope: 'perSession',
-        sessionPermissionModeApplyTiming: 'immediate',
-        permissionPromptSurface: 'composer',
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    input: { background: '#fff' },
+                    accent: { indigo: '#5856D6' },
+                    box: {
+                        error: { background: '#ffecec', border: '#ffa39e', text: '#a8071a' },
+                        warning: { background: '#fff7e6', border: '#ffd591', text: '#ad6800' },
+                    },
+                    button: {
+                        primary: { background: '#000', tint: '#fff' },
+                        secondary: { tint: '#000', surface: '#fff' },
+                    },
+                    radio: { active: '#000', inactive: '#ddd' },
+                    text: '#000',
+                    textSecondary: '#666',
+                    divider: '#ddd',
+                    success: '#0a0',
+                    warning: '#f90',
+                    warningCritical: '#f00',
+                    textDestructive: '#a00',
+                    surfacePressed: '#eee',
+                    surfacePressedOverlay: '#eee',
+                    surface: '#fff',
+                    shadow: { color: '#000' },
+                    overlay: {
+                        scrim: 'rgba(0, 0, 0, 0.45)',
+                        scrimStrong: 'rgba(0, 0, 0, 0.6)',
+                        text: '#FFFFFF',
+                        textSecondary: 'rgba(255, 255, 255, 0.9)',
+                    },
+                    permission: {
+                        acceptEdits: '#0a0',
+                        bypass: '#0a0',
+                        plan: '#0a0',
+                        readOnly: '#0a0',
+                        safeYolo: '#0a0',
+                        yolo: '#0a0',
+                    },
+                    surfaceHighest: '#fafafa',
+                    groupped: { background: '#fff' },
+                    header: { background: '#fff', tint: '#000' },
+                    textLink: '#00f',
+                    agentEventText: '#666',
+                },
+            },
+        });
+    },
+    icons: async () => ({
+        Ionicons: () => null,
+        Octicons: () => null,
     }),
-    useSessionTranscriptIds: () => ({ ids: committedMessageIdsOldestFirstRef as any, isLoaded: true }),
-    useSessionMessagesById: () => messagesByIdRef,
-    useSessionMessagesVersion: (_sid: string, enabled?: boolean) => (enabled === false ? 0 : messagesVersion),
-    useSessionMessagesReducerState: () => reducerStateRef,
-});
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: () => {},
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'profiles') return [];
+                if (key === 'agentInputEnterToSend') return true;
+                if (key === 'agentInputActionBarLayout') return 'wrap';
+                if (key === 'agentInputChipDensity') return 'labels';
+                if (key === 'agentInputHistoryScope') return 'perSession';
+                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
+                if (key === 'permissionPromptSurface') return 'composer';
+                return null;
+            },
+            useSettings: () => ({
+                profiles: [],
+                agentInputEnterToSend: true,
+                agentInputActionBarLayout: 'wrap',
+                agentInputChipDensity: 'labels',
+                agentInputHistoryScope: 'perSession',
+                sessionPermissionModeApplyTiming: 'immediate',
+                permissionPromptSurface: 'composer',
+            }),
+            useSessionTranscriptIds: () => ({ ids: committedMessageIdsOldestFirstRef as any, isLoaded: true }),
+            useSessionMessagesById: () => messagesByIdRef,
+            useSessionMessagesVersion: (_sid: string, enabled?: boolean) => (enabled === false ? 0 : messagesVersion),
+            useSessionMessagesReducerState: () => reducerStateRef,
+        });
+    },
 });
 
 vi.mock('@/sync/domains/state/storageStore', () => ({

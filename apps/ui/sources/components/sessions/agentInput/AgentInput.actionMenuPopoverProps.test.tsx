@@ -4,48 +4,14 @@ import { act } from 'react-test-renderer';
 import { createReducer } from '@/sync/reducer/reducer';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { renderScreen } from '@/dev/testkit';
+import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                    React.createElement('View', props, props.children),
-                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                    React.createElement('Text', props, props.children),
-                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                    React.createElement('Pressable', props, props.children),
-                                            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                    React.createElement('ScrollView', props, props.children),
-                                            ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-                                            Platform: {
-                                            OS: 'ios',
-                                            select: (v: any) => v.ios,
-                                        },
-                                            useWindowDimensions: () => ({ width: 800, height: 600 }),
-                                            Dimensions: {
-                                                    get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-                                                },
-                                        }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
-    Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),
-}));
-
 vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -65,20 +31,57 @@ const storageSettings: Settings = {
     sessionPermissionModeApplyTiming: 'immediate',
 };
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: createUseSettingMock({ values: storageSettings }),
-            useSettings: () => storageSettings,
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionMessagesById: () => ({}),
-            useSessionMessagesVersion: () => 0,
-            useSessionMessagesReducerState: () => createReducer(),
-        },
-    });
+installAgentInputCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Text', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('ScrollView', props, props.children),
+            ActivityIndicator: (props: Record<string, unknown>) =>
+                React.createElement('ActivityIndicator', props, null),
+            Platform: {
+                OS: 'ios',
+                select: (v: any) => v.ios,
+            },
+            useWindowDimensions: () => ({ width: 800, height: 600 }),
+            Dimensions: {
+                get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+            },
+        });
+    },
+    icons: async () => ({
+        Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
+        Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),
+    }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: createUseSettingMock({ values: storageSettings }),
+                useSettings: () => storageSettings,
+                useSessionMessages: () => ({ messages: [], isLoaded: true }),
+                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+                useSessionMessagesById: () => ({}),
+                useSessionMessagesVersion: () => 0,
+                useSessionMessagesReducerState: () => createReducer(),
+            },
+        });
+    },
 });
 
 vi.mock('@/sync/domains/state/storageStore', async () => {
@@ -173,6 +176,7 @@ type CapturedActionMenuContentProps = Readonly<{
 }>;
 const capturedActionMenuContent: { last: CapturedActionMenuContentProps | null } = { last: null };
 const capturedSimpleOptionsPopover: { last: Record<string, unknown> | null } = { last: null };
+const capturedChipPickerPopover: { last: Record<string, unknown> | null } = { last: null };
 
 function renderPopoverChildren(
     props: Readonly<{
@@ -194,7 +198,7 @@ function getCapturedActionMenuActions(): Array<{ id?: string; onPress?: () => vo
 vi.mock('@/components/ui/popover', () => ({
     Popover: (props: CapturedPopoverProps) => {
         captured.last = props;
-        return React.createElement('Popover', props, renderPopoverChildren(props));
+        return React.createElement('Popover', props, props.open ? renderPopoverChildren(props) : null);
     },
 }));
 
@@ -235,11 +239,6 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeAcpPlanModeControl: () => null,
     computeAcpSessionModePickerControl: () => null,
@@ -256,6 +255,13 @@ vi.mock('./components/PermissionModePicker', () => ({
 vi.mock('./components/AgentInputActionMenuPopoverContent', () => ({
     AgentInputActionMenuPopoverContent: (props: CapturedActionMenuContentProps) => {
         capturedActionMenuContent.last = props;
+        return null;
+    },
+}));
+
+vi.mock('./components/AgentInputChipPickerPopover', () => ({
+    AgentInputChipPickerPopover: (props: Record<string, unknown>) => {
+        capturedChipPickerPopover.last = props;
         return null;
     },
 }));
@@ -318,11 +324,12 @@ describe('AgentInput (action menu popover props)', () => {
         expect(popoverProps?.portal?.matchAnchorWidth).toBe(false);
     });
 
-    it('routes collapsed delivery actions through the shared simple-options popover anchored to the action menu button', async () => {
+    it('routes collapsed delivery actions through the shared chip-picker popover anchored to the action menu button', async () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedSimpleOptionsPopover.last = null;
+        capturedChipPickerPopover.last = null;
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -371,7 +378,7 @@ describe('AgentInput (action menu popover props)', () => {
             deliveryAction?.onPress?.();
         });
 
-        const simpleOptionsProps = capturedSimpleOptionsPopover.last as (Record<string, unknown> & {
+        const chipPickerProps = capturedChipPickerPopover.last as (Record<string, unknown> & {
             open?: boolean;
             title?: string;
             selectedOptionId?: string | null;
@@ -379,21 +386,22 @@ describe('AgentInput (action menu popover props)', () => {
             options?: Array<{ id: string }>;
         }) | null;
 
-        expect(simpleOptionsProps?.open).toBe(true);
-        expect(simpleOptionsProps?.title).toBe('runs.delivery.title');
-        expect(simpleOptionsProps?.selectedOptionId).toBe('interrupt');
-        expect(simpleOptionsProps?.options?.map((option) => option.id)).toEqual([
+        expect(chipPickerProps?.open).toBe(true);
+        expect(chipPickerProps?.title).toBe('runs.delivery.title');
+        expect(chipPickerProps?.selectedOptionId).toBe('interrupt');
+        expect(chipPickerProps?.options?.map((option) => option.id)).toEqual([
             'steer_if_supported',
             'interrupt',
         ]);
-        expect(simpleOptionsProps?.anchorRef).toBe(settingsButton.props.ref);
+        expect(chipPickerProps?.anchorRef).toBe(settingsButton.props.ref);
     });
 
-    it('routes collapsed recipient actions through the shared simple-options popover anchored to the action menu button', async () => {
+    it('routes collapsed recipient actions through the shared chip-picker popover anchored to the action menu button', async () => {
         vi.resetModules();
         captured.last = null;
         capturedActionMenuContent.last = null;
         capturedSimpleOptionsPopover.last = null;
+        capturedChipPickerPopover.last = null;
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -441,7 +449,7 @@ describe('AgentInput (action menu popover props)', () => {
             recipientAction?.onPress?.();
         });
 
-        const simpleOptionsProps = capturedSimpleOptionsPopover.last as (Record<string, unknown> & {
+        const chipPickerProps = capturedChipPickerPopover.last as (Record<string, unknown> & {
             open?: boolean;
             title?: string;
             selectedOptionId?: string | null;
@@ -449,14 +457,14 @@ describe('AgentInput (action menu popover props)', () => {
             options?: Array<{ id: string }>;
         }) | null;
 
-        expect(simpleOptionsProps?.open).toBe(true);
-        expect(simpleOptionsProps?.title).toBe('session.participants.sendToTitle');
-        expect(simpleOptionsProps?.selectedOptionId).toBe('run-1');
-        expect(simpleOptionsProps?.options?.map((option) => option.id)).toEqual([
+        expect(chipPickerProps?.open).toBe(true);
+        expect(chipPickerProps?.title).toBe('session.participants.sendToTitle');
+        expect(chipPickerProps?.selectedOptionId).toBe('run-1');
+        expect(chipPickerProps?.options?.map((option) => option.id)).toEqual([
             'lead',
             'run-1',
         ]);
-        expect(simpleOptionsProps?.anchorRef).toBe(settingsButton.props.ref);
+        expect(chipPickerProps?.anchorRef).toBe(settingsButton.props.ref);
     });
 
     it('routes collapsed content actions through the shared content popover anchored to the action menu button', async () => {
@@ -724,6 +732,56 @@ describe('AgentInput (action menu popover props)', () => {
 
         expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-target-server');
         expect(captured.last).toBeNull();
+    });
+
+    it('routes the checkout/worktree chip through the shared simple-options popover anchored to the chip', async () => {
+        vi.resetModules();
+        captured.last = null;
+        capturedActionMenuContent.last = null;
+        capturedSimpleOptionsPopover.last = null;
+        const { AgentInput } = await import('./AgentInput');
+        const { createCheckoutActionChip } = await import('./definitions/createCheckoutActionChip');
+
+        const checkoutChip = createCheckoutActionChip({
+            interaction: { kind: 'picker' },
+            pickerOpen: false,
+            title: 'Checkout',
+            selectedLabel: 'No worktree',
+            selectedOptionId: 'none',
+            pickerOptions: [
+                { id: 'none', label: 'No worktree', sectionId: 'linked', sectionLabel: 'Linked' },
+                { id: 'create_git_worktree', label: 'New worktree', sectionId: 'actions', sectionLabel: 'Actions' },
+            ],
+            onApplyOption: () => {},
+            onRequestClose: () => {},
+            setPickerOpen: () => {},
+        });
+
+        const screen = await renderScreen(
+            <AgentInput
+                value=""
+                placeholder="Type"
+                onChangeText={() => {}}
+                onSend={() => {}}
+                autocompletePrefixes={[]}
+                autocompleteSuggestions={async () => []}
+                extraActionChips={[checkoutChip]}
+            />,
+        );
+
+        const chip = screen.findByTestId('new-session-checkout-chip');
+        expect(chip).toBeTruthy();
+        if (!chip) return;
+
+        await screen.pressByTestIdAsync('new-session-checkout-chip');
+
+        const simpleOptionsPopoverProps = capturedSimpleOptionsPopover.last as (Record<string, unknown> & {
+            open?: boolean;
+            anchorRef?: unknown;
+        }) | null;
+
+        expect(simpleOptionsPopoverProps?.open).toBe(true);
+        expect(simpleOptionsPopoverProps?.anchorRef).toStrictEqual(chip.props.ref);
     });
 
 });

@@ -16,6 +16,9 @@ export function createAutomationToggleActionChip(params: Readonly<{
     value: AutomationSettingsValue;
     onChange: (next: AutomationSettingsValue) => void;
 }>): AgentInputExtraActionChip {
+    const maxWidthCapEnabled = 680;
+    const maxWidthCapDisabled = Math.round(maxWidthCapEnabled / 2);
+
     return {
         key: 'new-session-automate',
         controlId: 'automation',
@@ -32,7 +35,7 @@ export function createAutomationToggleActionChip(params: Readonly<{
                 />
             ),
             maxHeightCap: 620,
-            maxWidthCap: 680,
+            maxWidthCap: params.enabled ? maxWidthCapEnabled : maxWidthCapDisabled,
             scrollEnabled: true,
         },
         render: ({ chipStyle, iconColor, showLabel, textStyle, chipAnchorRef, toggleCollapsedPopover }) => (

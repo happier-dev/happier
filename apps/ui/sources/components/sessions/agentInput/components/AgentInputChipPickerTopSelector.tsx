@@ -34,6 +34,7 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                     title: option.label,
                     subtitle: option.subtitle,
                     category: section.label,
+                    icon: option.icon,
                     disabled: option.disabled,
                 })),
             ),
@@ -74,6 +75,11 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                             pressed ? styles.triggerPressed : null,
                         ]}
                     >
+                        {focusedOption?.icon ? (
+                            <View style={styles.icon}>
+                                {focusedOption.icon}
+                            </View>
+                        ) : null}
                         <View style={styles.textBlock}>
                             <Text style={styles.title}>{focusedOption?.label ?? ''}</Text>
                             {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
@@ -114,6 +120,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     triggerPressed: {
         opacity: 0.82,
+    },
+    icon: {
+        width: 18,
+        height: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     textBlock: {
         flex: 1,

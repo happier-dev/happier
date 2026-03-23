@@ -3,27 +3,24 @@ import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
 import {
-  ModelPickerOverlay,
-  type ModelPickerProbeState,
-} from "@/components/model/ModelPickerOverlay";
+  OptionPickerOverlay,
+  type OptionPickerProbeState,
+} from "@/components/sessions/pickers/OptionPickerOverlay";
 import type {
-  AcpConfigOption,
-  AcpConfigOptionControl,
-  AcpConfigOptionValueId,
-} from "@/sync/acp/configOptionsControl";
+  SessionConfigOption,
+  SessionConfigOptionControl,
+  SessionConfigOptionValueId,
+} from "@/sync/domains/sessionControl/configOptionsControl";
 import { t } from "@/text";
 
-import { AgentInputAcpConfigOptionsSection } from "./AgentInputAcpConfigOptionsSection";
-import {
-  AgentInputSessionModeSection,
-  type AgentInputSessionModeOption,
-} from "./AgentInputSessionModeSection";
+import { AgentInputSessionConfigOptionsSection } from "./AgentInputSessionConfigOptionsSection";
+import { type AgentInputSessionModeOption } from "./AgentInputSessionModeSection";
 
 type AgentInputEngineModelOption = Readonly<{
   value: string;
   label: string;
   description: string;
-  modelOptions?: ReadonlyArray<AcpConfigOption>;
+  modelOptions?: ReadonlyArray<SessionConfigOption>;
 }>;
 
 type AgentInputEngineDetailProps = Readonly<{
@@ -33,13 +30,13 @@ type AgentInputEngineDetailProps = Readonly<{
   modelNotes?: ReadonlyArray<string>;
   modelEmptyText?: string;
   canEnterCustomModel?: boolean;
-  modelProbe?: ModelPickerProbeState;
+  modelProbe?: OptionPickerProbeState;
   onSelectModel?: (value: string) => void;
-  onSubmitCustomModel?: (value: string) => void | Promise<void>;
-  selectedModelOptionControls?: ReadonlyArray<AcpConfigOptionControl> | null;
+  onSubmitCustomValue?: (value: string) => void | Promise<void>;
+  selectedModelOptionControls?: ReadonlyArray<SessionConfigOptionControl> | null;
   onSelectModelOptionValue?: (
     configId: string,
-    valueId: AcpConfigOptionValueId,
+    valueId: SessionConfigOptionValueId,
   ) => void;
 
   sessionModeOptions?: ReadonlyArray<AgentInputSessionModeOption>;
@@ -48,11 +45,11 @@ type AgentInputEngineDetailProps = Readonly<{
   sessionModeHeaderAccessory?: React.ReactNode;
   onSelectSessionMode?: (optionId: string) => void;
 
-  configControls?: ReadonlyArray<AcpConfigOptionControl> | null;
+  configControls?: ReadonlyArray<SessionConfigOptionControl> | null;
   configHeaderAccessory?: React.ReactNode;
   onSelectConfigValue?: (
     configId: string,
-    valueId: AcpConfigOptionValueId,
+    valueId: SessionConfigOptionValueId,
   ) => void;
 
   sectionOrder?: ReadonlyArray<"model" | "mode" | "config">;
@@ -89,13 +86,18 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
     return null;
   }
 
+  const selectedSessionModeName =
+    props.sessionModeOptions?.find(
+      (option) => option.id === props.selectedSessionModeId,
+    )?.name ?? "";
+
   const sections: Record<"model" | "mode" | "config", React.ReactNode | null> =
     {
       model: hasModelSection
         ? wrapSection(
             surfaceVariant,
             "model",
-            <ModelPickerOverlay
+            <OptionPickerOverlay
               title={t("agentInput.model.title")}
               effectiveLabel={
                 props.effectiveModelLabel ??
@@ -108,14 +110,14 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
               emptyText={
                 props.modelEmptyText ?? t("agentInput.model.configureInCli")
               }
-              canEnterCustomModel={props.canEnterCustomModel === true}
+              canEnterCustomValue={props.canEnterCustomModel === true}
               customLabel={`${t("profiles.custom")}...`}
               customDescription={t("agentInput.model.customDescription")}
               probe={props.modelProbe}
               selectedOptionControls={props.selectedModelOptionControls ?? undefined}
               onSelectOptionControlValue={props.onSelectModelOptionValue}
               onSelect={props.onSelectModel ?? (() => {})}
-              onSubmitCustomModel={props.onSubmitCustomModel}
+              onSubmitCustomValue={props.onSubmitCustomValue}
             />,
           )
         : null,
@@ -123,12 +125,22 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
         ? wrapSection(
             surfaceVariant,
             "mode",
-            <AgentInputSessionModeSection
-              options={props.sessionModeOptions ?? []}
-              selectedOptionId={props.selectedSessionModeId ?? "default"}
+            <OptionPickerOverlay
+              title={t("agentInput.mode.sectionTitle")}
+              effectiveLabel={selectedSessionModeName}
               summary={props.sessionModeSummary}
+              summaryTestID="agent-input-session-mode-summary"
               headerAccessory={props.sessionModeHeaderAccessory}
-              onSelectOption={props.onSelectSessionMode}
+              options={(props.sessionModeOptions ?? []).map((option) => ({
+                value: option.id,
+                label: option.name,
+                description: option.description,
+              }))}
+              optionTestIDPrefix="agent-input-session-mode-option"
+              selectedValue={props.selectedSessionModeId ?? "default"}
+              emptyText=""
+              canEnterCustomValue={false}
+              onSelect={props.onSelectSessionMode ?? (() => {})}
             />,
           )
         : null,
@@ -136,7 +148,7 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
         ? wrapSection(
             surfaceVariant,
             "config",
-            <AgentInputAcpConfigOptionsSection
+            <AgentInputSessionConfigOptionsSection
               controls={props.configControls ?? []}
               headerAccessory={props.configHeaderAccessory}
               onSelectValue={props.onSelectConfigValue}

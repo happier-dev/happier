@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { createReducer } from '@/sync/reducer/reducer';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
@@ -24,6 +25,74 @@ const storageSettings: Settings = {
     sessionPermissionModeApplyTiming: 'immediate',
 };
 
+installAgentInputCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Text', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('ScrollView', props, props.children),
+            ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
+            Platform: {
+                OS: 'ios',
+                select: (v: any) => v.ios,
+            },
+            useWindowDimensions: () => ({ width: 800, height: 600 }),
+            Dimensions: {
+                get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+            },
+        });
+    },
+    icons: async () => ({
+        Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
+        Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),
+    }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: { name?: string }) => {
+                if (key === 'agentInput.mode.badgeA11y') return `Mode: ${params?.name ?? ''}`;
+                return key;
+            },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        const modalMock = createModalModuleMock();
+        modalMock.spies.show.mockImplementation((...args) => modalShowMock(...args));
+        modalMock.spies.prompt.mockImplementation((...args) => modalPromptMock(...args));
+        return modalMock.module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: createUseSettingMock({
+                    fallback: (key) => {
+                        if (key === 'agentInputActionBarLayout') return mockAgentInputActionBarLayout;
+                        return storageSettings[key];
+                    },
+                }),
+                useSettings: () => ({
+                    ...storageSettings,
+                    agentInputActionBarLayout: mockAgentInputActionBarLayout,
+                }),
+                useSessionMessages: () => ({ messages: [], isLoaded: true }),
+                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+                useSessionMessagesById: () => ({}),
+                useSessionMessagesVersion: () => 0,
+                useSessionMessagesReducerState: () => createReducer(),
+            },
+        });
+    },
+});
+
 function findIconNode(
     tree: Awaited<ReturnType<typeof renderScreen>>['tree'] | { root: any } | { findAll: (predicate: (node: any) => boolean) => any[] },
     type: 'Ionicons' | 'Octicons',
@@ -37,36 +106,6 @@ function findIconNode(
     ))[0];
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('View', props, props.children),
-                                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('Text', props, props.children),
-                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('Pressable', props, props.children),
-                                    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('ScrollView', props, props.children),
-                                    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-                                    Platform: {
-                                    OS: 'ios',
-                                    select: (v: any) => v.ios,
-                                },
-                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
-                                    Dimensions: {
-                                        get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-                                    },
-                                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
-    Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),
-}));
-
 vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
 }));
@@ -74,40 +113,6 @@ vi.mock('expo-image', () => ({
 vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string, params?: { name?: string }) => {
-            if (key === 'agentInput.mode.badgeA11y') return `Mode: ${params?.name ?? ''}`;
-            return key;
-        },
-    });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: createUseSettingMock({
-                fallback: (key) => {
-                    if (key === 'agentInputActionBarLayout') return mockAgentInputActionBarLayout;
-                    return storageSettings[key];
-                },
-            }),
-            useSettings: () => ({
-                ...storageSettings,
-                agentInputActionBarLayout: mockAgentInputActionBarLayout,
-            }),
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionMessagesById: () => ({}),
-            useSessionMessagesVersion: () => 0,
-            useSessionMessagesReducerState: () => createReducer(),
-        },
-    });
-});
 
 vi.mock('@/sync/domains/state/storageStore', async () => {
     const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
@@ -244,24 +249,34 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-vi.mock('@/components/model/ModelPickerOverlay', () => ({
-    ModelPickerOverlay: (props: any) => {
-        lastModelPickerOverlayProps = props;
-        return React.createElement('ModelPickerOverlay', props, null);
+vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
+    OptionPickerOverlay: (props: any) => {
+        if (props.title === 'agentInput.model.title') {
+            lastModelPickerOverlayProps = props;
+        }
+        const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
+        return React.createElement(
+            'OptionPickerOverlay',
+            props,
+            props.title,
+            props.summary ?? null,
+            props.headerAccessory ?? null,
+            props.options?.map((option: { value: string; label: string }) => React.createElement(
+                'Pressable',
+                {
+                    key: option.value,
+                    testID: `${optionTestIDPrefix}:${option.value}`,
+                    onPress: () => props.onSelect(option.value),
+                },
+                option.label,
+            )) ?? null,
+        );
     },
 }));
 
 vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    modalMock.spies.show.mockImplementation((...args) => modalShowMock(...args));
-    modalMock.spies.prompt.mockImplementation((...args) => modalPromptMock(...args));
-    return modalMock.module;
-});
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeSessionModePickerControl: () => mockSessionModePickerControl,
@@ -371,10 +386,10 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
         await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        expect(typeof lastModelPickerOverlayProps?.onSubmitCustomModel).toBe('function');
+        expect(typeof lastModelPickerOverlayProps?.onSubmitCustomValue).toBe('function');
 
         await act(async () => {
-            lastModelPickerOverlayProps.onSubmitCustomModel('custom-model');
+            lastModelPickerOverlayProps.onSubmitCustomValue('custom-model');
         });
 
         expect(onModelModeChange).toHaveBeenCalledWith('custom-model');
