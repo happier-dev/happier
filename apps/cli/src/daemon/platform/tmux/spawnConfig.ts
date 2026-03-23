@@ -52,7 +52,11 @@ export function buildTmuxSpawnConfig(params: {
   const launchSpec = buildHappyCliSubprocessLaunchSpec(args);
   const commandTokens = [launchSpec.filePath, ...launchSpec.args];
 
-  const tmuxEnv = buildTmuxWindowEnv(process.env, { ...params.extraEnv, ...(launchSpec.env ?? {}) });
+  const tmuxEnv = buildTmuxWindowEnv(process.env, {
+    ...params.extraEnv,
+    ...(launchSpec.env ?? {}),
+    HAPPIER_CLI_ALLOW_DAEMON_TTY_IN_TMUX: '1',
+  });
 
   const tmuxCommandEnv: Record<string, string> = { ...(params.tmuxCommandEnv ?? {}) };
   const tmuxTmpDir = tmuxCommandEnv.TMUX_TMPDIR;
