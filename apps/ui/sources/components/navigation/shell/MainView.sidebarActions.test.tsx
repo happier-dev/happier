@@ -2,6 +2,7 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -21,33 +22,34 @@ const localSettingsState = vi.hoisted(() => ({
     sessionsListStorageTab: 'persisted' as 'persisted' | 'direct',
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-        pathname: '/',
-    });
-    return expoRouterMock.module;
+installNavigationShellCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { push: routerPushSpy },
+            pathname: '/',
+        });
+        return expoRouterMock.module;
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useFriendRequests: () => [],
+            useSocketStatus: () => ({ status: 'connected' }),
+            useRealtimeStatus: () => ({ status: 'idle' }),
+            useLocalSettingMutable: (name: string) => {
+                if (name === 'sessionsListStorageTab') {
+                    return [localSettingsState.sessionsListStorageTab, setSessionsListStorageTabSpy] as const;
+                }
+                throw new Error(`Unexpected local setting: ${name}`);
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useFriendRequests: () => [],
-        useSocketStatus: () => ({ status: 'connected' }),
-        useRealtimeStatus: () => ({ status: 'idle' }),
-        useLocalSettingMutable: (name: string) => {
-            if (name === 'sessionsListStorageTab') {
-                return [localSettingsState.sessionsListStorageTab, setSessionsListStorageTabSpy] as const;
-            }
-            throw new Error(`Unexpected local setting: ${name}`);
-        },
-    });
-});
 
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     useVisibleSessionListViewData: () => sessionListState.data,

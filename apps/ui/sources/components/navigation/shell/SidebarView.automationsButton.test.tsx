@@ -3,6 +3,7 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -21,55 +22,74 @@ const inboxState = vi.hoisted(() => ({
     hasContent: false,
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(),
-            prompt: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'ios',
-                                            },
-                                            View: 'View',
-                                            Text: 'Text',
-                                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                                            useWindowDimensions: () => ({ width: 1200, height: 800 }),
-                                        }
-    );
+installNavigationShellCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: vi.fn(),
+                prompt: vi.fn(),
+            },
+        }).module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+            View: 'View',
+            Text: 'Text',
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            useWindowDimensions: () => ({ width: 1200, height: 800 }),
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: routerPushSpy },
+        });
+        return routerMock.module;
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSocketStatus: () => ({ status: 'connected', lastError: null }),
+            useFriendRequests: () => friendRequestsState.items,
+            useSetting: () => false,
+            useSyncError: () => null,
+            useRealtimeStatus: () => 'disconnected',
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                dark: false,
+                colors: {
+                    header: { tint: '#111' },
+                    groupped: { background: '#fff' },
+                    divider: '#ddd',
+                    surface: '#fff',
+                    shadow: { color: '#000' },
+                    text: '#111',
+                    textSecondary: '#777',
+                    fab: { background: '#000' },
+                    status: { error: '#f00' },
+                },
+            },
+        });
+    },
 });
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            dark: false,
-            colors: {
-                header: { tint: '#111' },
-                groupped: { background: '#fff' },
-                divider: '#ddd',
-                surface: '#fff',
-                shadow: { color: '#000' },
-                text: '#111',
-                textSecondary: '#777',
-                fab: { background: '#000' },
-                status: { error: '#f00' },
-            },
-        },
-    });
-});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -80,33 +100,9 @@ vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
-
 vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 56,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useSocketStatus: () => ({ status: 'connected', lastError: null }),
-        useFriendRequests: () => friendRequestsState.items,
-        useSetting: () => false,
-        useSyncError: () => null,
-        useRealtimeStatus: () => 'disconnected',
-    });
-});
 
 vi.mock('@/hooks/inbox/useInboxHasContent', () => ({
     useInboxHasContent: () => inboxState.hasContent,
@@ -190,6 +186,11 @@ function flattenStyle(style: unknown) {
     return style ?? {};
 }
 
+function requireTestInstance(node: ReactTestInstance | null, label: string): ReactTestInstance {
+    expect(node, `${label} should be present`).toBeTruthy();
+    return node!;
+}
+
 describe('SidebarView header automations button', () => {
     beforeEach(() => {
         routerPushSpy.mockReset();
@@ -270,5 +271,58 @@ describe('SidebarView header automations button', () => {
             maxWidth: '100%',
             minWidth: 0,
         });
+    });
+
+    it('shows the header icons inline when the sidebar is wide enough', async () => {
+        const { SidebarView } = await import('./SidebarView');
+
+        const screen = await renderScreen(<SidebarView sidebarWidthPx={600} />);
+
+        expect(screen.findAllByTestId('sidebar-header-actions-overflow')).toHaveLength(0);
+        expect(screen.findAllByTestId('sidebar-inbox-button').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('nav-new-session').length).toBeGreaterThan(0);
+    });
+
+    it('folds header icons into an overflow menu when the sidebar is narrow', async () => {
+        const { SidebarView } = await import('./SidebarView');
+
+        const screen = await renderScreen(<SidebarView sidebarWidthPx={250} />);
+
+        expect(screen.findAllByTestId('sidebar-header-actions-overflow').length).toBeGreaterThan(0);
+        // Compact layout hides inbox/friends into the overflow menu.
+        expect(screen.findAllByTestId('sidebar-inbox-button')).toHaveLength(0);
+        // Keep new-session pinned so it remains one-tap even when space is tight.
+        expect(screen.findAllByTestId('nav-new-session').length).toBeGreaterThan(0);
+    });
+
+    it('keeps the overflow trigger left of real header icons in compact mode', async () => {
+        const { SidebarView } = await import('./SidebarView');
+
+        const screen = await renderScreen(<SidebarView sidebarWidthPx={250} />);
+
+        const overflow = requireTestInstance(
+            screen.findByTestId('sidebar-header-actions-overflow'),
+            'overflow trigger',
+        );
+        const settings = requireTestInstance(
+            screen.findByProps({ accessibilityLabel: 'settings.title' }),
+            'settings button',
+        );
+        const newSession = requireTestInstance(
+            screen.findByTestId('nav-new-session'),
+            'new session button',
+        );
+
+        expect(overflow.parent).toBe(settings.parent);
+        expect(overflow.parent).toBe(newSession.parent);
+
+        const parent = requireTestInstance(overflow.parent, 'header action parent');
+        const order = parent.children
+            .filter((child): child is ReactTestInstance => typeof child === 'object' && child !== null && 'props' in (child as any))
+            .map((child) => child.props?.testID ?? child.props?.accessibilityLabel)
+            .filter(Boolean) as string[];
+
+        expect(order.indexOf('sidebar-header-actions-overflow')).toBeLessThan(order.indexOf('settings.title'));
+        expect(order.indexOf('sidebar-header-actions-overflow')).toBeLessThan(order.indexOf('nav-new-session'));
     });
 });

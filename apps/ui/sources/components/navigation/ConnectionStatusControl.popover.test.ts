@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installConnectionStatusControlCommonModuleMocks } from './connectionStatusControlTestHelpers';
 
 
 (
@@ -63,50 +64,76 @@ const settingsState = vi.hoisted(() => ({
     serverSelectionActiveTargetId: null as string | null,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: {
-                        OS: 'web',
-                        select: (options: { web?: unknown; default?: unknown; ios?: unknown; android?: unknown }) =>
-                            options.web ?? options.default ?? options.ios ?? options.android,
-                    },
-                    View: 'View',
-                    Text: 'Text',
-                    Pressable: 'Pressable',
-                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                status: {
-                    connected: '#00ff00',
-                    connecting: '#ffcc00',
-                    actionRequired: '#ff9900',
-                    disconnected: '#ff0000',
-                    error: '#ff0000',
-                    default: '#999999',
-                },
-                text: '#111111',
-                textSecondary: '#666666',
+installConnectionStatusControlCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (options: { web?: unknown; default?: unknown; ios?: unknown; android?: unknown }) =>
+                    options.web ?? options.default ?? options.ios ?? options.android,
             },
-        },
-    });
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    status: {
+                        connected: '#00ff00',
+                        connecting: '#ffcc00',
+                        actionRequired: '#ff9900',
+                        disconnected: '#ff0000',
+                        error: '#ff0000',
+                        default: '#999999',
+                    },
+                    text: '#111111',
+                    textSecondary: '#666666',
+                },
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSocketStatus: () => ({ status: 'connected' }),
+            useSyncError: () => null,
+            useLastSyncAt: () => null,
+            useSettingMutable: (key: keyof typeof settingsState) => [
+                settingsState[key],
+                (value: unknown) => {
+                    (settingsState as Record<string, unknown>)[String(key)] = value;
+                },
+            ],
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                confirm: modalMocks.confirm,
+            },
+        }).module;
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { push: routerMocks.push, replace: routerMocks.replace },
+        }).module;
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -142,45 +169,13 @@ vi.mock('@/components/ui/popover', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSocketStatus: () => ({ status: 'connected' }),
-    useSyncError: () => null,
-    useLastSyncAt: () => null,
-    useSettingMutable: (key: keyof typeof settingsState) => [
-        settingsState[key],
-        (value: unknown) => {
-            (settingsState as Record<string, unknown>)[String(key)] = value;
-        },
-    ],
-});
-});
-
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: authMocks.refreshFromActiveServer }),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: modalMocks.confirm,
-        },
-    }).module;
-});
-
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: tokenStorageMock,
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerMocks.push, replace: routerMocks.replace },
-    });
-    return routerMock.module;
-});
 
 vi.mock('@/sync/sync', () => ({
     sync: { retryNow: vi.fn() },

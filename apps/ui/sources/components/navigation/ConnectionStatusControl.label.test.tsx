@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installConnectionStatusControlCommonModuleMocks } from './connectionStatusControlTestHelpers';
 
 
 (
@@ -10,49 +10,62 @@ import { renderScreen } from '@/dev/testkit';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: {
-                        OS: 'web',
-                        select: (options: { web?: unknown; default?: unknown; ios?: unknown; android?: unknown }) =>
-                            options.web ?? options.default ?? options.ios ?? options.android,
-                    },
-                    View: 'View',
-                    Pressable: 'Pressable',
-                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                status: {
-                    connected: '#00ff00',
-                    connecting: '#ffcc00',
-                    actionRequired: '#ff9900',
-                    disconnected: '#999999',
-                    error: '#ff0000',
-                    default: '#999999',
-                },
-                text: '#111111',
-                textSecondary: '#666666',
+installConnectionStatusControlCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (options: { web?: unknown; default?: unknown; ios?: unknown; android?: unknown }) =>
+                    options.web ?? options.default ?? options.ios ?? options.android,
             },
-        },
-    });
+            View: 'View',
+            Pressable: 'Pressable',
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    status: {
+                        connected: '#00ff00',
+                        connecting: '#ffcc00',
+                        actionRequired: '#ff9900',
+                        disconnected: '#999999',
+                        error: '#ff0000',
+                        default: '#999999',
+                    },
+                    text: '#111111',
+                    textSecondary: '#666666',
+                },
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSocketStatus: () => ({ status: 'connected' }),
+            useSyncError: () => null,
+            useLastSyncAt: () => null,
+            useSettingMutable: () => [null, vi.fn()],
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { replace: vi.fn(), push: vi.fn() },
+        }).module;
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
@@ -74,16 +87,6 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     FloatingOverlay: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSocketStatus: () => ({ status: 'connected' }),
-    useSyncError: () => null,
-    useLastSyncAt: () => null,
-    useSettingMutable: () => [null, vi.fn()],
-});
-});
-
 vi.mock('@/sync/domains/server/serverConfig', () => ({
     getServerUrl: () => 'https://cloud.example.test',
 }));
@@ -101,14 +104,6 @@ vi.mock('@/auth/context/AuthContext', () => ({
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: { getCredentialsForServerUrl: vi.fn(async () => ({ token: 't', secret: 's' })) },
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { replace: vi.fn(), push: vi.fn() },
-    });
-    return routerMock.module;
-});
 
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: vi.fn(async () => {}),
@@ -152,11 +147,8 @@ describe('ConnectionStatusControl (label)', () => {
     it('shows the active server name instead of a generic connection status label', async () => {
         const { ConnectionStatusControl } = await import('./ConnectionStatusControl');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'header' }))).tree;
-
-        const texts = tree.findAllByType('Text' as any);
-        const joined = texts.map((node: any) => String(node.props.children ?? '')).join(' ');
+        const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'header' }));
+        const joined = screen.getTextContent();
         expect(joined).toContain('Happier Cloud');
         expect(joined).not.toContain('status.connected');
     });
@@ -164,10 +156,9 @@ describe('ConnectionStatusControl (label)', () => {
     it('uses a single-line tail ellipsis contract for long sidebar server labels', async () => {
         const { ConnectionStatusControl } = await import('./ConnectionStatusControl');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }))).tree;
+        const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
 
-        const trigger = tree.findByType('Pressable' as any);
+        const trigger = screen.findByProps({ accessibilityRole: 'button' });
         expect(trigger.props.style).toMatchObject({
             flexShrink: 1,
             maxWidth: '100%',
@@ -175,7 +166,7 @@ describe('ConnectionStatusControl (label)', () => {
         });
         expect(trigger.props.style.width).toBeUndefined();
 
-        const label = tree.findAllByType('Text' as any).find((node: any) => String(node.props.children ?? '') === 'Happier Cloud');
+        const label = screen.findByType('Text' as any);
         expect(label).toBeTruthy();
         expect(label!.props.numberOfLines).toBe(1);
         expect(label!.props.ellipsizeMode).toBe('tail');
@@ -193,10 +184,9 @@ describe('ConnectionStatusControl (label)', () => {
     it('uses the action-required status color when the server is connected but no machines are available', async () => {
         const { ConnectionStatusControl } = await import('./ConnectionStatusControl');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'header' }))).tree;
+        const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'header' }));
 
-        const dot = tree.findByType('StatusDot' as any);
+        const dot = screen.findByType('StatusDot' as any);
         expect(dot.props.color).toBe('#ff9900');
     });
 });

@@ -2,6 +2,10 @@ import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+
+import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,6 +14,84 @@ const hoistedState = vi.hoisted(() => ({
     mockPlatformOS: 'web' as 'web' | 'ios',
     mockWindowDimensions: { width: 1000, height: 800 },
 }));
+
+installNavigationShellCommonModuleMocks({
+    reactNative: installReactNativeWebMock({
+        View: (props: any) => React.createElement('View', props, props.children),
+        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        PanResponder: {
+            create: () => ({ panHandlers: {} }),
+        },
+        Dimensions: {
+            get: () => ({
+                width: hoistedState.mockWindowDimensions.width,
+                height: hoistedState.mockWindowDimensions.height,
+                scale: 1,
+                fontScale: 1,
+            }),
+        },
+        useWindowDimensions: () => ({
+            width: hoistedState.mockWindowDimensions.width,
+            height: hoistedState.mockWindowDimensions.height,
+        }),
+        Platform: {
+            get OS() {
+                return hoistedState.mockPlatformOS;
+            },
+            select: (options: any) =>
+                options?.[hoistedState.mockPlatformOS] ?? options?.default ?? options?.ios ?? options?.android,
+        },
+    }),
+    storage: installPartialStorageModuleMock({
+        useLocalSetting: (key: string) => {
+            return React.useSyncExternalStore(
+                (listener) => mockLocalSettingsStore.subscribe(listener),
+                () => {
+                    if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
+                    if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
+                    if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
+                    if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
+                    return false;
+                },
+                () => {
+                    if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
+                    if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
+                    if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
+                    if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
+                    return false;
+                },
+            );
+        },
+        useLocalSettingMutable: (key: string) => {
+            const val = (React as any).useSyncExternalStore(
+                (listener: any) => mockLocalSettingsStore.subscribe(listener),
+                () => {
+                    if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
+                    if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
+                    if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
+                    if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
+                    return false;
+                },
+                () => {
+                    if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
+                    if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
+                    if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
+                    if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
+                    return false;
+                },
+            );
+            return [
+                val,
+                (next: unknown) => {
+                    if (key === 'sidebarCollapsed' && typeof next === 'boolean') mockLocalSettingsStore.setSidebarCollapsed(next);
+                    if (key === 'editorFocusModeEnabled' && typeof next === 'boolean') mockLocalSettingsStore.setEditorFocusModeEnabled(next);
+                    if (key === 'sidebarWidthPx' && typeof next === 'number') mockLocalSettingsStore.setSidebarWidthPx(next);
+                    if (key === 'sidebarWidthBasisPx' && typeof next === 'number') mockLocalSettingsStore.setSidebarWidthBasisPx(next);
+                },
+            ] as const;
+        },
+    }),
+});
 
 const mockLocalSettingsStore = (() => {
   let sidebarCollapsed = false;
@@ -56,38 +138,6 @@ const mockLocalSettingsStore = (() => {
 
 const mockDrawerLifecycle = { mounts: 0, unmounts: 0 };
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: (props: any) => React.createElement('View', props, props.children),
-                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                            PanResponder: {
-                                create: () => ({ panHandlers: {} }),
-                            },
-                            Dimensions: {
-                                get: () => ({
-                                    width: hoistedState.mockWindowDimensions.width,
-                                    height: hoistedState.mockWindowDimensions.height,
-                                    scale: 1,
-                                    fontScale: 1,
-                                }),
-                            },
-                            useWindowDimensions: () => ({
-                                width: hoistedState.mockWindowDimensions.width,
-                                height: hoistedState.mockWindowDimensions.height,
-                            }),
-                            Platform: {
-                                get OS() {
-                                    return hoistedState.mockPlatformOS;
-                                },
-                                select: (options: any) =>
-                                    options?.[hoistedState.mockPlatformOS] ?? options?.default ?? options?.ios ?? options?.android,
-                            },
-                        }
-    );
-});
-
 vi.mock('expo-router/drawer', () => ({
   Drawer: (props: any) => {
     React.useEffect(() => {
@@ -108,56 +158,6 @@ vi.mock('expo-router/drawer', () => ({
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ isAuthenticated: true }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-  const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-  return createPartialStorageModuleMock(importOriginal, {
-    useLocalSetting: (key: string) => {
-      return React.useSyncExternalStore(
-          (listener) => mockLocalSettingsStore.subscribe(listener),
-        () => {
-          if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
-          if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
-          if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
-          if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
-          return false;
-        },
-        () => {
-          if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
-          if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
-          if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
-          if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
-          return false;
-        }
-      );
-    },
-    useLocalSettingMutable: (key: string) => {
-      const val = (React as any).useSyncExternalStore(
-        (listener: any) => mockLocalSettingsStore.subscribe(listener),
-        () => {
-          if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
-          if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
-          if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
-          if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
-          return false;
-        },
-        () => {
-          if (key === 'sidebarCollapsed') return mockLocalSettingsStore.sidebarCollapsed;
-          if (key === 'editorFocusModeEnabled') return mockLocalSettingsStore.editorFocusModeEnabled;
-          if (key === 'sidebarWidthPx') return mockLocalSettingsStore.sidebarWidthPx;
-          if (key === 'sidebarWidthBasisPx') return mockLocalSettingsStore.sidebarWidthBasisPx;
-          return false;
-        }
-      );
-      return [val, (next: unknown) => {
-        if (key === 'sidebarCollapsed' && typeof next === 'boolean') mockLocalSettingsStore.setSidebarCollapsed(next);
-        if (key === 'editorFocusModeEnabled' && typeof next === 'boolean') mockLocalSettingsStore.setEditorFocusModeEnabled(next);
-        if (key === 'sidebarWidthPx' && typeof next === 'number') mockLocalSettingsStore.setSidebarWidthPx(next);
-        if (key === 'sidebarWidthBasisPx' && typeof next === 'number') mockLocalSettingsStore.setSidebarWidthBasisPx(next);
-      }] as const;
-    },
-  });
-});
 
 vi.mock('./SidebarView', () => ({
   SidebarView: () => React.createElement('SidebarView', {}, null),

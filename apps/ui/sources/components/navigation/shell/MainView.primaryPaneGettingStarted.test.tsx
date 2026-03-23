@@ -2,6 +2,7 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -16,54 +17,52 @@ const buildPolicyState = vi.hoisted(() => ({
 
 const setSessionsListStorageTabSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Platform: {
-                                OS: 'ios',
-                            },
-                            View: 'View',
-                            Text: 'Text',
-                            Pressable: 'Pressable',
-                            ActivityIndicator: 'ActivityIndicator',
-                        }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: async () => {} },
-        pathname: '/',
-    });
-    return expoRouterMock.module;
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useFriendRequests: () => [],
-        useSocketStatus: () => ({ status: 'connected' }),
-        useRealtimeStatus: () => ({ status: 'idle' }),
-        useLocalSettingMutable: (name: string) => {
-            if (name === 'sessionsListStorageTab') {
-                return ['persisted', setSessionsListStorageTabSpy] as const;
-            }
-            throw new Error(`Unexpected local setting: ${name}`);
-        },
-        useSetting: (key: string) => {
-            if (key === 'serverSelectionGroups') return [];
-            if (key === 'serverSelectionActiveTargetKind') return 'main_selection';
-            if (key === 'serverSelectionActiveTargetId') return '';
-            return null;
-        },
-        useSettings: () => ({}),
-    });
+installNavigationShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ActivityIndicator: 'ActivityIndicator',
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { push: async () => {} },
+            pathname: '/',
+        });
+        return expoRouterMock.module;
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useFriendRequests: () => [],
+            useSocketStatus: () => ({ status: 'connected' }),
+            useRealtimeStatus: () => ({ status: 'idle' }),
+            useLocalSettingMutable: (name: string) => {
+                if (name === 'sessionsListStorageTab') {
+                    return ['persisted', setSessionsListStorageTabSpy] as const;
+                }
+                throw new Error(`Unexpected local setting: ${name}`);
+            },
+            useSetting: (key: string) => {
+                if (key === 'serverSelectionGroups') return [];
+                if (key === 'serverSelectionActiveTargetKind') return 'main_selection';
+                if (key === 'serverSelectionActiveTargetId') return '';
+                return null;
+            },
+            useSettings: () => ({}),
+        });
+    },
 });
 
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({

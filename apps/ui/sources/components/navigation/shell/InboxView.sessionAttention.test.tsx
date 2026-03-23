@@ -2,6 +2,7 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,47 +42,102 @@ const storageState = {
             : null,
 };
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                            Text: 'Text',
-                            ScrollView: 'ScrollView',
-                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                            ActivityIndicator: 'ActivityIndicator',
-                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                groupped: { background: '#111' },
-                text: '#fff',
-                textSecondary: '#999',
-                header: { tint: '#fff' },
-                warning: '#f80',
-                divider: '#333',
-                surface: '#171717',
-                surfaceHigh: '#1d1d1d',
-                surfaceHighest: '#222',
-                surfacePressedOverlay: '#333',
-                status: { error: '#f00' },
-                button: { primary: { tint: '#fff', background: '#444' } },
+installNavigationShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            ScrollView: 'ScrollView',
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            ActivityIndicator: 'ActivityIndicator',
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    groupped: { background: '#111' },
+                    text: '#fff',
+                    textSecondary: '#999',
+                    header: { tint: '#fff' },
+                    warning: '#f80',
+                    divider: '#333',
+                    surface: '#171717',
+                    surfaceHigh: '#1d1d1d',
+                    surfaceHighest: '#222',
+                    surfacePressedOverlay: '#333',
+                    status: { error: '#f00' },
+                    button: { primary: { tint: '#fff', background: '#444' } },
+                },
             },
-        },
-    });
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: pushSpy },
-    });
-    return routerMock.module;
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: pushSpy },
+        });
+        return routerMock.module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useArtifacts: () => [],
+            useFriendRequests: () => [],
+            useRequestedFriends: () => [],
+            useFeedItems: () => [],
+            useFeedLoaded: () => true,
+            useFriendsLoaded: () => true,
+            useAllSessions: () => [
+                {
+                    id: 'session-1',
+                    presence: 'online',
+                    metadata: {
+                        name: 'Repo session',
+                        path: '/Users/leeroy/repo',
+                        homeDir: '/Users/leeroy',
+                        machineId: 'machine-stale',
+                    },
+                    agentState: {
+                        requests: {
+                            perm_1: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'pwd' },
+                                createdAt: 1,
+                            },
+                            ask_1: {
+                                tool: 'AskUserQuestion',
+                                kind: 'user_action',
+                                arguments: {
+                                    questions: [{ question: 'Continue?', header: 'Confirm', options: [{ label: 'Yes', description: 'Proceed' }] }],
+                                },
+                                createdAt: 2,
+                            },
+                        },
+                        completedRequests: {},
+                    },
+                    owner: null,
+                },
+            ],
+            useMachine: (machineId: string) =>
+                machineId === 'machine-target'
+                    ? {
+                        id: 'machine-target',
+                        metadata: { displayName: 'Rebound workstation', host: 'workstation.local' },
+                    }
+                    : null,
+            storage: {
+                getState: () => storageState,
+            },
+        });
+    },
 });
 
 vi.mock('expo-image', () => ({
@@ -92,71 +148,8 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 vi.mock('@/track', () => ({
     trackFriendsProfileView: vi.fn(),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useArtifacts: () => [],
-    useFriendRequests: () => [],
-    useRequestedFriends: () => [],
-    useFeedItems: () => [],
-    useFeedLoaded: () => true,
-    useFriendsLoaded: () => true,
-    useAllSessions: () => [
-            {
-                id: 'session-1',
-                presence: 'online',
-                metadata: {
-                    name: 'Repo session',
-                    path: '/Users/leeroy/repo',
-                    homeDir: '/Users/leeroy',
-                    machineId: 'machine-stale',
-                },
-                agentState: {
-                    requests: {
-                        perm_1: {
-                            tool: 'Bash',
-                            kind: 'permission',
-                            arguments: { command: 'pwd' },
-                            createdAt: 1,
-                        },
-                        ask_1: {
-                            tool: 'AskUserQuestion',
-                            kind: 'user_action',
-                            arguments: {
-                                questions: [{ question: 'Continue?', header: 'Confirm', options: [{ label: 'Yes', description: 'Proceed' }] }],
-                            },
-                            createdAt: 2,
-                        },
-                    },
-                    completedRequests: {},
-                },
-                owner: null,
-            },
-        ],
-    useMachine: (machineId: string) =>
-            machineId === 'machine-target'
-                ? {
-                      id: 'machine-target',
-                      metadata: { displayName: 'Rebound workstation', host: 'workstation.local' },
-                  }
-                : null,
-    storage: {
-            getState: () => storageState,
-        },
-});
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => {
@@ -168,6 +161,10 @@ vi.mock('@/sync/domains/state/storageStore', () => {
     );
     return { storage, getStorage: () => storage };
 });
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: 'Text',
+}));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children, title }: any) => React.createElement('ItemGroup', { title }, children),

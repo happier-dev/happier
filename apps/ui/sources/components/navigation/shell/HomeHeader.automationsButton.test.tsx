@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,32 +13,42 @@ const automationsSupportState = vi.hoisted(() => ({
     enabled: true,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Platform: {
-                                OS: 'ios',
-                            },
-                            View: 'View',
-                            Text: 'Text',
-                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                        }
-    );
+installNavigationShellCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key) => (key === 'automations.openA11y' ? 'Open automations' : key),
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { push: routerPushSpy },
+            segments: [],
+        });
+        return expoRouterMock.module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSocketStatus: () => ({
+                    status: 'connected',
+                    lastConnectedAt: null,
+                    lastDisconnectedAt: null,
+                    lastError: null,
+                    lastErrorAt: null,
+                }),
+                useSyncError: () => null,
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-        segments: [],
-    });
-    return expoRouterMock.module;
-});
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
@@ -58,29 +69,12 @@ vi.mock('@/components/navigation/Header', () => ({
         ),
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSocketStatus: () => ({
-                status: 'connected',
-                lastConnectedAt: null,
-                lastDisconnectedAt: null,
-                lastError: null,
-                lastErrorAt: null,
-            }),
-            useSyncError: () => null,
-        },
-    });
-});
-
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: automationsSupportState.enabled }),
 }));
 
 function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
-    return tree.find((node) => (node.type as unknown) === 'Pressable' && node.props.accessibilityLabel === label);
+    return tree.findByProps({ accessibilityLabel: label });
 }
 
 describe('HomeHeader automations button', () => {
