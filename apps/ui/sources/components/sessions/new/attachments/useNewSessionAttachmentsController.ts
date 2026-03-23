@@ -93,7 +93,8 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         if (!attachmentsUploadsEnabled) return base;
         return [
             createAttachmentActionChip({
-                onPress: () => filePickerRef.current?.open(),
+                onPickFile: () => filePickerRef.current?.openFiles?.() ?? filePickerRef.current?.open?.(),
+                onPickImage: () => filePickerRef.current?.openImages?.() ?? filePickerRef.current?.openFiles?.() ?? filePickerRef.current?.open?.(),
                 disabled: params.isCreating,
             }),
             ...base,

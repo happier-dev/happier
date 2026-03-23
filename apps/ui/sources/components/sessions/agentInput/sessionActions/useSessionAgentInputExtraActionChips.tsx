@@ -14,7 +14,8 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
     attachmentsUploadsEnabled: boolean;
     isReadOnly: boolean;
     isUploadingAttachments: boolean;
-    onOpenAttachmentsPicker: () => void;
+    onPickAttachmentFile: () => void;
+    onPickAttachmentImage: () => void;
     onAppendLinkedPath: (path: string) => void;
     reviewCommentsEnabled: boolean;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
@@ -30,7 +31,8 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
 
         if (params.attachmentsUploadsEnabled && !params.isReadOnly) {
             chips.push(createAttachmentActionChip({
-                onPress: params.onOpenAttachmentsPicker,
+                onPickFile: params.onPickAttachmentFile,
+                onPickImage: params.onPickAttachmentImage,
                 disabled: params.isUploadingAttachments,
             }));
         }
@@ -71,7 +73,8 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
         params.isReadOnly,
         params.isUploadingAttachments,
         params.onAppendLinkedPath,
-        params.onOpenAttachmentsPicker,
+        params.onPickAttachmentFile,
+        params.onPickAttachmentImage,
         params.reviewCommentDrafts,
         params.reviewCommentsEnabled,
         params.sessionId,

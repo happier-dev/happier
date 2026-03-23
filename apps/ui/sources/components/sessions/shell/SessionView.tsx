@@ -12,6 +12,8 @@ import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/Sess
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import { ChatList } from '@/components/sessions/transcript/ChatList';
 import { Deferred } from '@/components/ui/forms/Deferred';
+import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DependabotIcon } from '@/components/ui/icons/DependabotIcon';
 import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
@@ -149,6 +151,7 @@ export const SessionView = React.memo((props: {
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
     const headerHeight = useHeaderHeight();
+    const { width: windowWidth } = useWindowDimensions();
     const realtimeStatus = useRealtimeStatus();
     const isTablet = useIsTablet();
     const voiceSnap = useVoiceSessionSnapshot();
@@ -194,6 +197,13 @@ export const SessionView = React.memo((props: {
         && Platform.OS === 'web'
         && ((pane.scopeState?.right.isOpen ?? false) || (pane.scopeState?.details.isOpen ?? false)));
 
+    const handleHeaderExtraItemSelect = React.useCallback((actionId: string) => {
+        if (actionId !== 'header.openSubagents') return false;
+        pane.openRight({ tabId: 'agents' });
+        pane.setRightTab('agents');
+        return true;
+    }, [pane]);
+
     // Compute header props based on session state
     const headerProps = useMemo(() => {
         if (!isDataReady) {
@@ -225,6 +235,7 @@ export const SessionView = React.memo((props: {
         // Normal state - show session info
         const isConnected = session.presence === 'online';
         const directSessionLink = readDirectSessionLink(session.metadata);
+        const shouldFoldHeaderIconActions = windowWidth < 520;
         const badgeLabel =
             sessionAutomationsEnabledCount > 99 ? '99+' : String(sessionAutomationsEnabledCount);
         const storageBadge = directSessionLink ? t('sessionsList.storageDirectTab') : t('sessionsList.storagePersistedTab');
@@ -236,16 +247,50 @@ export const SessionView = React.memo((props: {
                     : directSessionLink.machineId,
             ].join(' · ')
             : null;
+        const foldedHeaderItems = (() => {
+            if (!shouldFoldHeaderIconActions) return [] as DropdownMenuItem[];
+
+            const items: DropdownMenuItem[] = [];
+            if (shouldShowSubagentsButton) {
+                items.push({
+                    id: 'header.openSubagents',
+                    title: t('session.openSubagents', { count: subagentCounts.active }),
+                    icon: <DependabotIcon size={18} color={theme.colors.textSecondary} />,
+                });
+            }
+            if (sessionExecutionRunsSupported) {
+                items.push({
+                    id: 'header.openRuns',
+                    title: t('session.openRuns'),
+                    icon: <Ionicons name="play-outline" size={18} color={theme.colors.textSecondary} />,
+                });
+            }
+            if (showAutomations) {
+                items.push({
+                    id: 'header.openAutomations',
+                    title: t('session.openAutomations'),
+                    icon: <Ionicons name="timer-outline" size={18} color={theme.colors.textSecondary} />,
+                });
+            }
+            return items;
+        })();
         const rightElement = (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <SessionHeaderActionMenu sessionId={sessionId} session={session} />
-                <SessionHeaderSubagentsButton
-                    scopeId={paneScopeId}
-                    activeCount={subagentCounts.active}
-                    hasAnySubagents={shouldShowSubagentsButton}
+                <SessionHeaderActionMenu
+                    sessionId={sessionId}
+                    session={session}
+                    extraItems={foldedHeaderItems.length > 0 ? foldedHeaderItems : undefined}
+                    onSelectExtraItem={handleHeaderExtraItemSelect}
                 />
+                {!shouldFoldHeaderIconActions ? (
+                    <SessionHeaderSubagentsButton
+                        scopeId={paneScopeId}
+                        activeCount={subagentCounts.active}
+                        hasAnySubagents={shouldShowSubagentsButton}
+                    />
+                ) : null}
                 <SessionHeaderTerminalButton sessionId={sessionId} scopeId={paneScopeId} />
-                {sessionExecutionRunsSupported ? (
+                {!shouldFoldHeaderIconActions && sessionExecutionRunsSupported ? (
                     <Pressable
                         onPress={() => router.push(`/session/${sessionId}/runs` as any)}
                         hitSlop={15}
@@ -262,7 +307,7 @@ export const SessionView = React.memo((props: {
                         <Ionicons name="play-outline" size={22} color={theme.colors.header.tint} />
                     </Pressable>
                 ) : null}
-                {showAutomations ? (
+                {!shouldFoldHeaderIconActions && showAutomations ? (
                     <Pressable
                         onPress={() => navigateWithBlurOnWeb(() => router.push(`/session/${sessionId}/automations` as any))}
                         hitSlop={15}
@@ -316,7 +361,24 @@ export const SessionView = React.memo((props: {
             flavor: session.metadata?.flavor || null,
             tintColor: isConnected ? '#000' : '#8E8E93'
         };
-    }, [isDataReady, paneScopeId, router, session, sessionAutomationsEnabledCount, sessionExecutionRunsSupported, sessionId, showAutomations, subagentCounts.active, subagentCounts.total, theme.colors.header.tint, theme.colors.status.error]);
+    }, [
+        handleHeaderExtraItemSelect,
+        isDataReady,
+        paneScopeId,
+        router,
+        session,
+        sessionAutomationsEnabledCount,
+        sessionExecutionRunsSupported,
+        sessionId,
+        shouldShowSubagentsButton,
+        showAutomations,
+        subagentCounts.active,
+        subagentCounts.total,
+        theme.colors.header.tint,
+        theme.colors.status.error,
+        theme.colors.textSecondary,
+        windowWidth,
+    ]);
 
     return (
         <SessionScreenTestIdsProvider enabled={isFocused}>
@@ -1205,8 +1267,11 @@ function SessionViewLoaded({
             attachmentsUploadsEnabled,
             isReadOnly,
             isUploadingAttachments,
-            onOpenAttachmentsPicker: () => {
-                filePickerRef.current?.open();
+            onPickAttachmentFile: () => {
+                filePickerRef.current?.openFiles?.() ?? filePickerRef.current?.open?.();
+            },
+            onPickAttachmentImage: () => {
+                filePickerRef.current?.openImages?.() ?? filePickerRef.current?.openFiles?.() ?? filePickerRef.current?.open?.();
             },
             onAppendLinkedPath: (path) => {
                 setMessage((prev) => {
