@@ -46,20 +46,20 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            View: 'View',
-            Pressable: 'Pressable',
-            Platform: {
-                OS: 'web',
-                select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
-            },
-            Dimensions: {
-                get: () => ({ width: 1440, height: 900 }),
-            },
-            AppState: {
-                currentState: 'active',
-                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-            },
-        }
+                    View: 'View',
+                    Pressable: 'Pressable',
+                    Platform: {
+                        OS: 'web',
+                        select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
+                    },
+                    Dimensions: {
+                        get: () => ({ width: 1440, height: 900 }),
+                    },
+                    AppState: {
+                        currentState: 'active',
+                        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                    },
+                }
     );
 });
 
@@ -110,18 +110,18 @@ vi.mock('@/modal', async () => {
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useSetting: createUseSettingMock({
+    useSetting: createUseSettingMock({
             values: {
                 acpCatalogSettingsV1: acpCatalogSettingsFixture,
             },
         }),
-        useSettingMutable: (key: string) => {
+    useSettingMutable: (key: string) => {
             if (key === 'acpCatalogSettingsV1') {
                 return [acpCatalogSettingsFixture, vi.fn()];
             }
             return [null, vi.fn()];
         },
-    });
+});
 });
 
 vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));

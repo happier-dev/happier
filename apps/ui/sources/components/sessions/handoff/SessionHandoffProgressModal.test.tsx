@@ -94,6 +94,49 @@ describe('SessionHandoffProgressModal', () => {
         expect(textContent).toContain('README.md');
     });
 
+    it('keeps the checkpoint timeline minimal when the daemon reports only minimal checkpoints (even with workspace progress)', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                status={{
+                    handoffId: 'handoff_minimal_with_workspace_progress_1',
+                    status: 'pending',
+                    phase: 'staging_target',
+                    workspacePreflightSummary: {
+                        addedPathsCount: 1,
+                        changedPathsCount: 0,
+                        removedPathsCount: 0,
+                        totalBytes: 1024,
+                    },
+                    progress: {
+                        updatedAtMs: 123,
+                        checkpoint: 'import_session',
+                        planned: {
+                            totalFiles: 1,
+                            totalBytes: 1024,
+                        },
+                        transferred: {
+                            bytes: 128,
+                        },
+                        resumable: true,
+                    },
+                    recoveryActions: [],
+                }}
+            />,
+        );
+
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-stage_target')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-import_session')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-finalize')).toBeTruthy();
+
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-scan_source')).toBeNull();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-plan')).toBeNull();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs')).toBeNull();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-apply')).toBeNull();
+    });
+
     it('shows a failure presentation without a spinner when the handoff status is failed', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
 

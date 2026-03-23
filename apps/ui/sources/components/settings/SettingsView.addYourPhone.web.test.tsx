@@ -12,22 +12,22 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                            View: 'View',
-                            Pressable: 'Pressable',
-                            Dimensions: {
-                                get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-                            },
-                            useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-                            Platform: {
-                                OS: 'web',
-                                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-                            },
-                            Linking: {
-                                canOpenURL: async () => false,
-                                openURL: async () => {},
-                            },
-                            ActivityIndicator: 'ActivityIndicator',
-                        }
+                                    View: 'View',
+                                    Pressable: 'Pressable',
+                                    Dimensions: {
+                                        get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+                                    },
+                                    useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+                                    },
+                                    Linking: {
+                                        canOpenURL: async () => false,
+                                        openURL: async () => {},
+                                    },
+                                    ActivityIndicator: 'ActivityIndicator',
+                                }
     );
 });
 

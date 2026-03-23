@@ -52,12 +52,12 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            View: 'View',
-            TextInput: 'TextInput',
-            ActivityIndicator: 'ActivityIndicator',
-            Pressable: 'Pressable',
-            ScrollView: 'ScrollView',
-        }
+                    View: 'View',
+                    TextInput: 'TextInput',
+                    ActivityIndicator: 'ActivityIndicator',
+                    Pressable: 'Pressable',
+                    ScrollView: 'ScrollView',
+                }
     );
 });
 
