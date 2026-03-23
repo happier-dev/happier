@@ -23,7 +23,7 @@ export function createPermissionActionChip(params: Readonly<{
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(state) => params.chipStyle(state.pressed)}
         >
-            {normalizeNodeForView(<Ionicons name="shield-outline" size={18} color={params.tint} />)}
+            {normalizeNodeForView(<Ionicons name="shield-checkmark-outline" size={18} color={params.tint} />)}
             {params.showLabel && params.label ? (
                 <Text style={params.textStyle}>{params.label}</Text>
             ) : null}
