@@ -86,6 +86,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
         startedBy: opts.startedBy ?? 'terminal',
     });
     session.claudeCodeExperimentalAgentTeamsEnabled = opts.claudeCodeExperimentalAgentTeamsEnabled === true;
+    session.spawnPermissionMode = opts.permissionMode ?? 'default';
 
     // Seed permission mode without blocking on transcript fetches.
     // The session's metadata snapshot is already available locally, and for fresh sessions
