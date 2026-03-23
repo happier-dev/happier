@@ -50,7 +50,13 @@ export async function runWorkspaceReplicationJob(params: Readonly<{
       updatedAtMs: persistedAtMs,
     };
     await params.jobStore.write(persisted);
-    return persisted;
+    // The store can merge/override fields (checkpoint regression guards, sticky cancellation, terminal guards).
+    // Always return the canonical post-merge record so orchestration logic can't proceed with stale state.
+    const merged = await params.jobStore.read(params.jobId);
+    if (!merged) {
+      throw new Error(`Workspace replication job not found after write: ${params.jobId}`);
+    }
+    return merged;
   } catch (error) {
     const failedAtMs = nowMs();
     if (isCancelRequestedError(error)) {
