@@ -7,12 +7,18 @@ import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/acp
 import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 
 function stableJsonStringify(value: unknown): string {
-    if (!value || typeof value !== 'object') return JSON.stringify(value);
+    if (value === null || value === undefined) return 'null';
+    if (typeof value === 'string') return JSON.stringify(value);
+    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'null';
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
     if (Array.isArray(value)) return `[${value.map((v) => stableJsonStringify(v)).join(',')}]`;
-
-    const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJsonStringify(obj[k])}`).join(',')}}`;
+    if (typeof value === 'object') {
+        const obj = value as Record<string, unknown>;
+        const keys = Object.keys(obj).sort();
+        return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJsonStringify(obj[k])}`).join(',')}}`;
+    }
+    // functions/symbols/etc: treat as null for key stability
+    return 'null';
 }
 
 export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
