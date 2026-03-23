@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -170,10 +170,10 @@ type DropdownMenuTestNode = Readonly<{
 }>;
 
 function findDropdownMenuByTriggerTestId(
-    tree: { findAllByType: (type: unknown) => DropdownMenuTestNode[] },
+    screen: { findAllByType: (type: unknown) => DropdownMenuTestNode[] },
     testID: string,
 ): DropdownMenuTestNode | undefined {
-    return tree.findAllByType('DropdownMenu').find((node) => node.props?.itemTrigger?.itemProps?.testID === testID);
+    return screen.findAllByType('DropdownMenu').find((node) => node.props?.itemTrigger?.itemProps?.testID === testID);
 }
 
 describe('DirectSessionsBrowseScreen', () => {
@@ -192,7 +192,7 @@ describe('DirectSessionsBrowseScreen', () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
         const screen = await renderScreen(<DirectSessionsBrowseScreen />);
 
-        await act(async () => {});
+        await flushHookEffects();
 
         expect(candidatesListSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',
@@ -201,14 +201,14 @@ describe('DirectSessionsBrowseScreen', () => {
             limit: 50,
         });
 
-        const machineDropdown = findDropdownMenuByTriggerTestId(screen.tree, 'direct-session-machine-picker-trigger');
-        const providerDropdown = findDropdownMenuByTriggerTestId(screen.tree, 'direct-session-provider-picker-trigger');
-        const sourceDropdown = findDropdownMenuByTriggerTestId(screen.tree, 'direct-session-source-picker-trigger');
+        const machineDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger');
+        const providerDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-provider-picker-trigger');
+        const sourceDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-source-picker-trigger');
 
         expect(machineDropdown).toBeTruthy();
         expect(providerDropdown).toBeTruthy();
         expect(sourceDropdown).toBeTruthy();
-        const itemGroups = screen.tree.findAllByType('ItemGroup');
+        const itemGroups = screen.findAllByType('ItemGroup' as any);
         expect(itemGroups[0]?.props.title).toBe('directSessions.browseFiltersTitle');
         expect(machineDropdown?.props?.itemTrigger?.itemProps?.density).toBeUndefined();
         expect(providerDropdown?.props?.itemTrigger?.itemProps?.density).toBeUndefined();
@@ -275,7 +275,7 @@ describe('DirectSessionsBrowseScreen', () => {
 
         const screen = await renderScreen(<DirectSessionsBrowseScreen />);
 
-        await act(async () => {});
+        await flushHookEffects();
 
         const candidateItem = screen.findByTestId('direct-session-candidate:claude-session-1');
         expect(candidateItem).toBeTruthy();
@@ -300,7 +300,7 @@ describe('DirectSessionsBrowseScreen', () => {
 
         const screen = await renderScreen(<DirectSessionsBrowseScreen />);
 
-        await act(async () => {});
+        await flushHookEffects();
 
         expect(candidatesListSpy).toHaveBeenCalledWith({
             machineId: 'machine-active',
@@ -309,7 +309,7 @@ describe('DirectSessionsBrowseScreen', () => {
             limit: 50,
         });
 
-        const machineDropdown = findDropdownMenuByTriggerTestId(screen.tree, 'direct-session-machine-picker-trigger');
+        const machineDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger');
         expect(machineDropdown?.props?.selectedId).toBe('machine-active');
     });
 
@@ -338,7 +338,7 @@ describe('DirectSessionsBrowseScreen', () => {
 
         const screen = await renderScreen(<DirectSessionsBrowseScreen />);
 
-        await act(async () => {});
+        await flushHookEffects();
 
         const searchInput = screen.findByTestId('direct-session-candidates-search-input');
         expect(searchInput).toBeTruthy();
@@ -357,7 +357,7 @@ describe('DirectSessionsBrowseScreen', () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
         const screen = await renderScreen(<DirectSessionsBrowseScreen />);
 
-        await act(async () => {});
+        await flushHookEffects();
 
         const candidateItem = screen.findByTestId('direct-session-candidate:codex-session-1');
         expect(candidateItem).toBeTruthy();
@@ -381,10 +381,10 @@ describe('DirectSessionsBrowseScreen', () => {
         const screen = await renderScreen(<DirectSessionsBrowseScreen />);
         const tree = screen.tree;
 
-        await act(async () => {});
+        await flushHookEffects();
         candidatesListSpy.mockClear();
 
-        const sourceDropdown = findDropdownMenuByTriggerTestId(screen.tree, 'direct-session-source-picker-trigger');
+        const sourceDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-source-picker-trigger');
         expect(sourceDropdown).toBeTruthy();
 
         await act(async () => {
@@ -417,7 +417,7 @@ describe('DirectSessionsBrowseScreen', () => {
         await act(async () => {
             tree.update(<DirectSessionsBrowseScreen />);
         });
-        await act(async () => {});
+        await flushHookEffects();
 
         expect(candidatesListSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',
@@ -447,9 +447,9 @@ describe('DirectSessionsBrowseScreen', () => {
         const screen = await renderScreen(<DirectSessionsBrowseScreen />);
         const tree = screen.tree;
 
-        await act(async () => {});
+        await flushHookEffects();
 
-        const machineDropdown = findDropdownMenuByTriggerTestId(screen.tree, 'direct-session-machine-picker-trigger');
+        const machineDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger');
 
         await act(async () => {
             await machineDropdown!.props?.onSelect?.('machine-2');
@@ -468,9 +468,9 @@ describe('DirectSessionsBrowseScreen', () => {
         await act(async () => {
             tree.update(<DirectSessionsBrowseScreen key="rerendered" />);
         });
-        await act(async () => {});
+        await flushHookEffects();
 
-        const rerenderedMachineDropdown = findDropdownMenuByTriggerTestId(screen.tree, 'direct-session-machine-picker-trigger');
+        const rerenderedMachineDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger');
 
         expect(rerenderedMachineDropdown).toBeTruthy();
         expect(rerenderedMachineDropdown!.props?.selectedId).toBe('machine-1');
@@ -523,9 +523,9 @@ describe('DirectSessionsBrowseScreen', () => {
         const screen = await renderScreen(<DirectSessionsBrowseScreen />);
         const tree = screen.tree;
 
-        await act(async () => {});
+        await flushHookEffects();
 
-        const machineDropdown = findDropdownMenuByTriggerTestId(screen.tree, 'direct-session-machine-picker-trigger');
+        const machineDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger');
 
         // Switch to machine-2 (this starts a slow request)
         await act(async () => {
@@ -551,25 +551,23 @@ describe('DirectSessionsBrowseScreen', () => {
             await machineDropdown!.props?.onSelect?.('machine-1');
         });
 
-        await act(async () => {});
+        await flushHookEffects();
 
         // Now resolve the slow request from machine-2
-        await act(async () => {
-            slowResolve!({
-                ok: true,
-                candidates: [
-                    {
-                        remoteSessionId: 'stale-session-1',
-                        title: 'Stale Session',
-                        updatedAtMs: 1_700_000_000_000,
-                        activity: 'idle',
-                        details: { path: '/tmp/stale', codexBackendMode: 'appServer' },
-                    },
-                ],
-                nextCursor: null,
-            });
-            await Promise.resolve();
+        slowResolve!({
+            ok: true,
+            candidates: [
+                {
+                    remoteSessionId: 'stale-session-1',
+                    title: 'Stale Session',
+                    updatedAtMs: 1_700_000_000_000,
+                    activity: 'idle',
+                    details: { path: '/tmp/stale', codexBackendMode: 'appServer' },
+                },
+            ],
+            nextCursor: null,
         });
+        await flushHookEffects();
 
         // The displayed candidates should be from machine-1, not the stale machine-2 request
         const candidateItem = screen.findByTestId('direct-session-candidate:fresh-session-1');

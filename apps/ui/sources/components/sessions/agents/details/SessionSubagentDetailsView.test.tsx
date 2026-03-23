@@ -4,16 +4,23 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
-import { SessionSubagentDetailsView } from './SessionSubagentDetailsView';
 import { renderScreen } from '@/dev/testkit';
+import { SessionSubagentDetailsView } from './SessionSubagentDetailsView';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const executionRunDetailsSpy = vi.fn();
-const messageDetailsSpy = vi.fn();
-const overviewCardSpy = vi.fn();
-const participantComposerSpy = vi.fn();
+const executionRunDetailsSpy = vi.hoisted(() => vi.fn());
+const messageDetailsSpy = vi.hoisted(() => vi.fn());
+const overviewCardSpy = vi.hoisted(() => vi.fn());
+const participantComposerSpy = vi.hoisted(() => vi.fn());
+
+function createPassthroughComponentMock(typeName: string, spy?: (props: unknown) => void) {
+    return (props: unknown) => {
+        spy?.(props);
+        return React.createElement(typeName);
+    };
+}
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -86,31 +93,19 @@ vi.mock('@/hooks/session/useSessionSubagents', () => ({
 }));
 
 vi.mock('@/components/sessions/runs/details/SessionExecutionRunDetailsView', () => ({
-    SessionExecutionRunDetailsView: (props: unknown) => {
-        executionRunDetailsSpy(props);
-        return React.createElement('SessionExecutionRunDetailsView');
-    },
+    SessionExecutionRunDetailsView: createPassthroughComponentMock('SessionExecutionRunDetailsView', executionRunDetailsSpy),
 }));
 
 vi.mock('@/components/sessions/transcript/details/SessionMessageDetailsView', () => ({
-    SessionMessageDetailsView: (props: unknown) => {
-        messageDetailsSpy(props);
-        return React.createElement('SessionMessageDetailsView');
-    },
+    SessionMessageDetailsView: createPassthroughComponentMock('SessionMessageDetailsView', messageDetailsSpy),
 }));
 
 vi.mock('@/components/sessions/agents/details/SessionSubagentOverviewCard', () => ({
-    SessionSubagentOverviewCard: (props: unknown) => {
-        overviewCardSpy(props);
-        return React.createElement('SessionSubagentOverviewCard');
-    },
+    SessionSubagentOverviewCard: createPassthroughComponentMock('SessionSubagentOverviewCard', overviewCardSpy),
 }));
 
 vi.mock('@/components/sessions/participants/composer/SessionParticipantComposer', () => ({
-    SessionParticipantComposer: (props: unknown) => {
-        participantComposerSpy(props);
-        return React.createElement('SessionParticipantComposer');
-    },
+    SessionParticipantComposer: createPassthroughComponentMock('SessionParticipantComposer', participantComposerSpy),
 }));
 
 describe('SessionSubagentDetailsView', () => {

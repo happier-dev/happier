@@ -1,7 +1,7 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -65,8 +65,7 @@ describe('PlanOutputMessageCard (selection)', () => {
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<PlanOutputMessageCard payload={payload} sessionId="s1" />)).tree;
 
-    const findTextNode = (text: string) =>
-      tree.root.findAll((n: any) => n.type === 'Text' && n.props?.children === text)[0]!;
+    const findTextNode = (text: string) => findTestInstanceByTypeContainingText(tree, 'Text', text)!;
 
     expect(findTextNode('Plan').props.selectable).toBe(true);
     expect(findTextNode('Do the thing').props.selectable).toBe(true);
@@ -77,4 +76,3 @@ describe('PlanOutputMessageCard (selection)', () => {
     expect(findTextNode('Adopt plan').props.selectable).not.toBe(true);
   });
 });
-

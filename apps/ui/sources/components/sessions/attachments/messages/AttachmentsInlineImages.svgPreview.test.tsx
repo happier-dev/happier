@@ -9,12 +9,14 @@ vi.mock('react-native-svg', () => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            OS: 'ios',
-            select: (values: { ios?: unknown; default?: unknown } | undefined) => values?.ios ?? values?.default ?? null,
-        },
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: {
+                    OS: 'ios',
+                    select: (values: { ios?: unknown; default?: unknown } | undefined) => values?.ios ?? values?.default ?? null,
+                },
+            }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({

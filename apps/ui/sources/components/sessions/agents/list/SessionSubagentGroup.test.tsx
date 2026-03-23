@@ -5,19 +5,16 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
-
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sendMessageSpy = vi.fn(async () => undefined);
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
-                    Pressable: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Pressable', props, children),
-                }
-    );
+    return createReactNativeWebMock({
+        View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
+        Pressable: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Pressable', props, children),
+    });
 });
 
 vi.mock('react-native-unistyles', async () => {

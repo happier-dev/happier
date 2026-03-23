@@ -1,7 +1,6 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -47,7 +46,14 @@ vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
 }));
 
 vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', () => ({
-  SessionRepositoryTreeBrowserView: (props: any) => React.createElement('SessionRepositoryTreeBrowserView', props),
+  SessionRepositoryTreeBrowserView: (props: any) => React.createElement(
+      'SessionRepositoryTreeBrowserView',
+      props,
+      React.createElement('Pressable', {
+          testID: 'repository-tree-row-src_api.ts',
+          onPress: () => props.onOpenFile('src/api.ts'),
+      }),
+  ),
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {
@@ -67,13 +73,12 @@ describe('ProjectFileLinkPickerModal', () => {
     const onPickPath = vi.fn();
     const onClose = vi.fn();
 
-    let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<ProjectFileLinkPickerModal sessionId="s1" onPickPath={onPickPath} onClose={onClose} />)).tree;
+    const screen = await renderScreen(
+        <ProjectFileLinkPickerModal sessionId="s1" onPickPath={onPickPath} onClose={onClose} />,
+    );
 
-    const browser = tree.root.findByType('SessionRepositoryTreeBrowserView' as any);
-    await act(async () => {
-      browser.props.onOpenFile('src/api.ts');
-    });
+    const fileRow = screen.findByTestId('repository-tree-row-src_api.ts');
+    await pressTestInstanceAsync(fileRow, 'repository-tree-row-src_api.ts');
 
     expect(onPickPath).toHaveBeenCalledWith('src/api.ts');
     expect(onClose).toHaveBeenCalled();

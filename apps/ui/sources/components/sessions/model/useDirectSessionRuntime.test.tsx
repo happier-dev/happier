@@ -40,29 +40,19 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function withFrozenTime<T>(run: () => Promise<T>): Promise<T> {
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-  try {
-    return await run();
-  } finally {
-    vi.useRealTimers();
-  }
-}
-
 async function renderHarness(): Promise<{ getCurrent: () => HookValue; unmount: () => Promise<void> }> {
   const { useDirectSessionRuntime } = await import('./useDirectSessionRuntime');
   const hook = await renderHook(() => useDirectSessionRuntime({
-      sessionId: 'session-1',
-      metadata: {
-        directSessionV1: {
-          v: 1,
-          providerId: 'opencode',
-          machineId: 'machine-1',
-          remoteSessionId: 'remote-1',
-          source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
-        },
-      } as any,
+    sessionId: 'session-1',
+    metadata: {
+      directSessionV1: {
+        v: 1,
+        providerId: 'opencode',
+        machineId: 'machine-1',
+        remoteSessionId: 'remote-1',
+        source: { kind: 'opencodeServer', directory: '/tmp/workspace' },
+      },
+    } as any,
   }));
 
   return {
@@ -86,53 +76,52 @@ describe('useDirectSessionRuntime', () => {
   });
 
   it('does not emit an unhandled rejection when status fails before transcript refresh completes', async () => {
-    await withFrozenTime(async () => {
-      const unhandled: unknown[] = [];
-      const onUnhandledRejection = (reason: unknown) => {
-        unhandled.push(reason);
-      };
-      process.on('unhandledRejection', onUnhandledRejection);
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
 
-      try {
-        machineDirectSessionStatusGetSpy.mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
-          rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE',
-        }));
-        refreshSessionMessagesSpy.mockImplementationOnce(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        });
-
-        const harness = await renderHarness();
-        await act(async () => {
-          await vi.advanceTimersByTimeAsync(40);
-        });
-        expect(unhandled).toEqual([]);
-        expect(harness.getCurrent().status).toBeNull();
-        await harness.unmount();
-      } finally {
-        process.off('unhandledRejection', onUnhandledRejection);
-      }
-    });
-  });
-
-  it('returns the current status instead of rejecting when status refresh fails', async () => {
-    await withFrozenTime(async () => {
+    try {
+      const refreshMessages = createDeferred<void>();
       machineDirectSessionStatusGetSpy.mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
         rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE',
       }));
-      refreshSessionMessagesSpy.mockImplementationOnce(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      });
+      refreshSessionMessagesSpy.mockReturnValueOnce(refreshMessages.promise);
 
       const harness = await renderHarness();
+      expect(unhandled).toEqual([]);
 
-      const refreshPromise = harness.getCurrent().refreshNow();
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(40);
+        refreshMessages.resolve();
+        await refreshMessages.promise;
       });
-      await expect(refreshPromise).resolves.toBeNull();
+
+      expect(unhandled).toEqual([]);
       expect(harness.getCurrent().status).toBeNull();
       await harness.unmount();
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
+  it('returns the current status instead of rejecting when status refresh fails', async () => {
+    const refreshMessages = createDeferred<void>();
+    machineDirectSessionStatusGetSpy.mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
+      rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE',
+    }));
+    refreshSessionMessagesSpy.mockReturnValueOnce(refreshMessages.promise);
+
+    const harness = await renderHarness();
+
+    const refreshPromise = harness.getCurrent().refreshNow();
+    await act(async () => {
+      refreshMessages.resolve();
+      await refreshMessages.promise;
     });
+    await expect(refreshPromise).resolves.toBeNull();
+    expect(harness.getCurrent().status).toBeNull();
+    await harness.unmount();
   });
 
   it('does not reset the direct-session runtime when the active server changes but the session owner stays the same', async () => {
@@ -152,7 +141,7 @@ describe('useDirectSessionRuntime', () => {
       activeServerSnapshot = { serverId: 'server-2' };
       const subscriber = subscribeActiveServerSpy.mock.calls[0]?.[0];
       if (subscriber) subscriber(activeServerSnapshot);
-      await Promise.resolve();
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
     });
 
     expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);

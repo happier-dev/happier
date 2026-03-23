@@ -1,7 +1,7 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -48,8 +48,7 @@ describe('DelegateOutputMessageCard (selection)', () => {
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<DelegateOutputMessageCard payload={payload} />)).tree;
 
-    const findTextNode = (text: string) =>
-      tree.root.findAll((n: any) => n.type === 'Text' && n.props?.children === text)[0]!;
+    const findTextNode = (text: string) => findTestInstanceByTypeContainingText(tree, 'Text', text)!;
 
     expect(findTextNode('Delegation output').props.selectable).toBe(true);
     expect(findTextNode('Summary').props.selectable).toBe(true);
@@ -58,4 +57,3 @@ describe('DelegateOutputMessageCard (selection)', () => {
     expect(findTextNode('Details').props.selectable).toBe(true);
   });
 });
-

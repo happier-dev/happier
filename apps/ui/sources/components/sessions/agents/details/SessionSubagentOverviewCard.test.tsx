@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
@@ -64,10 +63,8 @@ describe('SessionSubagentOverviewCard', () => {
             timestamps: {},
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionSubagentOverviewCard subagent={subagent} />)).tree;
-        expect(tree).toBeTruthy();
-        const textContent = tree!.root.findAllByType('Text').map((node: renderer.ReactTestInstance) => String(node.props.children)).join(' ');
+        const screen = await renderScreen(<SessionSubagentOverviewCard subagent={subagent} />);
+        const textContent = screen.getTextContent();
 
         expect(textContent).toContain('Type: Subagent');
         expect(textContent).toContain('Backend: codex');

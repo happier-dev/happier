@@ -1,6 +1,6 @@
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
@@ -86,12 +86,12 @@ describe('SessionParticipantComposer', () => {
     it('routes execution-run sends through sessionExecutionRunSend', async () => {
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
 
-        const tree: renderer.ReactTestRenderer | null = (await renderScreen(<SessionParticipantComposer
+        await renderScreen(<SessionParticipantComposer
             sessionId="s1"
             canSendMessages
             recipient={{ kind: 'execution_run', runId: 'run_1' }}
             executionRunDelivery="interrupt"
-        />)).tree;
+        />);
 
         let agentInputProps = agentInputSpy.mock.lastCall?.[0] as {
             onChangeText: (text: string) => void;
@@ -109,7 +109,6 @@ describe('SessionParticipantComposer', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        expect(tree).toBeTruthy();
         expect(sessionExecutionRunSendSpy).toHaveBeenCalledWith('s1', {
             runId: 'run_1',
             message: 'Refine the current review',
@@ -121,7 +120,7 @@ describe('SessionParticipantComposer', () => {
     it('routes agent-team sends through sync.sendMessage with participant meta', async () => {
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
 
-        const tree: renderer.ReactTestRenderer | null = (await renderScreen(<SessionParticipantComposer
+        await renderScreen(<SessionParticipantComposer
             sessionId="s1"
             canSendMessages
             recipient={{
@@ -130,7 +129,7 @@ describe('SessionParticipantComposer', () => {
                 memberId: 'alpha@qa-team',
                 memberLabel: 'alpha',
             }}
-        />)).tree;
+        />);
 
         let agentInputProps = agentInputSpy.mock.lastCall?.[0] as {
             onChangeText: (text: string) => void;
@@ -148,7 +147,6 @@ describe('SessionParticipantComposer', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        expect(tree).toBeTruthy();
         expect(syncSendMessageSpy).toHaveBeenCalledWith(
             's1',
             'Please focus on regressions only',

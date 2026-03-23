@@ -11,18 +11,18 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    Platform: {
-                        get OS() {
-                                        return platformState.os;
-                                    },
-                        select: (values: any) => values?.web ?? values?.default ?? values?.ios ?? values?.android,
-                    },
-                    View: React.forwardRef((props: any, ref: any) => {
-                            React.useImperativeHandle(ref, () => ({ nodeType: 'View' }));
-                            return React.createElement('View', props, props.children);
-                        }),
-                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                }
+                            Platform: {
+                                get OS() {
+                                                return platformState.os;
+                                            },
+                                select: (values: any) => values?.web ?? values?.default ?? values?.ios ?? values?.android,
+                            },
+                            View: React.forwardRef((props: any, ref: any) => {
+                                    React.useImperativeHandle(ref, () => ({ nodeType: 'View' }));
+                                    return React.createElement('View', props, props.children);
+                                }),
+                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                        }
     );
 });
 

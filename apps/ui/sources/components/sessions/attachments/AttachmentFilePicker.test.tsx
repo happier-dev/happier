@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 
-import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderScreen } from '@/dev/testkit';
 
 const nativePickFilesSpy = vi.hoisted(() => vi.fn<(params?: unknown) => Promise<unknown[]>>(async () => []));
 const nativePickImagesSpy = vi.hoisted(() => vi.fn<(params?: unknown) => Promise<unknown[]>>(async () => []));
@@ -21,16 +20,13 @@ describe('AttachmentFilePicker', () => {
         const onAttachmentsPicked = vi.fn();
         const ref = React.createRef<any>();
 
-        await act(async () => {
-            renderer.create(
-                <AttachmentFilePicker
-                    ref={ref}
-                    onAttachmentsPicked={onAttachmentsPicked}
-                    multiple={false}
-                />,
-            );
-        });
-        await flushHookEffects({ cycles: 1, turns: 4 });
+        await renderScreen(
+            <AttachmentFilePicker
+                ref={ref}
+                onAttachmentsPicked={onAttachmentsPicked}
+                multiple={false}
+            />,
+        );
 
         expect(typeof ref.current?.openFiles).toBe('function');
         expect(typeof ref.current?.openImages).toBe('function');
@@ -52,19 +48,14 @@ describe('AttachmentFilePicker', () => {
             },
         ]);
 
-        await act(async () => {
-            renderer.create(
-                <AttachmentFilePicker
-                    ref={ref}
-                    onAttachmentsPicked={onAttachmentsPicked}
-                    multiple={false}
-                />,
-            );
-        });
-        await act(async () => {
-            ref.current?.open?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 6 });
+        await renderScreen(
+            <AttachmentFilePicker
+                ref={ref}
+                onAttachmentsPicked={onAttachmentsPicked}
+                multiple={false}
+            />,
+        );
+        await ref.current?.open?.();
 
         expect(nativePickFilesSpy).toHaveBeenCalled();
         expect(onAttachmentsPicked).toHaveBeenCalledWith([
@@ -92,19 +83,14 @@ describe('AttachmentFilePicker', () => {
             },
         ]);
 
-        await act(async () => {
-            renderer.create(
-                <AttachmentFilePicker
-                    ref={ref}
-                    onAttachmentsPicked={onAttachmentsPicked}
-                    multiple={false}
-                />,
-            );
-        });
-        await act(async () => {
-            ref.current?.openImages?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 6 });
+        await renderScreen(
+            <AttachmentFilePicker
+                ref={ref}
+                onAttachmentsPicked={onAttachmentsPicked}
+                multiple={false}
+            />,
+        );
+        await ref.current?.openImages?.();
 
         expect(nativePickImagesSpy).toHaveBeenCalled();
         expect(onAttachmentsPicked).toHaveBeenCalledWith([

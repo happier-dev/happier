@@ -15,9 +15,11 @@ const previewState = vi.hoisted(() => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        useWindowDimensions: () => ({ width: 900, height: 700 }),
-    });
+    return createReactNativeWebMock(
+        {
+                useWindowDimensions: () => ({ width: 900, height: 700 }),
+            }
+    );
 });
 
 vi.mock('react-native-unistyles', async () => {

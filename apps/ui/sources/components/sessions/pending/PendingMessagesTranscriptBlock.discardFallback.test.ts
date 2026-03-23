@@ -1,7 +1,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { createPartialStorageModuleMock, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { createStorageModuleMock, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,9 +39,12 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-    useSession: () => null,
-    useSetting: () => undefined,
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => createStorageModuleMock({
+    importOriginal,
+    overrides: {
+        useSession: () => null,
+        useSetting: () => undefined,
+    },
 }));
 
 vi.mock('@/sync/sync', () => ({

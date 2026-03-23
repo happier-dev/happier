@@ -1,5 +1,5 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { changeTextTestInstance, findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
@@ -74,19 +74,18 @@ describe('ReviewFindingsMessageCard', () => {
       assumptions: [],
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const tree = screen.tree;
 
-    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
+    const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
     await act(async () => {
       await pressTestInstanceAsync(findingHeader!);
     });
 
-    const texts = tree!.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
-    expect(texts.some((text) => text.includes('Ask reviewer'))).toBe(false);
-    expect(texts.some((text) => text.includes('Answer reviewer'))).toBe(false);
-    expect(texts.some((text) => text.includes('Answer question'))).toBe(false);
+    expect(screen.getTextContent()).not.toContain('Ask reviewer');
+    expect(screen.getTextContent()).not.toContain('Answer reviewer');
+    expect(screen.getTextContent()).not.toContain('Answer question');
   });
 
   it('hides follow-up affordances when retention metadata is missing (fail closed)', async () => {
@@ -107,18 +106,17 @@ describe('ReviewFindingsMessageCard', () => {
       assumptions: [],
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const tree = screen.tree;
 
-    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
+    const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
     await act(async () => {
       await pressTestInstanceAsync(findingHeader!);
     });
 
-    const texts = tree!.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
-    expect(texts.some((text) => text.includes('Ask reviewer'))).toBe(false);
-    expect(texts.some((text) => text.includes('Answer question'))).toBe(false);
+    expect(screen.getTextContent()).not.toContain('Ask reviewer');
+    expect(screen.getTextContent()).not.toContain('Answer question');
   });
 
   it('hides follow-up affordances when the run retention policy is ephemeral', async () => {
@@ -139,18 +137,17 @@ describe('ReviewFindingsMessageCard', () => {
       assumptions: [],
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const tree = screen.tree;
 
-    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
+    const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
     await act(async () => {
       await pressTestInstanceAsync(findingHeader!);
     });
 
-    const texts = tree!.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
-    expect(texts.some((text) => text.includes('Ask reviewer'))).toBe(false);
-    expect(texts.some((text) => text.includes('Answer question'))).toBe(false);
+    expect(screen.getTextContent()).not.toContain('Ask reviewer');
+    expect(screen.getTextContent()).not.toContain('Answer question');
   });
 
   it('preloads persisted clarification comments and treats them as already applied', async () => {
@@ -169,21 +166,21 @@ describe('ReviewFindingsMessageCard', () => {
       triage: { findings: [{ id: 'f1', status: 'needs_refinement', comment: 'please clarify' }] },
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const tree = screen.tree;
 
-    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
+    const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
 
     await act(async () => {
       await pressTestInstanceAsync(findingHeader!);
     });
 
-    const inputs = tree!.findAllByType('TextInput');
+    const inputs = screen.findAllByType('TextInput');
     expect(inputs).toHaveLength(1);
     expect(inputs[0]!.props.value).toBe('please clarify');
 
-    const appliedButton = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Applied');
+    const appliedButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Applied');
     expect(appliedButton).toBeDefined();
     expect(appliedButton!.props.disabled).toBe(true);
     expect(sessionExecutionRunActionSpy).not.toHaveBeenCalled();
@@ -204,20 +201,20 @@ describe('ReviewFindingsMessageCard', () => {
       ],
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const tree = screen.tree;
 
-    const header = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
+    const header = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
     expect(header).toBeDefined();
 
     await act(async () => {
       await pressTestInstanceAsync(header!);
     });
 
-    const clarify = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Ask for clarification');
-    const ignore = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Ignore');
-    const implementFix = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Implement fix');
-    const applyReviewActions = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Apply review actions');
+    const clarify = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Ask for clarification');
+    const ignore = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Ignore');
+    const implementFix = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Implement fix');
+    const applyReviewActions = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Apply review actions');
 
     expect(clarify).toBeDefined();
     expect(ignore).toBeDefined();
@@ -228,7 +225,7 @@ describe('ReviewFindingsMessageCard', () => {
       await pressTestInstanceAsync(clarify!);
     });
 
-    const inputs = tree!.findAllByType('TextInput');
+    const inputs = screen.findAllByType('TextInput');
     expect(inputs).toHaveLength(1);
 
     await act(async () => {
@@ -269,24 +266,23 @@ describe('ReviewFindingsMessageCard', () => {
       assumptions: [],
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
 
-    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
+    const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
 
     await act(async () => {
       await pressTestInstanceAsync(findingHeader!);
     });
 
-    const ignore = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Ignore');
+    const ignore = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Ignore');
     expect(ignore).toBeDefined();
 
     await act(async () => {
       await pressTestInstanceAsync(ignore!);
     });
 
-    let applyReviewActions = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Apply review actions');
+    let applyReviewActions = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Apply review actions');
     expect(applyReviewActions).toBeDefined();
     expect(applyReviewActions!.props.disabled).toBe(false);
 
@@ -305,18 +301,18 @@ describe('ReviewFindingsMessageCard', () => {
       }),
     );
 
-    const appliedButton = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Applied');
+    const appliedButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Applied');
     expect(appliedButton).toBeDefined();
     expect(appliedButton!.props.disabled).toBe(true);
 
-    const decideLater = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Decide later');
+    const decideLater = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Decide later');
     expect(decideLater).toBeDefined();
 
     await act(async () => {
       await pressTestInstanceAsync(decideLater!);
     });
 
-    applyReviewActions = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Apply review actions');
+    applyReviewActions = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Apply review actions');
     expect(applyReviewActions).toBeDefined();
     expect(applyReviewActions!.props.disabled).toBe(false);
   });
@@ -339,41 +335,30 @@ describe('ReviewFindingsMessageCard', () => {
       assumptions: [],
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
 
-    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
+    const findingHeader = findTestInstanceByTypeContainingText(screen, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
     await act(async () => {
       await pressTestInstanceAsync(findingHeader!);
     });
 
-    const askReviewer = tree!.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => {
-        const text = String(t.props.children ?? '');
-        return text.includes('Ask reviewer') || text.includes('askReviewer');
-      });
-    });
+    const askReviewer = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Ask reviewer')
+      ?? findTestInstanceByTypeContainingText(screen, 'Pressable', 'askReviewer');
     expect(askReviewer).toBeDefined();
 
     await act(async () => {
       await pressTestInstanceAsync(askReviewer!);
     });
 
-    const inputs = tree!.findAllByType('TextInput');
+    const inputs = screen.findAllByType('TextInput');
     expect(inputs.length).toBeGreaterThan(0);
     await act(async () => {
       changeTextTestInstance(inputs.at(-1)!, 'Please clarify why this matters.');
     });
 
-    const sendFollowUp = tree!.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => {
-        const text = String(t.props.children ?? '');
-        return text.includes('Send follow-up') || text.includes('sendFollowUp');
-      });
-    });
+    const sendFollowUp = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Send follow-up')
+      ?? findTestInstanceByTypeContainingText(screen, 'Pressable', 'sendFollowUp');
     expect(sendFollowUp).toBeDefined();
     await act(async () => {
       await pressTestInstanceAsync(sendFollowUp!);
@@ -424,13 +409,10 @@ describe('ReviewFindingsMessageCard', () => {
       triage: { findings: [{ id: 'f1', status: 'accept' }] },
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const tree = screen.tree;
 
-    const publish = tree!.findByProps({
-      testID: 'review-findings-publish-accepted',
-      accessibilityRole: 'button',
-    });
+    const publish = screen.findByTestId('review-findings-publish-accepted');
     expect(publish).toBeDefined();
 
     await act(async () => {
@@ -520,26 +502,19 @@ describe('ReviewFindingsMessageCard', () => {
       triage: { findings: [{ id: 'f1', status: 'accept' }] },
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
+    const screen = await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
+    const tree = screen.tree;
 
-    const findingHeader = tree!.findByProps({
-      testID: 'review-findings-header:f1',
-      accessibilityRole: 'button',
-    });
+    const findingHeader = screen.findByTestId('review-findings-header:f1');
     expect(findingHeader).toBeDefined();
 
     await act(async () => {
       await pressTestInstanceAsync(findingHeader!);
     });
 
-    const allText = tree!.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
-    expect(allText.some((text) => text.includes('Merged summary'))).toBe(true);
+    expect(screen.getTextContent()).toContain('Merged summary');
 
-    const publish = tree!.findByProps({
-      testID: 'review-findings-publish-accepted',
-      accessibilityRole: 'button',
-    });
+    const publish = screen.findByTestId('review-findings-publish-accepted');
     expect(publish).toBeDefined();
 
     await act(async () => {

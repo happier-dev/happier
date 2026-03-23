@@ -9,44 +9,19 @@ import { renderScreen } from '@/dev/testkit';
 
 const stopRunSpy = vi.fn(async () => ({ ok: true }));
 const sendMessageSpy = vi.fn(async () => undefined);
-const modalAlertSpy = vi.fn();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-                    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                    Platform: {
-                        OS: 'web',
-                        select: (value: { web?: unknown; default?: unknown }) => value.web ?? value.default,
-                    },
-                }
-    );
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'web',
+        },
+    });
 });
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-                accent: {
-                    blue: '#007AFF',
-                    green: '#34C759',
-                    orange: '#FF9500',
-                    yellow: '#FFCC00',
-                    red: '#FF3B30',
-                    indigo: '#5856D6',
-                    purple: '#AF52DE',
-                },
-            },
-        },
-    });
+    return createUnistylesMock();
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -82,11 +57,7 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-        },
-    }).module;
+    return createModalModuleMock().module;
 });
 
 vi.mock('@/utils/system/fireAndForget', () => ({
@@ -127,7 +98,7 @@ describe('SessionSubagentRow', () => {
         expect(row.props.accessibilityRole).toBeUndefined();
         expect(row.props.tabIndex).toBe(0);
 
-        row.props.onClick?.({ stopPropagation: vi.fn(), nativeEvent: { stopPropagation: vi.fn() } });
+        await screen.pressByTestIdAsync('session-subagent-row:execution_run:run_web');
 
         expect(onOpenPreview).toHaveBeenCalledTimes(1);
     });
