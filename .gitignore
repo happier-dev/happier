@@ -108,3 +108,4 @@ _.env.pipeline.production.local
 # Local QA screenshots
 /authoring-qa-*.png
 /.codex-tmp
+/apps/stack/output
