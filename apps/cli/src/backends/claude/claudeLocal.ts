@@ -232,12 +232,13 @@ export async function claudeLocal(opts: {
             // Ensure positional args come after all flags (including our injected --settings).
             const flagArgs: string[] = [];
             const positionalArgs: string[] = [];
-            const flagsWithValue = new Set<string>([
-                '--model',
-                '--permission-mode',
-                '--settings',
-                '--mcp-config',
-                '--max-turns',
+	            const flagsWithValue = new Set<string>([
+	                '--model',
+	                '--effort',
+	                '--permission-mode',
+	                '--settings',
+	                '--mcp-config',
+	                '--max-turns',
                 '--allowedTools',
                 '--disallowedTools',
                 '--output-format',

@@ -80,6 +80,10 @@ import {
   type SessionHandoffPrepareTargetJobRecordInput,
 } from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import {
+  createWorkspaceReplicationJobStore,
+  type WorkspaceReplicationJobRecord,
+} from '../../workspaces/replication/jobs/workspaceReplicationJobStore';
+import {
   releaseSessionHandoffPrepareTargetJobLease,
   resolveSessionHandoffPrepareTargetJobLeaseTtlMs,
   startSessionHandoffPrepareTargetJobLeaseHeartbeat,
@@ -223,6 +227,57 @@ function buildPreparePendingStatus(input: Readonly<{
         phaseDetail: input.phaseDetail,
       },
       resumable: false,
+    },
+  };
+}
+
+function mapWorkspaceReplicationJobCheckpointToHandoffCheckpoint(
+  checkpoint: WorkspaceReplicationJobRecord['status']['checkpoint'],
+): NonNullable<SessionHandoffStatus['progress']>['checkpoint'] {
+  switch (checkpoint) {
+    case 'job_created':
+    case 'relationship_resolved':
+    case 'missing_digests_negotiated':
+      return 'plan';
+    case 'blob_transfer_started':
+      return 'transfer_blobs';
+    case 'blob_transfer_completed':
+    case 'apply_started':
+    case 'apply_completed':
+      return 'apply';
+    case 'baseline_committed':
+      return 'finalize';
+    default:
+      return 'plan';
+  }
+}
+
+function mergeWorkspaceReplicationProgressIntoHandoffStatus(params: Readonly<{
+  baseStatus: SessionHandoffStatus;
+  job: WorkspaceReplicationJobRecord;
+}>): SessionHandoffStatus {
+  const baseProgress = params.baseStatus.progress;
+  const counters = params.job.status.progressCounters;
+  const checkpoint = mapWorkspaceReplicationJobCheckpointToHandoffCheckpoint(params.job.status.checkpoint);
+
+  return {
+    ...params.baseStatus,
+    progress: {
+      updatedAtMs: params.job.updatedAtMs,
+      checkpoint,
+      planned: {
+        totalFiles: counters.plannedFiles,
+        totalBytes: counters.plannedBytes,
+      },
+      transferred: {
+        files: counters.transferredFiles,
+        bytes: counters.transferredBytes,
+      },
+      current: {
+        ...(baseProgress?.current ?? {}),
+        phaseDetail: `workspace_replication:${params.job.status.phase}`,
+      },
+      resumable: baseProgress?.resumable ?? false,
     },
   };
 }
@@ -630,6 +685,9 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 }>): void {
   const store = new Map<string, StoredHandoffState>();
   const prepareJobStore = createSessionHandoffPrepareTargetJobStore({
+    activeServerDir: configuration.activeServerDir,
+  });
+  const workspaceReplicationJobStore = createWorkspaceReplicationJobStore({
     activeServerDir: configuration.activeServerDir,
   });
   const activePrepareJobs = new Map<string, Promise<void>>();
@@ -1637,7 +1695,24 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       jobStore: prepareJobStore,
     });
     if (persistedJob) {
-      return { handoffId: parsed.data.handoffId, status: persistedJob.status };
+      const baseStatus = persistedJob.status;
+      if (
+        persistedJob.workspaceReplicationJobId
+        && baseStatus.status === 'pending'
+        && baseStatus.phase === 'staging_target'
+      ) {
+        const job = await workspaceReplicationJobStore.read(persistedJob.workspaceReplicationJobId);
+        if (job) {
+          return {
+            handoffId: parsed.data.handoffId,
+            status: mergeWorkspaceReplicationProgressIntoHandoffStatus({
+              baseStatus,
+              job,
+            }),
+          };
+        }
+      }
+      return { handoffId: parsed.data.handoffId, status: baseStatus };
     }
     if (!current) return { ok: false, errorCode: 'not_found' } as const;
 

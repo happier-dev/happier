@@ -16,6 +16,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createEncryptedTransferChunkEnvelope } from '../../machines/transfer/transferChunkEncryption';
 import type { DirectPeerOnDemandTransferScope } from '../../machines/transfer/directPeerTransport';
 import { createWorkspaceReplicationBaselineStore } from '../../workspaces/replication/baseline/workspaceReplicationBaselineStore';
+import { createWorkspaceReplicationJobStore } from '../../workspaces/replication/jobs/workspaceReplicationJobStore';
+import { createSessionHandoffPrepareTargetJobStore } from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
 
 type ExportSessionBundle = NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['exportSessionBundle']>;
@@ -1076,6 +1078,132 @@ function createLoopbackMachineTransferChannels() {
     const fetched = await status!({ handoffId });
     expect(fetched.status.status).toBe('completed');
     expect(fetched.status.phase).toBe('finalizing');
+  });
+
+  it('surfaces workspace replication engine progress in status_get while prepare-target is pending', async () => {
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-status-progress-'));
+
+    try {
+      vi.resetModules();
+      vi.doMock('@/configuration', () => ({
+        configuration: {
+          activeServerDir,
+          activeServerId: 'test_status_progress',
+          workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+          workspaceReplicationBlobPackMaxBlobs: 64,
+          workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+        },
+      }));
+      const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
+
+      const workspaceReplicationJobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+
+      const handoffId = 'handoff_status_progress';
+      const prepareJobId = 'prepare_status_progress';
+      const workspaceReplicationJobId = 'job_status_progress';
+
+      await workspaceReplicationJobStore.write({
+        jobId: workspaceReplicationJobId,
+        createdAtMs: 1,
+        updatedAtMs: 1234,
+        status: {
+          status: 'in_progress',
+          phase: 'transfer_missing_blobs_to_target_cas',
+          checkpoint: 'blob_transfer_started',
+          progressCounters: {
+            plannedFiles: 10,
+            plannedBytes: 100,
+            transferredFiles: 3,
+            transferredBytes: 30,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      await prepareJobStore.write({
+        jobId: prepareJobId,
+        handoffId,
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        workspaceReplicationJobId,
+        status: {
+          handoffId,
+          jobId: prepareJobId,
+          status: 'pending',
+          phase: 'staging_target',
+          progress: {
+            updatedAtMs: 2,
+            checkpoint: 'stage_target',
+            planned: {},
+            transferred: {},
+            current: {
+              phaseDetail: 'importing_workspace',
+            },
+            resumable: false,
+          },
+          recoveryActions: [],
+        },
+      });
+
+      const registered = new Map<string, (params: unknown) => Promise<any>>();
+      registerHandlers({
+        rpcHandlerManager: {
+          registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+            registered.set(method, handler);
+          },
+        } as any,
+        importSessionBundle: vi.fn(async () => ({
+          remoteSessionId: 'claude_session_target',
+          directSource: {
+            kind: 'claudeConfig',
+            configDir: null,
+            projectId: null,
+          },
+          resume: buildClaudeResumePlan({
+            directory: '/repo-target',
+            resume: 'claude_session_target',
+            transcriptStorage: 'persisted',
+          }),
+        })),
+      });
+
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      expect(statusGet).toBeDefined();
+
+      await expect(statusGet!({ handoffId })).resolves.toMatchObject({
+        handoffId,
+        status: {
+          handoffId,
+          status: 'pending',
+          phase: 'staging_target',
+          jobId: prepareJobId,
+          progress: {
+            updatedAtMs: 1234,
+            checkpoint: 'transfer_blobs',
+            planned: {
+              totalFiles: 10,
+              totalBytes: 100,
+            },
+            transferred: {
+              files: 3,
+              bytes: 30,
+            },
+            current: {
+              phaseDetail: expect.stringContaining('workspace_replication'),
+            },
+            resumable: false,
+          },
+        },
+      });
+    } finally {
+      vi.doUnmock('@/configuration');
+      vi.resetModules();
+      await rm(activeServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
   });
 
   it('reuses stored source-export payload sources when preparing on the same daemon (no inline payloads)', async () => {
