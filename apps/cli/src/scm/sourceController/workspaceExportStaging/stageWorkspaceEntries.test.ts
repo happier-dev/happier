@@ -171,20 +171,16 @@ describe('stageWorkspaceEntries', () => {
         expect(result.verification.isVerified).toBe(true);
     });
 
-    it('requires a file-backed blobProvider and does not fall back to in-memory blobContentsByDigest', async () => {
+    it('requires a file-backed blobProvider', async () => {
         const stagingRoot = await createWorkspaceStagingRoot({
             parentDirectory: await makeTempDir('workspace-stage-entries-require-provider-'),
             stagingId: 'stage_entries_require_provider',
         });
         const fixture = await createFileEntryFixture();
-
-        const legacyInput = {
+        await expect(stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: fixture.manifest,
-            blobContentsByDigest: new Map([[fixture.digest, fixture.content]]),
-        } as unknown as Parameters<typeof stageWorkspaceEntries>[0];
-
-        await expect(stageWorkspaceEntries(legacyInput)).rejects.toThrow(/blobProvider/i);
+        })).rejects.toThrow(/blobProvider/i);
 
         await expect(access(join(stagingRoot.workspaceDirectory, 'docs'))).rejects.toThrow();
         await expect(access(join(stagingRoot.workspaceDirectory, 'blobs', 'sha256'))).rejects.toThrow();

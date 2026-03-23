@@ -57,7 +57,6 @@ describe('sourceController workspace export artifacts', () => {
         );
         expect(shellEntries).toHaveLength(2);
         expect(new Set(shellEntries.map((entry) => entry.digest)).size).toBe(1);
-        expect(artifacts).not.toHaveProperty('blobContentsByDigest');
         expect(blobProvider.getBlobFilePath(shellEntries[0]!.digest)).toBe(join(root, 'bin', 'run.sh'));
     });
 
@@ -121,7 +120,7 @@ describe('sourceController workspace export artifacts', () => {
             }],
             fingerprint: 'sha256:test',
         });
-        expect(artifacts).not.toHaveProperty('blobContentsByDigest');
+        expect(Object.keys(artifacts).sort()).toEqual(['manifest']);
         expect(artifacts).not.toHaveProperty('sourceControllerMetadata');
     });
 });
