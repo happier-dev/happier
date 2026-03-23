@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
+import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import { DetectedClisList } from '@/components/machines/DetectedClisList';
 import { t } from '@/text';
 import type { CustomModalInjectedProps } from '@/modal';
@@ -62,7 +62,7 @@ export function DetectedClisModal({ onClose, machineId, isOnline, serverId }: Pr
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
-    const { state, refresh } = useMachineCapabilitiesCache({
+    const { state, refresh } = useDaemonScopedMachineCapabilitiesCache({
         machineId,
         serverId,
         // Cache-first: never auto-fetch on mount; user can explicitly refresh.
@@ -76,7 +76,7 @@ export function DetectedClisModal({ onClose, machineId, isOnline, serverId }: Pr
                 <Text style={styles.title}>{t('machine.detectedClis')}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                     <Pressable
-                        onPress={() => refresh()}
+                        onPress={() => refresh({ bypassCache: true })}
                         hitSlop={10}
                         style={{ padding: 2 }}
                         accessibilityRole="button"

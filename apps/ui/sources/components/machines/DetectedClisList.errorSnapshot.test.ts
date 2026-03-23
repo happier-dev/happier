@@ -12,16 +12,16 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            Platform: {
-                OS: 'ios',
-                select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
-            },
-            AppState: {
-                addEventListener: () => ({ remove: () => {} }),
-            },
-            Text: 'Text',
-            View: 'View',
-        }
+                    Platform: {
+                        OS: 'ios',
+                        select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
+                    },
+                    AppState: {
+                        addEventListener: () => ({ remove: () => {} }),
+                    },
+                    Text: 'Text',
+                    View: 'View',
+                }
     );
 });
 
