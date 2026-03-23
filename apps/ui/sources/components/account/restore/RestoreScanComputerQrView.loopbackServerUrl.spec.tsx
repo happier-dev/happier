@@ -1,40 +1,49 @@
 import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { installRestoreScanComputerQrViewCommonModuleMocks } from './restoreScanComputerQrViewTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
+installRestoreScanComputerQrViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            ScrollView: 'ScrollView',
+            ActivityIndicator: 'ActivityIndicator',
+            Platform: {
+                OS: 'ios',
+                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+        });
+        return routerMock.module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alertAsync: modalAlertAsyncSpy,
+                prompt: vi.fn(async () => null),
+            },
+        }).module;
+    },
+});
 
 vi.mock('expo-constants', () => ({
     default: { deviceName: 'Test iPhone' },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                            ScrollView: 'ScrollView',
-                            ActivityIndicator: 'ActivityIndicator',
-                            Platform: {
-                                OS: 'ios',
-                                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
-                            },
-                        }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
-    });
-    return routerMock.module;
-});
+const modalAlertAsyncSpy = vi.fn(async () => {});
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({ state: 'enabled' }),
@@ -42,29 +51,6 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ login: vi.fn(async () => {}), refreshFromActiveServer: vi.fn(async () => {}) }),
-}));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alertAsync: vi.fn(async () => {}),
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: 'RoundButton',
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -84,7 +70,7 @@ vi.mock('@/auth/pairing/pairingUrl', () => ({
 
 vi.mock('@/auth/flows/qrStart', () => ({
     generateAuthKeyPair: () => ({ publicKey: new Uint8Array([1]), secretKey: new Uint8Array([2]) }),
-    authQRStart: vi.fn(async () => false),
+    authQRStart: vi.fn(async () => true),
 }));
 
 vi.mock('@/auth/flows/qrWait', () => ({
@@ -99,20 +85,6 @@ vi.mock('@/encryption/base64', () => ({
     encodeBase64: () => 'x',
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-            },
-        },
-    });
-});
-
 let lastScannerProps: any = null;
 vi.mock('@/components/qr/QrCodeScannerView', () => ({
     QrCodeScannerView: (props: any) => {
@@ -122,9 +94,10 @@ vi.mock('@/components/qr/QrCodeScannerView', () => ({
 }));
 
 describe('RestoreScanComputerQrView (loopback serverUrl)', () => {
-    it('does not switch active server to localhost when scanning a pairing link', async () => {
+    it('does not switch to localhost and shows a server-setup hint when pairing returns not_found', async () => {
         vi.resetModules();
         upsertActivateAndSwitchServerSpy.mockClear();
+        modalAlertAsyncSpy.mockClear();
         lastScannerProps = null;
 
         const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
@@ -142,6 +115,10 @@ describe('RestoreScanComputerQrView (loopback serverUrl)', () => {
             });
 
             expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+            expect(modalAlertAsyncSpy).toHaveBeenCalledWith(
+                'connect.serverUrlNotEmbeddedTitle',
+                'connect.serverUrlNotEmbeddedBody',
+            );
         } finally {
             act(() => {
                 tree?.unmount();
@@ -149,4 +126,3 @@ describe('RestoreScanComputerQrView (loopback serverUrl)', () => {
         }
     });
 });
-

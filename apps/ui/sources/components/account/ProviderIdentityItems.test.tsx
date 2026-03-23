@@ -19,11 +19,11 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                Linking: {
-                                    canOpenURL: shared.canOpenURL,
-                                    openURL: shared.openURL,
-                                },
-                            }
+                                        Linking: {
+                                            canOpenURL: shared.canOpenURL,
+                                            openURL: shared.openURL,
+                                        },
+                                    }
     );
 });
 

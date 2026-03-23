@@ -1,33 +1,62 @@
 import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { installRestoreScanComputerQrViewCommonModuleMocks } from './restoreScanComputerQrViewTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
+    __DEV__?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as ReactActEnvironmentGlobal).__DEV__ = true;
+type ExpoGlobalShim = NonNullable<typeof globalThis.expo>;
+const expoShim = {
+    EventEmitter: class {} as unknown as ExpoGlobalShim['EventEmitter'],
+    SharedRef: class {} as unknown as ExpoGlobalShim['SharedRef'],
+    SharedObject: class {} as unknown as ExpoGlobalShim['SharedObject'],
+    NativeModule: class {} as unknown as ExpoGlobalShim['NativeModule'],
+    modules: {} as ExpoGlobalShim['modules'],
+} satisfies Partial<ExpoGlobalShim>;
+(globalThis as typeof globalThis & { expo: ExpoGlobalShim }).expo = expoShim as ExpoGlobalShim;
+process.env.EXPO_OS = 'web';
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('@/dev/reactNativeStub', async () => await import('../../../dev/reactNativeStub'));
+vi.mock('@/dev/testkit/mocks/reactNative', async () => await import('../../../dev/testkit/mocks/reactNative'));
+vi.mock('@/dev/testkit/mocks/router', async () => await import('../../../dev/testkit/mocks/router'));
+vi.mock('@/dev/testkit/mocks/modal', async () => await import('../../../dev/testkit/mocks/modal'));
+vi.mock('@/dev/testkit/mocks/text', async () => await import('../../../dev/testkit/mocks/text'));
+vi.mock('@/dev/testkit/mocks/unistyles', async () => await import('../../../dev/testkit/mocks/unistyles'));
+vi.mock('@/theme', async () => await import('../../../theme'));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        ScrollView: 'ScrollView',
-        ActivityIndicator: 'ActivityIndicator',
-        Platform: {
-            OS: 'web',
-            select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-        },
-    });
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
-    });
-    return routerMock.module;
+installRestoreScanComputerQrViewCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('../../../dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alertAsync: modalAlertAsyncSpy,
+                prompt: vi.fn(async () => null),
+            },
+        }).module;
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('../../../dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#fff',
+                    text: '#000',
+                    textSecondary: '#666',
+                    divider: '#ddd',
+                    overlay: {
+                        scrim: 'rgba(0,0,0,0.3)',
+                        scrimStrong: 'rgba(0,0,0,0.55)',
+                        text: '#fff',
+                        textSecondary: 'rgba(255,255,255,0.85)',
+                    },
+                },
+            },
+        });
+    },
 });
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
@@ -39,27 +68,11 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 const modalAlertAsyncSpy = vi.fn(async () => {});
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alertAsync: modalAlertAsyncSpy,
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: 'RoundButton',
+vi.mock('expo-constants', () => ({
+    default: {
+        deviceName: undefined,
+    },
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -69,6 +82,21 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (s: string) => s,
     upsertActivateAndSwitchServer: vi.fn(async () => {}),
+}));
+
+vi.mock('@/sync/domains/server/url/serverUrlOverridePolicy', () => ({
+    resolveEffectiveServerUrlOverride: () => null,
+}));
+
+vi.mock('@/sync/domains/server/url/serverUrlClassification', () => ({
+    isLoopbackServerUrl: () => false,
+}));
+
+vi.mock('@/constants/Typography', () => ({
+    Typography: {
+        default: () => ({}),
+        mono: () => ({}),
+    },
 }));
 
 vi.mock('@/auth/pairing/pairingUrl', () => ({
@@ -92,26 +120,6 @@ vi.mock('@/auth/flows/qrWait', () => ({
 vi.mock('@/encryption/base64', () => ({
     encodeBase64: () => 'x',
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                overlay: {
-                    scrim: 'rgba(0,0,0,0.3)',
-                    scrimStrong: 'rgba(0,0,0,0.55)',
-                    text: '#fff',
-                    textSecondary: 'rgba(255,255,255,0.85)',
-                },
-            },
-        },
-    });
-});
 
 let lastScannerProps: any = null;
 vi.mock('@/components/qr/QrCodeScannerView', () => ({

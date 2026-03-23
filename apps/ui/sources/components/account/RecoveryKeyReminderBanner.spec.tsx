@@ -112,13 +112,24 @@ vi.mock('@/components/ui/lists/Item', () => ({
         rightElement?: React.ReactNode;
         testID?: string;
     }) => {
-        const dismissElement =
-            React.isValidElement<{ accessibilityLabel?: string; testID?: string }>(props.rightElement)
-                ? React.cloneElement(props.rightElement, {
+        const dismissElement = React.isValidElement<{
+            accessibilityLabel?: string;
+            testID?: string;
+            onPress?: (event?: { stopPropagation?: () => void }) => void | Promise<void>;
+        }>(props.rightElement)
+            ? (() => {
+                  const rightElement = props.rightElement;
+                  return React.cloneElement(rightElement, {
                       accessibilityLabel: 'recovery-key-dismiss',
                       testID: 'recovery-key-dismiss',
-                  })
-                : props.rightElement;
+                      onPress: async () => {
+                          await rightElement.props.onPress?.({
+                              stopPropagation: vi.fn(),
+                          } as never);
+                      },
+                  });
+              })()
+            : props.rightElement;
         return (
             <>
                 {React.createElement('Pressable', {
@@ -185,12 +196,7 @@ describe('RecoveryKeyReminderBanner', () => {
             }),
         );
 
-        const dismissButton = screen.findByTestId('recovery-key-dismiss');
-        expect(dismissButton).toBeTruthy();
-
-        await act(async () => {
-            await dismissButton!.props.onPress({ stopPropagation: vi.fn() });
-        });
+        await screen.pressByTestIdAsync('recovery-key-dismiss');
 
         expect(setRecoveryKeyReminderDismissed).toHaveBeenCalledWith(true);
     });

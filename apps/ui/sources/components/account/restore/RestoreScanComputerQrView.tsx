@@ -16,6 +16,7 @@ import { pairingRequest } from '@/sync/api/account/apiPairingAuth';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
+import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
@@ -118,13 +119,15 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             setConfirmCode(null);
 
             try {
+                const activeServerUrl = normalizeServerUrl(getActiveServerUrl());
+                const activeServerUrlIsLoopback = activeServerUrl ? isLoopbackServerUrl(activeServerUrl) : false;
+
                 if (parsed.serverUrl) {
-                    const current = normalizeServerUrl(getActiveServerUrl());
                     const target = resolveEffectiveServerUrlOverride({
                         requestedServerUrl: parsed.serverUrl,
-                        activeServerUrl: current,
+                        activeServerUrl,
                     });
-                    if (target && current !== target) {
+                    if (target && activeServerUrl !== target) {
                         await upsertActivateAndSwitchServer({
                             serverUrl: target,
                             source: 'url',
@@ -151,7 +154,13 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
                 if (!pairingRes.ok) {
                     if (pairingRes.reason === 'not_found') {
-                        await Modal.alertAsync(t('modals.authRequestExpired'), t('modals.authRequestExpiredDescription'));
+                        const requestedLoopback = parsed.serverUrl ? isLoopbackServerUrl(parsed.serverUrl) : false;
+                        const showServerUrlNotEmbeddedHint = parsed.serverUrl == null || (requestedLoopback && !activeServerUrlIsLoopback);
+                        if (showServerUrlNotEmbeddedHint) {
+                            await Modal.alertAsync(t('connect.serverUrlNotEmbeddedTitle'), t('connect.serverUrlNotEmbeddedBody'));
+                        } else {
+                            await Modal.alertAsync(t('modals.authRequestExpired'), t('modals.authRequestExpiredDescription'));
+                        }
                     } else if (pairingRes.reason === 'already_requested') {
                         await Modal.alertAsync(
                             t('connect.pairingAlreadyRequestedTitle'),
