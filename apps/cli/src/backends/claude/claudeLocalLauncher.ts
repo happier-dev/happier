@@ -245,8 +245,16 @@ export async function claudeLocalLauncher(
                 const resolvedAgentMode = resolveAcpSessionModeOverrideFromMetadataSnapshot({
                     metadata: metadataSnapshot,
                 });
+                // Use spawnPermissionMode as a floor: if the per-turn lastPermissionMode
+                // has been clobbered to 'default' by remote messages but the session was
+                // originally started with a non-default mode (e.g. yolo), preserve the
+                // launch intent so the local Claude process respects it.
+                const effectivePermissionMode =
+                    session.lastPermissionMode === 'default' && session.spawnPermissionMode !== 'default'
+                        ? session.spawnPermissionMode
+                        : session.lastPermissionMode;
                 session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, {
-                    permissionMode: session.lastPermissionMode,
+                    permissionMode: effectivePermissionMode,
                     agentModeId: resolvedAgentMode ? resolvedAgentMode.modeId : null,
                 });
 
