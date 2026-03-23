@@ -1,6 +1,6 @@
 import React from 'react';
-import TestRenderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
 import { useDeviceType } from './responsive';
 
@@ -50,56 +50,35 @@ describe('useDeviceType (stability)', () => {
         screenState.staticDims = { width: 800, height: 700 };
     });
 
-    it('keeps the last valid deviceType when useWindowDimensions returns zero temporarily', () => {
-        let renderer: TestRenderer.ReactTestRenderer | undefined;
-        act(() => {
-            renderer = TestRenderer.create(<DeviceTypeLabel />);
-        });
-        if (!renderer) throw new Error('renderer not initialized');
-        const r = renderer;
-        expect(r.root.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('tablet');
+    it('keeps the last valid deviceType when useWindowDimensions returns zero temporarily', async () => {
+        const screen = await renderScreen(<DeviceTypeLabel />);
+        expect(screen.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('tablet');
 
-        act(() => {
-            screenState.hookDims = { width: 0, height: 0 };
-            r.update(<DeviceTypeLabel />);
-        });
+        screenState.hookDims = { width: 0, height: 0 };
+        await screen.update(<DeviceTypeLabel />);
 
-        expect(r.root.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('tablet');
+        expect(screen.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('tablet');
     });
 
-    it('falls back to Dimensions.get when hook dimensions are temporarily invalid', () => {
-        let renderer: TestRenderer.ReactTestRenderer | undefined;
-        act(() => {
-            renderer = TestRenderer.create(<DeviceTypeLabel />);
-        });
-        if (!renderer) throw new Error('renderer not initialized');
-        const r = renderer;
-        expect(r.root.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('tablet');
+    it('falls back to Dimensions.get when hook dimensions are temporarily invalid', async () => {
+        const screen = await renderScreen(<DeviceTypeLabel />);
+        expect(screen.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('tablet');
 
-        act(() => {
-            screenState.hookDims = { width: 0, height: 0 };
-            screenState.staticDims = { width: 800, height: 700 };
-            r.update(<DeviceTypeLabel />);
-        });
+        screenState.hookDims = { width: 0, height: 0 };
+        screenState.staticDims = { width: 800, height: 700 };
+        await screen.update(<DeviceTypeLabel />);
 
-        expect(r.root.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('tablet');
+        expect(screen.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('tablet');
     });
 
-    it('still updates when dimensions are valid and cross the tablet threshold', () => {
-        let renderer: TestRenderer.ReactTestRenderer | undefined;
-        act(() => {
-            renderer = TestRenderer.create(<DeviceTypeLabel />);
-        });
-        if (!renderer) throw new Error('renderer not initialized');
-        const r = renderer;
-        expect(r.root.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('tablet');
+    it('still updates when dimensions are valid and cross the tablet threshold', async () => {
+        const screen = await renderScreen(<DeviceTypeLabel />);
+        expect(screen.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('tablet');
 
-        act(() => {
-            screenState.hookDims = { width: 390, height: 844 };
-            screenState.staticDims = { width: 390, height: 844 };
-            r.update(<DeviceTypeLabel />);
-        });
+        screenState.hookDims = { width: 390, height: 844 };
+        screenState.staticDims = { width: 390, height: 844 };
+        await screen.update(<DeviceTypeLabel />);
 
-        expect(r.root.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('phone');
+        expect(screen.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe('phone');
     });
 });
