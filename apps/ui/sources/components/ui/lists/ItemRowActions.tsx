@@ -13,6 +13,14 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 export interface ItemRowActionsProps {
     title: string;
     actions: ItemAction[];
+    /**
+     * Optional override for the layout width used to decide whether the row is in "compact" mode.
+     * When omitted, the current window width from `useWindowDimensions()` is used.
+     *
+     * This is useful for responsive icon rows that live inside a container that can be narrower
+     * than the window (e.g. a resizable sidebar header).
+     */
+    layoutWidthPx?: number | null;
     overflowTriggerTestID?: string;
     renderOverflowTrigger?: (props: Readonly<{
         open: boolean;
@@ -48,8 +56,14 @@ export interface ItemRowActionsProps {
 export function ItemRowActions(props: ItemRowActionsProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const { width } = useWindowDimensions();
-    const compact = width < (props.compactThreshold ?? 450);
+    const { width: windowWidth } = useWindowDimensions();
+    const widthForCompact =
+        typeof props.layoutWidthPx === 'number'
+        && Number.isFinite(props.layoutWidthPx)
+        && props.layoutWidthPx > 0
+            ? props.layoutWidthPx
+            : windowWidth;
+    const compact = widthForCompact < (props.compactThreshold ?? 450);
     const [showOverflow, setShowOverflow] = React.useState(false);
     const overflowAnchorRef = React.useRef<View>(null);
 
@@ -110,11 +124,16 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     const overflowActionItems = React.useMemo((): ActionListItem[] => {
         return overflowActions.map((action) => {
             const color = action.color ?? (action.destructive ? theme.colors.deleteAction : theme.colors.button.secondary.tint);
+            const iconNode =
+                typeof action.icon === 'string'
+                    ? <Ionicons name={action.icon} size={18} color={color} />
+                    : action.icon;
             return {
                 id: action.id,
                 testID: action.id,
                 label: action.title,
-                icon: <Ionicons name={action.icon} size={18} color={color} />,
+                subtitle: action.subtitle,
+                icon: iconNode,
                 onPress: () => closeThen(action.onPress),
                 disabled: action.disabled,
             };
@@ -125,9 +144,22 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     const gap = props.gap ?? 16;
 
     const renderInlineAction = React.useCallback((action: ItemAction) => {
+        const color = action.color ?? (action.destructive ? theme.colors.deleteAction : theme.colors.button.secondary.tint);
+        const iconNode =
+            typeof action.icon === 'string'
+                ? (
+                    <Ionicons
+                        name={action.icon}
+                        size={iconSize}
+                        color={color}
+                    />
+                )
+                : action.icon;
+
         return (
             <Pressable
                 key={action.id}
+                testID={action.inlineTestID}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 onPressIn={() => props.onActionPressIn?.()}
                 onPress={(e: GestureResponderEvent) => {
@@ -138,11 +170,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 accessibilityLabel={action.title}
             >
                 {normalizeNodeForView(
-                    <Ionicons
-                        name={action.icon}
-                        size={iconSize}
-                        color={action.color ?? (action.destructive ? theme.colors.deleteAction : theme.colors.button.secondary.tint)}
-                    />,
+                    iconNode,
                 )}
             </Pressable>
         );
@@ -182,7 +210,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                             >
                                 {normalizeNodeForView(
                                     <Ionicons
-                                        name="ellipsis-vertical"
+                                        name="ellipsis-horizontal"
                                         size={iconSize + 2}
                                         color={theme.colors.button.secondary.tint}
                                     />,
@@ -214,7 +242,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                             blurOnWeb: Platform.OS === 'web' ? { px: 3, tintColor: blurTintOnWeb } : undefined,
                             anchorOverlay: () => normalizeNodeForView(
                                 <Ionicons
-                                    name="ellipsis-vertical"
+                                    name="ellipsis-horizontal"
                                     size={iconSize + 2}
                                     color={theme.colors.button.secondary.tint}
                                 />,

@@ -22,6 +22,9 @@ import { isStackContext } from '@/sync/domains/server/serverContext';
 import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
 import { resolveVisibleAppEnvironmentBadge } from '@/sync/runtime/appVariant';
 import { Text } from '@/components/ui/text/Text';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
 
 export type SidebarViewProps = Readonly<{
     sidebarWidthPx?: number | null;
@@ -282,6 +285,85 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
         router.push('/');
     }, [router]);
 
+    const headerActions = React.useMemo((): ItemAction[] => {
+        const out: ItemAction[] = [];
+
+        if (inboxEnabled) {
+            out.push({
+                id: 'inbox',
+                title: t('tabs.inbox'),
+                inlineTestID: 'sidebar-inbox-button',
+                icon: (
+                    <View style={[styles.iconButton, styles.notificationButton]}>
+                        <Octicons name="inbox" size={20} color={theme.colors.header.tint} />
+                        {inboxHasContent ? <View style={styles.indicatorDot} /> : null}
+                    </View>
+                ),
+                onPress: () => router.push('/(app)/inbox'),
+            });
+        }
+
+        if (friendsEnabled) {
+            const count = friendRequests.length;
+            out.push({
+                id: 'friends',
+                title: t('tabs.friends'),
+                icon: (
+                    <View style={[styles.iconButton, styles.notificationButton]}>
+                        <Ionicons name="people-outline" size={24} color={theme.colors.header.tint} />
+                        {count > 0 ? (
+                            <View style={styles.badge}>
+                                <Text style={styles.badgeText}>
+                                    {count > 99 ? '99+' : count}
+                                </Text>
+                            </View>
+                        ) : null}
+                    </View>
+                ),
+                onPress: () => router.push('/(app)/friends'),
+            });
+        }
+
+        out.push({
+            id: 'settings',
+            title: t('settings.title'),
+            icon: (
+                <View style={styles.iconButton}>
+                    <Ionicons name="cog-outline" size={24} color={theme.colors.header.tint} />
+                </View>
+            ),
+            onPress: () => router.push('/settings'),
+        });
+
+        out.push({
+            id: 'newSession',
+            title: t('newSession.title'),
+            inlineTestID: 'nav-new-session',
+            icon: (
+                <View style={styles.iconButton}>
+                    <Ionicons name="add-outline" size={24} color={theme.colors.header.tint} />
+                </View>
+            ),
+            onPress: handleNewSession,
+        });
+
+        return out;
+    }, [
+        friendRequests.length,
+        friendsEnabled,
+        handleNewSession,
+        inboxEnabled,
+        inboxHasContent,
+        router,
+        styles.badge,
+        styles.badgeText,
+        styles.iconButton,
+        styles.indicatorDot,
+        styles.notificationButton,
+        t,
+        theme.colors.header.tint,
+    ]);
+
     // Title content used in both centered and left-justified modes (DRY)
     const titleContent = (
         <>
@@ -335,54 +417,45 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
 
                     {/* Navigation icons */}
                     <View style={styles.rightContainer}>
-                        {inboxEnabled && (
-                            <Pressable
-                                onPress={() => router.push('/(app)/inbox')}
-                                hitSlop={15}
-                                testID="sidebar-inbox-button"
-                                style={[styles.iconButton, styles.notificationButton]}
-                            >
-                                <Octicons name="inbox" size={20} color={theme.colors.header.tint} />
-                                {inboxHasContent && (
-                                    <View style={styles.indicatorDot} />
-                                )}
-                            </Pressable>
-                        )}
-                        {friendsEnabled && (
-                            <Pressable
-                                onPress={() => router.push('/(app)/friends')}
-                                hitSlop={15}
-                                style={[styles.iconButton, styles.notificationButton]}
-                            >
-                                <Ionicons name="people-outline" size={24} color={theme.colors.header.tint} />
-                                {friendRequests.length > 0 && (
-                                    <View style={styles.badge}>
-                                        <Text style={styles.badgeText}>
-                                            {friendRequests.length > 99 ? '99+' : friendRequests.length}
-                                        </Text>
-                                    </View>
-                                )}
-                            </Pressable>
-                        )}
-                        <Pressable
-                            onPress={() => router.push('/settings')}
-                            hitSlop={15}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('settings.title')}
-                            style={styles.iconButton}
-                        >
-                            <Ionicons name="cog-outline" size={24} color={theme.colors.header.tint} />
-                        </Pressable>
-                        <Pressable
-                            onPress={handleNewSession}
-                            hitSlop={15}
-                            testID="nav-new-session"
-                            accessibilityRole="button"
-                            accessibilityLabel={t('newSession.title')}
-                            style={styles.iconButton}
-                        >
-                            <Ionicons name="add-outline" size={24} color={theme.colors.header.tint} />
-                        </Pressable>
+                        <ItemRowActions
+                            title={t('common.moreActions')}
+                            actions={headerActions}
+                            layoutWidthPx={props.sidebarWidthPx ?? null}
+                            compactThreshold={SIDEBAR_DOCK_MIN_WIDTH_PX + 120}
+                            compactActionIds={['settings', 'newSession']}
+                            pinnedActionIds={['settings', 'newSession']}
+                            overflowPosition="beforePinned"
+                            overflowTriggerTestID="sidebar-header-actions-overflow"
+                            popoverBoundaryRef={popoverBoundaryRef}
+                            gap={4}
+                            renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => {
+                                const shouldShowBadge = friendRequests.length > 0;
+                                const shouldShowDot = !shouldShowBadge && inboxHasContent;
+                                return (
+                                    <Pressable
+                                        testID={testID}
+                                        hitSlop={15}
+                                        style={[styles.iconButton, styles.notificationButton, open ? { opacity: 0 } : null]}
+                                        onPress={toggle}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={accessibilityLabel}
+                                        accessibilityHint={accessibilityHint}
+                                        accessibilityState={{ expanded: open }}
+                                    >
+                                        <Ionicons name="ellipsis-horizontal" size={24} color={theme.colors.header.tint} />
+                                        {shouldShowBadge ? (
+                                            <View style={styles.badge}>
+                                                <Text style={styles.badgeText}>
+                                                    {friendRequests.length > 99 ? '99+' : friendRequests.length}
+                                                </Text>
+                                            </View>
+                                        ) : shouldShowDot ? (
+                                            <View style={styles.indicatorDot} />
+                                        ) : null}
+                                    </Pressable>
+                                );
+                            }}
+                        />
                     </View>
 
                 </View>
