@@ -35,7 +35,23 @@ describe('createAcpRuntime (session models)', () => {
       payload: {
         currentModelId: 'model-a',
         availableModels: [
-          { id: 'model-a', name: 'Model A' },
+          {
+            id: 'model-a',
+            name: 'Model A',
+            modelOptions: [
+              {
+                id: 'reasoning_effort',
+                name: 'Thinking',
+                type: 'select',
+                currentValue: 'medium',
+                options: [
+                  { value: 'low', name: 'Low' },
+                  { value: 'medium', name: 'Medium' },
+                  { value: 'high', name: 'High' },
+                ],
+              },
+            ],
+          },
           { id: 'model-b', name: 'Model B', description: 'Accurate' },
         ],
       },
@@ -49,7 +65,23 @@ describe('createAcpRuntime (session models)', () => {
       provider: 'codex',
       currentModelId: 'model-a',
       availableModels: [
-        { id: 'model-a', name: 'Model A' },
+        {
+          id: 'model-a',
+          name: 'Model A',
+          modelOptions: [
+            {
+              id: 'reasoning_effort',
+              name: 'Thinking',
+              type: 'select',
+              currentValue: 'medium',
+              options: [
+                { value: 'low', name: 'Low' },
+                { value: 'medium', name: 'Medium' },
+                { value: 'high', name: 'High' },
+              ],
+            },
+          ],
+        },
         { id: 'model-b', name: 'Model B', description: 'Accurate' },
       ],
     });

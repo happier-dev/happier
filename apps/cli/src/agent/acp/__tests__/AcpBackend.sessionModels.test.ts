@@ -44,7 +44,33 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
             models: {
               currentModelId: 'model-a',
               availableModels: [
-                { id: 'model-a', name: 'Model A', description: 'Fast' },
+                {
+                  id: 'model-a',
+                  name: 'Model A',
+                  description: 'Fast',
+                  modelOptions: [
+                    {
+                      id: 'reasoning_effort',
+                      name: 'Thinking',
+                      type: 'select',
+                      currentValue: 'medium',
+                      options: [
+                        { value: 'medium', name: 'Medium' },
+                        { value: 'high', name: 'High', description: 'More depth' },
+                      ],
+                    },
+                    {
+                      id: 'service_tier',
+                      name: 'Speed',
+                      type: 'select',
+                      currentValue: 'fast',
+                      options: [
+                        { value: 'standard', name: 'Standard' },
+                        { value: 'fast', name: 'Fast' },
+                      ],
+                    },
+                  ],
+                },
                 { id: 'model-b', name: 'Model B', description: 'Accurate' },
               ],
             },
@@ -95,7 +121,33 @@ describe('AcpBackend session models', () => {
         expect(models).toEqual({
           currentModelId: 'model-a',
           availableModels: [
-            { id: 'model-a', name: 'Model A', description: 'Fast' },
+            {
+              id: 'model-a',
+              name: 'Model A',
+              description: 'Fast',
+              modelOptions: [
+                {
+                  id: 'reasoning_effort',
+                  name: 'Thinking',
+                  type: 'select',
+                  currentValue: 'medium',
+                  options: [
+                    { value: 'medium', name: 'Medium' },
+                    { value: 'high', name: 'High', description: 'More depth' },
+                  ],
+                },
+                {
+                  id: 'service_tier',
+                  name: 'Speed',
+                  type: 'select',
+                  currentValue: 'fast',
+                  options: [
+                    { value: 'standard', name: 'Standard' },
+                    { value: 'fast', name: 'Fast' },
+                  ],
+                },
+              ],
+            },
             { id: 'model-b', name: 'Model B', description: 'Accurate' },
           ],
         });

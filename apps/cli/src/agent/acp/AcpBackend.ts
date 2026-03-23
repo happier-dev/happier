@@ -199,9 +199,9 @@ type ExtendedRequestPermissionRequest = RequestPermissionRequest & {
 // SessionNotification payload shape differs across ACP SDK versions (some use `update`, some use `updates[]`).
 // We normalize dynamically in `handleSessionUpdate` and avoid relying on the SDK type here.
 
-type SessionConfigOptionValueId = string;
+export type SessionConfigOptionValueId = string;
 
-type SessionConfigOption = Readonly<{
+export type SessionConfigOption = Readonly<{
   id: string;
   name: string;
   description?: string;
@@ -253,6 +253,7 @@ export type SessionModel = {
   id: string;
   name: string;
   description?: string;
+  modelOptions?: SessionConfigOption[];
 };
 
 export type SessionModelState = {
@@ -1915,7 +1916,15 @@ export class AcpBackend implements AgentBackend {
         const name = getString(model, 'name');
         if (!id || !name) return null;
         const description = getString(model, 'description');
-        return { id, name, ...(description ? { description } : {}) };
+        const modelOptionsCandidate = model['modelOptions'] ?? model['model_options'];
+        const modelOptionsRaw: unknown[] | null = Array.isArray(modelOptionsCandidate) ? modelOptionsCandidate : null;
+        const modelOptions = modelOptionsRaw ? normalizeSessionConfigOptions(modelOptionsRaw) : null;
+        return {
+          id,
+          name,
+          ...(description ? { description } : {}),
+          ...(modelOptions && modelOptions.length > 0 ? { modelOptions } : {}),
+        };
       })
       .filter((model): model is SessionModel => Boolean(model));
 

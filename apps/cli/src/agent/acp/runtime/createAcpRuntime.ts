@@ -94,6 +94,77 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+type NormalizedConfigOptionValue = string | number | boolean | null;
+
+type NormalizedConfigOption = {
+  id: string;
+  name: string;
+  description?: string;
+  type: string;
+  currentValue: NormalizedConfigOptionValue;
+  options?: Array<{
+    value: NormalizedConfigOptionValue;
+    name: string;
+    description?: string;
+  }>;
+};
+
+function normalizeConfigOptionsArray(raw: unknown): NormalizedConfigOption[] {
+  if (!Array.isArray(raw)) return [];
+
+  const out: NormalizedConfigOption[] = [];
+  for (const entry of raw) {
+    const o = asRecord(entry);
+    const id = typeof o?.id === 'string' ? String(o.id).trim() : '';
+    const name = typeof o?.name === 'string' ? String(o.name).trim() : '';
+    const type = typeof o?.type === 'string' ? String(o.type).trim() : '';
+    if (!id || !name || !type) continue;
+
+    const description = typeof o?.description === 'string' ? String(o.description).trim() : '';
+    const currentValueRaw = o?.currentValue;
+    const currentValue =
+      typeof currentValueRaw === 'string' ? currentValueRaw
+      : typeof currentValueRaw === 'number' && Number.isFinite(currentValueRaw) ? currentValueRaw
+      : typeof currentValueRaw === 'boolean' ? currentValueRaw
+      : null;
+
+    const optionsRaw = o?.options;
+    const options = Array.isArray(optionsRaw)
+      ? (optionsRaw as unknown[])
+          .map((choice) => {
+            const c = asRecord(choice);
+            if (!c) return null;
+            const valueRaw = c.value;
+            const value =
+              typeof valueRaw === 'string' ? valueRaw
+              : typeof valueRaw === 'number' && Number.isFinite(valueRaw) ? valueRaw
+              : typeof valueRaw === 'boolean' ? valueRaw
+              : null;
+            const choiceName = typeof c.name === 'string' ? String(c.name).trim() : '';
+            if (!choiceName) return null;
+            const choiceDescription = typeof c.description === 'string' ? String(c.description).trim() : '';
+            return {
+              value,
+              name: choiceName,
+              ...(choiceDescription ? { description: choiceDescription } : {}),
+            };
+          })
+          .filter((v): v is NonNullable<typeof v> => v !== null)
+      : [];
+
+    out.push({
+      id,
+      name,
+      type,
+      currentValue,
+      ...(description ? { description } : {}),
+      ...(options.length > 0 ? { options } : {}),
+    });
+  }
+
+  return out;
+}
+
 export async function abortAcpRuntimeTurnIfNeeded(
   runtime: Pick<AcpRuntime, 'isTurnInFlight' | 'cancel'> | null | undefined,
 ): Promise<boolean> {
@@ -728,11 +799,15 @@ export function createAcpRuntime(params: {
             const availableModels = Array.isArray(availableModelsRaw)
               ? availableModelsRaw
                   .filter((m: any) => m && (typeof m.id === 'string' || typeof m.modelId === 'string') && typeof m.name === 'string')
-                  .map((m: any) => ({
-                    id: String(m.id ?? m.modelId),
-                    name: String(m.name),
-                    ...(typeof m.description === 'string' ? { description: String(m.description) } : {}),
-                  }))
+                  .map((m: any) => {
+                    const modelOptions = normalizeConfigOptionsArray(m?.modelOptions ?? m?.model_options);
+                    return {
+                      id: String(m.id ?? m.modelId),
+                      name: String(m.name),
+                      ...(typeof m.description === 'string' ? { description: String(m.description) } : {}),
+                      ...(modelOptions.length > 0 ? { modelOptions } : {}),
+                    };
+                  })
               : [];
             if (currentModelId && availableModels.length > 0) {
               updateMetadataBestEffort(
@@ -754,30 +829,7 @@ export function createAcpRuntime(params: {
           }
           if (name === 'config_options_state' || name === 'config_options_update') {
             const payloadRecord = asRecord(msg.payload);
-            const configOptionsRaw = payloadRecord?.configOptions;
-            const configOptions = Array.isArray(configOptionsRaw)
-              ? configOptionsRaw
-                  .filter((o: any) => o && typeof o.id === 'string' && typeof o.name === 'string' && typeof o.type === 'string')
-                  .map((o: any) => {
-                    const base: any = {
-                      id: String(o.id),
-                      name: String(o.name),
-                      type: String(o.type),
-                      currentValue: (o as any).currentValue,
-                    };
-                    if (typeof o.description === 'string') base.description = String(o.description);
-                    if (Array.isArray(o.options)) {
-                      base.options = o.options
-                        .filter((opt: any) => opt && (opt.value !== undefined) && typeof opt.name === 'string')
-                        .map((opt: any) => {
-                          const out: any = { value: opt.value, name: String(opt.name) };
-                          if (typeof opt.description === 'string') out.description = String(opt.description);
-                          return out;
-                        });
-                    }
-                    return base;
-                  })
-              : [];
+            const configOptions = normalizeConfigOptionsArray(payloadRecord?.configOptions);
             const derivedModels = (() => {
               const findModelOpt = (o: any) => {
                 const id = typeof o?.id === 'string' ? o.id.trim().toLowerCase() : '';
