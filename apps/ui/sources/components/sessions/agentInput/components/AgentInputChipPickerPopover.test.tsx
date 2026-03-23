@@ -88,6 +88,7 @@ describe('AgentInputChipPickerPopover', () => {
         const onSelect = vi.fn();
         const onRequestClose = vi.fn();
         const anchorRef = { current: { nodeType: 'View' } } as any;
+        capturedPopoverSurfaceProps = null;
 
         const screen = await renderScreen(<AgentInputChipPickerPopover
             open
@@ -104,6 +105,7 @@ describe('AgentInputChipPickerPopover', () => {
 
         expect(capturedSelectionPopoverProps?.anchorRef).toBe(anchorRef);
         expect(capturedSelectionPopoverProps?.maxWidthCap).toBe(720);
+        expect(capturedPopoverSurfaceProps?.scrollEnabled).toBe(true);
 
         expect(screen.findByTestId('agent-input-chip-picker.icon:one')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.icon:two')).toBeTruthy();
@@ -200,6 +202,42 @@ describe('AgentInputChipPickerPopover', () => {
 
         await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
 
+        expect(onSelect).toHaveBeenCalledWith('two');
+        expect(onRequestClose).not.toHaveBeenCalled();
+    });
+
+    it('keeps the popover open when switching focused options that have detail panes (engine-style)', async () => {
+        const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
+        const onSelect = vi.fn();
+        const onRequestClose = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerPopover
+            open
+            anchorRef={{ current: { nodeType: 'View' } } as any}
+            title="Pick"
+            options={[
+                {
+                    id: 'one',
+                    label: 'Primary',
+                    detailDescription: 'Primary checkout',
+                    renderDetailContent: () => React.createElement('View', { testID: 'detail:one' }),
+                } as any,
+                {
+                    id: 'two',
+                    label: 'Feature',
+                    detailDescription: 'Feature checkout',
+                    renderDetailContent: () => React.createElement('View', { testID: 'detail:two' }),
+                    onSelectImmediate: () => {
+                        onSelect('two');
+                    },
+                } as any,
+            ]}
+            selectedOptionId="one"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
+
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
         expect(onSelect).toHaveBeenCalledWith('two');
         expect(onRequestClose).not.toHaveBeenCalled();
     });

@@ -1,5 +1,5 @@
 import React from "react";
-import { useWindowDimensions, ScrollView, View } from "react-native";
+import { useWindowDimensions, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Item } from "@/components/ui/lists/Item";
@@ -83,7 +83,10 @@ export function AgentInputChipPickerPanel(
     }
     if (option.onSelectImmediate) {
       option.onSelectImmediate();
-      if (option.closeOnSelectImmediate !== false) {
+      // For selectors with a detail pane (e.g. engine + model), keep the popover
+      // open so users can continue configuring the newly focused option.
+      const canFocusOptionInPlace = typeof option.renderDetailContent === "function";
+      if (!canFocusOptionInPlace && option.closeOnSelectImmediate !== false) {
         props.onRequestClose();
       }
       return;
@@ -102,7 +105,7 @@ export function AgentInputChipPickerPanel(
   return (
     <View testID="agent-input-chip-picker" style={styles.container}>
       {!detailed ? (
-        <ScrollView style={styles.body}>
+        <View style={styles.body}>
           <Text style={styles.title}>{props.title}</Text>
           <ItemListStatic style={{ backgroundColor: "transparent" }}>
             {sections.map((section) => (
@@ -128,7 +131,7 @@ export function AgentInputChipPickerPanel(
               </ItemGroup>
             ))}
           </ItemListStatic>
-        </ScrollView>
+        </View>
       ) : (
         <View
           style={[
@@ -139,32 +142,27 @@ export function AgentInputChipPickerPanel(
           ]}
         >
           {showDetailedSelector ? (
-            <ScrollView
+            <View
               style={detailedLayout === "split"
                 ? [styles.railScroll, { width: railWidth, maxWidth: railMaxWidth }]
                 : null}
-              contentContainerStyle={
-                detailedLayout === "split" ? styles.railScrollContent : null
-              }
-              showsVerticalScrollIndicator={detailedLayout === "split"}
-              keyboardShouldPersistTaps="handled"
             >
-              <AgentInputChipPickerOptionSelector
-                sections={sections}
-                focusedOptionId={focusedOption?.id ?? null}
-                selectedOptionId={props.selectedOptionId}
-                onFocusOption={handleDetailedOptionFocus}
-                variant={detailedLayout === "stacked" ? "stacked" : "rail"}
-              />
-            </ScrollView>
+              <View
+                style={detailedLayout === "split" ? styles.railScrollContent : null}
+              >
+                <AgentInputChipPickerOptionSelector
+                  sections={sections}
+                  focusedOptionId={focusedOption?.id ?? null}
+                  selectedOptionId={props.selectedOptionId}
+                  onFocusOption={handleDetailedOptionFocus}
+                  variant={detailedLayout === "stacked" ? "stacked" : "rail"}
+                />
+              </View>
+            </View>
           ) : null}
           {focusedOption ? (
-            <ScrollView
-              style={detailedLayout === "split" ? styles.detailScroll : null}
-              contentContainerStyle={detailedLayout === "split" ? styles.detailScrollContent : null}
-              showsVerticalScrollIndicator={detailedLayout === "split"}
-              keyboardShouldPersistTaps="handled"
-            >
+            <View style={detailedLayout === "split" ? styles.detailScroll : null}>
+              <View style={detailedLayout === "split" ? styles.detailScrollContent : null}>
               <AgentInputChipPickerDetailPane
                 style={detailPaneStyle}
                 option={focusedOption}
@@ -183,7 +181,8 @@ export function AgentInputChipPickerPanel(
                 }}
                 onRequestClose={props.onRequestClose}
               />
-            </ScrollView>
+              </View>
+            </View>
           ) : null}
         </View>
       )}
@@ -213,7 +212,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "stretch",
     minHeight: 272,
-    maxHeight: 520,
     backgroundColor: theme.colors.surface,
   },
   bodyDetailedStacked: {
