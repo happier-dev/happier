@@ -266,9 +266,8 @@ describe('/oauth/[provider] (auth flow)', () => {
                 input.props.onChangeText('octocat_2');
             });
 
-            const save = tree.root.findByProps({ testID: 'oauth-username-save' });
             await act(async () => {
-                await save.props.onPress();
+                await tree.root.findByProps({ testID: 'oauth-username-save' }).props.onPress();
             });
             await flushOAuthEffects();
 
