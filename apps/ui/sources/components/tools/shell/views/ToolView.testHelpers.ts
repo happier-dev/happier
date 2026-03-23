@@ -1,71 +1,76 @@
-import type { ReactTestInstance, ReactTestRenderer } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import type { ToolViewProps } from '@/components/tools/renderers/core/_registry';
+import { vi } from 'vitest';
 
-export function makeToolCall(overrides: Partial<ToolCall> = {}): ToolCall {
-    const now = Date.now();
-    return {
-        name: 'UnknownTool',
-        state: 'completed',
-        input: {},
-        result: null,
-        createdAt: now,
-        startedAt: now,
-        completedAt: now,
-        description: null,
-        permission: undefined,
-        ...overrides,
-    };
-}
+type ToolShellModuleFactory = () => unknown | Promise<unknown>;
+type ToolShellStorageModuleFactory = (importOriginal: <T>() => Promise<T>) => unknown | Promise<unknown>;
 
-export function collectHostText(tree: ReactTestRenderer): string[] {
-    return tree.root
-        .findAllByType('Text')
-        .flatMap((node) => flattenTextValue((node.props as { children?: unknown }).children));
-}
+type ToolShellCommonModuleMocksOptions = Readonly<{
+    expoRouter?: ToolShellModuleFactory;
+    reactNative?: ToolShellModuleFactory;
+    storage?: ToolShellStorageModuleFactory;
+    text?: ToolShellModuleFactory;
+    unistyles?: ToolShellModuleFactory;
+}>;
 
-export function collectNodeText(node: ReactTestInstance): string[] {
-    return flattenTextValue((node.props as { children?: unknown }).children);
-}
+const toolShellCommonModuleMocksState = vi.hoisted(() => ({
+    options: {} as ToolShellCommonModuleMocksOptions,
+}));
 
-export function findPressableByText(
-    tree: ReactTestRenderer,
-    text: string,
-    hostTypes: ReadonlyArray<string> = ['TouchableOpacity', 'Pressable'],
-): ReactTestInstance | undefined {
-    for (const hostType of hostTypes) {
-        const nodes = tree.root.findAllByType(hostType);
-        for (const node of nodes) {
-            const nestedText = node.findAllByType('Text').flatMap((textNode) => collectNodeText(textNode)).join(' ');
-            if (nestedText.includes(text)) {
-                return node;
-            }
+export function installToolShellCommonModuleMocks(options: ToolShellCommonModuleMocksOptions = {}) {
+    toolShellCommonModuleMocksState.options = options;
+
+    vi.mock('expo-router', async () => {
+        const activeOptions = toolShellCommonModuleMocksState.options;
+        if (activeOptions.expoRouter) {
+            return await activeOptions.expoRouter();
         }
-    }
-    return undefined;
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock().module;
+    });
+
+    vi.mock('react-native', async () => {
+        const activeOptions = toolShellCommonModuleMocksState.options;
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock();
+    });
+
+    vi.mock('react-native-unistyles', async () => {
+        const activeOptions = toolShellCommonModuleMocksState.options;
+        if (activeOptions.unistyles) {
+            return await activeOptions.unistyles();
+        }
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
+    });
+
+    vi.mock('@/text', async () => {
+        const activeOptions = toolShellCommonModuleMocksState.options;
+        if (activeOptions.text) {
+            return await activeOptions.text();
+        }
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock();
+    });
+
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        const activeOptions = toolShellCommonModuleMocksState.options;
+        if (activeOptions.storage) {
+            return await activeOptions.storage(importOriginal);
+        }
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {},
+        });
+    });
 }
 
-export function makeToolViewProps(
-    tool: ToolCall,
-    overrides: Partial<ToolViewProps> = {},
-): ToolViewProps {
-    return {
-        tool,
-        metadata: null,
-        messages: [],
-        ...overrides,
-    };
-}
-
-function flattenTextValue(value: unknown): string[] {
-    if (typeof value === 'string') {
-        return [value];
-    }
-    if (typeof value === 'number') {
-        return [String(value)];
-    }
-    if (Array.isArray(value)) {
-        return value.flatMap((item) => flattenTextValue(item));
-    }
-    return [];
-}
+export {
+    collectHostText,
+    collectNodeText,
+    findPressableByText,
+    makeToolCall,
+    makeToolViewProps,
+} from '@/dev/testkit';

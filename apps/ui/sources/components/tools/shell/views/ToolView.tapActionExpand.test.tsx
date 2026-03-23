@@ -7,42 +7,60 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
-import { makeToolCall } from './ToolView.testHelpers';
+import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const ensureSidechainMessagesLoadedMock = vi.fn(async () => 'loaded');
+
 vi.mock('@/sync/sync', () => ({
     sync: {
-        ensureSidechainMessagesLoaded: vi.fn(async () => 'loaded'),
+        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
     },
 }));
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+const pushSpy = vi.fn();
+
+installToolShellCommonModuleMocks({
+    expoRouter: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: {
+                push: pushSpy,
+                back: vi.fn(),
+                replace: vi.fn(),
+                setParams: vi.fn(),
+            },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock();
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewDetailLevelDefault') return 'title';
+                    if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
+                    if (key === 'toolViewDetailLevelByToolName') return {};
+                    if (key === 'toolViewTapAction') return 'expand';
+                    if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
+                    if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+                    return null;
+                },
+            },
+        });
+    },
+});
+
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-const pushSpy = vi.fn();
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        router: {
-            push: pushSpy,
-            back: vi.fn(),
-            replace: vi.fn(),
-            setParams: vi.fn(),
-        },
-    }).module;
-});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
@@ -69,29 +87,6 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
 vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'toolViewDetailLevelDefault') return 'title';
-                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
-                if (key === 'toolViewDetailLevelByToolName') return {};
-                if (key === 'toolViewTapAction') return 'expand';
-                if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
-                if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-                return null;
-            },
-        },
-    });
-});
 
 vi.mock('@/utils/errors/toolErrorParser', () => ({
     parseToolUseError: () => ({ isToolUseError: false }),
@@ -122,12 +117,10 @@ describe('ToolView (tap action: expand)', () => {
     it('toggles inline expansion even without navigation params', async () => {
         pushSpy.mockReset();
         renderedToolViewSpy.mockReset();
-
-        const { ToolView } = await import('./ToolView');
-        const { sync } = await import('@/sync/sync');
-        const ensureSidechainMessagesLoadedMock = sync.ensureSidechainMessagesLoaded as any;
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
+
+        const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
             name: 'Read',
@@ -149,12 +142,10 @@ describe('ToolView (tap action: expand)', () => {
     it('preloads sidechain messages when expanding Task tools', async () => {
         pushSpy.mockReset();
         renderedToolViewSpy.mockReset();
-
-        const { ToolView } = await import('./ToolView');
-        const { sync } = await import('@/sync/sync');
-        const ensureSidechainMessagesLoadedMock = sync.ensureSidechainMessagesLoaded as any;
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
+
+        const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
             id: 'tool_task_1',
@@ -180,12 +171,10 @@ describe('ToolView (tap action: expand)', () => {
     it('preloads sidechain messages when expanding SubAgentRun tools (prefers result.sidechainId when present)', async () => {
         pushSpy.mockReset();
         renderedToolViewSpy.mockReset();
-
-        const { ToolView } = await import('./ToolView');
-        const { sync } = await import('@/sync/sync');
-        const ensureSidechainMessagesLoadedMock = sync.ensureSidechainMessagesLoaded as any;
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
+
+        const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
             id: 'tool_subagent_1',
@@ -211,12 +200,10 @@ describe('ToolView (tap action: expand)', () => {
     it('uses hitSlop for the secondary action icon to keep it easy to tap', async () => {
         pushSpy.mockReset();
         renderedToolViewSpy.mockReset();
-
-        const { ToolView } = await import('./ToolView');
-        const { sync } = await import('@/sync/sync');
-        const ensureSidechainMessagesLoadedMock = sync.ensureSidechainMessagesLoaded as any;
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
+
+        const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
             name: 'Read',
@@ -235,6 +222,8 @@ describe('ToolView (tap action: expand)', () => {
     it('uses the stable server route for the secondary open action when the message is already persisted', async () => {
         pushSpy.mockReset();
         renderedToolViewSpy.mockReset();
+        ensureSidechainMessagesLoadedMock.mockReset();
+        ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
         const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
@@ -266,6 +255,8 @@ describe('ToolView (tap action: expand)', () => {
     it('hides the secondary open action when tool navigation is disabled, even if the tool has its own id', async () => {
         pushSpy.mockReset();
         renderedToolViewSpy.mockReset();
+        ensureSidechainMessagesLoadedMock.mockReset();
+        ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
         const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({

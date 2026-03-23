@@ -4,7 +4,10 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
-import { makeToolCall } from './ToolView.testHelpers';
+import {
+    installToolShellCommonModuleMocks,
+    makeToolCall,
+} from './ToolView.testHelpers';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -31,41 +34,32 @@ vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        View: 'View',
-                                        Text: 'Text',
-                                        ScrollView: 'ScrollView',
-                                        Pressable: 'Pressable',
-                                        AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
-                                        Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
-                                        Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
-                                        useWindowDimensions: () => ({ width: 800, height: 600 }),
-                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'permissionPromptSurface') return 'transcript';
-                if (key === 'toolViewShowDebugByDefault') return false;
-                return false;
+installToolShellCommonModuleMocks({
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            ScrollView: 'ScrollView',
+            Pressable: 'Pressable',
+            AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
+            Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
+            Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
+            useWindowDimensions: () => ({ width: 800, height: 600 }),
+        }),
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'permissionPromptSurface') return 'transcript';
+                    if (key === 'toolViewShowDebugByDefault') return false;
+                    return false;
+                },
+                useSessionTranscriptDraftMessages: () => [],
             },
-            useSessionTranscriptDraftMessages: () => [],
-        },
-    }));
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+        }),
+});
 
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
     getToolViewComponent: () => null,

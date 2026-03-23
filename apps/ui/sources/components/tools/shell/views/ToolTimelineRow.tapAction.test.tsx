@@ -28,38 +28,6 @@ installToolShellCommonModuleMocks({
             },
         }).module;
     },
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock(
-            {
-                Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-                Animated: {
-                    Value: class {
-                        constructor(_value: unknown) {}
-                        setValue(_value: unknown) {}
-                        interpolate(_config: unknown) {
-                            return 0;
-                        }
-                    },
-                    timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
-                    parallel: (steps: Array<{ start?: (cb?: (result: { finished: boolean }) => void) => void }>) => ({
-                        start: (cb?: (result: { finished: boolean }) => void) => {
-                            for (const step of steps) {
-                                step?.start?.();
-                            }
-                            cb?.({ finished: true });
-                        },
-                    }),
-                    View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-                },
-                Easing: {
-                    bezier: () => (t: number) => t,
-                    linear: (t: number) => t,
-                },
-            },
-        );
-    },
     storage: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleMock({
@@ -72,30 +40,17 @@ installToolShellCommonModuleMocks({
 });
 
 vi.mock('@/components/ui/text/Text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return {
-        ...createTextModuleMock(),
         Text: (props: any) => React.createElement('Text', props, props.children),
         TextInput: (props: any) => React.createElement('TextInput', props),
         TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
     };
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {},
-}));
-
-vi.mock('@/components/tools/normalization/core/normalizeToolCallForRendering', () => ({
-    normalizeToolCallForRendering: (tool: any) => tool,
-}));
-
-vi.mock('@/components/tools/normalization/policy/toolNameInference', () => ({
-    inferToolNameForRendering: ({ toolName }: any) => ({ normalizedToolName: toolName, source: 'original' }),
 }));
 
 vi.mock('@/components/tools/renderers/system/MCPToolView', () => ({
@@ -217,13 +172,13 @@ describe('ToolTimelineRow (tap action)', () => {
             messageId: 'm1',
         });
 
-        expect(findHeaderTitleFontSize(screen)).toBe(13);
+        const beforeFontSize = findHeaderTitleFontSize(screen);
 
         await act(async () => {
             screen.pressByTestId('tool-timeline-row');
         });
 
-        expect(findHeaderTitleFontSize(screen)).toBe(13);
+        expect(findHeaderTitleFontSize(screen)).toBe(beforeFontSize);
     });
 
     it('prefers a stable server route when tap action is open and the message is already persisted', async () => {

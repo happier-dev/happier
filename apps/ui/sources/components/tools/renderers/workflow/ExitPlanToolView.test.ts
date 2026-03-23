@@ -1,11 +1,13 @@
 import React from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
-import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { collectHostText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installWorkflowRendererCommonModuleMocks,
+    resetWorkflowRendererCommonModuleMockState,
+} from './workflowRendererTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -17,28 +19,19 @@ const sendMessage = vi.fn();
 const modalAlert = vi.fn();
 const safeParsePlan = vi.fn();
 
-vi.mock('@/text', () => {
-    return createTextModuleMock({ translate: (key: string) => key });
+installWorkflowRendererCommonModuleMocks({
+    modal: () =>
+        import('@/dev/testkit/mocks/modal').then(({ createModalModuleMock }) =>
+            createModalModuleMock({
+                spies: {
+                    alert: (...args: any[]) => modalAlert(...args),
+                },
+            }).module,
+        ),
 });
-
-vi.mock('@/modal', () => {
-    return createModalModuleMock({
-        spies: {
-            alert: (...args: any[]) => modalAlert(...args),
-        },
-    }).module;
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: { markdown: string }) => React.createElement('MarkdownView', props),
-}));
-
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('../../catalog', () => ({
@@ -91,6 +84,7 @@ describe('ExitPlanToolView', () => {
     });
 
     beforeEach(() => {
+        resetWorkflowRendererCommonModuleMockState();
         sessionAllow.mockReset();
         sessionAllowWithPermissionUpdates.mockReset();
         sessionDeny.mockReset();

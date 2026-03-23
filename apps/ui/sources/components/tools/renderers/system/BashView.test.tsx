@@ -1,7 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
-import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -53,10 +52,9 @@ describe('BashView', () => {
             result: { stdout: longStdout, stderr: '' },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(BashView, makeToolViewProps(tool)))).tree;
+        const screen = await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
 
-        expect(tree.root.findAllByType('CommandView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('CommandView' as any)).toHaveLength(1);
         expect(commandViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 command: 'echo hi',
@@ -81,10 +79,9 @@ describe('BashView', () => {
             result: { stdout: longStdout, stderr: '' },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })))).tree;
+        const screen = await renderScreen(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })));
 
-        expect(tree.root.findAllByType('CommandView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('CommandView' as any)).toHaveLength(1);
         expect(commandViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 command: 'echo hi',
@@ -153,8 +150,7 @@ describe('BashView', () => {
             result: { stdout: '', stderr: '' },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })))).tree;
+        const screen = await renderScreen(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })));
 
         // The main command line stays clean.
         expect(commandViewSpy).toHaveBeenCalledWith(expect.objectContaining({ command: 'rm -rf /tmp/x' }));
@@ -162,7 +158,7 @@ describe('BashView', () => {
         // Full view exposes the raw command for transparency.
         expect(codeViewSpy).toHaveBeenCalledWith(expect.objectContaining({ code: raw }));
 
-        const texts = tree.root.findAllByType('Text' as any);
+        const texts = screen.findAllByType('Text' as any);
         const flattened = texts
             .map((t) => t.props.children)
             .flat()

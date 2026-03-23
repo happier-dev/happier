@@ -1,7 +1,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PermissionFooter } from '../permissions/PermissionFooter';
 import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -16,33 +16,6 @@ const ops = vi.hoisted(() => ({
 const sessionStore = vi.hoisted(() => ({
     updateSessionPermissionMode: vi.fn((..._args: unknown[]) => {}),
 }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: 'View',
-            Text: 'Text',
-            TouchableOpacity: 'TouchableOpacity',
-            ActivityIndicator: 'ActivityIndicator',
-            Alert: {
-                alert: vi.fn(),
-            },
-            Platform: {
-                OS: 'ios',
-                select: <T,>(value: { ios?: T }) => value.ios,
-            },
-            StyleSheet: {
-                create: <T,>(styles: T) => styles,
-            },
-        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -61,16 +34,13 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: { getState: () => sessionStore },
-});
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installPermissionShellCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: { getState: () => sessionStore },
+        });
+    },
 });
 
 vi.mock('@/agents/catalog/resolve', () => ({
@@ -119,6 +89,7 @@ describe('PermissionFooter (Claude permission updates)', () => {
     });
 
     it('approves allow-all-edits using updatedPermissions setMode', async () => {
+        const { PermissionFooter } = await import('../permissions/PermissionFooter');
         const screen = await renderScreen(React.createElement(PermissionFooter, {
             permission: { id: 'p1', status: 'pending' },
             sessionId: 's1',
@@ -141,6 +112,7 @@ describe('PermissionFooter (Claude permission updates)', () => {
     });
 
     it('approves allow-for-session using a tool-wide allowlist update for shell tools', async () => {
+        const { PermissionFooter } = await import('../permissions/PermissionFooter');
         const screen = await renderScreen(React.createElement(PermissionFooter, {
             permission: { id: 'p1', status: 'pending' },
             sessionId: 's1',
@@ -170,6 +142,7 @@ describe('PermissionFooter (Claude permission updates)', () => {
     });
 
     it('treats tool-wide shell allowlists as approved-for-session state', async () => {
+        const { PermissionFooter } = await import('../permissions/PermissionFooter');
         const screen = await renderScreen(React.createElement(PermissionFooter, {
             permission: {
                 id: 'p1',
@@ -193,6 +166,7 @@ describe('PermissionFooter (Claude permission updates)', () => {
     });
 
     it('approves allow-command-name using stripped shell prelude', async () => {
+        const { PermissionFooter } = await import('../permissions/PermissionFooter');
         const screen = await renderScreen(React.createElement(PermissionFooter, {
             permission: { id: 'p1', status: 'pending' },
             sessionId: 's1',

@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { renderScreen } from '@/dev/testkit';
+import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,10 +13,14 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+const routerPush = vi.fn();
+
+let toolDetailSetting: any = 'summary';
+
+installPermissionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             View: 'View',
             Text: 'Text',
             Pressable: 'Pressable',
@@ -27,37 +32,26 @@ vi.mock('react-native', async () => {
                 currentState: 'active',
                 addEventListener: () => ({ remove: () => {} }),
             },
-        }
-    );
-});
-
-const routerPush = vi.fn();
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPush },
-    });
-    return routerMock.module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-let toolDetailSetting: any = 'summary';
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return toolDetailSetting;
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
-        if (key === 'toolViewDetailLevelByToolName') return {};
-        return null;
+        });
     },
-});
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { push: routerPush },
+        }).module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            importOriginal,
+            useSetting: (key: string) => {
+                if (key === 'toolViewDetailLevelDefault') return toolDetailSetting;
+                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
+                if (key === 'toolViewDetailLevelByToolName') return {};
+                return null;
+            },
+        });
+    },
 });
 
 let mockedToolName = 'edit';

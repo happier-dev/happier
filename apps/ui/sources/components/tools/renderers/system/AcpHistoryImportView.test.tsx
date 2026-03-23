@@ -2,7 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, findPressableByText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { collectHostText, findPressableByText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 

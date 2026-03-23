@@ -2,57 +2,37 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { collectHostText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installWorkflowRendererCommonModuleMocks,
+} from './workflowRendererTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: 'View',
-            Text: 'Text',
-            ActivityIndicator: 'ActivityIndicator',
-            Platform: {
-                OS: 'ios',
-                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? null,
+installWorkflowRendererCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (_key: string, opts?: { count?: number; subject?: string }) => {
+                if (_key === 'tools.taskLikeSummary.createTaskWithSubject' && opts && typeof opts.subject === 'string') {
+                    return `Create task: ${opts.subject}`;
+                }
+                if (_key === 'tools.taskLikeSummary.createTask') return 'Create task';
+                if (opts && typeof opts.count === 'number') return `+ ${opts.count} more`;
+                return _key;
             },
-            AppState: {
-                addEventListener: () => ({ remove: () => {} }),
-            },
-        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (_key: string, opts?: { count?: number; subject?: string }) => {
-        if (_key === 'tools.taskLikeSummary.createTaskWithSubject' && opts && typeof opts.subject === 'string') {
-            return `Create task: ${opts.subject}`;
-        }
-        if (_key === 'tools.taskLikeSummary.createTask') return 'Create task';
-        if (opts && typeof opts.count === 'number') return `+ ${opts.count} more`;
-        return _key;
-    } });
-});
-
 vi.mock('../../catalog', () => ({
     knownTools: {},
-}));
-
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
 }));
 
 describe('SubAgentView', () => {

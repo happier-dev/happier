@@ -2,15 +2,34 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, findPressableByText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { collectHostText, findPressableByText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { ToolHeaderActionsContext } from '../../shell/presentation/ToolHeaderActionsContext';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installFileOpsRendererCommonModuleMocks } from './fileOpsRendererTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const codeLinesSpy = vi.fn();
 const syntaxHookSpy = vi.fn();
+
+installFileOpsRendererCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSetting: (key: string) => {
+                if (key === 'showLineNumbersInToolViews') return false;
+                if (key === 'wrapLinesInDiffs') return true;
+                return undefined;
+            },
+        });
+    },
+});
+
+vi.doMock('@expo/vector-icons', () => ({
+    Octicons: 'Octicons',
+    Ionicons: 'Ionicons',
+}));
 
 function getUniqueCodeLinesViews() {
     const unique = new Map<string, any>();
@@ -20,11 +39,6 @@ function getUniqueCodeLinesViews() {
     }
     return [...unique.values()];
 }
-
-
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
 
 vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
     CodeLinesView: (props: any) => {
@@ -45,22 +59,6 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
         };
     },
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-    useSetting: (key: string) => {
-            if (key === 'showLineNumbersInToolViews') return false;
-            if (key === 'wrapLinesInDiffs') return true;
-            return undefined;
-        },
-});
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 type DiffFileInput = { file_path: string; unified_diff?: string; oldText?: string; newText?: string };
 
@@ -138,9 +136,7 @@ describe('DiffView', () => {
         expect(fooRow).toBeTruthy();
 
         codeLinesSpy.mockClear();
-        await act(async () => {
-            fooRow!.props.onPress();
-        });
+        await pressTestInstanceAsync(fooRow!, 'foo row');
 
         expect(getUniqueCodeLinesViews()).toHaveLength(1);
     });
@@ -175,18 +171,14 @@ describe('DiffView', () => {
         expect(collapseAll).toBeTruthy();
 
         codeLinesSpy.mockClear();
-        await act(async () => {
-            collapseAll!.props.onPress();
-        });
+        await pressTestInstanceAsync(collapseAll!, 'collapse all');
         expect(getUniqueCodeLinesViews()).toHaveLength(0);
 
         const expandAll = findPressableByText(tree, 'machineLauncher.showAll', ['Pressable']);
         expect(expandAll).toBeTruthy();
 
         codeLinesSpy.mockClear();
-        await act(async () => {
-            expandAll!.props.onPress();
-        });
+        await pressTestInstanceAsync(expandAll!, 'expand all');
         expect(getUniqueCodeLinesViews()).toHaveLength(2);
     });
 

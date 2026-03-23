@@ -188,30 +188,27 @@ describe('SubAgentSummarySection (+N more tools row)', () => {
             makeToolCallMessage('m5', makeToolCall({ name: 'LS', input: { path: '.' }, createdAt: 15 })),
         ];
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SubAgentSummarySection
-                    tool={taskTool}
-                    metadata={null}
-                    messages={toolMessages}
-                    detailLevel="summary"
-                    sessionId="s1"
-                    messageId="msg-task-1"
-                />)).tree;
+        const screen = await renderScreen(<SubAgentSummarySection
+            tool={taskTool}
+            metadata={null}
+            messages={toolMessages}
+            detailLevel="summary"
+            sessionId="s1"
+            messageId="msg-task-1"
+        />);
 
-        const moreRow = tree!.root.findByProps({ testID: 'task-like-summary-more-tools' });
-        expect(typeof (moreRow.props as any).onPress).toBe('function');
+        const moreRow = screen.findByTestId('task-like-summary-more-tools');
+        expect(typeof moreRow?.props?.onPress).toBe('function');
 
-        const order = tree!.root
-            .findAll((n) =>
-                (n.props as any).testID === 'task-like-summary-more-tools' ||
-                (n.props as any).testID === 'task-like-summary-tool-item',
+        const order = screen
+            .findAll((node) =>
+                node.props?.testID === 'task-like-summary-more-tools' ||
+                node.props?.testID === 'task-like-summary-tool-item',
             )
-            .map((n) => (n.props as any).testID);
+            .map((node) => node.props?.testID);
         expect(order[0]).toBe('task-like-summary-more-tools');
 
-        act(() => {
-            moreRow.props.onPress?.();
-        });
+        await screen.pressByTestIdAsync('task-like-summary-more-tools');
         expect(pushSpy).toHaveBeenCalledWith('/session/s1/message/msg-task-1');
     });
 });

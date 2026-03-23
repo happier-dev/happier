@@ -2,17 +2,38 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installFileOpsRendererCommonModuleMocks,
+    resetFileOpsRendererCommonModuleMockState,
+} from './fileOpsRendererTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const diffFilesListSpy = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+resetFileOpsRendererCommonModuleMockState();
+installFileOpsRendererCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'showLineNumbersInToolViews') return false;
+                if (key === 'wrapLinesInDiffs') return true;
+                if (key === 'filesDiffFileListVirtualizationMinFiles') return 1;
+                return undefined;
+            },
+            useSessionReviewCommentsDrafts: () => [],
+            storage: {
+                getState: () => ({
+                    upsertSessionReviewCommentDraft: () => {},
+                    deleteSessionReviewCommentDraft: () => {},
+                }),
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/code/diff/DiffPresentationStyleToggleButton', () => ({
@@ -34,30 +55,11 @@ vi.mock('@/components/ui/code/model/diff/diffViewModel', () => ({
     ]),
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'showLineNumbersInToolViews') return false;
-        if (key === 'wrapLinesInDiffs') return true;
-        if (key === 'filesDiffFileListVirtualizationMinFiles') return 1;
-        return undefined;
-    },
-    useSessionReviewCommentsDrafts: () => [],
-    storage: { getState: () => ({ upsertSessionReviewCommentDraft: () => {}, deleteSessionReviewCommentDraft: () => {} }) },
-});
-});
-
 vi.mock('@/sync/domains/settings/settings', () => ({
     settingsDefaults: {
         filesDiffFileListVirtualizationMinFiles: 20,
     },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,

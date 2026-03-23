@@ -4,8 +4,16 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+installToolShellCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
@@ -43,11 +51,6 @@ vi.mock('@/agents/catalog/catalog', () => ({
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('ToolInlineBody (SubAgentRun error fallback)', () => {
     afterEach(() => {

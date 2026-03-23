@@ -5,6 +5,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,35 +17,37 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                                        TouchableOpacity: ({ children, ...props }: any) => React.createElement('TouchableOpacity', props, children),
-                                        ActivityIndicator: 'ActivityIndicator',
-                                        Animated: {
-                                            Value: class {
-                                                constructor(_value: unknown) {}
-                                                setValue(_value: unknown) {}
-                                                interpolate(_config: unknown) {
-                                                    return 0;
-                                                }
-                                            },
-                                            timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
-                                            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-                                        },
-                                        Easing: {
-                                            bezier: () => (t: number) => t,
-                                            linear: (t: number) => t,
-                                        },
-                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installToolShellCommonModuleMocks({
+    expoRouter: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            TouchableOpacity: ({ children, ...props }: any) => React.createElement('TouchableOpacity', props, children),
+            ActivityIndicator: 'ActivityIndicator',
+            Animated: {
+                Value: class {
+                    constructor(_value: unknown) {}
+                    setValue(_value: unknown) {}
+                    interpolate(_config: unknown) {
+                        return 0;
+                    }
+                },
+                timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
+                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+            },
+            Easing: {
+                bezier: () => (t: number) => t,
+                linear: (t: number) => t,
+            },
+        }),
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => settings[key],
+            },
+        }),
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -116,11 +119,6 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: (props: any) => React.createElement('PermissionFooter', props),
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
     DEFAULT_AGENT_ID: 'claude',
@@ -128,26 +126,12 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
-});
-
 vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => ({
     TranscriptCollapsible: ({ expanded, children }: any) =>
         expanded ? React.createElement(React.Fragment, null, children) : null,
 }));
 
 let settings: Record<string, unknown> = {};
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => settings[key],
-        },
-    });
-});
 
 describe('ToolTimelineRow (permission pending)', () => {
     beforeEach(() => {

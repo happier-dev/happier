@@ -1,6 +1,9 @@
 import React from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { makeToolCall } from './ToolView.testHelpers';
+import {
+    installToolShellCommonModuleMocks,
+    makeToolCall,
+} from './ToolView.testHelpers';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import {
     flushHookEffects,
@@ -59,22 +62,19 @@ vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            // Narrow boundary fixture: these tests only care about boolean local settings.
-            useLocalSetting: (() => false) as any,
-            useSetting: () => false,
-            useSessionTranscriptDraftMessages: () => [],
-        },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
+installToolShellCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                // Narrow boundary fixture: these tests only care about boolean local settings.
+                useLocalSetting: (() => false) as any,
+                useSetting: () => false,
+                useSessionTranscriptDraftMessages: () => [],
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/media/CodeView', () => ({

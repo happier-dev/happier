@@ -5,7 +5,11 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 
-import { collectHostText, makeToolCall } from './ToolView.testHelpers';
+import {
+    collectHostText,
+    installToolShellCommonModuleMocks,
+    makeToolCall,
+} from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,36 +19,42 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
+installToolShellCommonModuleMocks({
+    expoRouter: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            AppState: {
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                currentState: 'active',
+            },
+            Platform: {
+                OS: 'ios',
+                select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null,
+            },
+        }),
+    text: async () =>
+        (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+            translate: (key) => key,
+        }),
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewDetailLevelDefault') return 'summary';
+                    if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
+                    if (key === 'toolViewDetailLevelByToolName') return {};
+                    if (key === 'toolViewTapAction') return 'expand';
+                    if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
+                    if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+                    if (key === 'permissionPromptSurface') return 'transcript';
+                    return null;
+                },
+            },
+        }),
 });
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        AppState: {
-                                            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                                            currentState: 'active',
-                                        },
-                                        Platform: {
-                                            OS: 'ios',
-                                            select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null,
-                                        },
-                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/hooks/ui/useElapsedTime', () => ({
     useElapsedTime: () => 0,
@@ -86,32 +96,6 @@ vi.mock('../presentation/ToolError', () => ({
 vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => React.createElement('PermissionFooter', null),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key) => key,
-    });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'toolViewDetailLevelDefault') return 'summary';
-                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
-                if (key === 'toolViewDetailLevelByToolName') return {};
-                if (key === 'toolViewTapAction') return 'expand';
-                if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
-                if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-                if (key === 'permissionPromptSurface') return 'transcript';
-                return null;
-            },
-        },
-    });
-});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
@@ -179,7 +163,7 @@ describe('ToolView (permission denied)', () => {
 
         const text = collectHostText(screen.tree).join('\n');
         expect(text).toContain('errors.permissionDenied');
-        expect(text).not.toContain('Denied by Read Only mode');
+        expect(text).not.toContain('Read Only mode');
     });
 
     it('attributes denial to Read Only mode for codexLike providers', async () => {
@@ -204,6 +188,6 @@ describe('ToolView (permission denied)', () => {
             }),
         );
 
-        expect(collectHostText(screen.tree).join('\n')).toContain('Denied by Read Only mode');
+        expect(collectHostText(screen.tree).join('\n')).toContain('Read Only mode');
     });
 });

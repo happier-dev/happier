@@ -49,10 +49,7 @@ installToolShellCommonModuleMocks({
     },
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',

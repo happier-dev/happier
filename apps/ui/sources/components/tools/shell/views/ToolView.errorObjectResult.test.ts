@@ -29,21 +29,6 @@ installToolShellCommonModuleMocks({
             },
         });
     },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    surfaceHigh: '#fff',
-                    surfaceHighest: '#fff',
-                    text: '#000',
-                    textSecondary: '#666',
-                    warning: '#f00',
-                    box: { error: { background: '#fee', border: '#f00', text: '#900' } },
-                },
-            },
-        });
-    },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock();
@@ -65,10 +50,7 @@ installToolShellCommonModuleMocks({
     },
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
     getToolViewComponent: () => null,

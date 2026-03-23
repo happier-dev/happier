@@ -4,7 +4,10 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
-import { makeToolCall } from './ToolView.testHelpers';
+import {
+    installToolShellCommonModuleMocks,
+    makeToolCall,
+} from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,13 +22,6 @@ vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/ico
 vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
@@ -53,23 +49,39 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'toolViewDetailLevelDefault') return 'full';
-                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'full';
-                if (key === 'toolViewDetailLevelByToolName') return {};
-                if (key === 'toolViewTapAction') return 'expand';
-                if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
-                if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-                return null;
+installToolShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ScrollView: 'ScrollView',
+            Platform: {
+                OS: 'ios',
+                select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null,
             },
-        },
-    }));
+            useWindowDimensions: () => ({ width: 800, height: 600 }),
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewDetailLevelDefault') return 'full';
+                    if (key === 'toolViewDetailLevelDefaultLocalControl') return 'full';
+                    if (key === 'toolViewDetailLevelByToolName') return {};
+                    if (key === 'toolViewTapAction') return 'expand';
+                    if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
+                    if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+                    return null;
+                },
+            },
+        });
+    },
+});
 
 vi.mock('@/utils/errors/toolErrorParser', () => ({
     parseToolUseError: () => ({ isToolUseError: false }),

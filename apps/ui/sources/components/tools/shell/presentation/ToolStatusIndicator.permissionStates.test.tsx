@@ -54,7 +54,7 @@ describe('ToolStatusIndicator (permission states)', () => {
                     } as any}
                 />)).tree;
 
-        const icons = tree!.root.findAllByType('Ionicons' as any);
+        const icons = tree!.findAllByType('Ionicons' as any);
         expect(icons.some((n) => n.props.name === 'lock-closed-outline')).toBe(true);
     });
 
@@ -76,7 +76,7 @@ describe('ToolStatusIndicator (permission states)', () => {
                     } as any}
                 />)).tree;
 
-        const icons = tree!.root.findAllByType('Ionicons' as any);
+        const icons = tree!.findAllByType('Ionicons' as any);
         expect(icons.some((n) => n.props.name === 'remove-circle-outline')).toBe(true);
     });
 });

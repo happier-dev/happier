@@ -12,9 +12,34 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { makeToolCall } from './ToolView.testHelpers';
+import {
+    installToolShellCommonModuleMocks,
+    makeToolCall,
+} from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+installToolShellCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewDetailLevelDefault') return mockSettings.detailLevelDefault;
+                    if (key === 'toolViewDetailLevelDefaultLocalControl') return mockSettings.detailLevelDefault;
+                    if (key === 'toolViewDetailLevelByToolName') return {};
+                    if (key === 'toolViewTapAction') return 'expand';
+                    if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
+                    if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+                    return null;
+                },
+            },
+        }),
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -31,24 +56,12 @@ vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
-
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
     DEFAULT_AGENT_ID: 'claude',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/utils/errors/toolErrorParser', () => ({
     parseToolUseError: () => ({ isToolUseError: false }),
@@ -108,22 +121,6 @@ vi.mock('@/components/tools/catalog', () => ({
 
 type ToolViewDetailLevel = 'title' | 'summary' | 'full';
 const mockSettings: { detailLevelDefault: ToolViewDetailLevel } = { detailLevelDefault: 'summary' };
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'toolViewDetailLevelDefault') return mockSettings.detailLevelDefault;
-                if (key === 'toolViewDetailLevelDefaultLocalControl') return mockSettings.detailLevelDefault;
-                if (key === 'toolViewDetailLevelByToolName') return {};
-                if (key === 'toolViewTapAction') return 'expand';
-                if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
-                if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-                return null;
-            },
-        },
-    }));
 
 const fixtureTools: ReadonlyArray<Readonly<{ label: string; tool: ToolCall }>> = [
     {

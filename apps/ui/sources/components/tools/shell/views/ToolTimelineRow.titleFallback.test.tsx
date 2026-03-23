@@ -12,30 +12,8 @@ import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
 const ensureSidechainMessagesLoadedMock = vi.fn();
 
 let settings: Record<string, unknown> = {};
-let inferred = { normalizedToolName: 'UnknownTool', source: 'original' };
 
 installToolShellCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-            Animated: {
-                Value: class {
-                    constructor(_value: unknown) {}
-                    setValue(_value: unknown) {}
-                    interpolate(_config: unknown) {
-                        return 0;
-                    }
-                },
-                timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
-                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-            },
-            Easing: {
-                bezier: () => (t: number) => t,
-                linear: (t: number) => t,
-            },
-        });
-    },
     storage: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleMock({
@@ -53,22 +31,11 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
-
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {},
 }));
 
-vi.mock('@/components/tools/normalization/core/normalizeToolCallForRendering', () => ({
-    normalizeToolCallForRendering: (tool: any) => tool,
-}));
-
-vi.mock('@/components/tools/normalization/policy/toolNameInference', () => ({
-    inferToolNameForRendering: () => inferred,
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/components/tools/renderers/system/MCPToolView', () => ({
     formatMCPTitle: (name: string) => name,
@@ -104,9 +71,7 @@ vi.mock('@/components/tools/shell/presentation/ToolError', () => ({
 }));
 
 vi.mock('@/components/ui/text/Text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return {
-        ...createTextModuleMock(),
         Text: (props: any) => React.createElement('Text', props, props.children),
         TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
     };
@@ -130,7 +95,6 @@ describe('ToolTimelineRow (title fallback)', () => {
             toolViewTimelineFeedDefaultExpanded: false,
             toolViewTapAction: 'expand',
         };
-        inferred = { normalizedToolName: 'UnknownTool', source: 'original' };
     });
 
     afterEach(() => {
@@ -157,13 +121,11 @@ describe('ToolTimelineRow (title fallback)', () => {
     });
 
     it('uses description as title when inference fell back and tool is unknown', async () => {
-        inferred = { normalizedToolName: 'SomeInferredTool', source: 'description' };
-
         const { ToolTimelineRow } = await import('./ToolTimelineRow');
         const tool: any = {
             name: 'UnknownTool',
             state: 'completed',
-            input: {},
+            input: { _acp: { kind: 'SomeInferredTool' } },
             createdAt: 1,
             startedAt: 1,
             completedAt: 2,

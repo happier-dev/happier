@@ -14,27 +14,6 @@ const ensureSidechainMessagesLoadedMock = vi.fn();
 let settings: Record<string, unknown> = {};
 
 installToolShellCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-            Animated: {
-                Value: class {
-                    constructor(_value: unknown) {}
-                    setValue(_value: unknown) {}
-                    interpolate(_config: unknown) {
-                        return 0;
-                    }
-                },
-                timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
-                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-            },
-            Easing: {
-                bezier: () => (t: number) => t,
-                linear: (t: number) => t,
-            },
-        });
-    },
     storage: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleMock({
@@ -52,27 +31,12 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {
         MinimalTool: { minimal: true },
     },
-}));
-
-vi.mock('@/components/tools/normalization/core/normalizeToolCallForRendering', () => ({
-    normalizeToolCallForRendering: (tool: any) => tool,
-}));
-
-vi.mock('@/components/tools/normalization/policy/toolNameInference', () => ({
-    inferToolNameForRendering: ({ toolName }: any) => ({ normalizedToolName: toolName, source: 'original' }),
-}));
-
-vi.mock('@/components/tools/normalization/policy/resolveToolViewDetailLevel', () => ({
-    resolveToolViewDetailLevel: () => 'full',
 }));
 
 vi.mock('@/components/tools/renderers/system/MCPToolView', () => ({
@@ -109,9 +73,7 @@ vi.mock('@/components/tools/shell/presentation/ToolError', () => ({
 }));
 
 vi.mock('@/components/ui/text/Text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return {
-        ...createTextModuleMock(),
         Text: (props: any) => React.createElement('Text', props, props.children),
         TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
     };

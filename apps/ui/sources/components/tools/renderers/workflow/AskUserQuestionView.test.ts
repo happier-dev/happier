@@ -1,9 +1,10 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { changeTextTestInstance, findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,64 +16,47 @@ const modalAlert = vi.fn();
 let supportsAnswersInPermission = true;
 let activeAskUserQuestionRequest: { tool: string; kind?: 'user_action' } | null = null;
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+installWorkflowRendererCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: (...args: any[]) => modalAlert(...args),
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => ({
+                    sessions: {
+                        s1: {
+                            agentState: {
+                                capabilities: { askUserQuestionAnswersInPermission: supportsAnswersInPermission },
+                                requests: activeAskUserQuestionRequest
+                                    ? {
+                                        toolu_1: {
+                                            tool: activeAskUserQuestionRequest.tool,
+                                            ...(activeAskUserQuestionRequest.kind ? { kind: activeAskUserQuestionRequest.kind } : {}),
+                                            arguments: {},
+                                            createdAt: 1,
+                                        },
+                                    }
+                                    : {},
+                            },
+                        },
+                    },
+                }),
+            },
+        });
+    },
 });
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: (...args: any[]) => modalAlert(...args),
-        },
-    }).module;
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    TextInput: (props: any) => React.createElement('TextInput', props, props.children),
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
 
 vi.mock('@/sync/ops', () => ({
     sessionDeny: (...args: any[]) => sessionDeny(...args),
     sessionAllowWithAnswers: (...args: any[]) => sessionAllowWithAnswers(...args),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => ({
-            sessions: {
-                s1: {
-                    agentState: {
-                        capabilities: { askUserQuestionAnswersInPermission: supportsAnswersInPermission },
-                        requests: activeAskUserQuestionRequest
-                            ? {
-                                toolu_1: {
-                                    tool: activeAskUserQuestionRequest.tool,
-                                    ...(activeAskUserQuestionRequest.kind ? { kind: activeAskUserQuestionRequest.kind } : {}),
-                                    arguments: {},
-                                    createdAt: 1,
-                                },
-                            }
-                            : {},
-                    },
-                },
-            },
-        }),
-    },
-});
-});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -81,6 +65,8 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 describe('AskUserQuestionView', () => {
+    type Screen = Awaited<ReturnType<typeof renderScreen>>;
+
     function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
         return makeToolCall({
             name: 'AskUserQuestion',
@@ -142,39 +128,37 @@ describe('AskUserQuestionView', () => {
         });
     }
 
-    async function renderView(tool: ToolCall, overrides: Record<string, unknown> = {}) {
+    async function renderView(tool: ToolCall, overrides: Record<string, unknown> = {}): Promise<Screen> {
         const { AskUserQuestionView } = await import('./AskUserQuestionView');
-        let tree: renderer.ReactTestRenderer | undefined;
-        tree = (await renderScreen(React.createElement(
-                    AskUserQuestionView,
-                    makeToolViewProps(tool, { sessionId: 's1', ...overrides }),
-                ))).tree;
-        return tree!;
+        return renderScreen(React.createElement(
+            AskUserQuestionView,
+            makeToolViewProps(tool, { sessionId: 's1', ...overrides }),
+        ));
     }
 
-    function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
-        return findTestInstanceByTypeContainingText(tree, 'TouchableOpacity', label);
+    function findPressableByLabel(screen: Screen, label: string) {
+        return findTestInstanceByTypeContainingText(screen, 'TouchableOpacity', label);
     }
 
-    async function pressPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
-        const target = findPressableByLabel(tree, label);
+    async function pressPressableByLabel(screen: Screen, label: string) {
+        const target = findPressableByLabel(screen, label);
         expect(target).toBeTruthy();
         await pressTestInstanceAsync(target, label);
     }
 
-    async function chooseOptionAndSubmit(tree: renderer.ReactTestRenderer, optionLabel: string) {
-        await pressPressableByLabel(tree, optionLabel);
-        await pressPressableByLabel(tree, 'tools.askUserQuestion.submit');
+    async function chooseOptionAndSubmit(screen: Screen, optionLabel: string) {
+        await pressPressableByLabel(screen, optionLabel);
+        await pressPressableByLabel(screen, 'tools.askUserQuestion.submit');
     }
 
-    async function fillFreeformAndSubmit(tree: renderer.ReactTestRenderer, answer: string) {
-        const input = tree.root.findByType('TextInput' as any);
+    async function fillFreeformAndSubmit(screen: Screen, answer: string) {
+        const input = screen.findByType('TextInput' as any);
         expect(input).toBeTruthy();
         await act(async () => {
             changeTextTestInstance(input, answer, 'ask-user-question freeform input');
         });
 
-        const submit = findPressableByLabel(tree, 'tools.askUserQuestion.submit');
+        const submit = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
         expect(submit).toBeTruthy();
         expect(submit!.props.disabled).toBe(false);
         await pressTestInstanceAsync(submit, 'tools.askUserQuestion.submit');
@@ -192,8 +176,8 @@ describe('AskUserQuestionView', () => {
     it('submits answers via permission approval without sending a follow-up user message', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 
-        const tree = await renderView(makeTool());
-        await chooseOptionAndSubmit(tree, 'A');
+        const screen = await renderView(makeTool());
+        await chooseOptionAndSubmit(screen, 'A');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Pick one': 'A' });
@@ -202,13 +186,13 @@ describe('AskUserQuestionView', () => {
     });
 
     it('does not allow answering when the permission id is missing', async () => {
-        const tree = await renderView(makeTool({ permission: undefined }));
+        const screen = await renderView(makeTool({ permission: undefined }));
 
-        const option = findPressableByLabel(tree, 'A');
+        const option = findPressableByLabel(screen, 'A');
         expect(option).toBeTruthy();
         await pressTestInstanceAsync(option, 'A');
 
-        const submit = findPressableByLabel(tree, 'tools.askUserQuestion.submit');
+        const submit = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
         expect(submit).toBeUndefined();
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(0);
@@ -220,8 +204,8 @@ describe('AskUserQuestionView', () => {
     it('shows an error when permission approval fails', async () => {
         sessionAllowWithAnswers.mockRejectedValueOnce(new Error('boom'));
 
-        const tree = await renderView(makeTool());
-        await chooseOptionAndSubmit(tree, 'A');
+        const screen = await renderView(makeTool());
+        await chooseOptionAndSubmit(screen, 'A');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
         expect(sessionDeny).toHaveBeenCalledTimes(0);
@@ -234,8 +218,8 @@ describe('AskUserQuestionView', () => {
         activeAskUserQuestionRequest = { tool: 'AskUserQuestion', kind: 'user_action' };
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 
-        const tree = await renderView(makeTool());
-        await chooseOptionAndSubmit(tree, 'A');
+        const screen = await renderView(makeTool());
+        await chooseOptionAndSubmit(screen, 'A');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Pick one': 'A' });
@@ -247,13 +231,13 @@ describe('AskUserQuestionView', () => {
         supportsAnswersInPermission = true;
         activeAskUserQuestionRequest = null;
 
-        const tree = await renderView(makeTool());
+        const screen = await renderView(makeTool());
 
-        const option = findPressableByLabel(tree, 'A');
+        const option = findPressableByLabel(screen, 'A');
         expect(option).toBeTruthy();
         await pressTestInstanceAsync(option, 'A');
 
-        const submit = findPressableByLabel(tree, 'tools.askUserQuestion.submit');
+        const submit = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
         expect(submit).toBeUndefined();
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(0);
         expect(sessionDeny).toHaveBeenCalledTimes(0);
@@ -261,7 +245,7 @@ describe('AskUserQuestionView', () => {
     });
 
     it('does not allow answering when canApprovePermissions is false', async () => {
-        const tree = await renderView(
+        const screen = await renderView(
             makeTool(),
             {
                 interaction: {
@@ -272,26 +256,26 @@ describe('AskUserQuestionView', () => {
             },
         );
 
-        const option = findPressableByLabel(tree, 'A');
+        const option = findPressableByLabel(screen, 'A');
         expect(option).toBeTruthy();
         await pressTestInstanceAsync(option, 'A');
 
-        const submit = findPressableByLabel(tree, 'tools.askUserQuestion.submit');
+        const submit = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
         expect(submit).toBeUndefined();
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(0);
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
 
-        const texts = collectHostText(tree);
+        const texts = screen.getTextContent();
         expect(texts).toContain('session.sharing.permissionApprovalsDisabledNotGranted');
     });
 
     it('supports freeform questions with no options by submitting typed answers', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 
-        const tree = await renderView(makeFreeformTool());
-        await fillFreeformAndSubmit(tree, 'README.md');
+        const screen = await renderView(makeFreeformTool());
+        await fillFreeformAndSubmit(screen, 'README.md');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Which file should I inspect?': 'README.md' });
@@ -302,18 +286,18 @@ describe('AskUserQuestionView', () => {
     it('supports suggestion questions that allow a typed freeform answer (options + freeform)', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 
-        const tree = await renderView(makeSuggestionsWithFreeformTool());
+        const screen = await renderView(makeSuggestionsWithFreeformTool());
 
-        const submitBefore = findPressableByLabel(tree, 'tools.askUserQuestion.submit');
+        const submitBefore = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
         expect(submitBefore).toBeTruthy();
         expect(submitBefore!.props.disabled).toBe(true);
 
-        const input = tree.root.findByType('TextInput' as any);
+        const input = screen.findByType('TextInput' as any);
         await act(async () => {
             changeTextTestInstance(input, 'Custom goal, with commas', 'ask-user-question freeform input');
         });
 
-        const submitAfter = findPressableByLabel(tree, 'tools.askUserQuestion.submit');
+        const submitAfter = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
         expect(submitAfter).toBeTruthy();
         expect(submitAfter!.props.disabled).toBe(false);
 

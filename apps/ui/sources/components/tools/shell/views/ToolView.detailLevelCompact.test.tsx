@@ -5,43 +5,43 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 
-import { collectHostText, makeToolCall } from './ToolView.testHelpers';
+import { collectHostText, installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        ensureSidechainMessagesLoaded: vi.fn(),
+installToolShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
+        });
     },
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewDetailLevelDefault') return 'compact';
+                    if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
+                    if (key === 'toolViewDetailLevelByToolName') return {};
+                    if (key === 'toolViewShowDebugByDefault') return false;
+                    if (key === 'toolViewTapAction') return 'expand';
+                    if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
+                    if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+                    if (key === 'permissionPromptSurface') return 'transcript';
+                    return null;
+                },
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key) => key,
+        });
+    },
 });
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
-                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
-
-vi.mock('@/hooks/ui/useElapsedTime', () => ({
-    useElapsedTime: () => 0.1,
-}));
 
 const renderedToolViewSpy = vi.fn();
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
@@ -89,33 +89,6 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => (
     TranscriptCollapsible: ({ expanded, children }: any) =>
         expanded ? React.createElement(React.Fragment, null, children) : null,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key) => key,
-    });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'toolViewDetailLevelDefault') return 'compact';
-                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
-                if (key === 'toolViewDetailLevelByToolName') return {};
-                if (key === 'toolViewShowDebugByDefault') return false;
-                if (key === 'toolViewTapAction') return 'expand';
-                if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
-                if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-                if (key === 'permissionPromptSurface') return 'transcript';
-                return null;
-            },
-        },
-    });
-});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],

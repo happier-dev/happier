@@ -18,51 +18,9 @@ import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.test
 
 const ensureSidechainMessagesLoadedMock = vi.fn();
 
-let settings: Record<string, any> = {};
+let settings: Record<string, unknown> = {};
 
 installToolShellCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: { OS: 'web' },
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-            Animated: {
-                Value: class {
-                    constructor(_value: unknown) {}
-                    setValue(_value: unknown) {}
-                    interpolate(_config: unknown) {
-                        return 0;
-                    }
-                },
-                timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
-                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-            },
-            Easing: {
-                bezier: () => (t: number) => t,
-                linear: (t: number) => t,
-            },
-        });
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    surface: '#fff',
-                    text: '#111',
-                    textSecondary: '#555',
-                    textLink: '#09f',
-                    textDestructive: '#c00',
-                    divider: '#ddd',
-                    shadow: { color: '#000' },
-                    surfaceHigh: '#eee',
-                    surfaceHighest: '#fff',
-                    surfacePressedOverlay: '#ddd',
-                    warning: '#f90',
-                },
-            },
-        });
-    },
     storage: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleMock({
@@ -80,10 +38,7 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {},
@@ -94,9 +49,7 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
 }));
 
 vi.mock('@/components/ui/text/Text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return {
-        ...createTextModuleMock(),
         Text: (props: any) => React.createElement('Text', props, props.children),
         TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
     };

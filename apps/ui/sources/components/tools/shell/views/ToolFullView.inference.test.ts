@@ -6,7 +6,7 @@ import {
 } from '@/dev/testkit';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { makeToolCall } from './ToolView.testHelpers';
+import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,21 +24,18 @@ vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useLocalSetting: <K extends keyof typeof localSettingsDefaults>(name: K) => localSettingsDefaults[name],
-            useSetting: <K extends keyof typeof settingsDefaults>(name: K) => settingsDefaults[name],
-            useSessionTranscriptDraftMessages: () => [],
-        },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
+installToolShellCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useLocalSetting: <K extends keyof typeof localSettingsDefaults>(name: K) => localSettingsDefaults[name],
+                useSetting: <K extends keyof typeof settingsDefaults>(name: K) => settingsDefaults[name],
+                useSessionTranscriptDraftMessages: () => [],
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/media/CodeView', () => ({

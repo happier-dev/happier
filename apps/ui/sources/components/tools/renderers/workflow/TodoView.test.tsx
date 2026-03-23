@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { makeToolViewProps } from '@/dev/testkit';
 import { makeCompletedTool, normalizedHostText } from '../core/truncationView.testHelpers';
 import { renderScreen } from '@/dev/testkit';
 

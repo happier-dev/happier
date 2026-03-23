@@ -51,10 +51,7 @@ installToolShellCommonModuleMocks({
     },
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 const renderedSpecificToolViewSpy = vi.fn();
 const getToolViewComponentSpy = vi.fn((toolName: string) =>

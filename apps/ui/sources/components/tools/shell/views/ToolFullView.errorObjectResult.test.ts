@@ -1,11 +1,10 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPartialStorageModuleMock } from '@/dev/testkit';
 import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
-import { collectHostText, makeToolCall } from './ToolView.testHelpers';
+import { collectHostText, installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,21 +16,33 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
-                                        Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
-                                        Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
-                                        useWindowDimensions: () => ({ width: 800, height: 600 }),
-                                    }
-    );
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
+
+installToolShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
+            Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
+            Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
+            useWindowDimensions: () => ({ width: 800, height: 600 }),
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewShowDebugByDefault') return false;
+                    return null;
+                },
+            },
+        });
+    },
+});
 
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
     getToolViewComponent: () => null,
@@ -40,20 +51,6 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {},
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    await createPartialStorageModuleMock(importOriginal, {
-        useSetting: (key: string) => {
-            if (key === 'toolViewShowDebugByDefault') return false;
-            return null;
-        },
-    }),
-);
 
 vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: () => null,

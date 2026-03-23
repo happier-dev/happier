@@ -2,10 +2,40 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installToolShellCommonModuleMocks } from '../ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ioniconPropsState: Array<Record<string, unknown>> = [];
+
+installToolShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            Platform: {
+                OS: 'web',
+                select: (options: Record<string, unknown>) => options.web ?? options.default,
+            },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    textSecondary: '#777',
+                    surfacePressedOverlay: '#333',
+                    text: '#111',
+                },
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+});
 
 vi.mock('./ToolTimelineIconFrame', () => ({
     ToolTimelineIconFrame: ({ icon }: { icon: React.ReactNode }) => React.createElement('ToolTimelineIconFrame', { testID: 'tool-timeline-row-icon' }, icon),
@@ -18,41 +48,10 @@ vi.mock('@expo/vector-icons', () => ({
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-            Platform: {
-                OS: 'web',
-                select: (options: Record<string, unknown>) => options.web ?? options.default,
-            },
-        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                textSecondary: '#777',
-                surfacePressedOverlay: '#333',
-                text: '#111',
-            },
-        },
-    });
-});
-
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
     TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('ToolTimelineRowHeader', () => {
     function readOpacity(style: unknown): number | undefined {

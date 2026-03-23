@@ -1,62 +1,62 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
-import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { makeCompletedTool, normalizedHostText } from '../core/truncationView.testHelpers';
+import {
+    fileOpsRendererModuleState,
+    installFileOpsRendererCommonModuleMocks,
+    resetFileOpsRendererCommonModuleMockState,
+} from './fileOpsRendererTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
-
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
+resetFileOpsRendererCommonModuleMockState();
+installFileOpsRendererCommonModuleMocks({
+    storage: async (importOriginal) =>
+        createPartialStorageModuleMock(importOriginal, {
+            useSetting: () => true,
+        }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => {
+                if (key === 'common.applied') return 'Applied';
+                if (key === 'common.deleted') return 'Deleted';
+                return key;
+            },
+        });
+    },
+});
 
 vi.mock('@/utils/path/pathUtils', () => ({
     resolvePath: (p: string) => p,
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-    useSetting: () => true,
-}));
-
-const diffSpy = vi.fn();
-vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
-    ToolDiffView: (props: any) => {
-        diffSpy(props);
-        return React.createElement('ToolDiffView', props);
-    },
-}));
-
 describe('PatchView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { PatchView } = await import('./PatchView');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(
+        return renderScreen(React.createElement(
                     PatchView,
                     makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ))).tree;
-        return tree;
+                ));
     }
 
     it('shows an applied indicator when result.applied=true', async () => {
-        const tree = await renderView(
+        const screen = await renderView(
             makeCompletedTool(
                 'Patch',
                 { changes: { '/tmp/a.txt': { type: 'add', add: { content: 'hi' } } } },
                 { applied: true },
             ),
         );
-        const renderedText = normalizedHostText(tree);
+        const renderedText = normalizedHostText(screen.tree);
         expect(renderedText).toContain('Applied');
     });
 
     it('shows a deleted indicator when all changes are delete operations', async () => {
-        const tree = await renderView(
+        const screen = await renderView(
             makeCompletedTool(
                 'Patch',
                 {
@@ -68,13 +68,13 @@ describe('PatchView', () => {
                 { applied: true },
             ),
         );
-        const renderedText = normalizedHostText(tree);
+        const renderedText = normalizedHostText(screen.tree);
         expect(renderedText).toContain('Deleted');
     });
 
     it('renders a diff preview when detailLevel=full', async () => {
-        diffSpy.mockClear();
-        const tree = await renderView(
+        fileOpsRendererModuleState.toolDiffSpy.mockClear();
+        const screen = await renderView(
             makeCompletedTool(
                 'Patch',
                 {
@@ -90,13 +90,15 @@ describe('PatchView', () => {
             'full',
         );
 
-        expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(1);
-        expect(diffSpy).toHaveBeenCalledWith(expect.objectContaining({ filePath: '/tmp/a.txt' }));
+        expect(screen.findAllByType('ToolDiffView' as any)).toHaveLength(1);
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ filePath: '/tmp/a.txt' }),
+        );
     });
 
     it('renders a diff preview in full mode using result.metadata.files before/after when input content is unavailable', async () => {
-        diffSpy.mockClear();
-        const tree = await renderView(
+        fileOpsRendererModuleState.toolDiffSpy.mockClear();
+        const screen = await renderView(
             makeCompletedTool(
                 'Patch',
                 {
@@ -119,8 +121,8 @@ describe('PatchView', () => {
             'full',
         );
 
-        expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(1);
-        expect(diffSpy).toHaveBeenCalledWith(
+        expect(screen.findAllByType('ToolDiffView' as any)).toHaveLength(1);
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 filePath: 'qa/opencode_permission_inside.txt',
                 oldText: '',
@@ -130,7 +132,7 @@ describe('PatchView', () => {
     });
 
     it('falls back to summary rendering in full mode when diff extraction is not possible', async () => {
-        const tree = await renderView(
+        const screen = await renderView(
             makeCompletedTool(
                 'Patch',
                 {
@@ -143,14 +145,14 @@ describe('PatchView', () => {
             'full',
         );
 
-        expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(0);
-        const text = normalizedHostText(tree);
+        expect(screen.findAllByType('ToolDiffView' as any)).toHaveLength(0);
+        const text = normalizedHostText(screen.tree);
         expect(text).toContain('a.txt');
         expect(text).toContain('Applied');
     });
 
     it('does not show Deleted when changes include non-delete operations', async () => {
-        const tree = await renderView(
+        const screen = await renderView(
             makeCompletedTool(
                 'Patch',
                 {
@@ -163,13 +165,13 @@ describe('PatchView', () => {
             ),
         );
 
-        const text = normalizedHostText(tree);
+        const text = normalizedHostText(screen.tree);
         expect(text).toContain('Applied');
         expect(text).not.toContain('Deleted');
     });
 
     it('renders a human-readable error when tool.state=error', async () => {
-        const tree = await renderView(
+        const screen = await renderView(
             makeToolCall({
                 name: 'Patch',
                 state: 'error',
@@ -186,7 +188,7 @@ describe('PatchView', () => {
             'full',
         );
 
-        const text = normalizedHostText(tree);
+        const text = normalizedHostText(screen.tree);
         expect(text).toContain('rejected permission');
     });
 });

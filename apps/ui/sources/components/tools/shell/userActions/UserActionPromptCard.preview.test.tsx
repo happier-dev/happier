@@ -1,6 +1,5 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
 
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { renderScreen } from '@/dev/testkit';
@@ -79,20 +78,19 @@ describe('UserActionPromptCard (preview)', () => {
             arguments: { question: 'Continue?' },
         } as PendingPermissionRequest;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        tree = (await renderScreen(<UserActionPromptCard
-                    request={request}
-                    location={{
-                        kind: 'top',
-                        messageId: 'v0k1hmbmnud',
-                        seq: null,
-                    }}
-                    sessionId="session-1"
-                    metadata={null}
-                    canApprovePermissions={true}
-                />)).tree;
+        const screen = await renderScreen(<UserActionPromptCard
+            request={request}
+            location={{
+                kind: 'top',
+                messageId: 'v0k1hmbmnud',
+                seq: null,
+            }}
+            sessionId="session-1"
+            metadata={null}
+            canApprovePermissions={true}
+        />);
 
-        expect(() => tree!.root.findByProps({ testID: 'user-action-prompt-view-tool' })).toThrow();
+        expect(screen.findByTestId('user-action-prompt-view-tool')).toBeNull();
         expect(routerPush).not.toHaveBeenCalled();
     });
 });

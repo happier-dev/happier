@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
-import { makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { makeToolViewProps } from '@/dev/testkit';
 import { expectListSummary, makeCompletedTool } from '../core/listView.testHelpers';
 import { renderScreen } from '@/dev/testkit';
 

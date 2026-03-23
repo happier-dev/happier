@@ -7,9 +7,11 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
-import { makeToolCall } from './ToolView.testHelpers';
+import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+installToolShellCommonModuleMocks();
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -28,36 +30,6 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                        View: 'View',
-                                                        Text: 'Text',
-                                                        Pressable: 'Pressable',
-                                                        ScrollView: 'ScrollView',
-                                                        Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
-                                                        useWindowDimensions: () => ({ width: 800, height: 600 }),
-                                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: () => false,
-            useSessionTranscriptDraftMessages: () => [],
-        },
-    }));
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
     getToolViewComponent: () => null,

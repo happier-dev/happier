@@ -2,27 +2,28 @@ import React from 'react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
 
-import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { collectHostText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
+import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
+installWorkflowRendererCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => {
+                const last = key.split('.').pop() ?? key;
+                return last.charAt(0).toUpperCase() + last.slice(1);
+            },
+        });
+    },
+});
 
 vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: ({ code }: any) => React.createElement('CodeView', { code }),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => {
-        const last = key.split('.').pop() ?? key;
-        return last.charAt(0).toUpperCase() + last.slice(1);
-    } });
-});
 
 describe('AgentTeamView', () => {
     let AgentTeamView!: React.ComponentType<ReturnType<typeof makeToolViewProps>>;

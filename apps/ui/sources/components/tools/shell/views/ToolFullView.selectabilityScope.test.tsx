@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { makeToolCall } from './ToolView.testHelpers';
+import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 import {
   renderScreen,
   standardCleanup,
@@ -9,36 +9,24 @@ import { Text } from '@/components/ui/text/Text';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+installToolShellCommonModuleMocks({
+  reactNative: () => import('@/dev/testkit/mocks/reactNative').then(({ createReactNativeWebMock }) =>
+    createReactNativeWebMock({
+      View: 'View',
+      Text: 'Text',
+      ScrollView: 'ScrollView',
+      Pressable: 'Pressable',
+      Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
+      useWindowDimensions: () => ({ width: 800, height: 600 }),
+    }),
+  ),
+});
+
 vi.mock('@/sync/sync', () => ({
   sync: {
     ensureSidechainMessagesLoaded: vi.fn(),
   },
 }));
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-  (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-    importOriginal,
-    overrides: {
-      useSetting: () => false,
-      useSessionTranscriptDraftMessages: () => [],
-    },
-  }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Text: 'Text',
-                                    ScrollView: 'ScrollView',
-                                    Pressable: 'Pressable',
-                                    Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
-                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
-                                  }
-    );
-});
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');

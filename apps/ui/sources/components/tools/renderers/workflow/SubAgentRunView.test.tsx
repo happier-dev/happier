@@ -2,12 +2,19 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-import { collectHostText } from '../../shell/views/ToolView.testHelpers';
+import { collectHostText } from '@/dev/testkit';
+import {
+    installWorkflowRendererCommonModuleMocks,
+    resetWorkflowRendererCommonModuleMockState,
+} from './workflowRendererTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const structuredResultViewPropsSpy = vi.fn();
+
+installWorkflowRendererCommonModuleMocks();
+resetWorkflowRendererCommonModuleMockState();
 
 vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
     StructuredResultView: (props: any) => {
@@ -15,11 +22,6 @@ vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
         return React.createElement('StructuredResultView');
     },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 describe('SubAgentRunView', () => {
     let SubAgentRunView: any;
