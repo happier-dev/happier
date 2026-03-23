@@ -14,25 +14,15 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            View: ({ children, ...props }: any) => React.createElement('View', props, children),
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-        }
+                    View: ({ children, ...props }: any) => React.createElement('View', props, children),
+                    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                }
     );
 });
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    });
+    return createUnistylesMock();
 });
 
 vi.mock('@/components/ui/text/Text', () => ({

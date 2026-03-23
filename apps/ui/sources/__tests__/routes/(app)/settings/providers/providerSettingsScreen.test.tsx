@@ -266,6 +266,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         ...actual,
         isAgentId: (v: any) => v === 'codex' || v === 'customAcp' || v === 'opencode',
         getAgentCore: (agentId: string) => ({
+            id: agentId,
             displayNameKey:
                 agentId === 'customAcp'
                     ? 'agentInput.agent.customAcp'

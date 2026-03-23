@@ -23,7 +23,7 @@ import { getProviderLocalAuthPlugin } from '@/agents/providers/registry/provider
 import type { ProviderSettingFieldDef, TranslatableText } from '@/agents/providers/shared/providerSettingsPlugin';
 import { t } from '@/text';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
-import { getAgentSessionModeDescriptor, getProviderCliRuntimeSpec, isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
+import { getAgentSessionModeDescriptor, getAgentStaticModels, getProviderCliRuntimeSpec, isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
 import {
     buildCatalogModelList,
     classifySessionModeDescriptor,
@@ -313,6 +313,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
     const catalogModelList = buildCatalogModelList({
         defaultMode: core.model.defaultMode,
         allowedModes: core.model.allowedModes,
+        staticModels: getAgentStaticModels(core.id),
     });
     const catalogModelListText = catalogModelList.length > 0
         ? catalogModelList.join(', ')

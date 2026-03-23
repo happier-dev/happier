@@ -1,32 +1,70 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderSettingsView } from '@/dev/testkit';
+import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import { renderSettingsView, createUseSettingMock } from '@/dev/testkit';
+import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 
 const routerPushSpy = vi.fn();
+
+type AcpCatalogBackendDefinition = AcpCatalogSettingsV1['backends'][number];
+
+function createAcpBackendFixture(): AcpCatalogBackendDefinition {
+    return {
+        id: 'backend-1',
+        name: 'backend-1',
+        title: 'Backend One',
+        description: '',
+        command: 'custom-cli',
+        args: [],
+        env: {},
+        transportProfile: 'generic',
+        defaultMode: 'plan',
+        defaultModel: 'sonnet',
+        auth: { support: 'unsupported' },
+        capabilities: {
+            supportsLoadSession: false,
+            supportsModes: 'unknown',
+            supportsModels: 'unknown',
+            supportsConfigOptions: 'unknown',
+            promptImageSupport: 'unknown',
+        },
+        createdAt: 1,
+        updatedAt: 1,
+    };
+}
+
+function createAcpCatalogSettingsFixture(): AcpCatalogSettingsV1 {
+    return {
+        v: 2,
+        backends: [createAcpBackendFixture()],
+    };
+}
+
+const acpCatalogSettingsFixture = createAcpCatalogSettingsFixture();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    View: 'View',
-                    Pressable: 'Pressable',
-                    Platform: {
-                        OS: 'web',
-                        select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
-                    },
-                    Dimensions: {
-                        get: () => ({ width: 1440, height: 900 }),
-                    },
-                    AppState: {
-                        currentState: 'active',
-                        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                    },
-                }
+            View: 'View',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'web',
+                select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
+            },
+            Dimensions: {
+                get: () => ({ width: 1440, height: 900 }),
+            },
+            AppState: {
+                currentState: 'active',
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+        }
     );
 });
 
 vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
+    Ionicons: createPassThroughModule(['Ionicons']).Ionicons,
 }));
 
 vi.mock('expo-router', async () => {
@@ -72,83 +110,23 @@ vi.mock('@/modal', async () => {
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'acpCatalogSettingsV1') {
-            return {
-                v: 2,
-                backends: [
-                    {
-                        id: 'backend-1',
-                        name: 'backend-1',
-                        title: 'Backend One',
-                        description: '',
-                        command: 'custom-cli',
-                        args: [],
-                        env: {},
-                        transportProfile: 'generic',
-                        defaultMode: 'plan',
-                        defaultModel: 'sonnet',
-                        auth: { support: 'unsupported' },
-                        capabilities: {
-                            supportsLoadSession: false,
-                            supportsModes: 'unknown',
-                            supportsModels: 'unknown',
-                            supportsConfigOptions: 'unknown',
-                            promptImageSupport: 'unknown',
-                        },
-                        createdAt: 1,
-                        updatedAt: 1,
-                    },
-                ],
-            };
-        }
-        return undefined;
-    },
-    useSettingMutable: (key: string) => {
-        if (key === 'acpCatalogSettingsV1') {
-            return [
-                {
-                    v: 2,
-                    backends: [
-                        {
-                            id: 'backend-1',
-                            name: 'backend-1',
-                            title: 'Backend One',
-                            description: '',
-                            command: 'custom-cli',
-                            args: [],
-                            env: {},
-                            transportProfile: 'generic',
-                            defaultMode: 'plan',
-                            defaultModel: 'sonnet',
-                            auth: { support: 'unsupported' },
-                            capabilities: {
-                                supportsLoadSession: false,
-                                supportsModes: 'unknown',
-                                supportsModels: 'unknown',
-                                supportsConfigOptions: 'unknown',
-                                promptImageSupport: 'unknown',
-                            },
-                            createdAt: 1,
-                            updatedAt: 1,
-                        },
-                    ],
-                },
-                vi.fn(),
-            ];
-        }
-        return [null, vi.fn()];
-    },
-});
+        useSetting: createUseSettingMock({
+            values: {
+                acpCatalogSettingsV1: acpCatalogSettingsFixture,
+            },
+        }),
+        useSettingMutable: (key: string) => {
+            if (key === 'acpCatalogSettingsV1') {
+                return [acpCatalogSettingsFixture, vi.fn()];
+            }
+            return [null, vi.fn()];
+        },
+    });
 });
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
+vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
 
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
+vi.mock('@/components/ui/lists/Item', () => createPassThroughModule(['Item']));
 
 describe('CustomAcpProviderSettingsSections', () => {
     beforeEach(() => {

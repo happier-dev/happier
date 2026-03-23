@@ -12,7 +12,7 @@ describe('getAgentAdvancedModeCapabilities', () => {
         }> = [
             { agentId: 'claude', supportsPlanMode: true, supportsAcceptEdits: true, supportsRuntimeModeSwitch: 'provider-native' },
             { agentId: 'opencode', supportsPlanMode: true, supportsAcceptEdits: false, supportsRuntimeModeSwitch: 'acp-setSessionMode' },
-            { agentId: 'codex', supportsPlanMode: true, supportsAcceptEdits: false, supportsRuntimeModeSwitch: 'acp-setSessionMode' },
+            { agentId: 'codex', supportsPlanMode: false, supportsAcceptEdits: false, supportsRuntimeModeSwitch: 'metadata-gating' },
         ];
 
         for (const testCase of cases) {
