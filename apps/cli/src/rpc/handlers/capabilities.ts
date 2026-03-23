@@ -58,7 +58,7 @@ async function resolveProbeBackendContext(params?: Record<string, unknown>): Pro
         ...(params?.agentId ? { agentId: params.agentId as AgentId } : {}),
         backendTarget,
         mode: 'blocking',
-        refresh: 'force',
+        refresh: 'auto',
     }).catch(() => null);
 
     const accountSettings = accountSettingsContext?.settings ?? null;
