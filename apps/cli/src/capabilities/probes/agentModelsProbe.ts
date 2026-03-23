@@ -3,14 +3,11 @@ import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AgentBackend } from '@/agent/core';
 import { AGENTS } from '@/backends/catalog';
-import { withCodexAppServerClient } from '@/backends/codex/appServer/client/withCodexAppServerClient';
-import { readCodexAppServerSessionControls } from '@/backends/codex/appServer/sessionControlsMetadata';
-import { readCodexEnvironmentAuthState } from '@/backends/codex/cli/auth/readCodexEnvironmentAuthState';
 import type { CatalogAgentId } from '@/backends/types';
 import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
-import { getAgentModelConfig, resolveCodexSessionBackendMode } from '@happier-dev/agents';
+import { getAgentModelConfig, getAgentStaticModels } from '@happier-dev/agents';
 import { AsyncTtlCache, buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import { validateCatalogAcpProbeSpawn } from './validateCatalogAcpProbeSpawn';
@@ -76,19 +73,33 @@ function resolveProbeVariant(
     accountSettings,
   });
   if (configuredAcpVariant) return configuredAcpVariant;
-  if (agentId !== 'codex') return `${agentId}:default`;
-  return `codex:${resolveCodexSessionBackendMode({ metadata: null, accountSettings: accountSettings ?? null }) ?? 'default'}`;
+  const entry = AGENTS[agentId];
+  const entryVariant = entry?.resolveModelsProbeVariant?.({ backendTarget, accountSettings: accountSettings ?? null }) ?? null;
+  return entryVariant ?? `${agentId}:default`;
 }
 
 function buildStatic(agentId: CatalogAgentId): ProbedAgentModelsResult {
   const cfg = getAgentModelConfig(agentId);
   const supportsFreeform = cfg.supportsSelection === true && cfg.supportsFreeform === true;
-  const allowedModes = cfg.supportsSelection === true && Array.isArray(cfg.allowedModes) ? cfg.allowedModes : [];
-  const allowed = cfg.supportsSelection === true ? ['default', ...allowedModes] : ['default'];
-  const unique = Array.from(new Set(allowed));
+  const seen = new Set<string>();
+  const availableModels = (cfg.supportsSelection === true
+    ? [
+      { id: 'default', name: 'Default' },
+      ...getAgentStaticModels(agentId).map((model) => ({
+        id: model.id,
+        name: model.name,
+        ...(typeof model.description === 'string' ? { description: model.description } : {}),
+      })),
+    ]
+    : [{ id: 'default', name: 'Default' }]).filter((model) => {
+      const id = typeof model.id === 'string' ? model.id.trim() : '';
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
   return {
     provider: agentId,
-    availableModels: unique.map((id) => ({ id, name: id === 'default' ? 'Default' : id })),
+    availableModels,
     supportsFreeform,
     source: 'static',
   };
@@ -341,20 +352,6 @@ export async function probeModelsFromAcpBackend(params: {
   return null;
 }
 
-async function probeModelsFromCodexAppServer(params: Readonly<{
-  cwd: string;
-}>): Promise<ReadonlyArray<ProbedAgentModel> | null> {
-  const authMethod = readCodexEnvironmentAuthState().method;
-  const controls = await withCodexAppServerClient({
-    cwd: params.cwd,
-    run: async (client) => readCodexAppServerSessionControls({
-      client,
-      authMethod,
-    }),
-  });
-  return normalizeDynamicModels(controls.availableModels);
-}
-
 export async function probeAgentModelsBestEffort(params: {
   agentId: CatalogAgentId;
   backendTarget?: BackendTargetRefV1;
@@ -383,9 +380,6 @@ export async function probeAgentModelsBestEffort(params: {
       return fallback;
     }
     const entry = AGENTS[params.agentId];
-    const codexBackendMode = params.agentId === 'codex'
-      ? resolveCodexSessionBackendMode({ metadata: null, accountSettings: params.accountSettings ?? null })
-      : null;
 
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
 
@@ -418,25 +412,33 @@ export async function probeAgentModelsBestEffort(params: {
       }
     }
 
-    if (params.agentId === 'codex' && codexBackendMode === 'appServer') {
-      const models = await probeModelsFromCodexAppServer({ cwd }).catch(() => null);
+    const preflightModelsAdapter = entry?.getPreflightModelsProbeAdapter
+      ? await entry.getPreflightModelsProbeAdapter().catch(() => null)
+      : null;
+    if (preflightModelsAdapter?.probeModelsRaw) {
+      const modelsRaw = await preflightModelsAdapter.probeModelsRaw({
+        backendTarget: params.backendTarget,
+        cwd,
+        timeoutMs,
+        accountSettings: params.accountSettings ?? null,
+      }).catch(() => null);
+      const models = normalizeDynamicModels(modelsRaw);
       if (models) {
         const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
         agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
         return res;
       }
-      agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
-      return fallback;
+      if (preflightModelsAdapter.failureCacheStrategy === 'retry') {
+        // For providers where this probe is the primary/authoritative source (e.g. Codex app-server),
+        // cache an error so subsequent calls retry instead of freezing the static fallback.
+        agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        return fallback;
+      }
     }
 
     // Prefer lightweight CLI preflight probes when the provider offers a `models` command.
     // This avoids needing to start a full ACP session just to populate a menu.
-    const cliProbeArgsByAgent: Partial<Record<CatalogAgentId, ReadonlyArray<string>>> = {
-      opencode: ['models'],
-      kilo: ['models'],
-      auggie: ['model', 'list'],
-    };
-    const cliProbeArgs = cliProbeArgsByAgent[params.agentId];
+    const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs ?? null;
     if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
       const command =
         resolveProviderCliCommand(params.agentId)?.command

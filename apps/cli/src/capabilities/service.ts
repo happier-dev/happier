@@ -43,6 +43,20 @@ function mergeOverrides(
     });
 }
 
+function applyTopLevelDetectParams(
+    rawRequests: CapabilityDetectRequest[],
+    params: Readonly<{ bypassCache?: boolean }>,
+): CapabilityDetectRequest[] {
+    if (params.bypassCache !== true) return rawRequests;
+    return rawRequests.map((request) => ({
+        ...request,
+        params: {
+            ...(request.params ?? {}),
+            bypassCache: true,
+        },
+    }));
+}
+
 function selectRequestsFromChecklist(opts: {
     checklistId: ChecklistId | undefined;
     checklists: Record<ChecklistId, CapabilityDetectRequest[]>;
@@ -76,7 +90,10 @@ export function createCapabilitiesService(opts: {
             requests: data?.requests,
         });
 
-        const requests = mergeOverrides(rawRequests, data?.overrides);
+        const requests = applyTopLevelDetectParams(
+            mergeOverrides(rawRequests, data?.overrides),
+            { bypassCache: data?.bypassCache === true },
+        );
         const checkedAt = Date.now();
         const context = await opts.buildContext(requests);
 

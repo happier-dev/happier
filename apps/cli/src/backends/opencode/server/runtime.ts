@@ -224,8 +224,6 @@ export function createOpenCodeServerRuntime(params: {
 
       const currentModeId = selectedAgent
         ?? (availableModes.find((m) => m.id === 'build')?.id ?? availableModes[0]?.id ?? 'build');
-      const currentModelId = selectedModel ? `${selectedModel.providerID}/${selectedModel.modelID}` : (defaultModelId || 'default');
-
       const snapshot = await params.session.ensureMetadataSnapshot({ timeoutMs: 60_000 }).catch(() => null);
       if (!snapshot) return;
 
