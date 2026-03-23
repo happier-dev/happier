@@ -14,6 +14,20 @@ import type { UploadTransferTarget } from '../targets/uploadTransferTarget';
 
 type UploadSessionHandle = NonNullable<ReturnType<TransferSessionStore['getUploadSession']>>;
 
+const ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES = 1 + 12 + 16; // version + nonce + auth tag
+const DEFAULT_MAX_ENCRYPTED_DATA_KEY_ENVELOPE_BYTES = 16 * 1024;
+
+function estimateBase64DecodedBytes(value: string): number {
+  if (value.length === 0) return 0;
+  const paddingBytes = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((value.length * 3) / 4) - paddingBytes);
+}
+
+function resolveMaxEncodedChars(maxDecodedBytes: number): number {
+  const normalizedMaxDecodedBytes = Math.max(0, Math.floor(maxDecodedBytes));
+  return Math.ceil(normalizedMaxDecodedBytes / 3) * 4;
+}
+
 type UploadChunkRequest = Readonly<{
   uploadId: string;
   index: number;
@@ -64,6 +78,7 @@ export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalize
     sha256: string;
   }>) => TFinalizeResponse;
   enableChunkEncryption?: boolean;
+  maxEncryptedDataKeyEnvelopeBytes?: number;
 }>): void {
   params.rpcHandlerManager.registerHandler(params.methods.init, async (data: unknown): Promise<TInitResponse> => {
     params.store.cleanupExpiredBestEffort();
@@ -119,6 +134,23 @@ export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalize
     if (session.recipientSecretKeySeed) {
       if (!payloadBase64) return { success: false, error: 'Missing payloadBase64' };
       if (!encryptedDataKeyEnvelopeBase64) return { success: false, error: 'Missing encryptedDataKeyEnvelopeBase64' };
+      const maxEncryptedChunkBytes = session.chunkSizeBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES;
+      const maxPayloadEncodedChars = resolveMaxEncodedChars(maxEncryptedChunkBytes);
+      // Fail closed before calling decrypt to prevent unbounded base64 decode allocations.
+      if (payloadBase64.length > maxPayloadEncodedChars || estimateBase64DecodedBytes(payloadBase64) > maxEncryptedChunkBytes) {
+        return { success: false, error: 'Chunk exceeds configured chunk size' };
+      }
+
+      const maxEnvelopeBytes = typeof params.maxEncryptedDataKeyEnvelopeBytes === 'number' && params.maxEncryptedDataKeyEnvelopeBytes > 0
+        ? Math.floor(params.maxEncryptedDataKeyEnvelopeBytes)
+        : DEFAULT_MAX_ENCRYPTED_DATA_KEY_ENVELOPE_BYTES;
+      const maxEnvelopeEncodedChars = resolveMaxEncodedChars(maxEnvelopeBytes);
+      if (
+        encryptedDataKeyEnvelopeBase64.length > maxEnvelopeEncodedChars
+        || estimateBase64DecodedBytes(encryptedDataKeyEnvelopeBase64) > maxEnvelopeBytes
+      ) {
+        return { success: false, error: 'Encrypted data key envelope exceeds configured size limit' };
+      }
       try {
         buffer = decryptEncryptedTransferChunkEnvelope({
           transferId: uploadId,
@@ -132,7 +164,12 @@ export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalize
       }
     } else {
       if (!contentBase64) return { success: false, error: 'Missing contentBase64' };
-      const decodedBuffer = decodeUploadChunkBase64(contentBase64);
+      const maxEncodedChars = resolveMaxEncodedChars(session.chunkSizeBytes);
+      if (contentBase64.length > maxEncodedChars || estimateBase64DecodedBytes(contentBase64) > session.chunkSizeBytes) {
+        return { success: false, error: 'Chunk exceeds configured chunk size' };
+      }
+
+      const decodedBuffer = decodeUploadChunkBase64(contentBase64, { maxDecodedBytes: session.chunkSizeBytes });
       if (!decodedBuffer) {
         return { success: false, error: 'Invalid base64 content' };
       }

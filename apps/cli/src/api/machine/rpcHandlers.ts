@@ -59,7 +59,6 @@ import type {
   SessionHandoffProviderBundle,
   TransferEndpointCandidate,
 } from '@happier-dev/protocol';
-import type { SessionHandoffTransferredBundles } from '@/session/handoff/transfer/sessionHandoffTransferredBundles';
 import {
   applyOpenCodeSessionAffinityMetadata,
   buildOpenCodeSessionEnvironmentVariables,

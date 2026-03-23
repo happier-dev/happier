@@ -71,6 +71,17 @@ function sanitizeAttachmentFileName(value: string): string {
   return finalName.length > 200 ? finalName.slice(-200) : finalName;
 }
 
+function normalizeMessageLocalIdSegment(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed === '.' || trimmed === '..') return null;
+  if (trimmed.includes('\0')) return null;
+  // Must be a single safe path segment.
+  if (trimmed.includes('/') || trimmed.includes('\\')) return null;
+  return trimmed;
+}
+
 function joinAttachmentPath(...segments: readonly string[]): string {
   return segments
     .map((segment) => String(segment ?? '').replace(/[\\]+/g, '/'))
@@ -152,6 +163,13 @@ export function registerSessionAttachmentUploadRpcHandlers(
           response: { success: false, error: 'Missing messageLocalId' },
         };
       }
+      const messageLocalId = normalizeMessageLocalIdSegment(request.messageLocalId);
+      if (!messageLocalId) {
+        return {
+          kind: 'rejected',
+          response: { success: false, error: 'Invalid messageLocalId' },
+        };
+      }
       if (typeof request?.fileName !== 'string' || request.fileName.trim().length === 0) {
         return {
           kind: 'rejected',
@@ -161,7 +179,7 @@ export function registerSessionAttachmentUploadRpcHandlers(
 
       const path = buildAttachmentUploadPath({
         uploadBasePath: resolvedTarget.uploadBasePath,
-        messageLocalId: request.messageLocalId,
+        messageLocalId,
         fileName: request.fileName,
       });
 

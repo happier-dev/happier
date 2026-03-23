@@ -76,18 +76,20 @@ export function createEncryptedTransferChunkEnvelope(params: Readonly<{
     transferId: params.transferId,
     sequence: params.sequence,
   }));
-  const ciphertext = Buffer.concat([
-    cipher.update(params.payload),
-    cipher.final(),
-  ]);
+  const ciphertextHead = cipher.update(params.payload);
+  const ciphertextTail = cipher.final();
+  const ciphertext = Buffer.allocUnsafe(ciphertextHead.length + ciphertextTail.length);
+  ciphertextHead.copy(ciphertext, 0);
+  ciphertextTail.copy(ciphertext, ciphertextHead.length);
   const authTag = cipher.getAuthTag();
 
-  const encryptedChunk = Buffer.concat([
-    Buffer.from([TRANSFER_CHUNK_BUNDLE_VERSION]),
-    Buffer.from(nonce),
-    ciphertext,
-    authTag,
-  ]);
+  const encryptedChunk = Buffer.allocUnsafe(
+    1 + TRANSFER_CHUNK_NONCE_BYTES + ciphertext.length + TRANSFER_CHUNK_AUTH_TAG_BYTES,
+  );
+  encryptedChunk[0] = TRANSFER_CHUNK_BUNDLE_VERSION;
+  Buffer.from(nonce).copy(encryptedChunk, 1);
+  ciphertext.copy(encryptedChunk, 1 + TRANSFER_CHUNK_NONCE_BYTES);
+  authTag.copy(encryptedChunk, 1 + TRANSFER_CHUNK_NONCE_BYTES + ciphertext.length);
   const encryptedDataKeyEnvelope = sealEncryptedDataKeyEnvelopeV1({
     dataKey,
     recipientPublicKey: parseRecipientPublicKeyBase64(params.recipientPublicKeyBase64),
@@ -139,10 +141,12 @@ export function decryptEncryptedTransferChunkEnvelope(params: Readonly<{
       sequence: params.sequence,
     }));
     decipher.setAuthTag(authTag);
-    return Buffer.concat([
-      decipher.update(ciphertext),
-      decipher.final(),
-    ]);
+    const plaintextHead = decipher.update(ciphertext);
+    const plaintextTail = decipher.final();
+    const plaintext = Buffer.allocUnsafe(plaintextHead.length + plaintextTail.length);
+    plaintextHead.copy(plaintext, 0);
+    plaintextTail.copy(plaintext, plaintextHead.length);
+    return plaintext;
   } catch {
     throw new Error(`Failed to decrypt transfer chunk for ${params.transferId}`);
   }

@@ -1,10 +1,5 @@
 import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
 
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import {
   isServerRoutedTransferOverSizeLimit,
   resolveServerRoutedTransferMaxBytes,
@@ -16,9 +11,7 @@ import {
   createTransferRecipientKeyPair,
   decryptEncryptedTransferChunkEnvelope,
 } from './transferChunkEncryption';
-import type { TransferPayloadCodec } from './transferPayloadCodec';
 import {
-  createBufferTransferPayloadSource,
   readTransferPayloadChunk,
   resolveTransferPayloadManifestHash,
   resolveTransferPayloadSizeBytes,
@@ -26,10 +19,14 @@ import {
 } from './transferPayloadSource';
 import { createTransferPayloadFileSink, type TransferPayloadFileResult } from './transferPayloadFileSink';
 import { readPositiveIntEnv } from '../../utils/readPositiveIntEnv';
+import { clampTransferChunkBytes } from './transferChunkSizeLimit';
 
 const DEFAULT_TRANSFER_TIMEOUT_MS = 90_000;
 const DEFAULT_TRANSFER_CHUNK_BYTES = 256 * 1024;
 const ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES = 1 + 12 + 16; // version + nonce + auth tag
+// Encrypted data-key envelopes are small and fixed-size today (~105 bytes for V1), but we still
+// cap them independently so hostile payloads cannot force large base64 decode allocations.
+const ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES = 1024;
 
 export type MachineTransferChannel = Readonly<{
   onEnvelope: (listener: (payload: MachineTransferReceiveEnvelope) => void) => () => void;
@@ -56,14 +53,29 @@ function readTransferTimeoutMs(): number {
 }
 
 function readTransferChunkBytes(): number {
-  return readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES', DEFAULT_TRANSFER_CHUNK_BYTES);
+  return clampTransferChunkBytes(readPositiveIntEnv(
+    'HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES',
+    DEFAULT_TRANSFER_CHUNK_BYTES,
+  ));
+}
+
+function isBase64TrimChar(code: number): boolean {
+  // We only expect ASCII base64 strings; treat common ASCII whitespace/control as trim chars.
+  // This avoids allocating via `value.trim()` on potentially large hostile payloads.
+  return code <= 0x20 || code === 0xfeff;
 }
 
 function estimateBase64DecodedBytes(value: string): number {
-  const raw = value.trim();
-  if (raw.length === 0) return 0;
-  const paddingBytes = raw.endsWith('==') ? 2 : raw.endsWith('=') ? 1 : 0;
-  return Math.max(0, Math.floor((raw.length * 3) / 4) - paddingBytes);
+  let start = 0;
+  let end = value.length - 1;
+  while (start <= end && isBase64TrimChar(value.charCodeAt(start))) start += 1;
+  while (end >= start && isBase64TrimChar(value.charCodeAt(end))) end -= 1;
+  if (start > end) return 0;
+
+  const trimmedLength = end - start + 1;
+  const lastChar = value[end];
+  const paddingBytes = lastChar === '=' ? (value[end - 1] === '=' ? 2 : 1) : 0;
+  return Math.max(0, Math.floor((trimmedLength * 3) / 4) - paddingBytes);
 }
 
 function isReceiveOpenEnvelope(
@@ -151,10 +163,11 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
   chunkBytes?: number;
 }>): () => void {
   const activeTransfers = new Map<string, ActiveTransferState>();
-  const chunkBytes = typeof params.chunkBytes === 'number' && params.chunkBytes > 0
+  const chunkBytes = clampTransferChunkBytes(typeof params.chunkBytes === 'number' && params.chunkBytes > 0
     ? params.chunkBytes
-    : readTransferChunkBytes();
+    : readTransferChunkBytes());
   const maxBytes = resolveServerRoutedTransferMaxBytes();
+  const inMemoryMaxBytes = resolveInMemoryTransferMaxBytes();
 
   return params.machineTransferChannel.onEnvelope((payload) => {
     void (async () => {
@@ -195,6 +208,17 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
         });
         return;
       }
+      if (transferPayloadSource.kind === 'buffer' && transferSizeBytes > inMemoryMaxBytes) {
+        params.machineTransferChannel.sendEnvelope({
+          targetMachineId: payload.sourceMachineId,
+          envelope: {
+            transferId: envelope.transferId,
+            kind: 'abort',
+            reason: `${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`,
+          },
+        });
+        return;
+      }
 
       const totalChunks = Math.max(1, Math.ceil(transferSizeBytes / chunkBytes));
       const state: ActiveTransferState = {
@@ -212,6 +236,15 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
         transferId: envelope.transferId,
         state,
       });
+      return;
+    }
+
+    if (envelope.kind === 'abort') {
+      const current = activeTransfers.get(envelope.transferId);
+      if (!current || current.targetMachineId !== payload.sourceMachineId) {
+        return;
+      }
+      activeTransfers.delete(envelope.transferId);
       return;
     }
 
@@ -264,22 +297,6 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
   });
 }
 
-export function registerTypedServerRoutedTransferResponder<TPayload>(params: Readonly<{
-  machineTransferChannel: MachineTransferChannel;
-  loadTransferPayload: (transferId: string) => TPayload | null;
-  codec: TransferPayloadCodec<TPayload>;
-  chunkBytes?: number;
-}>): () => void {
-  return registerServerRoutedTransferResponder({
-    machineTransferChannel: params.machineTransferChannel,
-    loadTransferPayloadSource: (transferId) => {
-      const payload = params.loadTransferPayload(transferId);
-      return payload === null ? null : createBufferTransferPayloadSource(params.codec.encode(payload));
-    },
-    chunkBytes: params.chunkBytes,
-  });
-}
-
 async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
   transferId: string;
   sourceMachineId: string;
@@ -296,17 +313,37 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
     let settled = false;
     let unsubscribe: (() => void) | null = null;
     let timeout: NodeJS.Timeout | null = null;
+    let timeoutNonce = 0;
     let nextExpectedSequence = 0;
     let envelopeQueue = Promise.resolve();
 
     const armTimeout = () => {
       if (settled) return;
+      timeoutNonce += 1;
+      const localNonce = timeoutNonce;
       if (timeout) {
         clearTimeout(timeout);
       }
       timeout = setTimeout(() => {
+        // The event loop can delay timer callbacks; if a newer timeout was armed after this one,
+        // ignore the stale callback instead of aborting an active transfer.
+        if (settled || localNonce !== timeoutNonce) {
+          return;
+        }
+        // Ensure file sinks and other resources are reliably torn down on timeout.
+        // Without this, file-backed requests can leak open FileHandles and `.part` files until GC.
         cleanup();
-        reject(new Error(`Timed out waiting for machine transfer ${params.transferId}`));
+        params.machineTransferChannel.sendEnvelope({
+          targetMachineId: params.sourceMachineId,
+          envelope: {
+            transferId: params.transferId,
+            kind: 'abort',
+            reason: 'timeout',
+          },
+        });
+        void Promise.resolve(params.onAbort?.()).finally(() => {
+          reject(new Error(`Timed out waiting for machine transfer ${params.transferId}`));
+        });
       }, timeoutMs);
     };
 
@@ -323,12 +360,15 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
     unsubscribe = params.machineTransferChannel.onEnvelope((payload) => {
       if (payload.sourceMachineId !== params.sourceMachineId) return;
       if (payload.envelope.transferId !== params.transferId) return;
+      // Treat timeout as inactivity since *last received* envelope, not since last fully-processed
+      // envelope. Without this, slow chunk delivery can time out while chunks are in-flight but
+      // queued behind previous processing.
+      armTimeout();
       envelopeQueue = envelopeQueue
         .then(async () => {
           if (settled) {
             return;
           }
-          armTimeout();
 
           if (isReceiveChunkEnvelope(payload.envelope)) {
             const chunkEnvelope = payload.envelope;
@@ -342,6 +382,9 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
                   windowBytes: nextExpectedSequence,
                 },
               });
+              // Sending an ack is progress; treat it as activity so we don't time out while the
+              // next chunk is gated on this ack.
+              armTimeout();
               return;
             }
             if (chunkEnvelope.sequence > nextExpectedSequence) {
@@ -354,9 +397,14 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
               throw new Error(`Machine transfer missing encrypted chunk key for ${params.transferId}`);
             }
             if (typeof params.maxInMemoryPayloadBytes === 'number' && params.maxInMemoryPayloadBytes > 0) {
-              const estimatedEncryptedBytes = estimateBase64DecodedBytes(chunkEnvelope.payloadBase64);
-              const maxEncryptedBytes = params.maxInMemoryPayloadBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES;
-              if (estimatedEncryptedBytes > maxEncryptedBytes) {
+              const maxEncryptedPayloadBytes =
+                params.maxInMemoryPayloadBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES;
+              const estimatedEncryptedPayloadBytes = estimateBase64DecodedBytes(chunkEnvelope.payloadBase64);
+              const estimatedEncryptedDataKeyEnvelopeBytes = estimateBase64DecodedBytes(encryptedDataKeyEnvelopeBase64);
+              if (
+                estimatedEncryptedPayloadBytes > maxEncryptedPayloadBytes
+                || estimatedEncryptedDataKeyEnvelopeBytes > ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES
+              ) {
                 throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
               }
             }
@@ -379,6 +427,9 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
                 windowBytes: nextExpectedSequence,
               },
             });
+            // Treat ack send as activity. Without this, slow disk writes can delay the ack enough
+            // that no new chunk arrives before the inactivity timer fires.
+            armTimeout();
             return;
           }
 
@@ -413,57 +464,6 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
   });
 }
 
-export async function requestServerRoutedTransferPayload(params: Readonly<{
-  transferId: string;
-  sourceMachineId: string;
-  machineTransferChannel: MachineTransferChannel;
-  timeoutMs?: number;
-}>): Promise<Buffer> {
-  const maxBytes = resolveServerRoutedTransferMaxBytes();
-  const inMemoryMaxBytes = resolveInMemoryTransferMaxBytes();
-  const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-payload-'));
-  const destinationPath = join(tempDir, `payload-${randomUUID()}.bin`);
-  const sink = await createTransferPayloadFileSink({ destinationPath });
-  let receivedBytes = 0;
-
-  return await requestServerRoutedTransfer({
-    ...params,
-    maxInMemoryPayloadBytes: inMemoryMaxBytes,
-    onChunk: async (chunk, _info) => {
-      receivedBytes += chunk.length;
-      if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(receivedBytes, maxBytes)) {
-        throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
-      }
-      if (receivedBytes > inMemoryMaxBytes) {
-        throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
-      }
-      await sink.appendChunk(chunk);
-    },
-    onFinish: async (manifestHash) => {
-      try {
-        const received = await sink.finalize(manifestHash);
-        if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(received.sizeBytes, maxBytes)) {
-          throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
-        }
-        if (received.sizeBytes > inMemoryMaxBytes) {
-          throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
-        }
-
-        const payload = await readFile(received.destinationPath);
-        await rm(tempDir, { recursive: true, force: true });
-        return payload;
-      } catch (error) {
-        await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-        throw error;
-      }
-    },
-    onAbort: async () => {
-      await sink.abort();
-      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    },
-  });
-}
-
 export async function requestServerRoutedTransferToFile(params: Readonly<{
   transferId: string;
   sourceMachineId: string;
@@ -475,34 +475,29 @@ export async function requestServerRoutedTransferToFile(params: Readonly<{
   const sink = await createTransferPayloadFileSink({
     destinationPath: params.destinationPath,
   });
+  let receivedBytes = 0;
   return await requestServerRoutedTransfer({
     ...params,
+    // File-backed transfers are still bounded per chunk to avoid OOM, but they must not be constrained
+    // by the small-only whole-buffer in-memory cap (`HAPPIER_FILES_READ_MAX_BYTES`).
+    maxInMemoryPayloadBytes: readTransferChunkBytes(),
     onChunk: async (chunk) => {
+      const nextBytes = receivedBytes + chunk.length;
+      if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(nextBytes, maxBytes)) {
+        throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
+      }
+      receivedBytes = nextBytes;
       await sink.appendChunk(chunk);
     },
     onFinish: async (manifestHash) => {
-      const received = await sink.finalize(manifestHash);
-      if (isServerRoutedTransferOverSizeLimit(received.sizeBytes, maxBytes)) {
+      if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(receivedBytes, maxBytes)) {
         throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
       }
+      const received = await sink.finalize(manifestHash);
       return received;
     },
     onAbort: async () => {
       await sink.abort();
     },
-  });
-}
-
-export async function requestTypedServerRoutedTransferPayload<TPayload>(params: Readonly<{
-  transferId: string;
-  sourceMachineId: string;
-  machineTransferChannel: MachineTransferChannel;
-  codec: TransferPayloadCodec<TPayload>;
-  timeoutMs?: number;
-}>): Promise<TPayload> {
-  const payload = await requestServerRoutedTransferPayload(params);
-  return params.codec.decode({
-    transferId: params.transferId,
-    payload,
   });
 }

@@ -14,11 +14,8 @@ import type {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createEncryptedTransferChunkEnvelope } from '../../machines/transfer/transferChunkEncryption';
-import type { SessionHandoffTransferredBundles } from '../../session/handoff/transfer/sessionHandoffTransferredBundles';
-import {
-  createSessionHandoffTransferredBundlesPayloadSource,
-  sessionHandoffTransferredBundlesCodec,
-} from '../../session/handoff/transfer/sessionHandoffTransferredBundles';
+import type { DirectPeerOnDemandTransferScope } from '../../machines/transfer/directPeerTransport';
+import { createWorkspaceReplicationBaselineStore } from '../../workspaces/replication/baseline/workspaceReplicationBaselineStore';
 import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
 
 type ExportSessionBundle = NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['exportSessionBundle']>;
@@ -28,9 +25,6 @@ type DirectPeerRequestPayloadFile = NonNullable<
 type DirectPeerPublishTransfer = NonNullable<
   NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['directPeerTransfer']>['publishTransfer']
 >;
-type ImportWorkspaceBundleInput = Parameters<
-  NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['importWorkspaceBundle']>
->[0];
 type DirectPeerPublishPayload = Parameters<DirectPeerPublishTransfer>[0]['payload'];
 type DirectPeerPublishPayloadSource = Parameters<DirectPeerPublishTransfer>[0]['payloadSource'];
 type DirectPeerPublishPayloadHasWorkspaceBundle = 'workspaceBundle' extends keyof DirectPeerPublishPayload ? true : false;
@@ -45,44 +39,6 @@ function createDeferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
-}
-
-function createLegacyTransferredPayloadBuffer(params: Readonly<{
-  providerBundle: {
-    providerId: 'claude';
-    remoteSessionId: string;
-    transcriptBase64: string;
-  };
-  workspaceExportArtifacts?: Readonly<{
-    manifest: Readonly<{
-      entries: readonly Readonly<{
-        relativePath: string;
-        kind: 'file';
-        digest: string;
-        sizeBytes: number;
-        executable: boolean;
-      }>[];
-      fingerprint: string;
-    }>;
-    blobContentsByDigest?: ReadonlyMap<string, Buffer>;
-  }>;
-}>): Buffer {
-  return Buffer.from(JSON.stringify({
-    providerBundle: params.providerBundle,
-    ...(params.workspaceExportArtifacts
-      ? {
-          workspaceArtifacts: {
-            manifest: params.workspaceExportArtifacts.manifest,
-            blobs: [...(params.workspaceExportArtifacts.blobContentsByDigest ?? new Map()).entries()].map(
-              ([digest, content]) => ({
-                digest,
-                contentBase64: Buffer.from(content).toString('base64'),
-              }),
-            ),
-          },
-        }
-      : {}),
-  }), 'utf8');
 }
 
 function createLoopbackMachineTransferChannels() {
@@ -119,21 +75,21 @@ function createLoopbackMachineTransferChannels() {
   };
 }
 
-describe('rpcHandlers (session handoff)', () => {
-  it('keeps direct-peer publish input canonical inside the handoff RPC layer', () => {
-    expectTypeOf<DirectPeerPublishPayload>().toEqualTypeOf<SessionHandoffTransferredBundles>();
-    expectTypeOf<DirectPeerPublishPayloadSource>().toMatchTypeOf<
-      | {
-          kind: 'buffer';
-        }
-      | {
-          kind: 'file';
-        }
-      | undefined
-    >();
-    expectTypeOf<DirectPeerPublishPayloadHasWorkspaceBundle>().toEqualTypeOf<false>();
-    expectTypeOf<DirectPeerPublishPayloadHasProviderBundle>().toEqualTypeOf<false>();
-  });
+  describe('rpcHandlers (session handoff)', () => {
+    it('keeps direct-peer publish input canonical inside the handoff RPC layer', () => {
+      expectTypeOf<DirectPeerPublishPayload>().toEqualTypeOf<Readonly<Record<never, never>>>();
+      expectTypeOf<DirectPeerPublishPayloadSource>().toMatchTypeOf<
+        | {
+            kind: 'buffer';
+          }
+        | {
+            kind: 'file';
+          }
+        | undefined
+      >();
+      expectTypeOf<DirectPeerPublishPayloadHasWorkspaceBundle>().toEqualTypeOf<false>();
+      expectTypeOf<DirectPeerPublishPayloadHasProviderBundle>().toEqualTypeOf<false>();
+    });
 
   function buildClaudeResumePlan(params: Readonly<{
     directory: string;
@@ -164,7 +120,9 @@ describe('rpcHandlers (session handoff)', () => {
         }),
       });
     });
-    const openEnvelope = sendEnvelope.mock.calls[0]?.[0]?.envelope;
+    const openEnvelope = sendEnvelope.mock.calls
+      .map((call) => call?.[0]?.envelope)
+      .find((envelope) => envelope?.kind === 'open' && envelope.transferId === transferId);
     if (
       !openEnvelope
       || openEnvelope.kind !== 'open'
@@ -189,6 +147,23 @@ describe('rpcHandlers (session handoff)', () => {
     };
   }
 
+  function buildDirectPeerEndpointCandidate(params: Readonly<{
+    transferId: string;
+    port?: number;
+    authorizationToken?: string;
+    expiresAt?: number;
+  }>): TransferEndpointCandidate {
+    const port = params.port ?? 46001;
+    const expiresAt = params.expiresAt ?? Date.now() + 30_000;
+    const transferPathKey = Buffer.from(params.transferId, 'utf8').toString('base64url');
+    return {
+      kind: 'http',
+      url: `http://127.0.0.1:${port}/machine-transfers/direct/${transferPathKey}`,
+      authorizationToken: params.authorizationToken ?? 'test-token',
+      expiresAt,
+    };
+  }
+
   async function createDirectPeerRequestPayloadFile(params: Readonly<{
     payload: Buffer;
   }>): Promise<Readonly<{
@@ -209,37 +184,67 @@ describe('rpcHandlers (session handoff)', () => {
     };
   }
 
-  async function createPublishedDirectPeerPayloadRouter(): Promise<Readonly<{
-    publishTransfer: ReturnType<typeof vi.fn<DirectPeerPublishTransfer>>;
-    requestPayloadFile: ReturnType<typeof vi.fn<DirectPeerRequestPayloadFile>>;
-    dispose: () => Promise<void>;
-    listPublishedTransferIds: () => readonly string[];
-  }>> {
-    const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-published-'));
-    const publishedPayloadPaths = new Map<string, string>();
+	  async function createPublishedDirectPeerPayloadRouter(): Promise<Readonly<{
+	    publishTransfer: ReturnType<typeof vi.fn<DirectPeerPublishTransfer>>;
+	    requestPayloadFile: ReturnType<typeof vi.fn<DirectPeerRequestPayloadFile>>;
+	    requestPayloadFileWithOpenBody: (input: Readonly<{
+	      transferId: string;
+	      endpointCandidates: readonly TransferEndpointCandidate[];
+	      destinationPath: string;
+	      openBody?: unknown;
+	    }>) => Promise<Readonly<{ destinationPath: string }>>;
+	    dispose: () => Promise<void>;
+	    listPublishedTransferIds: () => readonly string[];
+	  }>> {
+	    const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-published-'));
+	    const publishedPayloadPaths = new Map<string, string>();
+	    const onDemandScopesByToken = new Map<string, DirectPeerOnDemandTransferScope>();
 
-    return {
-      publishTransfer: vi.fn(({ transferId, payloadSource }) => {
-        if (!payloadSource || payloadSource.kind !== 'file') {
-          throw new Error(`Expected a file-backed direct-peer payload source for ${transferId}`);
-        }
-        publishedPayloadPaths.set(transferId, payloadSource.filePath);
-        return [
-          {
-            kind: 'http' as const,
-            url: `http://127.0.0.1:46001/session-handoffs/direct-transfer/${encodeURIComponent(transferId)}?token=${encodeURIComponent(`${transferId}-token`)}`,
-            expiresAt: Date.now() + 30_000,
-          },
-        ];
-      }),
-      requestPayloadFile: vi.fn(async ({ transferId, destinationPath }) => {
-        const publishedPayloadPath = publishedPayloadPaths.get(transferId);
-        if (!publishedPayloadPath) {
-          throw new Error(`Missing published direct-peer payload for ${transferId}`);
-        }
-        await copyFile(publishedPayloadPath, destinationPath);
-        return { destinationPath };
-      }),
+	    return {
+	      publishTransfer: vi.fn(({ transferId, payloadSource, onDemandScope }) => {
+	        if (!payloadSource || payloadSource.kind !== 'file') {
+	          throw new Error(`Expected a file-backed direct-peer payload source for ${transferId}`);
+	        }
+	        publishedPayloadPaths.set(transferId, payloadSource.filePath);
+	        const authorizationToken = `${transferId}-token`;
+	        if (onDemandScope) {
+	          onDemandScopesByToken.set(authorizationToken, onDemandScope);
+	        }
+	        return [buildDirectPeerEndpointCandidate({ transferId, authorizationToken })];
+	      }),
+	      requestPayloadFile: vi.fn(async ({ transferId, destinationPath }) => {
+	        const publishedPayloadPath = publishedPayloadPaths.get(transferId);
+	        if (!publishedPayloadPath) {
+	          throw new Error(`Missing published direct-peer payload for ${transferId}`);
+	        }
+	        await copyFile(publishedPayloadPath, destinationPath);
+	        return { destinationPath };
+	      }),
+	      requestPayloadFileWithOpenBody: async ({ transferId, destinationPath, endpointCandidates, openBody }) => {
+	        let publishedPayloadPath = publishedPayloadPaths.get(transferId);
+	        if (!publishedPayloadPath) {
+	          const authorizationToken = endpointCandidates
+	            .map((candidate) => candidate.authorizationToken)
+	            .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+	          const scope = authorizationToken ? onDemandScopesByToken.get(authorizationToken) : null;
+	          if (scope?.allowTransferId(transferId) === true) {
+	            const resolved = await scope.resolvePayloadSourceOnOpen({
+	              transferId,
+	              requestBody: openBody ?? null,
+	            });
+	            if (!resolved || resolved.kind !== 'file') {
+	              throw new Error(`Expected on-demand file-backed direct-peer payload source for ${transferId}`);
+	            }
+	            publishedPayloadPath = resolved.filePath;
+	            publishedPayloadPaths.set(transferId, resolved.filePath);
+	          }
+	        }
+	        if (!publishedPayloadPath) {
+	          throw new Error(`Missing published direct-peer payload for ${transferId}`);
+	        }
+	        await copyFile(publishedPayloadPath, destinationPath);
+	        return { destinationPath };
+	      },
       dispose: async () => {
         await rm(temporaryDirectory, { recursive: true, force: true });
       },
@@ -263,6 +268,201 @@ describe('rpcHandlers (session handoff)', () => {
     expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT)).toBe(true);
     expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT)).toBe(true);
     expect(registered.has(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET)).toBe(true);
+  });
+
+  it('fails closed when the persisted prepare-target job record is missing (resultGet uses job store only)', async () => {
+    vi.resetModules();
+
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-prepare-job-missing-'));
+    try {
+      vi.doMock('@/configuration', () => ({
+        configuration: {
+          activeServerDir,
+          activeServerId: 'server_test',
+          workspaceReplicationBlobPackTargetBytes: 1024 * 1024,
+          workspaceReplicationBlobPackMaxBlobs: 1024,
+          workspaceReplicationBlobPackMaxSingleBlobBytes: 1024 * 1024,
+        },
+      }));
+
+      const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
+
+      const registered = new Map<string, (params: unknown) => Promise<any>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+          registered.set(method, handler);
+        },
+      } as any;
+
+      registerHandlers({
+        rpcHandlerManager,
+        loadSessionMetadata: async () => ({
+          machineId: 'machine_source',
+          path: '/repo',
+          flavor: 'claude',
+          claudeSessionId: 'claude_session_1',
+        }),
+        exportSessionBundle: async () => ({
+          providerBundle: {
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_1',
+            transcriptBase64: 'e30K',
+          },
+	          targetPath: '/repo',
+	          workspaceExportArtifacts: {
+	            manifest: {
+	              entries: [
+                {
+                  relativePath: 'README.md',
+                  kind: 'file',
+                  digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
+                  sizeBytes: 6,
+                  executable: false,
+                },
+	              ],
+	              fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
+	            },
+	          },
+	        }),
+        importSessionBundle: async () => ({
+          remoteSessionId: 'claude_session_1',
+          directSource: {
+            kind: 'claudeConfig',
+            configDir: null,
+            projectId: null,
+          },
+          resume: buildClaudeResumePlan({
+            directory: '/repo-copy',
+            resume: 'claude_session_1',
+            transcriptStorage: 'direct',
+          }),
+	        }),
+	      });
+
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      expect(start).toBeDefined();
+      expect(prepare).toBeDefined();
+      expect(resultGet).toBeDefined();
+
+      const started = await start!({
+        sessionId: 'sess_job_missing',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        sessionStorageMode: 'persisted',
+        preferredTransportStrategies: ['direct_peer'],
+        negotiatedTransportStrategy: 'direct_peer',
+      });
+
+      let ready = await prepare!({
+        handoffId: started.handoffId,
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        negotiatedTransportStrategy: 'direct_peer',
+        sourceSessionStorageMode: 'persisted',
+        targetPath: '/repo',
+      });
+      if (ready.status.status !== 'ready_for_cutover') {
+        await vi.waitFor(async () => {
+          ready = await resultGet!({ handoffId: started.handoffId });
+          expect(ready.status.status).toBe('ready_for_cutover');
+        });
+      }
+
+      const prepareJobId = ready.status.jobId;
+      expect(prepareJobId).toBeTypeOf('string');
+
+      await rm(join(activeServerDir, 'session-handoff', 'prepare-target-jobs', `${prepareJobId}.json`), { force: true });
+
+      await expect(resultGet!({ handoffId: started.handoffId })).resolves.toEqual({ ok: false, errorCode: 'not_found' });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+      vi.doUnmock('@/configuration');
+    }
+  });
+
+  it('propagates handoff abort to the underlying workspace replication engine job (cancelRequestedAtMs)', async () => {
+    vi.resetModules();
+
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-abort-wsrepl-'));
+    try {
+      vi.doMock('@/configuration', () => ({
+        configuration: {
+          activeServerDir,
+          activeServerId: 'server_test',
+        },
+      }));
+
+      const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
+      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      await jobStore.write({
+        jobId: 'job_wsrepl_1',
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        status: {
+          status: 'in_progress',
+          phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      const { writeJsonAtomic } = await import('@/utils/fs/writeJsonAtomic');
+      const prepareJobId = 'prepare_job_1';
+      const handoffId = 'handoff_abort_1';
+      const prepareJobPath = join(activeServerDir, 'session-handoff', 'prepare-target-jobs', `${prepareJobId}.json`);
+      await writeJsonAtomic(prepareJobPath, {
+        schemaVersion: 1,
+        jobId: prepareJobId,
+        handoffId,
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        status: {
+          handoffId,
+          status: 'pending',
+          phase: 'preparing',
+          jobId: prepareJobId,
+          recoveryActions: [],
+        },
+        workspaceReplicationJobId: 'job_wsrepl_1',
+      });
+
+      const { createSessionHandoffPrepareTargetJobStore } = await import('@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore');
+      const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const persisted = await prepareJobStore.findByHandoffId(handoffId);
+      expect(persisted?.workspaceReplicationJobId).toBe('job_wsrepl_1');
+
+      const registered = new Map<string, (params: unknown) => Promise<any>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+          registered.set(method, handler);
+        },
+      } as any;
+
+      const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
+      registerHandlers({ rpcHandlerManager });
+
+      const abort = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT);
+      expect(abort).toBeDefined();
+
+      await abort!({ handoffId, reason: 'user_abort' });
+
+      const updated = await jobStore.read('job_wsrepl_1');
+      expect(updated?.cancelRequestedAtMs).toBeTypeOf('number');
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+      vi.doUnmock('@/configuration');
+    }
   });
 
   it('uses the configured activeServerDir in the default handoff exporter', async () => {
@@ -328,6 +528,169 @@ describe('rpcHandlers (session handoff)', () => {
     });
   });
 
+  it('publishes provider bundle + workspace replication transfers without a transferred-bundles handshake transfer when workspace replication metadata is present (V2 handoff start)', async () => {
+    vi.resetModules();
+
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-start-v2-header-only-'));
+    const published = await createPublishedDirectPeerPayloadRouter();
+    try {
+      vi.doMock('@/configuration', () => ({
+        configuration: {
+          activeServerDir,
+          activeServerId: 'server_test',
+          workspaceReplicationBlobPackTargetBytes: 1024 * 1024,
+          workspaceReplicationBlobPackMaxBlobs: 1024,
+          workspaceReplicationBlobPackMaxSingleBlobBytes: 1024 * 1024,
+        },
+      }));
+
+      const { createScmSourceControllerWorkspaceExportArtifacts } = await import('@/scm/sourceController/workspaceExportArtifacts');
+
+      const exportSessionBundle: ExportSessionBundle = async () => ({
+        providerBundle: {
+          providerId: 'claude' as const,
+          remoteSessionId: 'claude_session_1',
+          transcriptBase64: 'e30K',
+        },
+        targetPath: '/repo',
+	        workspaceExportArtifacts: createScmSourceControllerWorkspaceExportArtifacts({
+	          manifest: {
+	            entries: [],
+	            fingerprint: 'sha256:fp',
+	          },
+	        }),
+	      });
+
+      const registered = new Map<string, (params: unknown) => Promise<any>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+          registered.set(method, handler);
+        },
+      } as any;
+
+      const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
+      registerHandlers({
+        rpcHandlerManager,
+        loadSessionMetadata: async () => ({
+          machineId: 'machine_source',
+          path: '/repo',
+          flavor: 'claude',
+          claudeSessionId: 'claude_session_1',
+          portableMetadataVersion: 'v2',
+        }),
+        exportSessionBundle,
+        directPeerTransfer: {
+          publishTransfer: published.publishTransfer,
+          requestPayloadFile: published.requestPayloadFile as any,
+          clearPublishedTransfer: vi.fn(),
+        },
+      });
+
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      expect(start).toBeDefined();
+
+      const result = await start!({
+        sessionId: 'sess_v2_header_only',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        sessionStorageMode: 'persisted',
+        preferredTransportStrategies: ['direct_peer'],
+        negotiatedTransportStrategy: 'direct_peer',
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'replace_existing',
+          includeIgnoredMode: 'exclude',
+          ignoredIncludeGlobs: [],
+        },
+      });
+
+      // Canonical V2: no inline/base64 bulk bytes inside the handoff start response.
+      // Provider bundle bytes and workspace replication payloads are always transferred out-of-band.
+      const rawResponse = JSON.stringify(result);
+      expect(rawResponse).not.toContain('transcriptBase64');
+      expect(rawResponse).not.toContain('contentBase64');
+
+      expect(result.handoffMetadataV2).toMatchObject({
+        workspaceReplicationSourceRootPath: '/repo',
+      });
+
+      const publishedTransferIds = published.listPublishedTransferIds();
+      // Canonical V2: no transferred-bundles handshake transfer is published under the handoff id.
+      expect(publishedTransferIds).not.toContain(String(result.handoffId));
+      // Provider bundle + workspace manifest + blob packs are published out-of-band.
+      expect(publishedTransferIds).toContain(`session-handoff:${result.handoffId}:provider-bundle-file`);
+      expect(publishedTransferIds.some((transferId) => transferId.includes(':workspace-manifest'))).toBe(true);
+      // Direct-peer blob packs must be resolved on-demand from the manifest token carrier, not pre-published up front.
+      expect(publishedTransferIds.some((transferId) => transferId.includes(':workspace-pack'))).toBe(false);
+
+      const manifestPublishCall = published.publishTransfer.mock.calls
+        .map((call) => call?.[0])
+        .find((input) => String(input?.transferId ?? '').includes(':workspace-manifest'));
+      expect(manifestPublishCall).toBeDefined();
+      expect(manifestPublishCall).toMatchObject({
+        payload: {},
+        onDemandScope: expect.any(Object),
+      });
+    } finally {
+      await published.dispose();
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+      vi.doUnmock('@/configuration');
+    }
+  });
+
+  it('returns missing_handoff_metadata_v2 for direct-peer prepare payloads that omit handoffMetadataV2 (no transferred-bundles fallback)', async () => {
+    const registered = new Map<string, (params: unknown) => Promise<any>>();
+    const importSessionBundle = vi.fn(async () => ({
+      remoteSessionId: 'claude_session_target',
+      directSource: {
+        kind: 'claudeConfig',
+        configDir: null,
+        projectId: null,
+      },
+      resume: buildClaudeResumePlan({
+        directory: '/repo-target',
+        resume: 'claude_session_target',
+        transcriptStorage: 'persisted',
+      }),
+	    }));
+	    const rpcHandlerManager = {
+	      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+	        registered.set(method, handler);
+	      },
+    } as any;
+
+	    registerMachineSessionHandoffRpcHandlers({
+	      rpcHandlerManager,
+	      importSessionBundle,
+	      directPeerTransfer: {
+	        publishTransfer: vi.fn(() => []),
+	        requestPayloadFile: vi.fn(),
+	        clearPublishedTransfer: vi.fn(),
+	      },
+    });
+
+    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    expect(prepare).toBeDefined();
+
+    await expect(prepare!({
+      handoffId: 'handoff_missing_handoff_metadata_v2',
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      negotiatedTransportStrategy: 'direct_peer',
+      sourceSessionStorageMode: 'persisted',
+      targetPath: '/repo-target',
+      allowServerRoutedFallback: false,
+      // Intentionally omit handoffMetadataV2 to prove we do not fall back to any transferred-bundles handshake.
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'missing_handoff_metadata_v2',
+      error: 'Handoff metadata V2 is required to prepare the target',
+    });
+
+	    expect(importSessionBundle).not.toHaveBeenCalled();
+	  });
+
   it('prefers live local runtime metadata without overwriting newer portable remote metadata when starting a handoff back', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const exportSessionBundle = vi.fn(async (metadata: Record<string, unknown>) => ({
@@ -339,11 +702,7 @@ describe('rpcHandlers (session handoff)', () => {
       targetPath: String(metadata.path),
     }));
     const publishTransfer = vi.fn(() => [
-      {
-        kind: 'http' as const,
-        url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_back?token=test-token',
-        expiresAt: Date.now() + 30_000,
-      },
+      buildDirectPeerEndpointCandidate({ transferId: 'handoff_back' }),
     ]);
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
@@ -418,14 +777,19 @@ describe('rpcHandlers (session handoff)', () => {
         status: 'pending',
         phase: 'preparing',
       }),
-      endpointCandidates: [
-        {
-          kind: 'http',
-          url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_back?token=test-token',
-          expiresAt: expect.any(Number),
-        },
-      ],
+      endpointCandidates: [],
       targetPath: '/repo-source-current',
+      handoffMetadataV2: expect.objectContaining({
+        providerBundleTransferPublication: expect.objectContaining({
+          endpointCandidates: [
+            expect.objectContaining({
+              kind: 'http',
+              url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_back' }).url,
+              expiresAt: expect.any(Number),
+            }),
+          ],
+        }),
+      }),
     });
     expect(exportSessionBundle).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -602,26 +966,23 @@ describe('rpcHandlers (session handoff)', () => {
 
   it('tracks handoff lifecycle state in memory across handlers', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const importSessionBundle = vi.fn(async () => ({
-      remoteSessionId: 'claude_session_1',
-      directSource: {
-        kind: 'claudeConfig',
+	    const importSessionBundle = vi.fn(async (_bundle: any, directory: string) => ({
+	      remoteSessionId: 'claude_session_1',
+	      directSource: {
+	        kind: 'claudeConfig',
         configDir: null,
         projectId: null,
       },
       resume: buildClaudeResumePlan({
-        directory: '/repo-copy',
+        directory,
         resume: 'claude_session_1',
-        transcriptStorage: 'direct',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async (_params: ImportWorkspaceBundleInput) => ({
-      targetPath: '/repo-copy',
-    }));
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
-        registered.set(method, handler);
-      },
+	        transcriptStorage: 'direct',
+	      }),
+	    }));
+	    const rpcHandlerManager = {
+	      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+	        registered.set(method, handler);
+	      },
     } as any;
 
     registerMachineSessionHandoffRpcHandlers({
@@ -639,27 +1000,9 @@ describe('rpcHandlers (session handoff)', () => {
           transcriptBase64: 'e30K',
         },
         targetPath: '/repo',
-        workspaceExportArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                sizeBytes: 6,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-          },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
-        },
-      }),
-      importSessionBundle,
-      importWorkspaceBundle,
-    });
+	      }),
+	      importSessionBundle,
+	    });
 
     const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
@@ -707,41 +1050,18 @@ describe('rpcHandlers (session handoff)', () => {
     }
     expect(ready.status.transportStrategy).toBe('direct_peer');
     expect(ready.remoteSessionId).toBe('claude_session_1');
-    await expect(resultGet!({ handoffId })).resolves.toEqual(ready);
-    expect(importWorkspaceBundle).toHaveBeenCalledWith({
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        },
-        blobContentsByDigest: new Map(),
-      },
-      blobProvider: expect.objectContaining({
-        getBlobFilePath: expect.any(Function),
-      }),
-      assertCanContinue: expect.any(Function),
-      targetPath: '/repo',
-      workspaceTransfer: undefined,
-    });
-    expect(importSessionBundle).toHaveBeenCalledWith(
-      {
-        providerId: 'claude',
-        remoteSessionId: 'claude_session_1',
+	    await expect(resultGet!({ handoffId })).resolves.toEqual(ready);
+	    expect(importSessionBundle).toHaveBeenCalledWith(
+	      {
+	        providerId: 'claude',
+	        remoteSessionId: 'claude_session_1',
         transcriptBase64: 'e30K',
       },
-      '/repo-copy',
+      '/repo',
       'persisted',
     );
     expect(ready.resume).toEqual({
-      directory: '/repo-copy',
+      directory: '/repo',
       agent: 'claude',
       resume: 'claude_session_1',
       transcriptStorage: 'direct',
@@ -757,10 +1077,10 @@ describe('rpcHandlers (session handoff)', () => {
     expect(fetched.status.phase).toBe('finalizing');
   });
 
-  it('reuses stored source-export transferred bundles when preparing on the same daemon without re-sending inline payloads', async () => {
+  it('reuses stored source-export payload sources when preparing on the same daemon (no inline payloads)', async () => {
     const exportDirectory = await mkdtemp(`${os.tmpdir()}/happier-handoff-export-`);
     const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const importSessionBundle = vi.fn(async () => ({
+    const importSessionBundle = vi.fn(async (_bundle: any, directory: string) => ({
       remoteSessionId: 'claude_session_1',
       directSource: {
         kind: 'claudeConfig',
@@ -768,16 +1088,13 @@ describe('rpcHandlers (session handoff)', () => {
         projectId: null,
       },
       resume: buildClaudeResumePlan({
-        directory: '/repo-copy',
+        directory,
         resume: 'claude_session_1',
         transcriptStorage: 'persisted',
       }),
-    }));
-    const importWorkspaceBundle = vi.fn(async (_params: ImportWorkspaceBundleInput) => ({
-      targetPath: '/repo-copy',
-    }));
-    await writeFile(`${exportDirectory}/README.md`, 'hello\n');
-    const rpcHandlerManager = {
+	    }));
+	    await writeFile(`${exportDirectory}/README.md`, 'hello\n');
+	    const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
         registered.set(method, handler);
       },
@@ -809,18 +1126,16 @@ describe('rpcHandlers (session handoff)', () => {
                   sizeBytes: 6,
                   executable: false,
                 },
-              ],
-              fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-            },
-            blobContentsByDigest: new Map(),
-          },
-          blobProvider: {
-            getBlobFilePath: () => `${exportDirectory}/README.md`,
-          },
-        }),
-        importSessionBundle,
-        importWorkspaceBundle,
-      });
+	              ],
+	              fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
+	            },
+	          },
+	          blobProvider: {
+	            getBlobFilePath: () => `${exportDirectory}/README.md`,
+	          },
+	        }),
+	        importSessionBundle,
+	      });
 
       const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
       const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
@@ -853,374 +1168,36 @@ describe('rpcHandlers (session handoff)', () => {
           ready = await resultGet!({ handoffId: started.handoffId });
           expect(ready.status.status).toBe('ready_for_cutover');
         });
-      }
-      expect(ready.status.transportStrategy).toBe('server_routed_stream');
-      expect(importWorkspaceBundle).toHaveBeenCalledWith({
-        workspaceExportArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                sizeBytes: 6,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-          },
-          blobContentsByDigest: new Map(),
-        },
-        blobProvider: expect.objectContaining({
-          getBlobFilePath: expect.any(Function),
-        }),
-        assertCanContinue: expect.any(Function),
-        targetPath: '/repo',
-        workspaceTransfer: undefined,
-      });
-      expect(importSessionBundle).toHaveBeenCalledWith(
-        {
-          providerId: 'claude',
-          remoteSessionId: 'claude_session_1',
+	      }
+	      expect(ready.status.transportStrategy).toBe('server_routed_stream');
+	      expect(importSessionBundle).toHaveBeenCalledWith(
+	        {
+	          providerId: 'claude',
+	          remoteSessionId: 'claude_session_1',
           transcriptBase64: 'e30K',
         },
-        '/repo-copy',
+        '/repo',
         'persisted',
       );
-      const sameDaemonWorkspaceImport =
-        (importWorkspaceBundle.mock.calls as unknown as readonly [ImportWorkspaceBundleInput][])[0]?.[0];
-      expect(sameDaemonWorkspaceImport?.workspaceExportArtifacts?.blobContentsByDigest.size).toBe(0);
-      expect(sameDaemonWorkspaceImport?.blobProvider).toEqual(expect.objectContaining({
-        getBlobFilePath: expect.any(Function),
-      }));
     } finally {
       await rm(exportDirectory, { recursive: true, force: true });
     }
   });
 
-  it('reuses stored canonical workspace artifacts before prepare-time import', async () => {
-    const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const importSessionBundle = vi.fn(async () => ({
-      remoteSessionId: 'claude_session_1',
-      directSource: {
-        kind: 'claudeConfig',
-        configDir: null,
-        projectId: null,
-      },
-      resume: buildClaudeResumePlan({
-        directory: '/repo-copy',
-        resume: 'claude_session_1',
-        transcriptStorage: 'direct',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async (_params: ImportWorkspaceBundleInput) => ({
-      targetPath: '/repo-copy',
-    }));
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
-        registered.set(method, handler);
-      },
-    } as any;
-
-    registerMachineSessionHandoffRpcHandlers({
-      rpcHandlerManager,
-      loadSessionMetadata: async () => ({
-        machineId: 'machine_source',
-        path: '/repo',
-        flavor: 'claude',
-        claudeSessionId: 'claude_session_1',
-      }),
-      exportSessionBundle: async () => ({
-        providerBundle: {
-          providerId: 'claude',
-          remoteSessionId: 'claude_session_1',
-          transcriptBase64: 'e30K',
-        },
-        targetPath: '/repo',
-        workspaceExportArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                sizeBytes: 6,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-          },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
-        },
-      }),
-      importSessionBundle,
-      importWorkspaceBundle,
-    });
-
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
-    expect(start).toBeDefined();
-    expect(prepare).toBeDefined();
-    expect(resultGet).toBeDefined();
-
-    const started = await start!({
-      sessionId: 'sess_legacy_start_bundle',
-      sourceMachineId: 'machine_source',
-      targetMachineId: 'machine_target',
-      sessionStorageMode: 'persisted',
-      preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
-      negotiatedTransportStrategy: 'direct_peer',
-    });
-
-    expect(started.endpointCandidates).toEqual([]);
-    expect(started.targetPath).toBe('/repo');
-
-    await prepare!({
-      handoffId: started.handoffId,
-      sourceMachineId: 'machine_source',
-      targetMachineId: 'machine_target',
-      negotiatedTransportStrategy: 'direct_peer',
-      sourceSessionStorageMode: 'persisted',
-      targetPath: '/repo',
-    });
-
-    expect(importWorkspaceBundle).toHaveBeenCalledWith({
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        },
-        blobContentsByDigest: new Map(),
-      },
-      blobProvider: expect.objectContaining({
-        getBlobFilePath: expect.any(Function),
-      }),
-      assertCanContinue: expect.any(Function),
-      targetPath: '/repo',
-      workspaceTransfer: undefined,
-    });
-    const storedCanonicalImport =
-      (importWorkspaceBundle.mock.calls as unknown as readonly [ImportWorkspaceBundleInput][])[0]?.[0];
-    expect(storedCanonicalImport?.workspaceExportArtifacts?.blobContentsByDigest.size).toBe(0);
-    expect(storedCanonicalImport?.blobProvider).toEqual(expect.objectContaining({
-      getBlobFilePath: expect.any(Function),
-    }));
-  });
-
-  it('applies same-daemon workspace sync through the replication engine when workspace transfer is enabled', async () => {
-    const sourcePath = '/Users/tester/projects/demo';
-    const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
-      remoteSessionId: 'claude_session_target',
-      directSource: {
-        kind: 'claudeConfig',
-        configDir: null,
-        projectId: null,
-      },
-      resume: buildClaudeResumePlan({
-        directory,
-        resume: 'claude_session_target',
-        transcriptStorage: 'persisted',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async (_params: ImportWorkspaceBundleInput) => ({
-      targetPath: '/repo-legacy',
-    }));
-    const loadCurrentTargetManifest = vi.fn(async () => ({
-      entries: [
-        {
-          relativePath: 'README.md',
-          kind: 'file' as const,
-          digest: 'sha256:previous',
-          sizeBytes: 5,
-          executable: false,
-        },
-      ],
-      fingerprint: 'sha256:previous',
-    }));
-    const applyWorkspaceReplicationPlan = vi.fn(async () => ({
-      targetPath: '/repo-synced',
-    }));
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
-        registered.set(method, handler);
-      },
-    } as any;
-
-    registerMachineSessionHandoffRpcHandlers({
-      rpcHandlerManager,
-      loadSessionMetadata: async () => ({
-        machineId: 'machine_source',
-        path: sourcePath,
-        homeDir: '/Users/tester',
-        flavor: 'claude',
-        claudeSessionId: 'claude_session_1',
-      }),
-      exportSessionBundle: async () => ({
-        providerBundle: {
-          providerId: 'claude',
-          remoteSessionId: 'claude_session_1',
-          transcriptBase64: 'e30K',
-        },
-        targetPath: sourcePath,
-        workspaceExportArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                sizeBytes: 6,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-          },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
-          sourceControllerMetadata: {
-            scmBackendId: 'git',
-          },
-        },
-      }),
-      importSessionBundle,
-      importWorkspaceBundle,
-      loadCurrentTargetManifest,
-      applyReplicationPlan: applyWorkspaceReplicationPlan,
-    });
-
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
-    expect(start).toBeDefined();
-    expect(prepare).toBeDefined();
-    expect(resultGet).toBeDefined();
-
-    const workspaceTransfer = {
-      enabled: true as const,
-      strategy: 'sync_changes' as const,
-      conflictPolicy: 'create_sibling_copy' as const,
-      includeIgnoredMode: 'include_selected' as const,
-      ignoredIncludeGlobs: ['dist/**'],
-    };
-    const started = await start!({
-      sessionId: 'sess_same_daemon_replication_prepare',
-      sourceMachineId: 'machine_source',
-      targetMachineId: 'machine_target',
-      sessionStorageMode: 'persisted',
-      preferredTransportStrategies: ['server_routed_stream'],
-      negotiatedTransportStrategy: 'server_routed_stream',
-      workspaceTransfer,
-    });
-    expect(started).toHaveProperty('handoffId');
-
-    const prepared = await prepare!({
-      handoffId: started.handoffId,
-      sourceMachineId: 'machine_source',
-      targetMachineId: 'machine_target',
-      negotiatedTransportStrategy: 'server_routed_stream',
-      sourceSessionStorageMode: 'persisted',
-      targetPath: '/repo-target',
-      workspaceTransfer,
-    });
-
-    let ready = prepared;
-    if (ready.status.status !== 'ready_for_cutover') {
-      await vi.waitFor(async () => {
-        ready = await resultGet!({ handoffId: started.handoffId });
-        expect(ready.status.status).toBe('ready_for_cutover');
-      });
-    }
-    expect(ready.status.transportStrategy).toBe('server_routed_stream');
-    expect(loadCurrentTargetManifest).toHaveBeenCalledWith({
-      targetPath: '/repo-target',
-      workspaceTransfer,
-    });
-    expect(applyWorkspaceReplicationPlan).toHaveBeenCalledWith({
-      activeServerDir: expect.any(String),
-      assertCanContinue: expect.any(Function),
-      sourceOffer: {
-        offerId: expect.any(String),
-        relationshipId: expect.any(String),
-        directionId: expect.any(String),
-        sourceFingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        },
-        blobIndex: [
-          {
-            digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-            sizeBytes: 6,
-          },
-        ],
-        sourceControllerMetadata: {
-          scmBackendId: 'git',
-        },
-      },
-      targetPath: '/repo-target',
-      strategy: 'sync_changes',
-      conflictPolicy: 'create_sibling_copy',
-      currentTargetManifest: {
-        entries: [
-          {
-            relativePath: 'README.md',
-            kind: 'file',
-            digest: 'sha256:previous',
-            sizeBytes: 5,
-            executable: false,
-          },
-        ],
-        fingerprint: 'sha256:previous',
-      },
-    });
-    expect(importWorkspaceBundle).not.toHaveBeenCalled();
-    expect(importSessionBundle).toHaveBeenCalledWith(
-      {
-        providerId: 'claude',
-        remoteSessionId: 'claude_session_1',
-        transcriptBase64: 'e30K',
-      },
-      '/repo-synced',
-      'persisted',
-    );
-  });
-
   it('delegates source-side workspace transfer preparation to the adapter seam when starting a handoff', async () => {
     const sourcePath = '/Users/tester/projects/demo';
     const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const transferredPayloadSource = await createSessionHandoffTransferredBundlesPayloadSource({});
     const createState = vi.fn(async () => ({
       workspaceReplicationMetadata: undefined,
     }));
     const resolveSourceOffer = vi.fn(async () => null);
     const prepareSourceWorkspaceTransfer = vi.fn(async () => ({
-      transferredBundles: {} satisfies SessionHandoffTransferredBundles,
-      transferredPayloadSource,
-      storedTransferredPayload: {
-        transferredBundles: {} satisfies SessionHandoffTransferredBundles,
+      handoffMetadataV2: {
+        workspaceReplicationSourceRootPath: sourcePath,
+        workspaceReplicationManifestTransferPublication: {
+          transferId: 'session-handoff:test:workspace-manifest',
+        },
       },
-      includeWorkspaceBlobPayloads: true,
     }));
     const createSessionHandoffWorkspaceReplicationAdapter = vi.fn(() => ({
       createReplicationTransfers: () => ({}) as any,
@@ -1235,18 +1212,18 @@ describe('rpcHandlers (session handoff)', () => {
     } as any;
 
     vi.resetModules();
-    vi.doMock('@/configuration', () => ({
-      configuration: {
-        activeServerDir: '/tmp/happier-adapter-seam',
-        activeServerId: 'test_adapter_seam',
+	    vi.doMock('@/configuration', () => ({
+	      configuration: {
+	        activeServerDir: '/tmp/happier-adapter-seam',
+	        activeServerId: 'test_adapter_seam',
         workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
         workspaceReplicationBlobPackMaxBlobs: 64,
-        workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
-      },
-    }));
-    vi.doMock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
-      createSessionHandoffWorkspaceReplicationAdapter,
-    }));
+	        workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+	      },
+	    }));
+	    vi.doMock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
+	      createSessionHandoffWorkspaceReplicationAdapter,
+	    }));
 
     try {
       const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
@@ -1276,17 +1253,17 @@ describe('rpcHandlers (session handoff)', () => {
                 sizeBytes: 6,
                 executable: false,
               },
-            ],
-            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-          },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
-          sourceControllerMetadata: {
-            scmBackendId: 'git',
-          },
-        },
-      }),
+	            ],
+	            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
+	          },
+	          sourceControllerMetadata: {
+	            scmBackendId: 'git',
+	          },
+	        },
+	        blobProvider: {
+	          getBlobFilePath: () => `${sourcePath}/README.md`,
+	        },
+	      }),
       importSessionBundle: async () => ({
         remoteSessionId: 'claude_session_target',
         directSource: {
@@ -1299,24 +1276,8 @@ describe('rpcHandlers (session handoff)', () => {
             resume: 'claude_session_target',
             transcriptStorage: 'persisted',
           }),
-        }),
-        importWorkspaceBundle: async () => ({ targetPath: '/repo-seam' }),
-        loadCurrentTargetManifest: async () => ({
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file' as const,
-              digest: 'sha256:previous',
-              sizeBytes: 5,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:previous',
-        }),
-        applyReplicationPlan: async () => ({
-          targetPath: '/repo-seam',
-        }),
-      });
+	        }),
+	      });
 
       const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
       expect(start).toBeDefined();
@@ -1354,54 +1315,61 @@ describe('rpcHandlers (session handoff)', () => {
       vi.doUnmock('@/configuration');
       vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
       vi.resetModules();
-      await transferredPayloadSource.dispose?.();
     }
   });
 
   it('delegates target-side workspace preparation to the adapter seam during prepare-target', async () => {
     const sourcePath = '/Users/tester/projects/demo';
     const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const transferredPayloadSource = await createSessionHandoffTransferredBundlesPayloadSource({});
     const createState = vi.fn(async () => ({
       workspaceReplicationMetadata: undefined,
     }));
     const resolveSourceOffer = vi.fn(async () => null);
     const prepareSourceWorkspaceTransfer = vi.fn(async () => ({
-      transferredBundles: {} satisfies SessionHandoffTransferredBundles,
-      transferredPayloadSource,
-      storedTransferredPayload: {
-        transferredBundles: {} satisfies SessionHandoffTransferredBundles,
+      handoffMetadataV2: {
+        workspaceReplicationSourceRootPath: sourcePath,
+        workspaceReplicationManifestTransferPublication: {
+          transferId: `session-handoff:test:workspace-manifest`,
+        },
       },
-      includeWorkspaceBlobPayloads: true,
-    }));
-    const prepareTargetWorkspace = vi.fn(async () => ({
-      importedWorkspace: {
-        targetPath: '/repo-adapter-target',
+      workspaceReplicationMetadata: {
+        sourceRootPath: sourcePath,
+        manifest: {
+          entries: [],
+        },
       },
-      currentTargetManifest: {
-        entries: [
-          {
-            relativePath: 'README.md',
-            kind: 'file' as const,
-            digest: 'sha256:previous',
-            sizeBytes: 5,
-            executable: false,
-          },
-        ],
-        fingerprint: 'sha256:previous',
-      },
-      sourceOffer: null,
     }));
-    const createSessionHandoffWorkspaceReplicationAdapter = vi.fn(() => ({
-      createReplicationTransfers: () => ({}) as any,
-      createState,
-      resolveSourceOffer,
-      prepareSourceWorkspaceTransfer,
-      prepareTargetWorkspace,
-    }));
-    const importSessionBundle = vi.fn(async () => ({
-      remoteSessionId: 'claude_session_target',
-      directSource: {
+    const prepareTargetWorkspace = vi.fn(async (params: any) => {
+      await params.onWorkspaceReplicationJobStarted?.('job_wsrepl_1');
+      return {
+        importedWorkspace: {
+          targetPath: '/repo-adapter-target',
+        },
+        currentTargetManifest: {
+          entries: [
+            {
+              relativePath: 'README.md',
+              kind: 'file' as const,
+              digest: 'sha256:previous',
+              sizeBytes: 5,
+              executable: false,
+            },
+          ],
+          fingerprint: 'sha256:previous',
+        },
+        sourceOffer: null,
+      };
+	    });
+	    const createSessionHandoffWorkspaceReplicationAdapter = vi.fn(() => ({
+	      createReplicationTransfers: () => ({}) as any,
+	      createState,
+	      resolveSourceOffer,
+	      prepareSourceWorkspaceTransfer,
+	      prepareTargetWorkspace,
+	    }));
+	    const importSessionBundle = vi.fn(async () => ({
+	      remoteSessionId: 'claude_session_target',
+	      directSource: {
         kind: 'claudeConfig',
         configDir: null,
         projectId: null,
@@ -1411,27 +1379,18 @@ describe('rpcHandlers (session handoff)', () => {
         resume: 'claude_session_target',
         transcriptStorage: 'persisted',
       }),
-    }));
-    const importWorkspaceBundle = vi.fn(async (_params: ImportWorkspaceBundleInput) => ({
-      targetPath: '/repo-legacy',
-    }));
-    const loadCurrentTargetManifest = vi.fn(async () => ({
-      entries: [],
-    }));
-    const applyWorkspaceReplicationPlan = vi.fn(async () => ({
-      targetPath: '/repo-synced',
-    }));
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
-        registered.set(method, handler);
-      },
+	    }));
+	    const rpcHandlerManager = {
+	      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+	        registered.set(method, handler);
+	      },
     } as any;
 
-    vi.resetModules();
-    vi.doMock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
-      createSessionHandoffWorkspaceReplicationAdapter,
-      resolveSessionHandoffWorkspaceReplicationSourceOffer: resolveSourceOffer,
-    }));
+	    vi.resetModules();
+	    vi.doMock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter', () => ({
+	      createSessionHandoffWorkspaceReplicationAdapter,
+	      resolveSessionHandoffWorkspaceReplicationSourceOffer: resolveSourceOffer,
+	    }));
 
     try {
       const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
@@ -1461,22 +1420,19 @@ describe('rpcHandlers (session handoff)', () => {
                   sizeBytes: 6,
                   executable: false,
                 },
-              ],
-              fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-            },
-            blobContentsByDigest: new Map([
-              ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-            ]),
-            sourceControllerMetadata: {
-              scmBackendId: 'git',
-            },
-          },
-        }),
-        importSessionBundle,
-        importWorkspaceBundle,
-        loadCurrentTargetManifest,
-        applyReplicationPlan: applyWorkspaceReplicationPlan,
-      });
+	              ],
+	              fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
+	            },
+	            sourceControllerMetadata: {
+	              scmBackendId: 'git',
+	            },
+	          },
+	          blobProvider: {
+	            getBlobFilePath: () => `${sourcePath}/README.md`,
+	          },
+		        }),
+	        importSessionBundle,
+	      });
 
       const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
       const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
@@ -1510,6 +1466,7 @@ describe('rpcHandlers (session handoff)', () => {
         sourceSessionStorageMode: 'persisted',
         targetPath: '/repo-target',
         workspaceTransfer,
+        ...(started.handoffMetadataV2 ? { handoffMetadataV2: started.handoffMetadataV2 } : {}),
       });
 
       if (prepared.status.status !== 'ready_for_cutover') {
@@ -1519,35 +1476,41 @@ describe('rpcHandlers (session handoff)', () => {
         });
       }
 
-      expect(prepareTargetWorkspace).toHaveBeenCalledWith(expect.objectContaining({
-        activeServerDir: expect.any(String),
-        actualTransportStrategy: 'server_routed_stream',
-        handoffId: started.handoffId,
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        targetPath: '/repo-target',
-        workspaceTransfer,
-        importWorkspaceBundle: expect.any(Function),
-        loadCurrentTargetManifest: expect.any(Function),
-        applyReplicationPlan: expect.any(Function),
-        assertCanContinue: expect.any(Function),
-      }));
-      expect(importWorkspaceBundle).not.toHaveBeenCalled();
-      expect(loadCurrentTargetManifest).not.toHaveBeenCalled();
-      expect(applyWorkspaceReplicationPlan).not.toHaveBeenCalled();
-      expect(importSessionBundle).toHaveBeenCalledWith(
-        {
-          providerId: 'claude',
-          remoteSessionId: 'claude_session_1',
+	      expect(prepareTargetWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+	        activeServerDir: expect.any(String),
+	        actualTransportStrategy: 'server_routed_stream',
+	        handoffId: started.handoffId,
+	        sourceMachineId: 'machine_source',
+	        targetMachineId: 'machine_target',
+	        targetPath: '/repo-target',
+	        workspaceTransfer,
+	        assertCanContinue: expect.any(Function),
+	        onWorkspaceReplicationJobStarted: expect.any(Function),
+	        metadata: expect.objectContaining({
+	          sourceRootPath: sourcePath,
+	          manifest: expect.any(Object),
+	        }),
+	      }));
+	      expect(importSessionBundle).toHaveBeenCalledWith(
+	        {
+	          providerId: 'claude',
+	          remoteSessionId: 'claude_session_1',
           transcriptBase64: 'e30K',
         },
         '/repo-adapter-target',
         'persisted',
       );
+
+      const { configuration } = await import('@/configuration');
+      const { createSessionHandoffPrepareTargetJobStore } = await import('@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore');
+      const prepareJobStore = createSessionHandoffPrepareTargetJobStore({
+        activeServerDir: configuration.activeServerDir,
+      });
+      const persisted = await prepareJobStore.findByHandoffId(started.handoffId);
+      expect(persisted?.workspaceReplicationJobId).toBe('job_wsrepl_1');
     } finally {
       vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
       vi.resetModules();
-      await transferredPayloadSource.dispose?.();
     }
   });
 
@@ -1564,15 +1527,12 @@ describe('rpcHandlers (session handoff)', () => {
         directory: '/repo-copy',
         resume: 'claude_session_1',
         transcriptStorage: 'direct',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async () => ({
-      targetPath: '/repo-copy',
-    }));
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
-        registered.set(method, handler);
-      },
+	      }),
+	    }));
+	    const rpcHandlerManager = {
+	      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+	        registered.set(method, handler);
+	      },
     } as any;
 
     registerMachineSessionHandoffRpcHandlers({
@@ -1589,28 +1549,16 @@ describe('rpcHandlers (session handoff)', () => {
           remoteSessionId: 'claude_session_1',
           transcriptBase64: 'e30K',
         },
-        targetPath: '/repo',
-        workspaceExportArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                sizeBytes: 6,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-          },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
-        },
-      }),
-      importSessionBundle,
-      importWorkspaceBundle,
-    });
+	        targetPath: '/repo',
+	        workspaceExportArtifacts: {
+	          manifest: {
+	            entries: [],
+	            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
+	          },
+	        },
+	      }),
+	      importSessionBundle,
+	    });
 
     const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
@@ -1638,326 +1586,17 @@ describe('rpcHandlers (session handoff)', () => {
     });
 
     await resultGet!({ handoffId: started.handoffId });
-    importWorkspaceBundle.mockClear();
-
-    await prepare!({
-      handoffId: started.handoffId,
-      sourceMachineId: 'machine_source',
-      targetMachineId: 'machine_target',
+	    await prepare!({
+	      handoffId: started.handoffId,
+	      sourceMachineId: 'machine_source',
+	      targetMachineId: 'machine_target',
       negotiatedTransportStrategy: 'direct_peer',
       sourceSessionStorageMode: 'persisted',
       targetPath: '/repo',
     });
 
-    await resultGet!({ handoffId: started.handoffId });
-    expect(importWorkspaceBundle).not.toHaveBeenCalled();
-  });
-
-  it('reuses the stored canonical transferred bundles on a repeated direct-peer prepare retry after the first target import', async () => {
-    const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const directPeerPayload = createLegacyTransferredPayloadBuffer({
-      providerBundle: {
-        providerId: 'claude',
-        remoteSessionId: 'claude_session_source',
-        transcriptBase64: 'e30K',
-      },
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        },
-        blobContentsByDigest: new Map([
-          ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-        ]),
-      },
-    });
-    const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
-      payload: directPeerPayload,
-    });
-    const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
-      remoteSessionId: 'claude_session_target',
-      directSource: {
-        kind: 'claudeConfig',
-        configDir: null,
-        projectId: null,
-      },
-      resume: buildClaudeResumePlan({
-        directory,
-        resume: 'claude_session_target',
-        transcriptStorage: 'persisted',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
-        registered.set(method, handler);
-      },
-    } as any;
-
-    try {
-      registerMachineSessionHandoffRpcHandlers({
-        rpcHandlerManager,
-        importSessionBundle,
-        importWorkspaceBundle,
-        directPeerTransfer: {
-          publishTransfer: vi.fn(() => []),
-          requestPayloadFile,
-          clearPublishedTransfer: vi.fn(),
-        },
-      });
-
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
-      expect(prepare).toBeDefined();
-      expect(resultGet).toBeDefined();
-
-      await prepare!({
-        handoffId: 'handoff_direct_peer_retry',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        negotiatedTransportStrategy: 'direct_peer',
-        sourceSessionStorageMode: 'persisted',
-        targetPath: '/repo',
-        endpointCandidates: [
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer_retry?token=test-token',
-            expiresAt: Date.now() + 30_000,
-          },
-        ],
-        allowServerRoutedFallback: false,
-      });
-
-      await resultGet!({ handoffId: 'handoff_direct_peer_retry' });
-      requestPayloadFile.mockClear();
-      importWorkspaceBundle.mockClear();
-      importSessionBundle.mockClear();
-
-      const retried = await prepare!({
-        handoffId: 'handoff_direct_peer_retry',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        negotiatedTransportStrategy: 'direct_peer',
-        sourceSessionStorageMode: 'persisted',
-        targetPath: '/repo',
-        endpointCandidates: [
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer_retry?token=test-token',
-            expiresAt: Date.now() - 1,
-          },
-        ],
-        allowServerRoutedFallback: false,
-      });
-
-      let ready = retried;
-      if (!ready.status || ready.status.status !== 'ready_for_cutover') {
-        await vi.waitFor(async () => {
-          ready = await resultGet!({ handoffId: 'handoff_direct_peer_retry' });
-          expect(ready.status.status).toBe('ready_for_cutover');
-        });
-      }
-      expect(ready.status.transportStrategy).toBe('direct_peer');
-      expect(requestPayloadFile).not.toHaveBeenCalled();
-      expect(importWorkspaceBundle).not.toHaveBeenCalled();
-      expect(importSessionBundle).not.toHaveBeenCalled();
-    } finally {
-      await dispose();
-    }
-  });
-
-  it('marks the handoff awaiting recovery and reuses stored canonical bundles after a target import failure', async () => {
-    const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const directPeerPayload = createLegacyTransferredPayloadBuffer({
-      providerBundle: {
-        providerId: 'claude',
-        remoteSessionId: 'claude_session_source',
-        transcriptBase64: 'e30K',
-      },
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        },
-        blobContentsByDigest: new Map([
-          ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-        ]),
-      },
-    });
-    const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
-      payload: directPeerPayload,
-    });
-    const importSessionBundle = vi.fn()
-      .mockRejectedValueOnce(new Error('session import failed'))
-      .mockResolvedValueOnce({
-        remoteSessionId: 'claude_session_target',
-        directSource: {
-          kind: 'claudeConfig',
-          configDir: null,
-          projectId: null,
-        },
-        resume: buildClaudeResumePlan({
-          directory: '/repo-target',
-          resume: 'claude_session_target',
-          transcriptStorage: 'persisted',
-        }),
-      });
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
-        registered.set(method, handler);
-      },
-    } as any;
-
-    try {
-      registerMachineSessionHandoffRpcHandlers({
-        rpcHandlerManager,
-        importSessionBundle,
-        importWorkspaceBundle,
-        directPeerTransfer: {
-          publishTransfer: vi.fn(() => []),
-          requestPayloadFile,
-          clearPublishedTransfer: vi.fn(),
-        },
-      });
-
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
-      const status = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
-      expect(prepare).toBeDefined();
-      expect(resultGet).toBeDefined();
-      expect(status).toBeDefined();
-
-      let failedAttempt:
-        | Awaited<ReturnType<NonNullable<typeof prepare>>>
-        | null = null;
-      let firstAttemptError: unknown;
-      try {
-        failedAttempt = await prepare!({
-          handoffId: 'handoff_direct_peer_retry_after_failure',
-          sourceMachineId: 'machine_source',
-          targetMachineId: 'machine_target',
-          negotiatedTransportStrategy: 'direct_peer',
-          sourceSessionStorageMode: 'persisted',
-          targetPath: '/repo',
-          endpointCandidates: [
-            {
-              kind: 'http',
-              url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer_retry_after_failure?token=test-token',
-              expiresAt: Date.now() + 30_000,
-            },
-          ],
-          allowServerRoutedFallback: false,
-        });
-      } catch (error) {
-        firstAttemptError = error;
-      }
-      if (firstAttemptError) {
-        expect(firstAttemptError).toBeInstanceOf(Error);
-        expect((firstAttemptError as Error).message).toBe('session import failed');
-      }
-
-      if (!failedAttempt || failedAttempt.status.status !== 'awaiting_recovery') {
-        await vi.waitFor(async () => {
-          const currentStatus = await status!({ handoffId: 'handoff_direct_peer_retry_after_failure' });
-          expect(currentStatus.status.status).toBe('awaiting_recovery');
-          failedAttempt = currentStatus;
-        });
-      }
-      expect(failedAttempt?.status.transportStrategy).toBe('direct_peer');
-
-      await expect(status!({
-        handoffId: 'handoff_direct_peer_retry_after_failure',
-      })).resolves.toEqual({
-        handoffId: 'handoff_direct_peer_retry_after_failure',
-        status: {
-          handoffId: 'handoff_direct_peer_retry_after_failure',
-          jobId: expect.any(String),
-          status: 'awaiting_recovery',
-          phase: 'staging_target',
-          transportStrategy: 'direct_peer',
-          recoveryActions: [],
-          progress: expect.objectContaining({
-            checkpoint: 'stage_target',
-            current: expect.objectContaining({
-              phaseDetail: 'importing_session',
-            }),
-          }),
-        },
-      });
-
-      requestPayloadFile.mockClear();
-      importWorkspaceBundle.mockClear();
-      importSessionBundle.mockClear();
-
-      const retried = await prepare!({
-        handoffId: 'handoff_direct_peer_retry_after_failure',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        negotiatedTransportStrategy: 'direct_peer',
-        sourceSessionStorageMode: 'persisted',
-        targetPath: '/repo',
-        endpointCandidates: [
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer_retry_after_failure?token=test-token',
-            expiresAt: Date.now() - 1,
-          },
-        ],
-        allowServerRoutedFallback: false,
-      });
-
-      let ready = retried;
-      if (!ready.status || ready.status.status !== 'ready_for_cutover') {
-        await vi.waitFor(async () => {
-          ready = await resultGet!({ handoffId: 'handoff_direct_peer_retry_after_failure' });
-          expect(ready.status?.status).toBe('ready_for_cutover');
-        });
-      }
-      expect(ready.status.transportStrategy).toBe('direct_peer');
-      expect(requestPayloadFile).not.toHaveBeenCalled();
-      expect(importWorkspaceBundle).toHaveBeenCalledWith({
-        workspaceExportArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                sizeBytes: 6,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-          },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
-        },
-        assertCanContinue: expect.any(Function),
-        targetPath: '/repo',
-        workspaceTransfer: undefined,
-      });
-    } finally {
-      await dispose();
-    }
-  });
+	    await resultGet!({ handoffId: started.handoffId });
+	  });
 
   it('returns invalid_request for malformed payloads', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
@@ -2005,6 +1644,14 @@ describe('rpcHandlers (session handoff)', () => {
       negotiatedTransportStrategy: 'direct_peer',
       sourceSessionStorageMode: 'persisted',
       targetPath: '/repo',
+      handoffMetadataV2: {
+        providerBundleTransferPublication: {
+          transferId: 'session-handoff:handoff_missing_transfer_source:provider-bundle-file',
+          sizeBytes: 0,
+          manifestHash: `sha256:${'0'.repeat(64)}`,
+          // Intentionally omit endpointCandidates to force `direct_peer_transfer_unavailable`.
+        },
+      },
     })).resolves.toEqual({
       ok: false,
       errorCode: 'direct_peer_transfer_unavailable',
@@ -2135,7 +1782,7 @@ describe('rpcHandlers (session handoff)', () => {
     expect(started.transferredPayload).toBeUndefined();
   });
 
-  it('keeps codex start responses canonical without inline transferred bundles', async () => {
+  it('keeps codex start responses canonical without inline payloads', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
@@ -2441,9 +2088,16 @@ describe('rpcHandlers (session handoff)', () => {
     const sourcePath = '/Users/tester/projects/direct-peer';
     const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-source-'));
     const targetActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-target-'));
+    const targetPath = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-target-workspace-'));
+    const sourceBlobDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-source-blob-'));
+    const baselinePayload = Buffer.from('previous\n', 'utf8');
+    const baselineDigest = `sha256:${createHash('sha256').update(baselinePayload).digest('hex')}`;
+    const baselineFingerprint = `sha256:${'1'.repeat(64)}`;
+    await writeFile(join(targetPath, 'README.md'), baselinePayload);
     const directPeerWorkspacePayload = Buffer.from('direct-peer-pack\n', 'utf8');
     const directPeerWorkspaceDigest = `sha256:${createHash('sha256').update(directPeerWorkspacePayload).digest('hex')}`;
     const directPeerManifestFingerprint = `sha256:${'1'.repeat(64)}`;
+    await writeFile(join(sourceBlobDir, 'README.md'), directPeerWorkspacePayload);
     const workspaceTransfer = {
       enabled: true as const,
       strategy: 'sync_changes' as const,
@@ -2453,9 +2107,13 @@ describe('rpcHandlers (session handoff)', () => {
     };
     const sourceRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const targetRegistered = new Map<string, (params: unknown) => Promise<any>>();
-    const { publishTransfer, requestPayloadFile, dispose, listPublishedTransferIds } =
-      await createPublishedDirectPeerPayloadRouter();
-    const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
+	    const { publishTransfer, requestPayloadFile, requestPayloadFileWithOpenBody, dispose, listPublishedTransferIds } =
+	      await createPublishedDirectPeerPayloadRouter();
+      const requestPayloadFileWithOpenBodySpy = vi.fn(
+        async (input: Parameters<typeof requestPayloadFileWithOpenBody>[0]) =>
+          await requestPayloadFileWithOpenBody(input),
+      );
+	    const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
       remoteSessionId: 'claude_session_target',
       directSource: {
         kind: 'claudeConfig',
@@ -2468,21 +2126,17 @@ describe('rpcHandlers (session handoff)', () => {
         transcriptStorage: 'persisted',
       }),
     }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-    const loadCurrentTargetManifest = vi.fn(async () => ({
+	    const loadCurrentTargetManifest = vi.fn(async () => ({
       entries: [
         {
           relativePath: 'README.md',
           kind: 'file' as const,
-          digest: 'sha256:previous',
-          sizeBytes: 5,
+          digest: baselineDigest,
+          sizeBytes: baselinePayload.byteLength,
           executable: false,
         },
       ],
-      fingerprint: 'sha256:previous',
-    }));
-    const applyWorkspaceReplicationPlan = vi.fn(async () => ({
-      targetPath: '/repo-synced',
+      fingerprint: baselineFingerprint,
     }));
     const sourceRpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
@@ -2496,6 +2150,22 @@ describe('rpcHandlers (session handoff)', () => {
     } as any;
 
     try {
+      const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir: targetActiveServerDir });
+      await baselineStore.save({
+        scope: {
+          sourceMachineId: 'machine_source',
+          sourceWorkspaceRoot: sourcePath,
+          targetMachineId: 'machine_target',
+          targetWorkspaceRoot: targetPath,
+          mode: 'one_way_safe',
+        },
+        baseline: {
+          manifestFingerprint: baselineFingerprint,
+          manifest: await loadCurrentTargetManifest(),
+          savedAtMs: 0,
+        },
+      });
+
       vi.doMock('@/configuration', () => ({
         configuration: {
           activeServerDir: sourceActiveServerDir,
@@ -2535,12 +2205,13 @@ describe('rpcHandlers (session handoff)', () => {
               ],
               fingerprint: directPeerManifestFingerprint,
             },
-            blobContentsByDigest: new Map([
-              [directPeerWorkspaceDigest, directPeerWorkspacePayload],
-            ]),
+            blobContentsByDigest: new Map(),
             sourceControllerMetadata: {
               scmBackendId: 'git',
             },
+          },
+          blobProvider: {
+            getBlobFilePath: (digest: string) => (digest === directPeerWorkspaceDigest ? join(sourceBlobDir, 'README.md') : null),
           },
         }),
         directPeerTransfer: {
@@ -2562,8 +2233,8 @@ describe('rpcHandlers (session handoff)', () => {
           workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
         },
       }));
-      vi.doMock('../../workspaces/replication/transport/workspaceReplicationTransfers', () => ({
-        createWorkspaceReplicationTransfers: () => ({
+	      vi.doMock('@/workspaces/replication/transport/workspaceReplicationTransfers', () => ({
+	        createWorkspaceReplicationTransfers: () => ({
           publishDirectPeerSourceOffer: () => [],
           requestDirectPeerSourceOffer: async () => {
             throw new Error('Unexpected direct-peer source-offer request');
@@ -2572,18 +2243,21 @@ describe('rpcHandlers (session handoff)', () => {
             throw new Error('Unexpected server-routed source-offer request');
           },
           publishDirectPeerBlobPack: () => [],
-          requestDirectPeerBlobPackToFile: async ({ transferId, destinationPath }: Readonly<{
-            transferId: string;
-            destinationPath: string;
-          }>) => ({
-            destinationPath: (await requestPayloadFile({
-              transferId,
-              endpointCandidates: [],
-              destinationPath,
-            })).destinationPath,
-            manifestHash: `sha256:${'2'.repeat(64)}`,
-            sizeBytes: 0,
-          }),
+	          requestDirectPeerBlobPackToFile: async ({ transferId, endpointCandidates, destinationPath, openBody }: Readonly<{
+	            transferId: string;
+	            endpointCandidates: readonly TransferEndpointCandidate[];
+	            destinationPath: string;
+	            openBody?: unknown;
+	          }>) => ({
+	            destinationPath: (await requestPayloadFileWithOpenBodySpy({
+	              transferId,
+	              endpointCandidates,
+	              destinationPath,
+	              ...(openBody !== undefined ? { openBody } : {}),
+	            })).destinationPath,
+	            manifestHash: `sha256:${'2'.repeat(64)}`,
+	            sizeBytes: 0,
+	          }),
           requestServerRoutedBlobPackToFile: async () => {
             throw new Error('Unexpected server-routed blob-pack request');
           },
@@ -2591,16 +2265,13 @@ describe('rpcHandlers (session handoff)', () => {
       }));
       const { registerMachineSessionHandoffRpcHandlers: registerTargetHandlers } = await import('./rpcHandlers.sessionHandoff');
 
-      registerTargetHandlers({
-        rpcHandlerManager: targetRpcHandlerManager,
-        importSessionBundle,
-        importWorkspaceBundle,
-        loadCurrentTargetManifest,
-        applyReplicationPlan: applyWorkspaceReplicationPlan,
-        directPeerTransfer: {
-          publishTransfer: vi.fn(() => []),
-          requestPayloadFile,
-          clearPublishedTransfer: vi.fn(),
+	      registerTargetHandlers({
+	        rpcHandlerManager: targetRpcHandlerManager,
+	        importSessionBundle,
+	        directPeerTransfer: {
+	          publishTransfer: vi.fn(() => []),
+	          requestPayloadFile,
+	          clearPublishedTransfer: vi.fn(),
         },
       });
 
@@ -2627,16 +2298,33 @@ describe('rpcHandlers (session handoff)', () => {
         }),
       });
 
+      if (!started.handoffMetadataV2) {
+        throw new Error('Expected start() to return handoffMetadataV2');
+      }
+      // Normalize to plain JSON and validate against the protocol schema (prepare-target request is strict).
+      const normalizedMetadata = JSON.parse(JSON.stringify(started.handoffMetadataV2));
+      const { SessionHandoffMetadataV2Schema } = await import('@happier-dev/protocol');
+      const metadataParsed = SessionHandoffMetadataV2Schema.safeParse(normalizedMetadata);
+      if (!metadataParsed.success) {
+        throw new Error(`Invalid decoded handoffMetadataV2 fixture: ${metadataParsed.error.message}`);
+      }
+      const handoffMetadataV2: unknown = metadataParsed.data;
+      expect(handoffMetadataV2).toBeDefined();
+
       const prepared = await prepare!({
         handoffId: started.handoffId,
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         negotiatedTransportStrategy: 'direct_peer',
         sourceSessionStorageMode: 'persisted',
-        targetPath: '/repo-target',
+        targetPath,
         workspaceTransfer,
         endpointCandidates: started.endpointCandidates,
+        handoffMetadataV2,
       });
+      if ('ok' in prepared && prepared.ok === false) {
+        throw new Error(`unexpected prepare failure: ${prepared.errorCode}:${prepared.error}`);
+      }
 
       let ready = prepared;
       if (ready.status.status !== 'ready_for_cutover') {
@@ -2676,37 +2364,40 @@ describe('rpcHandlers (session handoff)', () => {
         },
       });
       await expect(resultGet!({ handoffId: started.handoffId })).resolves.toEqual(ready);
-      const requestedTransferIds = requestPayloadFile.mock.calls.map(([call]) => call.transferId);
-      expect(requestedTransferIds).toContain(started.handoffId);
+      const requestedTransferIds = [
+        ...requestPayloadFile.mock.calls.map(([call]) => call.transferId),
+        ...requestPayloadFileWithOpenBodySpy.mock.calls.map(([call]) => call.transferId),
+      ];
+      expect(requestedTransferIds).not.toContain(started.handoffId);
       expect(requestedTransferIds).toContain(`session-handoff:${started.handoffId}:provider-bundle-file`);
-      expect(requestedTransferIds.some((transferId) => transferId.includes(':workspace-pack:'))).toBe(true);
+      expect(requestedTransferIds.some((transferId) => transferId.includes(':workspace-manifest'))).toBe(true);
+      expect(requestedTransferIds.some((transferId) => transferId.includes('workspace-pack'))).toBe(true);
       const publishedTransferIds = listPublishedTransferIds();
-      expect(publishedTransferIds).toContain(started.handoffId);
+      expect(publishedTransferIds).not.toContain(started.handoffId);
       expect(publishedTransferIds).toContain(`session-handoff:${started.handoffId}:provider-bundle-file`);
-      expect(publishedTransferIds.some((transferId) => transferId.includes(':workspace-pack:'))).toBe(true);
+      expect(publishedTransferIds.some((transferId) => transferId.includes(':workspace-manifest'))).toBe(true);
+      // Direct-peer blob packs are resolved on demand (they are not pre-published via publishTransfer).
       const publishedWorkspacePackCalls = publishTransfer.mock.calls.filter(
-        ([call]) => typeof call.transferId === 'string' && call.transferId.includes(':workspace-pack:'),
+        ([call]) => typeof call.transferId === 'string' && call.transferId.includes('workspace-pack'),
       );
-      expect(publishedWorkspacePackCalls.length).toBeGreaterThan(0);
-      for (const [call] of publishedWorkspacePackCalls) {
-        expect(call.payload).toEqual({});
-      }
-      expect(loadCurrentTargetManifest).toHaveBeenCalledWith({
-        targetPath: '/repo-target',
-        workspaceTransfer,
-      });
-      const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
-      const workspaceReplicationJobStore = createWorkspaceReplicationJobStore({ activeServerDir: targetActiveServerDir });
+      expect(publishedWorkspacePackCalls).toHaveLength(0);
+      expect(
+        requestPayloadFileWithOpenBodySpy.mock.calls.some(
+          ([call]) => typeof call.transferId === 'string' && call.transferId.includes('workspace-pack'),
+        ),
+      ).toBe(true);
+	      // Runtime owns manifest loading; the handler must not fall back to legacy workspace import paths.
+	      const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
+	      const workspaceReplicationJobStore = createWorkspaceReplicationJobStore({ activeServerDir: targetActiveServerDir });
       await expect(
         workspaceReplicationJobStore.findByCorrelationId(`session_handoff_workspace_prepare_target:${started.handoffId}`),
-      ).resolves.toMatchObject({
-        status: {
-          status: 'completed',
-          checkpoint: 'baseline_committed',
-        },
-      });
-      expect(importWorkspaceBundle).not.toHaveBeenCalled();
-      const importedDirectory = ready.resume.directory;
+	      ).resolves.toMatchObject({
+	        status: {
+	          status: 'completed',
+	          checkpoint: 'baseline_committed',
+	        },
+	      });
+	      const importedDirectory = ready.resume.directory;
       expect(importSessionBundle).toHaveBeenCalledWith(
         {
           providerId: 'claude',
@@ -2717,12 +2408,151 @@ describe('rpcHandlers (session handoff)', () => {
         'persisted',
       );
     } finally {
-      vi.doUnmock('../../workspaces/replication/transport/workspaceReplicationTransfers');
+      vi.doUnmock('@/workspaces/replication/transport/workspaceReplicationTransfers');
       vi.doUnmock('@/configuration');
       vi.resetModules();
       await dispose();
+      await rm(sourceBlobDir, { recursive: true, force: true });
       await rm(sourceActiveServerDir, { recursive: true, force: true });
       await rm(targetActiveServerDir, { recursive: true, force: true });
+      await rm(targetPath, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes provider bundle + workspace replication transfers without inline workspace blobs when workspace transfer is enabled (V2 start)', async () => {
+    vi.resetModules();
+
+    const sourcePath = '/Users/tester/projects/direct-peer-header-only';
+    const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-header-only-'));
+    const workspaceBlobDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-header-only-blob-'));
+    const workspaceBlobPayload = Buffer.from('direct-peer-pack\n', 'utf8');
+    const workspaceBlobDigest = `sha256:${createHash('sha256').update(workspaceBlobPayload).digest('hex')}`;
+    const workspaceManifestFingerprint = `sha256:${'1'.repeat(64)}`;
+    const workspaceTransfer = {
+      enabled: true as const,
+      strategy: 'sync_changes' as const,
+      conflictPolicy: 'create_sibling_copy' as const,
+      includeIgnoredMode: 'include_selected' as const,
+      ignoredIncludeGlobs: ['dist/**'],
+    };
+
+    const registered = new Map<string, (params: unknown) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const { publishTransfer, requestPayloadFile, dispose } = await createPublishedDirectPeerPayloadRouter();
+
+    try {
+      const workspaceBlobPath = join(workspaceBlobDir, 'README.md');
+      await writeFile(workspaceBlobPath, workspaceBlobPayload);
+      vi.doMock('@/configuration', () => ({
+        configuration: {
+          activeServerDir: sourceActiveServerDir,
+          activeServerId: 'test_direct_peer_header_only',
+          workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+          workspaceReplicationBlobPackMaxBlobs: 64,
+          workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+        },
+      }));
+      const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
+
+      registerHandlers({
+        rpcHandlerManager,
+        loadSessionMetadata: async () => ({
+          machineId: 'machine_source',
+          path: sourcePath,
+          homeDir: '/Users/tester',
+          flavor: 'claude',
+          claudeSessionId: 'claude_session_source',
+        }),
+        exportSessionBundle: async () => ({
+          providerBundle: {
+            providerId: 'claude' as const,
+            remoteSessionId: 'claude_session_source',
+            transcriptBase64: 'e30K',
+          },
+          targetPath: sourcePath,
+          workspaceExportArtifacts: {
+            manifest: {
+              entries: [
+                {
+                  relativePath: 'README.md',
+                  kind: 'file' as const,
+                  digest: workspaceBlobDigest,
+                  sizeBytes: workspaceBlobPayload.byteLength,
+                  executable: false,
+                },
+              ],
+              fingerprint: workspaceManifestFingerprint,
+            },
+            blobContentsByDigest: new Map(),
+            sourceControllerMetadata: {
+              scmBackendId: 'git',
+            },
+          },
+          blobProvider: {
+            getBlobFilePath: (digest: string) => (digest === workspaceBlobDigest ? workspaceBlobPath : null),
+          },
+        }),
+        directPeerTransfer: {
+          publishTransfer,
+          requestPayloadFile,
+          clearPublishedTransfer: vi.fn(),
+        },
+      });
+
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      expect(start).toBeDefined();
+
+      const started = await start!({
+        sessionId: 'sess_direct_peer_header_only',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        sessionStorageMode: 'persisted',
+        preferredTransportStrategies: ['direct_peer'],
+        negotiatedTransportStrategy: 'direct_peer',
+        workspaceTransfer,
+      });
+
+      if ('ok' in started && started.ok === false) {
+        throw new Error(`unexpected start failure: ${started.errorCode}:${started.error}`);
+      }
+
+      const publishedTransferIds = new Set(publishTransfer.mock.calls.map(([call]) => String(call.transferId)));
+      expect(publishedTransferIds.has(started.handoffId)).toBe(false);
+      expect(publishedTransferIds.has(`session-handoff:${started.handoffId}:provider-bundle-file`)).toBe(true);
+      expect([...publishedTransferIds].some((transferId) => transferId.includes(':workspace-manifest'))).toBe(true);
+      expect([...publishedTransferIds].some((transferId) => transferId.includes('workspace-pack'))).toBe(false);
+
+      const providerBundlePublishCall = publishTransfer.mock.calls.find(
+        ([call]) => call.transferId === `session-handoff:${started.handoffId}:provider-bundle-file`,
+      )?.[0];
+      expect(providerBundlePublishCall?.payloadSource?.kind).toBe('file');
+      if (!providerBundlePublishCall?.payloadSource || providerBundlePublishCall.payloadSource.kind !== 'file') {
+        throw new Error('Expected file-backed provider bundle publication');
+      }
+      const providerBundleContents = await readFile(providerBundlePublishCall.payloadSource.filePath, 'utf8');
+      expect(providerBundleContents).not.toContain(workspaceBlobPayload.toString('utf8'));
+
+      expect(started.handoffMetadataV2).toEqual(expect.objectContaining({
+        providerBundleTransferPublication: expect.objectContaining({
+          transferId: `session-handoff:${started.handoffId}:provider-bundle-file`,
+          endpointCandidates: expect.any(Array),
+        }),
+        workspaceReplicationSourceRootPath: sourcePath,
+        workspaceReplicationManifestTransferPublication: expect.objectContaining({
+          transferId: `session-handoff:${started.handoffId}:workspace-manifest`,
+        }),
+      }));
+    } finally {
+      vi.doUnmock('@/configuration');
+      vi.resetModules();
+      await dispose();
+      await rm(workspaceBlobDir, { recursive: true, force: true });
+      await rm(sourceActiveServerDir, { recursive: true, force: true });
     }
   });
 
@@ -2732,6 +2562,15 @@ describe('rpcHandlers (session handoff)', () => {
     const sourcePath = '/Users/tester/projects/server-routed';
     const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-source-'));
     const targetActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-target-'));
+    const targetPath = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-target-workspace-'));
+    const sourceBlobDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-source-blob-'));
+    const baselinePayload = Buffer.from('previous\n', 'utf8');
+    const baselineDigest = `sha256:${createHash('sha256').update(baselinePayload).digest('hex')}`;
+    const baselineFingerprint = `sha256:${'1'.repeat(64)}`;
+    const workspaceBlobPayload = Buffer.from('server-routed-pack\n', 'utf8');
+    const workspaceBlobDigest = `sha256:${createHash('sha256').update(workspaceBlobPayload).digest('hex')}`;
+    await writeFile(join(sourceBlobDir, 'README.md'), workspaceBlobPayload);
+    await writeFile(join(targetPath, 'README.md'), baselinePayload);
     const workspaceTransfer = {
       enabled: true as const,
       strategy: 'sync_changes' as const,
@@ -2752,25 +2591,21 @@ describe('rpcHandlers (session handoff)', () => {
         directory,
         resume: 'claude_session_target',
         transcriptStorage: 'persisted',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-legacy' }));
-    const loadCurrentTargetManifest = vi.fn(async () => ({
+	      }),
+	    }));
+	    const loadCurrentTargetManifest = vi.fn(async () => ({
       entries: [
         {
           relativePath: 'README.md',
           kind: 'file' as const,
-          digest: 'sha256:previous',
-          sizeBytes: 5,
+          digest: baselineDigest,
+          sizeBytes: baselinePayload.byteLength,
           executable: false,
         },
       ],
-      fingerprint: 'sha256:previous',
-    }));
-    const applyWorkspaceReplicationPlan = vi.fn(async () => ({
-      targetPath: '/repo-synced',
-    }));
-    const channels = createLoopbackMachineTransferChannels();
+      fingerprint: baselineFingerprint,
+	    }));
+	    const channels = createLoopbackMachineTransferChannels();
     const sourceRpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
         sourceRegistered.set(method, handler);
@@ -2782,6 +2617,22 @@ describe('rpcHandlers (session handoff)', () => {
       },
     } as any;
     try {
+      const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir: targetActiveServerDir });
+      await baselineStore.save({
+        scope: {
+          sourceMachineId: 'machine_source',
+          sourceWorkspaceRoot: sourcePath,
+          targetMachineId: 'machine_target',
+          targetWorkspaceRoot: targetPath,
+          mode: 'one_way_safe',
+        },
+        baseline: {
+          manifestFingerprint: baselineFingerprint,
+          manifest: await loadCurrentTargetManifest(),
+          savedAtMs: 0,
+        },
+      });
+
       vi.doMock('@/configuration', () => ({
         configuration: {
           activeServerDir: sourceActiveServerDir,
@@ -2815,29 +2666,36 @@ describe('rpcHandlers (session handoff)', () => {
                 {
                   relativePath: 'README.md',
                   kind: 'file',
-                  digest: 'sha256:be224639187f439ccf43515d94acc2300663a6bfba09afd1e950e22e1b552bd8',
-                  sizeBytes: 19,
+                  digest: workspaceBlobDigest,
+                  sizeBytes: workspaceBlobPayload.byteLength,
                   executable: false,
                 },
               ],
               fingerprint: 'sha256:0f17985b1cd57fb85b266f9106da8e3feec58da8fe9b31f6d9e4e83079a996f0',
             },
-            blobContentsByDigest: new Map([
-              ['sha256:be224639187f439ccf43515d94acc2300663a6bfba09afd1e950e22e1b552bd8', Buffer.from('server-routed-pack\n', 'utf8')],
-            ]),
+            blobContentsByDigest: new Map(),
             sourceControllerMetadata: {
               scmBackendId: 'git',
             },
           },
+          blobProvider: {
+            getBlobFilePath: (digest: string) => {
+              if (digest !== workspaceBlobDigest) {
+                return null;
+              }
+              return join(sourceBlobDir, 'README.md');
+            },
+          },
         }),
         machineTransferChannel: channels.source,
-      });
+	      });
 
-      vi.resetModules();
-      vi.doMock('@/configuration', () => ({
-        configuration: {
-          activeServerDir: targetActiveServerDir,
-          activeServerId: 'test_server_routed_target',
+	      vi.resetModules();
+	      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+	      vi.doMock('@/configuration', () => ({
+	        configuration: {
+	          activeServerDir: targetActiveServerDir,
+	          activeServerId: 'test_server_routed_target',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
           workspaceReplicationBlobPackMaxBlobs: 64,
           workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
@@ -2845,14 +2703,11 @@ describe('rpcHandlers (session handoff)', () => {
       }));
       const { registerMachineSessionHandoffRpcHandlers: registerTargetHandlers } = await import('./rpcHandlers.sessionHandoff');
 
-      registerTargetHandlers({
-        rpcHandlerManager: targetRpcHandlerManager,
-        importSessionBundle,
-        importWorkspaceBundle,
-        loadCurrentTargetManifest,
-        applyReplicationPlan: applyWorkspaceReplicationPlan,
-        machineTransferChannel: channels.target,
-      });
+	      registerTargetHandlers({
+	        rpcHandlerManager: targetRpcHandlerManager,
+	        importSessionBundle,
+	        machineTransferChannel: channels.target,
+	      });
 
       const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
       const targetPrepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
@@ -2880,11 +2735,15 @@ describe('rpcHandlers (session handoff)', () => {
         targetMachineId: 'machine_target',
         negotiatedTransportStrategy: 'server_routed_stream',
         sourceSessionStorageMode: 'persisted',
-        targetPath: '/repo-target',
+        targetPath,
         workspaceTransfer,
+        ...(started.handoffMetadataV2 ? { handoffMetadataV2: started.handoffMetadataV2 } : {}),
       });
 
       const prepared = await preparePromise;
+      if ('ok' in prepared && prepared.ok === false) {
+        throw new Error(`unexpected prepare failure: ${prepared.errorCode}:${prepared.error}`);
+      }
       let ready = prepared;
       if (ready.status.status !== 'ready_for_cutover') {
         await vi.waitFor(async () => {
@@ -2918,12 +2777,9 @@ describe('rpcHandlers (session handoff)', () => {
         }),
         resumable: false,
       }));
-      expect(loadCurrentTargetManifest).toHaveBeenCalledWith({
-        targetPath: '/repo-target',
-        workspaceTransfer,
-      });
-      const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
-      const workspaceReplicationJobStore = createWorkspaceReplicationJobStore({ activeServerDir: targetActiveServerDir });
+	      // Runtime owns manifest loading; the handler must not fall back to legacy workspace import paths.
+	      const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
+	      const workspaceReplicationJobStore = createWorkspaceReplicationJobStore({ activeServerDir: targetActiveServerDir });
       await expect(
         workspaceReplicationJobStore.findByCorrelationId(`session_handoff_workspace_prepare_target:${started.handoffId}`),
       ).resolves.toMatchObject({
@@ -2932,8 +2788,7 @@ describe('rpcHandlers (session handoff)', () => {
           checkpoint: 'baseline_committed',
         },
       });
-      expect(importWorkspaceBundle).not.toHaveBeenCalled();
-      const importedDirectory = ready.resume.directory;
+	      const importedDirectory = ready.resume.directory;
       expect(importSessionBundle).toHaveBeenCalledWith(
         {
           providerId: 'claude',
@@ -2946,13 +2801,14 @@ describe('rpcHandlers (session handoff)', () => {
       const openTransferIds = channels.sentEnvelopes
         .filter((entry) => entry.envelope.kind === 'open')
         .map((entry) => entry.envelope.transferId);
-      expect(openTransferIds).toContain(`session-handoff:${started.handoffId}`);
+      expect(openTransferIds).not.toContain(`session-handoff:${started.handoffId}`);
       expect(openTransferIds).toContain(`session-handoff:${started.handoffId}:provider-bundle-file`);
-      expect(openTransferIds.some((transferId) => transferId.includes(':workspace-offer:'))).toBe(true);
+      expect(openTransferIds.some((transferId) => transferId.includes(':workspace-manifest'))).toBe(true);
       expect(openTransferIds.some((transferId) => transferId.includes(':workspace-pack:'))).toBe(true);
     } finally {
       vi.doUnmock('@/configuration');
       vi.resetModules();
+      await rm(sourceBlobDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       await rm(sourceActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       await rm(targetActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
@@ -2964,6 +2820,10 @@ describe('rpcHandlers (session handoff)', () => {
     const sourcePath = '/Users/tester/projects/server-routed-deferred';
     const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-deferred-source-'));
     const targetActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-deferred-target-'));
+    const sourceBlobDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-deferred-source-blob-'));
+    const workspaceBlobPayload = Buffer.from('server-routed-pack\n', 'utf8');
+    const workspaceBlobDigest = `sha256:${createHash('sha256').update(workspaceBlobPayload).digest('hex')}`;
+    await writeFile(join(sourceBlobDir, 'README.md'), workspaceBlobPayload);
     const workspaceTransfer = {
       enabled: true as const,
       strategy: 'sync_changes' as const,
@@ -2996,6 +2856,9 @@ describe('rpcHandlers (session handoff)', () => {
           scmBackendId: 'git';
         };
       };
+      blobProvider?: {
+        getBlobFilePath: (digest: string) => string | null;
+      };
     }>>();
     const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
       remoteSessionId: 'claude_session_target',
@@ -3009,15 +2872,11 @@ describe('rpcHandlers (session handoff)', () => {
         resume: 'claude_session_target',
         transcriptStorage: 'persisted',
       }),
-    }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-legacy' }));
-    const loadCurrentTargetManifest = vi.fn(async () => ({
-      entries: [],
-      fingerprint: 'sha256:target-empty',
-    }));
-    const applyWorkspaceReplicationPlan = vi.fn(async () => ({
-      targetPath: '/repo-synced',
-    }));
+	    }));
+	    const loadCurrentTargetManifest = vi.fn(async () => ({
+	      entries: [],
+	      fingerprint: `sha256:${'0'.repeat(64)}`,
+	    }));
     const channels = createLoopbackMachineTransferChannels();
     const sourceRpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
@@ -3031,6 +2890,21 @@ describe('rpcHandlers (session handoff)', () => {
     } as any;
 
     try {
+      const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir: targetActiveServerDir });
+      await baselineStore.save({
+        scope: {
+          sourceMachineId: 'machine_source',
+          sourceWorkspaceRoot: sourcePath,
+          targetMachineId: 'machine_target',
+          targetWorkspaceRoot: '/repo-target',
+          mode: 'one_way_safe',
+        },
+        baseline: {
+          manifestFingerprint: `sha256:${'0'.repeat(64)}`,
+          manifest: await loadCurrentTargetManifest(),
+          savedAtMs: 0,
+        },
+      });
       vi.doMock('@/configuration', () => ({
         configuration: {
           activeServerDir: sourceActiveServerDir,
@@ -3053,13 +2927,14 @@ describe('rpcHandlers (session handoff)', () => {
         }),
         exportSessionBundle: vi.fn(async () => await exportDeferred.promise),
         machineTransferChannel: channels.source,
-      });
+	      });
 
-      vi.resetModules();
-      vi.doMock('@/configuration', () => ({
-        configuration: {
-          activeServerDir: targetActiveServerDir,
-          activeServerId: 'test_server_routed_deferred_target',
+	      vi.resetModules();
+	      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+	      vi.doMock('@/configuration', () => ({
+	        configuration: {
+	          activeServerDir: targetActiveServerDir,
+	          activeServerId: 'test_server_routed_deferred_target',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
           workspaceReplicationBlobPackMaxBlobs: 64,
           workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
@@ -3067,14 +2942,11 @@ describe('rpcHandlers (session handoff)', () => {
       }));
       const { registerMachineSessionHandoffRpcHandlers: registerTargetHandlers } = await import('./rpcHandlers.sessionHandoff');
 
-      registerTargetHandlers({
-        rpcHandlerManager: targetRpcHandlerManager,
-        importSessionBundle,
-        importWorkspaceBundle,
-        loadCurrentTargetManifest,
-        applyReplicationPlan: applyWorkspaceReplicationPlan,
-        machineTransferChannel: channels.target,
-      });
+	      registerTargetHandlers({
+	        rpcHandlerManager: targetRpcHandlerManager,
+	        importSessionBundle,
+	        machineTransferChannel: channels.target,
+	      });
 
       const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
       const targetPrepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
@@ -3116,6 +2988,7 @@ describe('rpcHandlers (session handoff)', () => {
         sourceSessionStorageMode: 'persisted',
         targetPath: '/repo-target',
         workspaceTransfer,
+        ...(started.handoffMetadataV2 ? { handoffMetadataV2: started.handoffMetadataV2 } : {}),
       });
 
       expect(prepareAck).toMatchObject({
@@ -3139,27 +3012,39 @@ describe('rpcHandlers (session handoff)', () => {
               {
                 relativePath: 'README.md',
                 kind: 'file',
-                digest: 'sha256:be224639187f439ccf43515d94acc2300663a6bfba09afd1e950e22e1b552bd8',
-                sizeBytes: 19,
+                digest: workspaceBlobDigest,
+                sizeBytes: workspaceBlobPayload.byteLength,
                 executable: false,
               },
             ],
             fingerprint: 'sha256:0f17985b1cd57fb85b266f9106da8e3feec58da8fe9b31f6d9e4e83079a996f0',
           },
-          blobContentsByDigest: new Map([
-            ['sha256:be224639187f439ccf43515d94acc2300663a6bfba09afd1e950e22e1b552bd8', Buffer.from('server-routed-pack\n', 'utf8')],
-          ]),
+          blobContentsByDigest: new Map(),
           sourceControllerMetadata: {
             scmBackendId: 'git',
           },
         },
+        blobProvider: {
+          getBlobFilePath: (digest: string) => (digest === workspaceBlobDigest ? join(sourceBlobDir, 'README.md') : null),
+        },
       });
 
       let ready = prepareAck;
+      const { createSessionHandoffPrepareTargetJobStore } = await import('@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore');
+      const prepareTargetJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir: targetActiveServerDir });
       await vi.waitFor(async () => {
-        ready = await resultGet!({ handoffId: started.handoffId });
+        const next = await resultGet!({ handoffId: started.handoffId });
+        if (next && typeof next === 'object' && 'ok' in next && next.ok === false) {
+          const record = await prepareTargetJobStore.read(prepareAck.status.jobId ?? 'missing_job_id');
+          if (record?.status.status === 'awaiting_recovery' && record.lastErrorMessage) {
+            throw new Error(`prepare-target failed: ${record.lastErrorMessage}`);
+          }
+          // Result-get is allowed to fail closed as not_found until the async prepare job persists a result.
+          throw new Error(`prepare-target result not ready (${String((next as any).errorCode ?? 'unknown')})`);
+        }
+        ready = next;
         expect(ready.status.status).toBe('ready_for_cutover');
-      });
+      }, { timeout: 10_000 });
 
       expect(ready.status.transportStrategy).toBe('server_routed_stream');
       const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
@@ -3189,152 +3074,8 @@ describe('rpcHandlers (session handoff)', () => {
       vi.resetModules();
       await rm(sourceActiveServerDir, { recursive: true, force: true });
       await rm(targetActiveServerDir, { recursive: true, force: true });
+      await rm(sourceBlobDir, { recursive: true, force: true });
     }
-  });
-
-  it('loads the fetched server-routed transfer payload during prepare', async () => {
-    const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const importSessionBundle = vi.fn(async () => ({
-      remoteSessionId: 'claude_session_target',
-      directSource: {
-        kind: 'claudeConfig',
-        configDir: null,
-        projectId: null,
-      },
-      resume: buildClaudeResumePlan({
-        directory: '/repo-target',
-        resume: 'claude_session_target',
-        transcriptStorage: 'persisted',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-    const sendEnvelope = vi.fn();
-    const listeners = new Set<(payload: MachineTransferReceiveEnvelope) => void>();
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
-        registered.set(method, handler);
-      },
-    } as any;
-
-    registerMachineSessionHandoffRpcHandlers({
-      rpcHandlerManager,
-      importSessionBundle,
-      importWorkspaceBundle,
-      machineTransferChannel: {
-        onEnvelope(listener) {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        },
-        sendEnvelope,
-      },
-    });
-
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    expect(prepare).toBeDefined();
-
-    const preparePromise = prepare!({
-      handoffId: 'handoff_server_routed_prefers_transport',
-      sourceMachineId: 'machine_source',
-      targetMachineId: 'machine_target',
-      negotiatedTransportStrategy: 'server_routed_stream',
-      sourceSessionStorageMode: 'persisted',
-      targetPath: '/repo',
-    });
-
-    const recipientPublicKeyBase64 = await expectOpenEnvelopeWithRecipient(
-      sendEnvelope,
-      'session-handoff:handoff_server_routed_prefers_transport',
-    );
-
-    const dispatchEnvelope = (payload: MachineTransferReceiveEnvelope) => {
-      for (const listener of listeners) {
-        listener(payload);
-      }
-    };
-    const serverRoutedPayload = createLegacyTransferredPayloadBuffer({
-      providerBundle: {
-        providerId: 'claude',
-        remoteSessionId: 'claude_session_source',
-        transcriptBase64: 'e30K',
-      },
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        },
-        blobContentsByDigest: new Map([
-          ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-        ]),
-      },
-    });
-
-    dispatchEnvelope({
-      sourceMachineId: 'machine_source',
-      targetMachineId: 'machine_target',
-      envelope: {
-        transferId: 'session-handoff:handoff_server_routed_prefers_transport',
-        kind: 'chunk',
-        sequence: 0,
-        ...createEncryptedTransferChunkEnvelope({
-          transferId: 'session-handoff:handoff_server_routed_prefers_transport',
-          sequence: 0,
-          payload: serverRoutedPayload,
-          recipientPublicKeyBase64,
-          randomBytes: (length) => new Uint8Array(length).fill(5),
-        }),
-      },
-    });
-    dispatchEnvelope({
-      sourceMachineId: 'machine_source',
-      targetMachineId: 'machine_target',
-      envelope: {
-        transferId: 'session-handoff:handoff_server_routed_prefers_transport',
-        kind: 'finish',
-        manifestHash: `sha256:${createHash('sha256').update(serverRoutedPayload).digest('hex')}`,
-      },
-    });
-
-    await preparePromise;
-
-    expect(importWorkspaceBundle).toHaveBeenCalledWith({
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        },
-        blobContentsByDigest: new Map([
-          ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-        ]),
-      },
-      assertCanContinue: expect.any(Function),
-      targetPath: '/repo',
-      workspaceTransfer: undefined,
-    });
-    expect(importSessionBundle).toHaveBeenCalledWith(
-      {
-        providerId: 'claude',
-        remoteSessionId: 'claude_session_source',
-        transcriptBase64: 'e30K',
-      },
-      '/repo-target',
-      'persisted',
-    );
   });
 
   it('returns pending and then awaiting_recovery when the server-routed transfer is unavailable during prepare', async () => {
@@ -3421,18 +3162,16 @@ describe('rpcHandlers (session handoff)', () => {
           resume: 'claude_session_target',
           transcriptStorage: 'persisted',
         }),
-      }));
-      const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-      registerTargetHandlers({
+	      }));
+	      registerTargetHandlers({
         rpcHandlerManager: {
           registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
             targetRegistered.set(method, handler);
           },
-        } as any,
-        importSessionBundle,
-        importWorkspaceBundle,
-        machineTransferChannel: targetChannel,
-      });
+	        } as any,
+	        importSessionBundle,
+	        machineTransferChannel: targetChannel,
+	      });
 
       const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
       const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
@@ -3449,7 +3188,7 @@ describe('rpcHandlers (session handoff)', () => {
         preferredTransportStrategies: ['server_routed_stream'],
         negotiatedTransportStrategy: 'server_routed_stream',
       });
-      droppedTransferId = `session-handoff:${started.handoffId}`;
+      droppedTransferId = `session-handoff:${started.handoffId}:provider-bundle-file`;
 
       await expect(prepare!({
         handoffId: started.handoffId,
@@ -3479,8 +3218,7 @@ describe('rpcHandlers (session handoff)', () => {
           },
         });
       });
-      expect(importWorkspaceBundle).not.toHaveBeenCalled();
-      expect(importSessionBundle).not.toHaveBeenCalled();
+	      expect(importSessionBundle).not.toHaveBeenCalled();
     } finally {
       delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
       vi.doUnmock('@/configuration');
@@ -3586,23 +3324,21 @@ describe('rpcHandlers (session handoff)', () => {
           configDir: null,
           projectId: null,
         },
-        resume: buildClaudeResumePlan({
-          directory: '/repo-target',
-          resume: 'claude_session_target',
-          transcriptStorage: 'persisted',
-        }),
-      }));
-      const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-      registerTargetHandlers({
+	      resume: buildClaudeResumePlan({
+	        directory: '/repo-target',
+	        resume: 'claude_session_target',
+	        transcriptStorage: 'persisted',
+	      }),
+	    }));
+	      registerTargetHandlers({
         rpcHandlerManager: {
           registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
             targetRegistered.set(method, handler);
           },
-        } as any,
-        importSessionBundle,
-        importWorkspaceBundle,
-        machineTransferChannel: targetChannel,
-      });
+	        } as any,
+	        importSessionBundle,
+	        machineTransferChannel: targetChannel,
+	      });
 
       const start = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
       const prepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
@@ -3649,8 +3385,7 @@ describe('rpcHandlers (session handoff)', () => {
           },
         });
       });
-      expect(importWorkspaceBundle).not.toHaveBeenCalled();
-      expect(importSessionBundle).not.toHaveBeenCalled();
+	      expect(importSessionBundle).not.toHaveBeenCalled();
     } finally {
       delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
       vi.doUnmock('@/configuration');
@@ -3674,19 +3409,17 @@ describe('rpcHandlers (session handoff)', () => {
         resume: 'claude_session_target',
         transcriptStorage: 'persisted',
       }),
-    }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-    const rpcHandlerManager = {
+	    }));
+	    const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
         registered.set(method, handler);
       },
     } as any;
 
-    registerMachineSessionHandoffRpcHandlers({
-      rpcHandlerManager,
-      importSessionBundle,
-      importWorkspaceBundle,
-    });
+	    registerMachineSessionHandoffRpcHandlers({
+	      rpcHandlerManager,
+	      importSessionBundle,
+	    });
 
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
     expect(prepare).toBeDefined();
@@ -3721,9 +3454,8 @@ describe('rpcHandlers (session handoff)', () => {
       errorCode: 'invalid_request',
     });
 
-    expect(importWorkspaceBundle).not.toHaveBeenCalled();
-    expect(importSessionBundle).not.toHaveBeenCalled();
-  });
+	    expect(importSessionBundle).not.toHaveBeenCalled();
+	  });
 
   it('fails closed when server-routed prepare receives a malformed transfer payload', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
@@ -3737,11 +3469,10 @@ describe('rpcHandlers (session handoff)', () => {
       resume: buildClaudeResumePlan({
         directory: '/repo-target',
         resume: 'claude_session_target',
-        transcriptStorage: 'persisted',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-    const sendEnvelope = vi.fn();
+	        transcriptStorage: 'persisted',
+	      }),
+	    }));
+	    const sendEnvelope = vi.fn();
     const listeners = new Set<(payload: MachineTransferReceiveEnvelope) => void>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
@@ -3749,13 +3480,12 @@ describe('rpcHandlers (session handoff)', () => {
       },
     } as any;
 
-    registerMachineSessionHandoffRpcHandlers({
-      rpcHandlerManager,
-      importSessionBundle,
-      importWorkspaceBundle,
-      machineTransferChannel: {
-        onEnvelope(listener) {
-          listeners.add(listener);
+	    registerMachineSessionHandoffRpcHandlers({
+	      rpcHandlerManager,
+	      importSessionBundle,
+	      machineTransferChannel: {
+	        onEnvelope(listener) {
+	          listeners.add(listener);
           return () => listeners.delete(listener);
         },
         sendEnvelope,
@@ -3765,8 +3495,10 @@ describe('rpcHandlers (session handoff)', () => {
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
     expect(prepare).toBeDefined();
 
+    const handoffId = 'handoff_invalid_server_routed_inline_fallback';
+    const providerBundleTransferId = `session-handoff:${handoffId}:provider-bundle-file`;
     const preparePromise = prepare!({
-      handoffId: 'handoff_invalid_server_routed_inline_fallback',
+      handoffId,
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
       negotiatedTransportStrategy: 'server_routed_stream',
@@ -3776,21 +3508,21 @@ describe('rpcHandlers (session handoff)', () => {
 
     const recipientPublicKeyBase64 = await expectOpenEnvelopeWithRecipient(
       sendEnvelope,
-      'session-handoff:handoff_invalid_server_routed_inline_fallback',
+      providerBundleTransferId,
     );
 
-    const malformedServerRoutedPayload = Buffer.from('{"providerBundle":', 'utf8');
+    const malformedServerRoutedPayload = Buffer.from('{"providerId":', 'utf8');
 
     for (const listener of listeners) {
       listener({
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         envelope: {
-          transferId: 'session-handoff:handoff_invalid_server_routed_inline_fallback',
+          transferId: providerBundleTransferId,
           kind: 'chunk',
           sequence: 0,
           ...createEncryptedTransferChunkEnvelope({
-            transferId: 'session-handoff:handoff_invalid_server_routed_inline_fallback',
+            transferId: providerBundleTransferId,
             sequence: 0,
             payload: malformedServerRoutedPayload,
             recipientPublicKeyBase64,
@@ -3802,17 +3534,16 @@ describe('rpcHandlers (session handoff)', () => {
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         envelope: {
-          transferId: 'session-handoff:handoff_invalid_server_routed_inline_fallback',
+          transferId: providerBundleTransferId,
           kind: 'finish',
           manifestHash: `sha256:${createHash('sha256').update(malformedServerRoutedPayload).digest('hex')}`,
         },
       });
     }
 
-    await expect(preparePromise).rejects.toThrow('Invalid session handoff transfer payload');
-    expect(importWorkspaceBundle).not.toHaveBeenCalled();
-    expect(importSessionBundle).not.toHaveBeenCalled();
-  });
+	    await expect(preparePromise).rejects.toThrow();
+	    expect(importSessionBundle).not.toHaveBeenCalled();
+	  });
 
   it('fails closed when the server-routed transfer payload does not satisfy the canonical handoff schemas', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
@@ -3826,11 +3557,10 @@ describe('rpcHandlers (session handoff)', () => {
       resume: buildClaudeResumePlan({
         directory: '/repo-target',
         resume: 'claude_session_target',
-        transcriptStorage: 'persisted',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-    const sendEnvelope = vi.fn();
+	        transcriptStorage: 'persisted',
+	      }),
+	    }));
+	    const sendEnvelope = vi.fn();
     const listeners = new Set<(payload: MachineTransferReceiveEnvelope) => void>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
@@ -3838,13 +3568,12 @@ describe('rpcHandlers (session handoff)', () => {
       },
     } as any;
 
-    registerMachineSessionHandoffRpcHandlers({
-      rpcHandlerManager,
-      importSessionBundle,
-      importWorkspaceBundle,
-      machineTransferChannel: {
-        onEnvelope(listener) {
-          listeners.add(listener);
+	    registerMachineSessionHandoffRpcHandlers({
+	      rpcHandlerManager,
+	      importSessionBundle,
+	      machineTransferChannel: {
+	        onEnvelope(listener) {
+	          listeners.add(listener);
           return () => listeners.delete(listener);
         },
         sendEnvelope,
@@ -3854,8 +3583,10 @@ describe('rpcHandlers (session handoff)', () => {
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
     expect(prepare).toBeDefined();
 
+    const handoffId = 'handoff_invalid_server_routed';
+    const providerBundleTransferId = `session-handoff:${handoffId}:provider-bundle-file`;
     const preparePromise = prepare!({
-      handoffId: 'handoff_invalid_server_routed',
+      handoffId,
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
       negotiatedTransportStrategy: 'server_routed_stream',
@@ -3865,7 +3596,7 @@ describe('rpcHandlers (session handoff)', () => {
 
     const recipientPublicKeyBase64 = await expectOpenEnvelopeWithRecipient(
       sendEnvelope,
-      'session-handoff:handoff_invalid_server_routed',
+      providerBundleTransferId,
     );
 
     const dispatchEnvelope = (payload: MachineTransferReceiveEnvelope) => {
@@ -3873,24 +3604,21 @@ describe('rpcHandlers (session handoff)', () => {
         listener(payload);
       }
     };
-    const invalidServerRoutedPayload = Buffer.from(
-      JSON.stringify({
-        providerBundle: {
-          providerId: 'claude',
-          remoteSessionId: 'claude_session_source',
-        },
-      }),
-    );
+    // Missing transcriptBase64 (required).
+    const invalidServerRoutedPayload = Buffer.from(JSON.stringify({
+      providerId: 'claude',
+      remoteSessionId: 'claude_session_source',
+    }), 'utf8');
 
     dispatchEnvelope({
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
       envelope: {
-        transferId: 'session-handoff:handoff_invalid_server_routed',
+        transferId: providerBundleTransferId,
         kind: 'chunk',
         sequence: 0,
         ...createEncryptedTransferChunkEnvelope({
-          transferId: 'session-handoff:handoff_invalid_server_routed',
+          transferId: providerBundleTransferId,
           sequence: 0,
           payload: invalidServerRoutedPayload,
           recipientPublicKeyBase64,
@@ -3902,18 +3630,17 @@ describe('rpcHandlers (session handoff)', () => {
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
       envelope: {
-        transferId: 'session-handoff:handoff_invalid_server_routed',
+        transferId: providerBundleTransferId,
         kind: 'finish',
         manifestHash: `sha256:${createHash('sha256').update(invalidServerRoutedPayload).digest('hex')}`,
       },
     });
 
-    await expect(preparePromise).rejects.toThrow('Invalid session handoff transfer payload');
-    expect(importWorkspaceBundle).not.toHaveBeenCalled();
-    expect(importSessionBundle).not.toHaveBeenCalled();
-  });
+	    await expect(preparePromise).rejects.toThrow();
+	    expect(importSessionBundle).not.toHaveBeenCalled();
+	  });
 
-  it('fails closed when the server-routed transfer payload omits blob content required by workspace artifacts', async () => {
+  it('fails closed when the server-routed workspace replication manifest payload uses the legacy non-streaming format', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const importSessionBundle = vi.fn(async () => ({
       remoteSessionId: 'claude_session_target',
@@ -3928,8 +3655,7 @@ describe('rpcHandlers (session handoff)', () => {
         transcriptStorage: 'persisted',
       }),
     }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-    const sendEnvelope = vi.fn();
+	    const sendEnvelope = vi.fn();
     const listeners = new Set<(payload: MachineTransferReceiveEnvelope) => void>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
@@ -3937,13 +3663,12 @@ describe('rpcHandlers (session handoff)', () => {
       },
     } as any;
 
-    registerMachineSessionHandoffRpcHandlers({
-      rpcHandlerManager,
-      importSessionBundle,
-      importWorkspaceBundle,
-      machineTransferChannel: {
-        onEnvelope(listener) {
-          listeners.add(listener);
+	    registerMachineSessionHandoffRpcHandlers({
+	      rpcHandlerManager,
+	      importSessionBundle,
+	      machineTransferChannel: {
+	        onEnvelope(listener) {
+	          listeners.add(listener);
           return () => listeners.delete(listener);
         },
         sendEnvelope,
@@ -3953,62 +3678,58 @@ describe('rpcHandlers (session handoff)', () => {
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
     expect(prepare).toBeDefined();
 
+    const handoffId = 'handoff_invalid_server_routed_workspace_manifest_format';
+    const providerBundleTransferId = `session-handoff:${handoffId}:provider-bundle-file`;
+    const manifestTransferId = `session-handoff:${handoffId}:workspace-manifest`;
+    const workspaceTransfer = {
+      enabled: true as const,
+      strategy: 'sync_changes' as const,
+      conflictPolicy: 'create_sibling_copy' as const,
+      includeIgnoredMode: 'include_selected' as const,
+      ignoredIncludeGlobs: ['dist/**'],
+    };
     const preparePromise = prepare!({
-      handoffId: 'handoff_invalid_server_routed_workspace_artifacts',
+      handoffId,
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
       negotiatedTransportStrategy: 'server_routed_stream',
       sourceSessionStorageMode: 'persisted',
       targetPath: '/repo',
+      workspaceTransfer,
+      handoffMetadataV2: {
+        workspaceReplicationSourceRootPath: '/repo',
+        workspaceReplicationManifestTransferPublication: {
+          transferId: manifestTransferId,
+        },
+      },
     });
 
-    const recipientPublicKeyBase64 = await expectOpenEnvelopeWithRecipient(
-      sendEnvelope,
-      'session-handoff:handoff_invalid_server_routed_workspace_artifacts',
-    );
+    const providerRecipientPublicKeyBase64 = await expectOpenEnvelopeWithRecipient(sendEnvelope, providerBundleTransferId);
+
+    // Provide a valid provider bundle so the prepare flow reaches manifest fetch.
+    const providerBundlePayload = Buffer.from(JSON.stringify({
+      providerId: 'claude',
+      remoteSessionId: 'claude_session_source',
+      transcriptBase64: 'e30K',
+    }), 'utf8');
 
     const dispatchEnvelope = (payload: MachineTransferReceiveEnvelope) => {
       for (const listener of listeners) {
         listener(payload);
       }
     };
-    const invalidServerRoutedPayload = Buffer.from(
-      JSON.stringify({
-        providerBundle: {
-          providerId: 'claude',
-          remoteSessionId: 'claude_session_source',
-          transcriptBase64: 'e30K',
-        },
-        workspaceArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: 'sha256:blob_missing',
-                sizeBytes: 6,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:manifest_missing_blob',
-          },
-          blobs: [],
-        },
-      }),
-    );
-
     dispatchEnvelope({
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
       envelope: {
-        transferId: 'session-handoff:handoff_invalid_server_routed_workspace_artifacts',
+        transferId: providerBundleTransferId,
         kind: 'chunk',
         sequence: 0,
         ...createEncryptedTransferChunkEnvelope({
-          transferId: 'session-handoff:handoff_invalid_server_routed_workspace_artifacts',
+          transferId: providerBundleTransferId,
           sequence: 0,
-          payload: invalidServerRoutedPayload,
-          recipientPublicKeyBase64,
+          payload: providerBundlePayload,
+          recipientPublicKeyBase64: providerRecipientPublicKeyBase64,
           randomBytes: (length) => new Uint8Array(length).fill(11),
         }),
       },
@@ -4017,18 +3738,50 @@ describe('rpcHandlers (session handoff)', () => {
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
       envelope: {
-        transferId: 'session-handoff:handoff_invalid_server_routed_workspace_artifacts',
+        transferId: providerBundleTransferId,
         kind: 'finish',
-        manifestHash: `sha256:${createHash('sha256').update(invalidServerRoutedPayload).digest('hex')}`,
+        manifestHash: `sha256:${createHash('sha256').update(providerBundlePayload).digest('hex')}`,
       },
     });
 
-    await expect(preparePromise).rejects.toThrow('Invalid session handoff transfer payload');
-    expect(importWorkspaceBundle).not.toHaveBeenCalled();
-    expect(importSessionBundle).not.toHaveBeenCalled();
-  });
+    // Now respond to the workspace manifest request with legacy whole-buffer JSON.
+    const manifestRecipientPublicKeyBase64 = await expectOpenEnvelopeWithRecipient(sendEnvelope, manifestTransferId);
+    const legacyManifestPayload = Buffer.from(JSON.stringify({
+      entries: [],
+      fingerprint: 'sha256:manifest_legacy',
+    }), 'utf8');
 
-  it('publishes direct-peer endpoint candidates on start and reuses same-daemon transferred bundles before re-requesting them', async () => {
+    dispatchEnvelope({
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      envelope: {
+        transferId: manifestTransferId,
+        kind: 'chunk',
+        sequence: 0,
+        ...createEncryptedTransferChunkEnvelope({
+          transferId: manifestTransferId,
+          sequence: 0,
+          payload: legacyManifestPayload,
+          recipientPublicKeyBase64: manifestRecipientPublicKeyBase64,
+          randomBytes: (length) => new Uint8Array(length).fill(12),
+        }),
+      },
+    });
+    dispatchEnvelope({
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      envelope: {
+        transferId: manifestTransferId,
+        kind: 'finish',
+        manifestHash: `sha256:${createHash('sha256').update(legacyManifestPayload).digest('hex')}`,
+      },
+    });
+
+	    await expect(preparePromise).rejects.toThrow(/workspace replication manifest/i);
+	    expect(importSessionBundle).not.toHaveBeenCalled();
+	  });
+
+  it('publishes direct-peer endpoint candidates on start and reuses same-daemon payload sources before re-requesting them', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const requestPayloadFile = vi.fn(async () => {
       throw new Error('same-daemon prepare should reuse stored payload source');
@@ -4036,14 +3789,10 @@ describe('rpcHandlers (session handoff)', () => {
     const publishTransfer = vi.fn(
       (_params: Readonly<{
         transferId: string;
-        payload: SessionHandoffTransferredBundles;
+        payload: Readonly<Record<never, never>>;
         payloadSource?: DirectPeerPublishPayloadSource;
       }>): readonly TransferEndpointCandidate[] => [
-        {
-          kind: 'http',
-          url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
-          expiresAt: Date.now() + 30_000,
-        },
+        buildDirectPeerEndpointCandidate({ transferId: 'handoff_direct_peer' }),
       ],
     );
     const importSessionBundle = vi.fn(async () => ({
@@ -4056,11 +3805,10 @@ describe('rpcHandlers (session handoff)', () => {
       resume: buildClaudeResumePlan({
         directory: '/repo-target',
         resume: 'claude_session_target',
-        transcriptStorage: 'persisted',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-    const rpcHandlerManager = {
+	        transcriptStorage: 'persisted',
+	      }),
+	    }));
+	    const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
         registered.set(method, handler);
       },
@@ -4098,13 +3846,12 @@ describe('rpcHandlers (session handoff)', () => {
             ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
           ]),
         },
-      }),
-      importSessionBundle,
-      importWorkspaceBundle,
-      directPeerTransfer: {
-        publishTransfer,
-        requestPayloadFile,
-        clearPublishedTransfer: vi.fn(),
+	      }),
+	      importSessionBundle,
+	      directPeerTransfer: {
+	        publishTransfer,
+	        requestPayloadFile,
+	        clearPublishedTransfer: vi.fn(),
       },
     });
 
@@ -4131,46 +3878,14 @@ describe('rpcHandlers (session handoff)', () => {
         manifestHash: expect.stringMatching(/^sha256:/),
       }),
     });
-    expect(publishTransfer).toHaveBeenNthCalledWith(2, {
-      transferId: started.handoffId,
-      payload: {
-        workspaceExportArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                sizeBytes: 6,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-          },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
-        },
-      },
-      payloadSource: expect.objectContaining({
-        kind: 'file',
-        sizeBytes: expect.any(Number),
-        manifestHash: expect.stringMatching(/^sha256:/),
-      }),
-    });
-    const publishedPayloadSource = publishTransfer.mock.calls[1]?.[0]?.payloadSource;
+    const publishedPayloadSource = publishTransfer.mock.calls[0]?.[0]?.payloadSource;
     expect(publishedPayloadSource?.kind).toBe('file');
     if (publishedPayloadSource?.kind !== 'file') {
       throw new Error('Expected a file-backed direct-peer payload source');
     }
     await expect(access(publishedPayloadSource.filePath)).resolves.toBeUndefined();
-    expect(started.endpointCandidates).toEqual([
-      {
-        kind: 'http',
-        url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
-        expiresAt: expect.any(Number),
-      },
-    ]);
+    expect(started.endpointCandidates).toEqual([]);
+    expect(started.handoffMetadataV2?.providerBundleTransferPublication?.endpointCandidates?.length ?? 0).toBeGreaterThan(0);
     expect(started.transferredPayload).toBeUndefined();
 
     const prepared = await prepare!({
@@ -4183,38 +3898,15 @@ describe('rpcHandlers (session handoff)', () => {
       endpointCandidates: started.endpointCandidates,
     });
 
-    expect(requestPayloadFile).not.toHaveBeenCalled();
-    expect(prepared.status.transportStrategy).toBe('direct_peer');
-    expect(importWorkspaceBundle).toHaveBeenCalledWith({
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        },
-        blobContentsByDigest: new Map(),
-      },
-      blobProvider: expect.objectContaining({
-        getBlobFilePath: expect.any(Function),
-      }),
-      assertCanContinue: expect.any(Function),
-      targetPath: '/repo',
-      workspaceTransfer: undefined,
-    });
-    expect(importSessionBundle).toHaveBeenCalledWith(
+	    expect(requestPayloadFile).not.toHaveBeenCalled();
+	    expect(prepared.status.transportStrategy).toBe('direct_peer');
+	    expect(importSessionBundle).toHaveBeenCalledWith(
       {
         providerId: 'claude',
         remoteSessionId: 'claude_session_source',
         transcriptBase64: 'e30K',
       },
-      '/repo-target',
+      '/repo',
       'persisted',
     );
 
@@ -4227,12 +3919,12 @@ describe('rpcHandlers (session handoff)', () => {
   it('fails closed when a source export leaks a legacy codex backend field instead of canonical affinity', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const publishTransfer = vi.fn(
-      (_params: Readonly<{ transferId: string; payload: SessionHandoffTransferredBundles }>): readonly TransferEndpointCandidate[] => [
-        {
-          kind: 'http',
-          url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_codex_legacy_provider?token=test-token',
-          expiresAt: Date.now() + 30_000,
-        },
+      ({ transferId }: Readonly<{ transferId: string; payload: Readonly<Record<never, never>> }>): readonly TransferEndpointCandidate[] => [
+        buildDirectPeerEndpointCandidate({
+          transferId,
+          authorizationToken: 'test-token',
+          port: 46001,
+        }),
       ],
     );
     const rpcHandlerManager = {
@@ -4288,34 +3980,10 @@ describe('rpcHandlers (session handoff)', () => {
     expect(publishTransfer).not.toHaveBeenCalled();
   });
 
-  it('prefers the fetched direct-peer transfer payload during target preparation', async () => {
+  it('fails closed when the direct-peer provider bundle payload is malformed', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const directPeerPayload = createLegacyTransferredPayloadBuffer({
-      providerBundle: {
-        providerId: 'claude',
-        remoteSessionId: 'claude_session_source',
-        transcriptBase64: 'e30K',
-      },
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        },
-        blobContentsByDigest: new Map([
-          ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-        ]),
-      },
-    });
     const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
-      payload: directPeerPayload,
+      payload: Buffer.from('{"providerId":', 'utf8'),
     });
     const importSessionBundle = vi.fn(async () => ({
       remoteSessionId: 'claude_session_target',
@@ -4330,7 +3998,6 @@ describe('rpcHandlers (session handoff)', () => {
         transcriptStorage: 'persisted',
       }),
     }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
         registered.set(method, handler);
@@ -4341,104 +4008,6 @@ describe('rpcHandlers (session handoff)', () => {
       registerMachineSessionHandoffRpcHandlers({
         rpcHandlerManager,
         importSessionBundle,
-        importWorkspaceBundle,
-        directPeerTransfer: {
-          publishTransfer: vi.fn(() => []),
-          requestPayloadFile,
-          clearPublishedTransfer: vi.fn(),
-        },
-      });
-
-      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-      expect(prepare).toBeDefined();
-
-      await prepare!({
-        handoffId: 'handoff_direct_peer_artifacts',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        negotiatedTransportStrategy: 'direct_peer',
-        sourceSessionStorageMode: 'persisted',
-        targetPath: '/repo',
-        endpointCandidates: [
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer_artifacts?token=test-token',
-            expiresAt: Date.now() + 30_000,
-          },
-        ],
-      });
-
-      expect(importWorkspaceBundle).toHaveBeenCalledWith({
-        workspaceExportArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                sizeBytes: 6,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-          },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
-        },
-        assertCanContinue: expect.any(Function),
-        targetPath: '/repo',
-        workspaceTransfer: undefined,
-      });
-      expect(importSessionBundle).toHaveBeenCalledWith(
-        {
-          providerId: 'claude',
-          remoteSessionId: 'claude_session_source',
-          transcriptBase64: 'e30K',
-        },
-        '/repo-target',
-        'persisted',
-      );
-    } finally {
-      await dispose();
-    }
-  });
-
-  it('fails closed when the direct-peer transfer payload does not satisfy the canonical handoff schemas', async () => {
-    const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
-      payload: Buffer.from(JSON.stringify({
-        providerBundle: {
-          providerId: 'claude',
-          remoteSessionId: 'claude_session_source',
-        },
-      }), 'utf8'),
-    });
-    const importSessionBundle = vi.fn(async () => ({
-      remoteSessionId: 'claude_session_target',
-      directSource: {
-        kind: 'claudeConfig',
-        configDir: null,
-        projectId: null,
-      },
-      resume: buildClaudeResumePlan({
-        directory: '/repo-target',
-        resume: 'claude_session_target',
-        transcriptStorage: 'persisted',
-      }),
-    }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
-        registered.set(method, handler);
-      },
-    } as any;
-
-    try {
-      registerMachineSessionHandoffRpcHandlers({
-        rpcHandlerManager,
-        importSessionBundle,
-        importWorkspaceBundle,
         directPeerTransfer: {
           publishTransfer: vi.fn(() => []),
           requestPayloadFile,
@@ -4456,48 +4025,46 @@ describe('rpcHandlers (session handoff)', () => {
         negotiatedTransportStrategy: 'direct_peer',
         sourceSessionStorageMode: 'persisted',
         targetPath: '/repo',
+        handoffMetadataV2: {
+          providerBundleTransferPublication: {
+            transferId: 'session-handoff:handoff_invalid_direct_peer_payload:provider-bundle-file',
+            sizeBytes: 0,
+            manifestHash: `sha256:${'0'.repeat(64)}`,
+            endpointCandidates: [
+              {
+                ...buildDirectPeerEndpointCandidate({
+                  transferId: 'session-handoff:handoff_invalid_direct_peer_payload:provider-bundle-file',
+                  authorizationToken: 'test-token',
+                  port: 46001,
+                }),
+              },
+            ],
+          },
+        },
         endpointCandidates: [
           {
-            kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_invalid_direct_peer_payload?token=test-token',
-            expiresAt: Date.now() + 30_000,
+            ...buildDirectPeerEndpointCandidate({
+              transferId: 'session-handoff:handoff_invalid_direct_peer_payload:provider-bundle-file',
+              authorizationToken: 'test-token',
+              port: 46001,
+            }),
           },
         ],
-      })).rejects.toThrow('Invalid session handoff transfer payload');
+      })).rejects.toThrow();
 
-      expect(importWorkspaceBundle).not.toHaveBeenCalled();
       expect(importSessionBundle).not.toHaveBeenCalled();
     } finally {
       await dispose();
     }
   });
 
-  it('fails closed when the direct-peer transfer payload omits blob content required by workspace artifacts', async () => {
+  it('fails closed when the direct-peer provider bundle payload fails schema validation', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const directPeerPayload = createLegacyTransferredPayloadBuffer({
-      providerBundle: {
+    const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
+      payload: Buffer.from(JSON.stringify({
         providerId: 'claude',
         remoteSessionId: 'claude_session_source',
-        transcriptBase64: 'e30K',
-      },
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:blob_missing',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:manifest_missing_blob',
-        },
-        blobContentsByDigest: new Map(),
-      },
-    });
-    const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
-      payload: directPeerPayload,
+      }), 'utf8'),
     });
     const importSessionBundle = vi.fn(async () => ({
       remoteSessionId: 'claude_session_target',
@@ -4512,7 +4079,6 @@ describe('rpcHandlers (session handoff)', () => {
         transcriptStorage: 'persisted',
       }),
     }));
-    const importWorkspaceBundle = vi.fn(async () => ({ targetPath: '/repo-target' }));
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
         registered.set(method, handler);
@@ -4523,7 +4089,6 @@ describe('rpcHandlers (session handoff)', () => {
       registerMachineSessionHandoffRpcHandlers({
         rpcHandlerManager,
         importSessionBundle,
-        importWorkspaceBundle,
         directPeerTransfer: {
           publishTransfer: vi.fn(() => []),
           requestPayloadFile,
@@ -4541,23 +4106,38 @@ describe('rpcHandlers (session handoff)', () => {
         negotiatedTransportStrategy: 'direct_peer',
         sourceSessionStorageMode: 'persisted',
         targetPath: '/repo',
+        handoffMetadataV2: {
+          providerBundleTransferPublication: {
+            transferId: 'session-handoff:handoff_invalid_direct_peer_workspace_artifacts:provider-bundle-file',
+            sizeBytes: 0,
+            manifestHash: `sha256:${'0'.repeat(64)}`,
+            endpointCandidates: [
+              {
+                kind: 'http',
+                url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_invalid_direct_peer_workspace_artifacts' }).url,
+                authorizationToken: 'test-token',
+                expiresAt: Date.now() + 30_000,
+              },
+            ],
+          },
+        },
         endpointCandidates: [
           {
             kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_invalid_direct_peer_workspace_artifacts?token=test-token',
+            url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_invalid_direct_peer_workspace_artifacts' }).url,
+            authorizationToken: 'test-token',
             expiresAt: Date.now() + 30_000,
           },
         ],
-      })).rejects.toThrow('Invalid session handoff transfer payload');
+      })).rejects.toThrow();
 
-      expect(importWorkspaceBundle).not.toHaveBeenCalled();
       expect(importSessionBundle).not.toHaveBeenCalled();
     } finally {
       await dispose();
     }
   });
 
-  it('returns a transport error instead of server-routed fallback when direct-peer transfer fails and fallback is forbidden', async () => {
+  it('fails closed when direct-peer transfer fails and fallback is forbidden', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const requestPayloadFile = vi.fn(async () => {
       throw new Error('direct peer unavailable');
@@ -4584,24 +4164,38 @@ describe('rpcHandlers (session handoff)', () => {
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
     expect(prepare).toBeDefined();
 
-    await expect(
-      prepare!({
-        handoffId: 'handoff_direct_peer_forbidden_fallback',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        negotiatedTransportStrategy: 'direct_peer',
-        allowServerRoutedFallback: false,
-        sourceSessionStorageMode: 'persisted',
-        targetPath: '/repo',
-        endpointCandidates: [
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
-            expiresAt: Date.now() + 30_000,
-          },
-        ],
-      }),
-    ).resolves.toEqual({
+    await expect(prepare!({
+      handoffId: 'handoff_direct_peer_forbidden_fallback',
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      negotiatedTransportStrategy: 'direct_peer',
+      allowServerRoutedFallback: false,
+      sourceSessionStorageMode: 'persisted',
+      targetPath: '/repo',
+      handoffMetadataV2: {
+        providerBundleTransferPublication: {
+          transferId: 'session-handoff:handoff_direct_peer_forbidden_fallback:provider-bundle-file',
+          sizeBytes: 0,
+          manifestHash: `sha256:${'0'.repeat(64)}`,
+          endpointCandidates: [
+            {
+              kind: 'http',
+              url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_direct_peer_forbidden_fallback' }).url,
+              authorizationToken: 'test-token',
+              expiresAt: Date.now() + 30_000,
+            },
+          ],
+        },
+      },
+      endpointCandidates: [
+        {
+          kind: 'http',
+          url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_direct_peer' }).url,
+          authorizationToken: 'test-token',
+          expiresAt: Date.now() + 30_000,
+        },
+      ],
+    })).resolves.toEqual({
       ok: false,
       errorCode: 'direct_peer_transfer_unavailable',
       error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',

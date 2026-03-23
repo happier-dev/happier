@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -87,8 +87,89 @@ function createLoopbackChannels(options?: Readonly<{
 describe('server routed machine transfer', () => {
   afterEach(() => {
     delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
+    delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES;
     delete process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES;
     delete process.env.HAPPIER_FILES_READ_MAX_BYTES;
+  });
+
+  it('keeps the request surface file-backed (no whole-buffer requestServerRoutedTransferPayload export)', async () => {
+    const mod = await import('./serverRoutedTransport');
+    expect('requestServerRoutedTransferPayload' in mod).toBe(false);
+  });
+
+  it('does not use Buffer.concat inside serverRoutedTransport.ts (large payloads must not assemble whole buffers)', async () => {
+    const sourcePath = new URL('./serverRoutedTransport.ts', import.meta.url);
+    const source = await readFile(sourcePath, 'utf8');
+    expect(source).not.toContain('Buffer.concat');
+  });
+
+  it('hard-clamps the server routed chunk-bytes env override to a bounded ceiling', async () => {
+    // Intentionally larger than the hard max. This must be clamped to avoid huge per-chunk allocations.
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES = '10000000';
+    process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES = '50000000';
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-chunk-bytes-'));
+    const sourcePath = join(tempDir, 'payload.bin');
+    // Slightly over 1 MiB so the clamped chunk size yields >1 chunk.
+    await writeFile(sourcePath, Buffer.alloc(1_048_577, 9));
+
+    const { source, target, sentEnvelopes } = createLoopbackChannels();
+    const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
+    const { createFileTransferPayloadSource } = await import('./transferPayloadSource');
+    const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
+
+    const unregister = registerServerRoutedTransferResponder({
+      machineTransferChannel: source,
+      loadTransferPayloadSource: (transferId) =>
+        transferId === 'transfer_chunk_bytes_clamped'
+          ? createFileTransferPayloadSource({ filePath: sourcePath })
+          : null,
+    });
+
+    async function waitForChunkCount(expectedCount: number) {
+      const deadlineMs = Date.now() + 250;
+      while (Date.now() < deadlineMs) {
+        if (sentEnvelopes.filter(isChunkTransferEnvelope).length >= expectedCount) return;
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 5);
+        });
+      }
+    }
+
+    try {
+      const recipientSecretKeySeed = new Uint8Array(32).fill(7);
+      const recipientPublicKeyBase64 = Buffer.from(deriveBoxPublicKeyFromSeed(recipientSecretKeySeed)).toString('base64');
+
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_chunk_bytes_clamped',
+          kind: 'open',
+          manifestHash: 'sha256:test',
+          recipientPublicKeyBase64,
+        },
+      });
+
+      await waitForChunkCount(1);
+
+      expect(sentEnvelopes.filter(isChunkTransferEnvelope)).toHaveLength(1);
+
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_chunk_bytes_clamped',
+          kind: 'ack',
+          nextSequence: 1,
+        },
+      });
+
+      await waitForChunkCount(2);
+
+      expect(sentEnvelopes.filter(isChunkTransferEnvelope)).toHaveLength(2);
+    } finally {
+      unregister();
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('hard-clamps the in-memory transfer max-bytes env override to a bounded ceiling', async () => {
@@ -100,6 +181,61 @@ describe('server routed machine transfer', () => {
     })).toBe(IN_MEMORY_TRANSFER_HARD_MAX_BYTES);
   });
 
+  it('fails closed before streaming when an oversized in-memory buffer payload source is served via server-routed responder', async () => {
+    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+
+    const { source, target, sentEnvelopes } = createLoopbackChannels();
+    const payload = Buffer.from('handoff-payload-buffer-'.repeat(16), 'utf8');
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-buffer-oversized-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const {
+      registerServerRoutedTransferResponder,
+      requestServerRoutedTransferToFile,
+    } = await import('./serverRoutedTransport');
+    const { createBufferTransferPayloadSource } = await import('./transferPayloadSource');
+
+    const unregister = registerServerRoutedTransferResponder({
+      machineTransferChannel: source,
+      loadTransferPayloadSource: (transferId) =>
+        transferId === 'transfer_buffer_oversized'
+          ? createBufferTransferPayloadSource(payload)
+          : null,
+      chunkBytes: 8,
+    });
+
+    try {
+      await expect(requestServerRoutedTransferToFile({
+        transferId: 'transfer_buffer_oversized',
+        sourceMachineId: 'machine_source',
+        machineTransferChannel: target,
+        destinationPath,
+      })).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
+
+      // Large payloads must be file-backed; the responder should abort before sending any chunk bytes.
+      expect(
+        sentEnvelopes.some(
+          (entry) =>
+            entry.targetMachineId === 'machine_target'
+            && entry.envelope.kind === 'chunk'
+            && entry.envelope.transferId === 'transfer_buffer_oversized',
+        ),
+      ).toBe(false);
+      expect(
+        sentEnvelopes.some(
+          (entry) =>
+            entry.targetMachineId === 'machine_target'
+            && entry.envelope.kind === 'abort'
+            && entry.envelope.transferId === 'transfer_buffer_oversized'
+            && entry.envelope.reason.includes('Transfer exceeds the in-memory transfer size limit'),
+        ),
+      ).toBe(true);
+    } finally {
+      unregister();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('streams a payload across the machine channel and uses ack envelopes to advance chunk delivery', async () => {
     const { source, target, sentEnvelopes } = createLoopbackChannels();
     const payload = Buffer.from('handoff-payload-'.repeat(64), 'utf8');
@@ -109,7 +245,7 @@ describe('server routed machine transfer', () => {
 
     const {
       registerServerRoutedTransferResponder,
-      requestServerRoutedTransferPayload,
+      requestServerRoutedTransferToFile,
     } = await import('./serverRoutedTransport');
     const { createFileTransferPayloadSource } = await import('./transferPayloadSource');
 
@@ -123,13 +259,15 @@ describe('server routed machine transfer', () => {
     });
 
     try {
-      const received = await requestServerRoutedTransferPayload({
+      const destinationPath = join(tempDir, 'payload-destination.bin');
+      await requestServerRoutedTransferToFile({
         transferId: 'transfer_1',
         sourceMachineId: 'machine_source',
         machineTransferChannel: target,
+        destinationPath,
       });
 
-      expect(received.equals(payload)).toBe(true);
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
       expect(
         sentEnvelopes.some(
           (entry) =>
@@ -166,6 +304,9 @@ describe('server routed machine transfer', () => {
   });
 
   it('streams a payload directly to a destination file with verified manifest metadata', async () => {
+    // File-backed transfers must not be constrained by the small-only in-memory transfer cap.
+    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+
     const { source, target } = createLoopbackChannels();
     const payload = Buffer.from('handoff-payload-file-'.repeat(64), 'utf8');
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-file-'));
@@ -209,49 +350,100 @@ describe('server routed machine transfer', () => {
     }
   });
 
-  it('streams typed payloads through a shared codec-backed server-routed carrier', async () => {
+  it('streams file-backed transfers when the configured chunk-bytes value is smaller than the encrypted data-key envelope', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES = '8';
+    // Keep the in-memory max-bytes cap tiny to ensure we do not rely on whole-buffer paths.
+    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+
     const { source, target } = createLoopbackChannels();
-    const payload = {
-      id: 'transfer_typed',
-      values: ['alpha', 'beta'],
-    };
+    const payload = Buffer.from('handoff-payload-tiny-chunks-'.repeat(4), 'utf8');
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-tiny-chunks-'));
+    const sourcePath = join(tempDir, 'payload-source.bin');
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+    await writeFile(sourcePath, payload);
 
     const {
-      registerTypedServerRoutedTransferResponder,
-      requestTypedServerRoutedTransferPayload,
+      registerServerRoutedTransferResponder,
+      requestServerRoutedTransferToFile,
     } = await import('./serverRoutedTransport');
+    const { createFileTransferPayloadSource } = await import('./transferPayloadSource');
+    const { createTransferManifestHash } = await import('./transferChunkEncryption');
 
-    const unregister = registerTypedServerRoutedTransferResponder({
+    const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
-      loadTransferPayload: (transferId) => (transferId === 'transfer_typed' ? payload : null),
-      codec: {
-        encode: (value) => Buffer.from(JSON.stringify(value), 'utf8'),
-        decode: ({ payload: encoded }) => JSON.parse(encoded.toString('utf8')) as typeof payload,
-      },
-      chunkBytes: 32,
+      loadTransferPayloadSource: (transferId) =>
+        transferId === 'transfer_to_file_tiny_chunks'
+          ? createFileTransferPayloadSource({ filePath: sourcePath })
+          : null,
+      chunkBytes: 8,
     });
 
     try {
-      const received = await requestTypedServerRoutedTransferPayload({
-        transferId: 'transfer_typed',
+      const received = await requestServerRoutedTransferToFile({
+        transferId: 'transfer_to_file_tiny_chunks',
         sourceMachineId: 'machine_source',
         machineTransferChannel: target,
-        codec: {
-          encode: (value) => Buffer.from(JSON.stringify(value), 'utf8'),
-          decode: ({ payload: encoded }) => JSON.parse(encoded.toString('utf8')) as typeof payload,
-        },
+        destinationPath,
       });
 
-      expect(received).toEqual(payload);
+      expect(received).toEqual({
+        destinationPath,
+        manifestHash: createTransferManifestHash(payload),
+        sizeBytes: payload.length,
+      });
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
       unregister();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed before decrypting when a file-backed server-routed transfer chunk envelope exceeds the configured per-chunk envelope bound', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES = '8';
+
+    const { source, target } = createLoopbackChannels();
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-oversized-chunk-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
+
+    const unregister = source.onEnvelope((payload) => {
+      if (payload.envelope.kind !== 'open') {
+        return;
+      }
+      source.sendEnvelope({
+        targetMachineId: payload.sourceMachineId,
+        envelope: {
+          transferId: payload.envelope.transferId,
+          kind: 'chunk',
+          sequence: 0,
+          // Deliberately oversized (valid base64 characters, but not a valid encrypted payload).
+          payloadBase64: 'A'.repeat(80),
+          encryptedDataKeyEnvelopeBase64: 'A'.repeat(80),
+        },
+      });
+    });
+
+    try {
+      await expect(requestServerRoutedTransferToFile({
+        transferId: 'transfer_oversized_chunk',
+        sourceMachineId: 'machine_source',
+        machineTransferChannel: target,
+        destinationPath,
+      })).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
+    } finally {
+      unregister();
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 
   it('aborts when the source machine does not have the requested transfer payload', async () => {
     const { source, target } = createLoopbackChannels();
 
-    const { registerServerRoutedTransferResponder, requestServerRoutedTransferPayload } = await import('./serverRoutedTransport');
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-missing-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { registerServerRoutedTransferResponder, requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
@@ -261,31 +453,62 @@ describe('server routed machine transfer', () => {
 
     try {
       await expect(
-        requestServerRoutedTransferPayload({
+        requestServerRoutedTransferToFile({
           transferId: 'missing_transfer',
           sourceMachineId: 'machine_source',
           machineTransferChannel: target,
+          destinationPath,
         }),
       ).rejects.toThrow('missing_transfer');
     } finally {
       unregister();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
   it('uses the configured transfer timeout while waiting for a source payload', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '5';
     const { target } = createLoopbackChannels();
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-timeout-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
 
-    const { requestServerRoutedTransferPayload } = await import('./serverRoutedTransport');
+    const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
 
     await expect(
-      requestServerRoutedTransferPayload({
+      requestServerRoutedTransferToFile({
         transferId: 'slow_transfer',
         sourceMachineId: 'machine_source',
         machineTransferChannel: target,
+        destinationPath,
       }),
     ).rejects.toThrow('Timed out waiting for machine transfer slow_transfer');
 
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  });
+
+  it('closes and cleans up file-backed sinks when a server-routed transfer times out', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '5';
+    const { target } = createLoopbackChannels();
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-timeout-sink-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
+
+    try {
+      await expect(
+        requestServerRoutedTransferToFile({
+          transferId: 'slow_transfer_to_file',
+          sourceMachineId: 'machine_source',
+          machineTransferChannel: target,
+          destinationPath,
+        }),
+      ).rejects.toThrow('Timed out waiting for machine transfer slow_transfer_to_file');
+
+      const files = await readdir(tempDir);
+      expect(files.filter((entry) => entry.includes('.part'))).toEqual([]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   });
 
   it('treats the configured timeout as inactivity rather than absolute wall-clock duration while chunks keep flowing', async () => {
@@ -295,7 +518,10 @@ describe('server routed machine transfer', () => {
     });
     const payload = Buffer.from('handoff-payload-'.repeat(32), 'utf8');
 
-    const { registerServerRoutedTransferResponder, requestServerRoutedTransferPayload } = await import('./serverRoutedTransport');
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-slow-active-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { registerServerRoutedTransferResponder, requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
@@ -308,15 +534,16 @@ describe('server routed machine transfer', () => {
     });
 
     try {
-      await expect(
-        requestServerRoutedTransferPayload({
-          transferId: 'slow_but_active_transfer',
-          sourceMachineId: 'machine_source',
-          machineTransferChannel: target,
-        }),
-      ).resolves.toEqual(payload);
+      await requestServerRoutedTransferToFile({
+        transferId: 'slow_but_active_transfer',
+        sourceMachineId: 'machine_source',
+        machineTransferChannel: target,
+        destinationPath,
+      });
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
       unregister();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -325,7 +552,10 @@ describe('server routed machine transfer', () => {
     const { source, target } = createLoopbackChannels();
     const payload = Buffer.from('handoff-payload', 'utf8');
 
-    const { registerServerRoutedTransferResponder, requestServerRoutedTransferPayload } = await import('./serverRoutedTransport');
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-oversized-policy-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { registerServerRoutedTransferResponder, requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
@@ -339,14 +569,16 @@ describe('server routed machine transfer', () => {
 
     try {
       await expect(
-        requestServerRoutedTransferPayload({
+        requestServerRoutedTransferToFile({
           transferId: 'transfer_oversized',
           sourceMachineId: 'machine_source',
           machineTransferChannel: target,
+          destinationPath,
         }),
       ).rejects.toThrow('Transfer exceeds the server-routed transfer size limit');
     } finally {
       unregister();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
@@ -355,7 +587,10 @@ describe('server routed machine transfer', () => {
     const { source, target } = createLoopbackChannels();
     const payload = Buffer.from('handoff-payload', 'utf8'); // > 8 bytes
 
-    const { registerServerRoutedTransferResponder, requestServerRoutedTransferPayload } = await import('./serverRoutedTransport');
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-oversized-memory-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { registerServerRoutedTransferResponder, requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
@@ -369,22 +604,122 @@ describe('server routed machine transfer', () => {
 
     try {
       await expect(
-        requestServerRoutedTransferPayload({
+        requestServerRoutedTransferToFile({
           transferId: 'transfer_oversized_memory',
           sourceMachineId: 'machine_source',
           machineTransferChannel: target,
+          destinationPath,
         }),
       ).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
     } finally {
       unregister();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
-  it('fails closed before decrypting when a source sends an oversized chunk envelope for an in-memory transfer request', async () => {
-    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+  it('fails closed and cleans up file-backed sinks before finalizing when a file-backed request exceeds the configured max-bytes policy', async () => {
+    process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES = '8';
+    const { source, target } = createLoopbackChannels();
+    const fullPayload = Buffer.from('payload-too-large', 'utf8');
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-to-file-oversized-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    let recipientPublicKeyBase64FromOpen: string | null = null;
+
+    const unregister = source.onEnvelope((payload) => {
+      void (async () => {
+        if (payload.envelope.kind === 'open') {
+          const recipientPublicKeyBase64 = payload.envelope.recipientPublicKeyBase64;
+          if (!recipientPublicKeyBase64) {
+            throw new Error('Expected recipient key');
+          }
+          recipientPublicKeyBase64FromOpen = recipientPublicKeyBase64;
+          const firstChunk = fullPayload.subarray(0, 4);
+          const chunk0 = createEncryptedTransferChunkEnvelope({
+            transferId: payload.envelope.transferId,
+            sequence: 0,
+            payload: firstChunk,
+            recipientPublicKeyBase64,
+          });
+          source.sendEnvelope({
+            targetMachineId: payload.sourceMachineId,
+            envelope: {
+              transferId: payload.envelope.transferId,
+              kind: 'chunk',
+              sequence: 0,
+              payloadBase64: chunk0.payloadBase64,
+              encryptedDataKeyEnvelopeBase64: chunk0.encryptedDataKeyEnvelopeBase64,
+            },
+          });
+          return;
+        }
+
+        if (payload.envelope.kind === 'ack' && payload.envelope.nextSequence === 1) {
+          const recipientPublicKeyBase64 = recipientPublicKeyBase64FromOpen;
+          if (!recipientPublicKeyBase64) {
+            throw new Error('Expected recipient key');
+          }
+          const secondChunk = fullPayload.subarray(4);
+          const chunk1 = createEncryptedTransferChunkEnvelope({
+            transferId: payload.envelope.transferId,
+            sequence: 1,
+            payload: secondChunk,
+            recipientPublicKeyBase64,
+          });
+          source.sendEnvelope({
+            targetMachineId: payload.sourceMachineId,
+            envelope: {
+              transferId: payload.envelope.transferId,
+              kind: 'chunk',
+              sequence: 1,
+              payloadBase64: chunk1.payloadBase64,
+              encryptedDataKeyEnvelopeBase64: chunk1.encryptedDataKeyEnvelopeBase64,
+            },
+          });
+          return;
+        }
+
+        if (payload.envelope.kind === 'ack' && payload.envelope.nextSequence === 2) {
+          source.sendEnvelope({
+            targetMachineId: payload.sourceMachineId,
+            envelope: {
+              transferId: payload.envelope.transferId,
+              kind: 'finish',
+              manifestHash: createTransferManifestHash(fullPayload),
+            },
+          });
+        }
+      })();
+    });
+
+    try {
+      await expect(
+        requestServerRoutedTransferToFile({
+          transferId: 'transfer_to_file_oversized',
+          sourceMachineId: 'machine_source',
+          machineTransferChannel: target,
+          destinationPath,
+        }),
+      ).rejects.toThrow('Transfer exceeds the server-routed transfer size limit');
+
+      const files = await readdir(tempDir);
+      expect(files).toEqual([]);
+    } finally {
+      unregister();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('fails closed before decrypting when a source sends an oversized data-key envelope for a server-routed transfer request', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES = '8';
 
     type Listener = (payload: MachineTransferReceiveEnvelope) => void;
     const listeners = new Set<Listener>();
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-oversized-key-envelope-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
 
     const target = {
       onEnvelope(listener: Listener) {
@@ -403,11 +738,12 @@ describe('server routed machine transfer', () => {
               sourceMachineId: 'machine_source',
               targetMachineId: 'machine_target',
               envelope: {
-                transferId: 'transfer_chunk_oversized',
+                transferId: 'transfer_key_envelope_oversized',
                 kind: 'chunk',
                 sequence: 0,
-                payloadBase64: 'A'.repeat(128),
-                encryptedDataKeyEnvelopeBase64: 'AA==',
+                payloadBase64: 'AA==',
+                // Must exceed the independent hard cap for encrypted data-key envelopes.
+                encryptedDataKeyEnvelopeBase64: 'A'.repeat(2048),
               },
             });
           }
@@ -415,15 +751,92 @@ describe('server routed machine transfer', () => {
       },
     };
 
-    const { requestServerRoutedTransferPayload } = await import('./serverRoutedTransport');
+    const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
 
     await expect(
-      requestServerRoutedTransferPayload({
-        transferId: 'transfer_chunk_oversized',
+      requestServerRoutedTransferToFile({
+        transferId: 'transfer_key_envelope_oversized',
         sourceMachineId: 'machine_source',
         machineTransferChannel: target,
+        destinationPath,
       }),
     ).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
+
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  });
+
+  it('drops active responder state when the recipient aborts a server-routed transfer', async () => {
+    const { source, target, sentEnvelopes } = createLoopbackChannels();
+    const payload = Buffer.from('abcdefghijklmno', 'utf8');
+
+    const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
+    const { createTransferRecipientKeyPair } = await import('./transferChunkEncryption');
+
+    const unregister = registerServerRoutedTransferResponder({
+      machineTransferChannel: source,
+      loadTransferPayloadSource: (transferId) => (
+        transferId === 'transfer_recipient_abort'
+          ? { kind: 'buffer', payload, sizeBytes: payload.length }
+          : null
+      ),
+      chunkBytes: 5,
+    });
+
+    try {
+      const recipient = createTransferRecipientKeyPair();
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_recipient_abort',
+          kind: 'open',
+          manifestHash: 'transfer_recipient_abort',
+          recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+        },
+      });
+
+      await expect.poll(() =>
+        sentEnvelopes.filter(
+          (entry): entry is MachineTransferSendEnvelope & { envelope: MachineTransferSendChunkEnvelope } =>
+            entry.targetMachineId === 'machine_target'
+            && isChunkTransferEnvelope(entry)
+            && entry.envelope.transferId === 'transfer_recipient_abort',
+        ).map((entry) => entry.envelope.sequence),
+      ).toEqual([0]);
+
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_recipient_abort',
+          kind: 'abort',
+          reason: 'recipient_abort',
+        },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_recipient_abort',
+          kind: 'ack',
+          nextSequence: 1,
+          windowBytes: 1,
+        },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(
+        sentEnvelopes.filter(
+          (entry): entry is MachineTransferSendEnvelope & { envelope: MachineTransferSendChunkEnvelope } =>
+            entry.targetMachineId === 'machine_target'
+            && isChunkTransferEnvelope(entry)
+            && entry.envelope.transferId === 'transfer_recipient_abort',
+        ).map((entry) => entry.envelope.sequence),
+      ).toEqual([0]);
+    } finally {
+      unregister();
+    }
   });
 
   it('ignores stale ack envelopes instead of rewinding chunk delivery', async () => {
@@ -589,15 +1002,19 @@ describe('server routed machine transfer', () => {
       },
     };
 
-    const { requestServerRoutedTransferPayload } = await import('./serverRoutedTransport');
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-duplicate-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
 
-    await expect(
-      requestServerRoutedTransferPayload({
-        transferId: 'transfer_duplicate_chunk',
-        sourceMachineId: 'machine_source',
-        machineTransferChannel: target,
-      }),
-    ).resolves.toEqual(Buffer.from('duplicate-safe-payload', 'utf8'));
+    const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
+
+    await requestServerRoutedTransferToFile({
+      transferId: 'transfer_duplicate_chunk',
+      sourceMachineId: 'machine_source',
+      machineTransferChannel: target,
+      destinationPath,
+    });
+
+    await expect(readFile(destinationPath)).resolves.toEqual(Buffer.from('duplicate-safe-payload', 'utf8'));
 
     expect(
       sentEnvelopes.filter(
@@ -607,5 +1024,7 @@ describe('server routed machine transfer', () => {
           && entry.envelope.transferId === 'transfer_duplicate_chunk',
       ).map((entry) => entry.envelope.nextSequence),
     ).toEqual([1, 1, 2]);
+
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   });
 });
