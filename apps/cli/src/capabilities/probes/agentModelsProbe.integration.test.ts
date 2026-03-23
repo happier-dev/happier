@@ -217,18 +217,46 @@ describe('probeAgentModelsBestEffort', () => {
     const binDir = resolve(join(fixture.dir, 'bin'));
     await mkdir(binDir, { recursive: true });
 
-    const opencodePath = resolve(join(binDir, 'opencode'));
-    await writeExecutableScript(
-      opencodePath,
-      `#!/usr/bin/env node
-const args = process.argv.slice(2);
-if (args[0] === "models") {
-  process.stdout.write("openai/gpt-4.1\\nopenai/gpt-4.1-mini\\n");
-  process.exit(0);
-}
-process.exit(1);
-`,
-    );
+	    const opencodePath = resolve(join(binDir, 'opencode'));
+	    await writeExecutableScript(
+	      opencodePath,
+	      `#!/usr/bin/env node
+	const args = process.argv.slice(2);
+	if (args[0] === "models" && args.includes("--verbose")) {
+	  process.stdout.write(
+	    "openai/gpt-4.1\\n"
+	    + "{\\n"
+	    + "  \\"id\\": \\"gpt-4.1\\",\\n"
+	    + "  \\"providerID\\": \\"openai\\",\\n"
+	    + "  \\"name\\": \\"GPT-4.1\\",\\n"
+	    + "  \\"family\\": \\"gpt-4.1\\",\\n"
+	    + "  \\"status\\": \\"active\\",\\n"
+	    + "  \\"capabilities\\": { \\"toolcall\\": true, \\"reasoning\\": true, \\"input\\": { \\"text\\": true } },\\n"
+	    + "  \\"variants\\": {\\n"
+	    + "    \\"low\\": { \\"reasoningEffort\\": \\"low\\" },\\n"
+	    + "    \\"medium\\": { \\"reasoningEffort\\": \\"medium\\" },\\n"
+	    + "    \\"high\\": { \\"reasoningEffort\\": \\"high\\" }\\n"
+	    + "  }\\n"
+	    + "}\\n"
+	    + "openai/gpt-4.1-mini\\n"
+	    + "{\\n"
+	    + "  \\"id\\": \\"gpt-4.1-mini\\",\\n"
+	    + "  \\"providerID\\": \\"openai\\",\\n"
+	    + "  \\"name\\": \\"GPT-4.1 Mini\\",\\n"
+	    + "  \\"family\\": \\"gpt-4.1\\",\\n"
+	    + "  \\"status\\": \\"active\\",\\n"
+	    + "  \\"capabilities\\": { \\"toolcall\\": true, \\"reasoning\\": false, \\"input\\": { \\"text\\": true } }\\n"
+	    + "}\\n"
+	  );
+	  process.exit(0);
+	}
+	if (args[0] === "models") {
+	  process.stdout.write("openai/gpt-4.1\\nopenai/gpt-4.1-mini\\n");
+	  process.exit(0);
+	}
+	process.exit(1);
+	`,
+	    );
 
     const prevPath = process.env.PATH;
     const prevOverride = process.env.HAPPIER_OPENCODE_PATH;
@@ -240,13 +268,17 @@ process.exit(1);
         cwd: fixture.dir,
         timeoutMs: CLI_MODELS_PROBE_TEST_TIMEOUT_MS,
       });
-      expect(res.source).toBe('dynamic');
-      expect(res.availableModels[0]).toEqual({ id: 'default', name: 'Default' });
-      expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1')).toBe(true);
-      expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1-mini')).toBe(true);
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevOverride === 'string') {
+	      expect(res.source).toBe('dynamic');
+	      expect(res.availableModels[0]).toEqual({ id: 'default', name: 'Default' });
+	      expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1')).toBe(true);
+	      expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1-mini')).toBe(true);
+	      expect(res.availableModels).toContainEqual(expect.objectContaining({
+	        id: 'openai/gpt-4.1',
+	        modelOptions: [expect.objectContaining({ id: 'reasoning_effort' })],
+	      }));
+	    } finally {
+	      process.env.PATH = prevPath;
+	      if (typeof prevOverride === 'string') {
         process.env.HAPPIER_OPENCODE_PATH = prevOverride;
       } else {
         delete process.env.HAPPIER_OPENCODE_PATH;
