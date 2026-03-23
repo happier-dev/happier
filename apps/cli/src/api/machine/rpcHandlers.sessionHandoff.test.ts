@@ -397,6 +397,7 @@ function createLoopbackMachineTransferChannels() {
       const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
       const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
       await jobStore.write({
+        schemaVersion: 1,
         jobId: 'job_wsrepl_1',
         createdAtMs: 1,
         updatedAtMs: 1,
@@ -1695,9 +1696,6 @@ function createLoopbackMachineTransferChannels() {
             ],
             fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
           },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
         },
       }),
     });
@@ -1758,9 +1756,6 @@ function createLoopbackMachineTransferChannels() {
             ],
             fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
           },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
         },
       }),
     });
@@ -1826,9 +1821,6 @@ function createLoopbackMachineTransferChannels() {
             ],
             fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
           },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
         },
       }),
     });
@@ -2205,7 +2197,6 @@ function createLoopbackMachineTransferChannels() {
               ],
               fingerprint: directPeerManifestFingerprint,
             },
-            blobContentsByDigest: new Map(),
             sourceControllerMetadata: {
               scmBackendId: 'git',
             },
@@ -2488,7 +2479,6 @@ function createLoopbackMachineTransferChannels() {
               ],
               fingerprint: workspaceManifestFingerprint,
             },
-            blobContentsByDigest: new Map(),
             sourceControllerMetadata: {
               scmBackendId: 'git',
             },
@@ -2673,7 +2663,6 @@ function createLoopbackMachineTransferChannels() {
               ],
               fingerprint: 'sha256:0f17985b1cd57fb85b266f9106da8e3feec58da8fe9b31f6d9e4e83079a996f0',
             },
-            blobContentsByDigest: new Map(),
             sourceControllerMetadata: {
               scmBackendId: 'git',
             },
@@ -2851,7 +2840,6 @@ function createLoopbackMachineTransferChannels() {
           }>;
           fingerprint: string;
         };
-        blobContentsByDigest: Map<string, Buffer>;
         sourceControllerMetadata: {
           scmBackendId: 'git';
         };
@@ -3019,7 +3007,6 @@ function createLoopbackMachineTransferChannels() {
             ],
             fingerprint: 'sha256:0f17985b1cd57fb85b266f9106da8e3feec58da8fe9b31f6d9e4e83079a996f0',
           },
-          blobContentsByDigest: new Map(),
           sourceControllerMetadata: {
             scmBackendId: 'git',
           },
@@ -3296,9 +3283,6 @@ function createLoopbackMachineTransferChannels() {
               ],
               fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
             },
-            blobContentsByDigest: new Map([
-              ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-            ]),
           },
         }),
         machineTransferChannel: channels.source,
@@ -3842,9 +3826,6 @@ function createLoopbackMachineTransferChannels() {
             ],
             fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
           },
-          blobContentsByDigest: new Map([
-            ['sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03', Buffer.from('hello\n', 'utf8')],
-          ]),
         },
 	      }),
 	      importSessionBundle,

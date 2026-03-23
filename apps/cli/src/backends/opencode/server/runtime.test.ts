@@ -30,7 +30,17 @@ function createFakeClient() {
         id: 'openai',
         env: ['OPENAI_API_KEY'],
         models: {
-          'gpt-5.2': { id: 'gpt-5.2', name: 'GPT-5.2', status: 'active', capabilities: { toolcall: true, input: { text: true } } },
+          'gpt-5.2': {
+            id: 'gpt-5.2',
+            name: 'GPT-5.2',
+            status: 'active',
+            capabilities: { toolcall: true, reasoning: true, input: { text: true } },
+            variants: {
+              low: { reasoningEffort: 'low' },
+              medium: { reasoningEffort: 'medium' },
+              high: { reasoningEffort: 'high' },
+            },
+          },
         },
       },
     ])),
@@ -285,14 +295,31 @@ describe('createOpenCodeServerRuntime', () => {
         currentModeId: 'build',
         availableModes: [expect.objectContaining({ id: 'build' })],
       }),
+      sessionModelsV1: expect.objectContaining({
+        v: 1,
+        provider: 'opencode',
+        currentModelId: 'openai/gpt-5.2',
+        availableModels: [
+          expect.objectContaining({
+            id: 'openai/gpt-5.2',
+            modelOptions: [expect.objectContaining({ id: 'reasoning_effort' })],
+          }),
+        ],
+      }),
       acpSessionModelsV1: expect.objectContaining({
         v: 1,
         provider: 'opencode',
         currentModelId: 'openai/gpt-5.2',
-        availableModels: [expect.objectContaining({ id: 'openai/gpt-5.2' })],
+        availableModels: [
+          expect.objectContaining({
+            id: 'openai/gpt-5.2',
+            modelOptions: [expect.objectContaining({ id: 'reasoning_effort' })],
+          }),
+        ],
       }),
     });
     expect(metadata.sessionModesV1).toEqual(metadata.acpSessionModesV1);
+    expect(metadata.sessionModelsV1).toEqual(metadata.acpSessionModelsV1);
   });
 
   it('applies the OpenCode session directory on resume (uses sessionGet.directory)', async () => {
@@ -504,6 +531,7 @@ describe('createOpenCodeServerRuntime', () => {
     await runtime.setSessionMode('build');
     await runtime.setSessionModel('openai/gpt-5.2');
     await runtime.setSessionConfigOption('telemetry', true);
+    await runtime.setSessionConfigOption('reasoning_effort', 'high');
     runtime.beginTurn();
 
     const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-1' });
@@ -514,7 +542,7 @@ describe('createOpenCodeServerRuntime', () => {
       sessionId: 'ses_1',
       agent: 'build',
       model: { providerID: 'openai', modelID: 'gpt-5.2' },
-      config: { telemetry: true },
+      config: { telemetry: true, variant: 'high' },
       parts: [{ type: 'text', text: `hello\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
     });
     expect(firstCall.messageId).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
