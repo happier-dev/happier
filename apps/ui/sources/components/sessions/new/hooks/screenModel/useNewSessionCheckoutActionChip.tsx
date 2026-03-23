@@ -18,6 +18,8 @@ import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSe
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { NewSessionWorktreeBranchSelection } from '@/components/sessions/new/components/NewSessionWorktreeBranchDetail';
 
+const EXISTING_WORKTREE_MODE_OPTION_ID = '__existing_worktree__';
+
 export function useNewSessionCheckoutActionChip(params: Readonly<{
     repoScmSnapshot: ScmWorkingSnapshot | null;
     checkoutChipModel: NewSessionCheckoutChipModel;
@@ -118,44 +120,37 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
                     option.id,
                     {
                         label: option.displayName,
-                        subtitle: option.gitBranch ?? option.path,
+                        // The label already includes the effective branch name; keep the subtitle as the path
+                        // so we don't show duplicate "main / main" rows in the existing worktree list.
+                        subtitle: option.path,
                     },
                 ];
             }),
         ) as Record<string, { label: string; subtitle: string }>;
 
+        const currentPathOption = params.checkoutChipModel.options.find((option) => option.kind === 'current_path') ?? null;
+        const createWorktreeOption = params.checkoutChipModel.options.find((option) => option.kind === 'create_git_worktree') ?? null;
+        const linkedWorktreeOptions = params.checkoutChipModel.options.filter((option) => option.kind === 'linked_checkout');
+
         const pickerOptions: AgentInputChipPickerOption[] = interaction.kind === 'picker'
-            ? interaction.selectableOptionIds.map((id) => {
-                const option = params.checkoutChipModel.options.find((entry) => entry.id === id) ?? null;
-                const optionCopy = optionsById[id];
-                if (!option || !optionCopy) {
-                    return { id, label: id };
-                }
-
-                if (option.kind === 'current_path') {
-                    return {
-                        id,
-                        label: optionCopy.label,
-                        subtitle: optionCopy.subtitle,
-                        sectionId: 'current',
-                        sectionLabel: t('newSession.checkout.noWorktreeSectionTitle'),
-                        detailTitle: t('newSession.checkout.noWorktree'),
-                        detailDescription: t('newSession.checkout.noWorktreeSubtitle'),
-                        detailBullets: option.path
-                            ? [
-                                t('newSession.checkout.detailPath', { path: option.path }),
-                                ...(params.checkoutChipModel.options.some((entry) => entry.kind === 'linked_checkout')
-                                    ? [t('newSession.checkout.detailLinkedWorkspace')]
-                                    : []),
-                            ]
-                            : [],
-                        onSelectImmediate: () => {
-                            applyCheckoutChipOption(option.id);
-                        },
-                    };
-                }
-
-                if (option.kind === 'create_git_worktree') {
+            ? [
+                ...(currentPathOption ? [{
+                    id: currentPathOption.id,
+                    label: optionsById[currentPathOption.id]?.label ?? t('newSession.checkout.noWorktree'),
+                    subtitle: optionsById[currentPathOption.id]?.subtitle ?? currentPathOption.path,
+                    sectionId: 'worktreeMode',
+                    detailDescription: t('newSession.checkout.noWorktreeSubtitle'),
+                    detailBullets: currentPathOption.path
+                        ? [
+                            t('newSession.checkout.detailPath', { path: currentPathOption.path }),
+                            ...(linkedWorktreeOptions.length > 0 ? [t('newSession.checkout.detailLinkedWorkspace')] : []),
+                        ]
+                        : [],
+                    onSelectImmediate: () => {
+                        applyCheckoutChipOption(currentPathOption.id);
+                    },
+                }] : []),
+                ...(createWorktreeOption ? (() => {
                     const selectedBaseRef = params.pendingGitWorktreeBaseRefRef.current
                         ?? (
                             params.checkoutCreationDraft?.branchMode === 'existing'
@@ -172,18 +167,13 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
                         currentBranch: params.repoScmSnapshot?.branch.head ?? null,
                         currentPath: params.selectedPath,
                     });
-                    return {
-                        id,
-                        label: optionCopy.label,
-                        subtitle: optionCopy.subtitle,
-                        sectionId: 'actions',
-                        sectionLabel: t('newSession.checkout.actionsSectionTitle'),
-                        detailTitle: t('newSession.checkout.newWorktree'),
-                        detailDescription: reusableWorktree
-                            ? t('newSession.checkout.existingBranchWorktreeDescription')
-                            : canUseExistingBranchDirectly
-                                ? t('newSession.checkout.existingBranchDescription')
-                            : t('newSession.checkout.newWorktreeSubtitle'),
+
+                    return [{
+                        id: createWorktreeOption.id,
+                        label: optionsById[createWorktreeOption.id]?.label ?? t('newSession.checkout.newWorktree'),
+                        subtitle: optionsById[createWorktreeOption.id]?.subtitle ?? t('newSession.checkout.newWorktreeSubtitle'),
+                        sectionId: 'worktreeMode',
+                        // The right pane starts directly at the “Start from” picker (keeps parity with model/mode panels).
                         detailBullets: reusableWorktree
                             ? [
                                 reusableWorktree.branch
@@ -197,15 +187,15 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
                                     t('newSession.checkout.detailBranch', { branch: selectedBaseRef }),
                                     t('newSession.checkout.createNewBranchFromBranchHint'),
                                 ]
-                            : [
-                                t('newSession.checkout.newWorktreeDetailWorkspace'),
-                                t('newSession.checkout.newWorktreeDetailBranch'),
-                            ],
+                                : [
+                                    t('newSession.checkout.newWorktreeDetailWorkspace'),
+                                    t('newSession.checkout.newWorktreeDetailBranch'),
+                                ],
                         detailActionLabel: reusableWorktree
                             ? t('newSession.checkout.useExistingWorktreeAction')
                             : canUseExistingBranchDirectly
                                 ? t('newSession.checkout.useExistingBranchAction')
-                            : undefined,
+                                : undefined,
                         onDetailAction: reusableWorktree
                             ? () => {
                                 params.shouldReconcileInitialHydratedCheckoutCreationDraftRef.current = false;
@@ -217,19 +207,18 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
                             : canUseExistingBranchDirectly
                                 ? () => {
                                     params.shouldReconcileInitialHydratedCheckoutCreationDraftRef.current = false;
-                                    params.setCheckoutCreationDraft((current) => ({
+                                    params.setCheckoutCreationDraft(() => ({
                                         kind: 'git_worktree',
                                         displayName: selectedBaseRef,
                                         baseRef: null,
                                         branchMode: 'existing',
-                                        ...(current?.kind === 'git_worktree' ? {} : {}),
                                     }));
                                     clearPendingGitWorktreeBaseRef();
                                     params.setCheckoutPickerOpen(false);
                                 }
-                            : undefined,
+                                : undefined,
                         onApply: () => {
-                            applyCheckoutChipOption(option.id, {
+                            applyCheckoutChipOption(createWorktreeOption.id, {
                                 baseRef: params.pendingGitWorktreeBaseRefRef.current ?? params.checkoutCreationDraft?.baseRef ?? null,
                             });
                         },
@@ -245,40 +234,44 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
                                 }}
                             />
                         ),
-                    };
-                }
-
-                return {
-                    id,
-                    label: optionCopy.label,
-                    subtitle: optionCopy.subtitle,
-                    sectionId: 'linked',
-                    sectionLabel: t('newSession.checkout.existingWorktreesSectionTitle'),
-                    detailTitle: option.displayName,
-                    detailDescription: option.checkoutKind === 'primary'
-                        ? t('newSession.checkout.primaryDetailDescription')
-                        : t('newSession.checkout.gitWorktreeDetailDescription'),
-                    detailBullets: [
-                        option.gitBranch
-                            ? t('newSession.checkout.detailBranch', { branch: option.gitBranch })
-                            : t('newSession.checkout.detailPath', { path: option.path }),
-                        option.gitBranch
-                            ? t('newSession.checkout.detailPath', { path: option.path })
-                            : t('newSession.checkout.detailLinkedWorkspace'),
-                    ],
-                    onSelectImmediate: () => {
-                        applyCheckoutChipOption(option.id);
-                    },
-                };
-            })
+                    }] satisfies AgentInputChipPickerOption[];
+                })() : []),
+                {
+                    id: EXISTING_WORKTREE_MODE_OPTION_ID,
+                    label: t('newSession.checkout.existingWorktree'),
+                    subtitle: t('newSession.checkout.existingWorktreeSubtitle'),
+                    sectionId: 'worktreeMode',
+                    detailDescription: t('newSession.checkout.gitWorktreeDetailDescription'),
+                    detailSelectOptions: linkedWorktreeOptions.length > 0
+                        ? linkedWorktreeOptions.map((option) => ({
+                            id: option.id,
+                            label: optionsById[option.id]?.label ?? option.displayName,
+                            subtitle: optionsById[option.id]?.subtitle ?? option.path,
+                            selected: params.checkoutChipModel.selectedOptionId === option.id,
+                        }))
+                        : [{
+                            id: '__existing_worktree_empty__',
+                            label: t('newSession.checkout.existingWorktreeEmptyTitle'),
+                            subtitle: t('newSession.checkout.existingWorktreeEmptySubtitle'),
+                            selected: false,
+                            disabled: true,
+                        }],
+                },
+            ]
             : [];
+
+        const effectivePickerSelectedOptionId = params.checkoutChipModel.options.some((option) =>
+            option.kind === 'linked_checkout' && option.id === params.checkoutChipModel.selectedOptionId
+        )
+            ? EXISTING_WORKTREE_MODE_OPTION_ID
+            : params.checkoutChipModel.selectedOptionId;
 
         return createCheckoutActionChip({
             interaction,
             pickerOpen: params.checkoutPickerOpen,
             title: t('newSession.checkout.selectTitle'),
             selectedLabel: optionsById[params.checkoutChipModel.selectedOptionId]?.label ?? t('newSession.checkout.noWorktree'),
-            selectedOptionId: params.checkoutChipModel.selectedOptionId,
+            selectedOptionId: effectivePickerSelectedOptionId,
             pickerOptions,
             onApplyOption: applyCheckoutChipOption,
             onRequestClose: () => {

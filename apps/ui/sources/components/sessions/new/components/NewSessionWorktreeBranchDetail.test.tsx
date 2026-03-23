@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -9,18 +10,23 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const fetchBranchesForMachinePathMock = vi.hoisted(() => vi.fn());
 const readCachedBranchesForMachinePathMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) => {
-        if (key === 'files.branchMenu.branch.upstream') {
-            return `Upstream: ${String(params?.upstream ?? '')}`;
-        }
-        return key;
-    } });
+installNewSessionComponentsCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: Record<string, unknown>) => {
+                if (key === 'files.branchMenu.branch.upstream') {
+                    return `Upstream: ${String(params?.upstream ?? '')}`;
+                }
+
+                return key;
+            },
+        });
+    },
 });
 
-vi.mock('@/components/model/ModelPickerOverlay', () => ({
-    ModelPickerOverlay: (props: Record<string, unknown>) => React.createElement('ModelPickerOverlay', props),
+vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
+    OptionPickerOverlay: (props: Record<string, unknown>) => React.createElement('OptionPickerOverlay', props),
 }));
 
 vi.mock('@/scm/repository/repoScmBranchService', () => ({
@@ -57,7 +63,7 @@ describe('NewSessionWorktreeBranchDetail', () => {
                     onSelectionChange={() => {}}
                 />);
 
-        const overlay = screen.findByType('ModelPickerOverlay' as any);
+        const overlay = screen.findByType('OptionPickerOverlay' as any);
         expect(fetchBranchesForMachinePathMock).toHaveBeenCalledWith({
             machineId: 'machine-a',
             path: '~/repo',
@@ -108,7 +114,7 @@ describe('NewSessionWorktreeBranchDetail', () => {
                     onSelectionChange={onSelectionChange}
                 />);
 
-        const overlay = screen.findByType('ModelPickerOverlay' as any);
+        const overlay = screen.findByType('OptionPickerOverlay' as any);
         await act(async () => {
             overlay.props.onSelect('__repo_head__');
             overlay.props.onSelect('main');
@@ -139,7 +145,7 @@ describe('NewSessionWorktreeBranchDetail', () => {
                     onSelectionChange={() => {}}
                 />);
 
-        const overlay = screen.findByType('ModelPickerOverlay' as any);
+        const overlay = screen.findByType('OptionPickerOverlay' as any);
         expect(overlay.props.options).toEqual([
             expect.objectContaining({
                 value: '__repo_head__',
@@ -171,7 +177,7 @@ describe('NewSessionWorktreeBranchDetail', () => {
                     onSelectionChange={() => {}}
                 />);
 
-        const overlay = screen.findByType('ModelPickerOverlay' as any);
+        const overlay = screen.findByType('OptionPickerOverlay' as any);
         expect(overlay.props.options).toEqual([
             expect.objectContaining({
                 value: '__repo_head__',

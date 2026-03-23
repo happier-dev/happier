@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import type { ScmBranchListEntry } from '@happier-dev/protocol';
 
-import { ModelPickerOverlay, type ModelPickerOption } from '@/components/model/ModelPickerOverlay';
+import { OptionPickerOverlay, type OptionPickerOption } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { repoScmBranchService } from '@/scm/repository/repoScmBranchService';
 import { useRepoScmBranchList } from '@/scm/repository/useRepoScmBranchList';
 import { t } from '@/text';
@@ -21,7 +21,7 @@ export type NewSessionWorktreeBranchDetailProps = Readonly<{
     onSelectionChange?: (selection: NewSessionWorktreeBranchSelection) => void;
 }>;
 
-function buildBranchOption(branch: ScmBranchListEntry): ModelPickerOption {
+function buildBranchOption(branch: ScmBranchListEntry): OptionPickerOption {
     if (branch.upstream) {
         return {
             value: branch.name,
@@ -74,7 +74,7 @@ export function NewSessionWorktreeBranchDetail(props: NewSessionWorktreeBranchDe
         fetch: fetchBranches,
     });
 
-    const options = React.useMemo<ReadonlyArray<ModelPickerOption>>(() => {
+    const options = React.useMemo<ReadonlyArray<OptionPickerOption>>(() => {
         return [
             {
                 value: NEW_SESSION_WORKTREE_BRANCH_CURRENT_HEAD_SENTINEL,
@@ -91,14 +91,14 @@ export function NewSessionWorktreeBranchDetail(props: NewSessionWorktreeBranchDe
         : selectedValue;
 
     return (
-        <ModelPickerOverlay
+        <OptionPickerOverlay
             title={t('newSession.checkout.branchPickerTitle')}
             effectiveLabel={effectiveLabel}
             notes={[]}
             options={options}
             selectedValue={selectedValue}
             emptyText={t('newSession.checkout.branchPickerEmpty')}
-            canEnterCustomModel={false}
+            canEnterCustomValue={false}
             searchPlaceholder={t('newSession.checkout.branchPickerSearchPlaceholder')}
             onSelect={(value) => {
                 if (value === NEW_SESSION_WORKTREE_BRANCH_CURRENT_HEAD_SENTINEL) {
