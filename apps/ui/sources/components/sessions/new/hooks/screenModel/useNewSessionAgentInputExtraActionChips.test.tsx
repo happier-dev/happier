@@ -58,7 +58,7 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                 directSessionsFeatureEnabled: false,
                 supportsDirectTranscriptStorage: false,
                 transcriptStorage: 'persisted',
-                onToggleTranscriptStorage: vi.fn(),
+                onTranscriptStorageChange: vi.fn(),
                 selectedMachineIsWindows: false,
                 windowsRemoteSessionLaunchMode: null,
                 windowsTerminalAvailable: false,
@@ -78,5 +78,63 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
             boundaryRef: null,
         }));
         expect(automationChip?.collapsedAction).toBeUndefined();
+    });
+
+    it('publishes transcript storage as a shared options popover with synced and direct explanations', async () => {
+        const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
+        const onTranscriptStorageChange = vi.fn();
+
+        let chips: ReadonlyArray<AgentInputExtraActionChip> = [];
+
+        function Probe() {
+            chips = useNewSessionAgentInputExtraActionChips({
+                agentId: 'codex',
+                agentOptionState: null,
+                setAgentOptionState: vi.fn(),
+                showAutomationActionChips: false,
+                automationDraft: {
+                    enabled: false,
+                    name: '',
+                    description: '',
+                    scheduleKind: 'interval',
+                    everyMinutes: 60,
+                    cronExpr: '0 * * * *',
+                    timezone: null,
+                },
+                automationLabel: 'Automate',
+                onAutomationChange: vi.fn(),
+                showServerPickerChip: false,
+                targetServerId: null,
+                targetServerName: 'Server A',
+                directSessionsFeatureEnabled: true,
+                supportsDirectTranscriptStorage: true,
+                transcriptStorage: 'persisted',
+                onTranscriptStorageChange,
+                selectedMachineIsWindows: false,
+                windowsRemoteSessionLaunchMode: null,
+                windowsTerminalAvailable: false,
+                onWindowsRemoteSessionLaunchModeChange: vi.fn(),
+                onActionShortcutPress: vi.fn(),
+            });
+            return null;
+        }
+
+        await renderScreen(<Probe />);
+
+        const storageChip = chips.find((chip) => chip.key === 'new-session-storage');
+        expect(storageChip?.collapsedAction).toBeUndefined();
+        expect(storageChip?.collapsedOptionsPopover?.selectedOptionId).toBe('persisted');
+        expect(storageChip?.collapsedOptionsPopover?.title).toBeTruthy();
+        expect(storageChip?.collapsedOptionsPopover?.options).toHaveLength(2);
+        expect(storageChip?.collapsedOptionsPopover?.options.map((option) => option.id)).toEqual([
+            'persisted',
+            'direct',
+        ]);
+        expect(storageChip?.collapsedOptionsPopover?.options.every((option) =>
+            typeof option.subtitle === 'string' && option.subtitle.length > 0,
+        )).toBe(true);
+
+        storageChip?.collapsedOptionsPopover?.onSelect('direct');
+        expect(onTranscriptStorageChange).toHaveBeenCalledWith('direct');
     });
 });

@@ -96,9 +96,9 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
 
     const automationSection = null;
 
-    const toggleTranscriptStorage = React.useCallback(() => {
+    const handleTranscriptStorageChange = React.useCallback((next: 'direct' | 'persisted') => {
         params.hasUserSelectedTranscriptStorageRef.current = true;
-        params.setTranscriptStorage((current) => current === 'direct' ? 'persisted' : 'direct');
+        params.setTranscriptStorage(next);
     }, [params.hasUserSelectedTranscriptStorageRef, params.setTranscriptStorage]);
 
     const checkoutActionChip = useNewSessionCheckoutActionChip({
@@ -154,7 +154,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         directSessionsFeatureEnabled: params.directSessionsFeatureEnabled,
         supportsDirectTranscriptStorage: params.supportsDirectTranscriptStorage,
         transcriptStorage: params.transcriptStorage,
-        onToggleTranscriptStorage: toggleTranscriptStorage,
+        onTranscriptStorageChange: handleTranscriptStorageChange,
         selectedMachineIsWindows: params.selectedMachineIsWindows,
         windowsRemoteSessionLaunchMode: params.effectiveWindowsRemoteSessionLaunchMode,
         windowsTerminalAvailable: params.windowsTerminalAvailable,

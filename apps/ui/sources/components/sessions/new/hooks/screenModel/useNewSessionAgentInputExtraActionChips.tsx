@@ -33,7 +33,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     directSessionsFeatureEnabled: boolean;
     supportsDirectTranscriptStorage: boolean;
     transcriptStorage: NewSessionTranscriptStorage;
-    onToggleTranscriptStorage: () => void;
+    onTranscriptStorageChange: (next: NewSessionTranscriptStorage) => void;
     selectedMachineIsWindows: boolean;
     windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchMode | null;
     windowsTerminalAvailable: boolean;
@@ -70,11 +70,11 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         if (!params.directSessionsFeatureEnabled || !params.supportsDirectTranscriptStorage) return null;
         return createTranscriptStorageActionChip({
             transcriptStorage: params.transcriptStorage,
-            onPress: params.onToggleTranscriptStorage,
+            onStorageChange: params.onTranscriptStorageChange,
         });
     }, [
         params.directSessionsFeatureEnabled,
-        params.onToggleTranscriptStorage,
+        params.onTranscriptStorageChange,
         params.supportsDirectTranscriptStorage,
         params.transcriptStorage,
     ]);
