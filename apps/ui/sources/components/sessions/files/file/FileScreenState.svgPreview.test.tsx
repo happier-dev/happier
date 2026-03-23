@@ -2,13 +2,19 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+
+import { installSessionFileViewCommonModuleMocks } from './sessionFileViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installSessionFileViewCommonModuleMocks({
+    reactNative: installReactNativeWebMock({
+        Platform: {
+            OS: 'ios',
+        },
+    }),
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -22,22 +28,6 @@ vi.mock('@/constants/Typography', () => ({
 vi.mock('react-native-svg', () => ({
     SvgXml: (props: any) => React.createElement('SvgXml', props),
 }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: (values: any) => values?.ios ?? values?.default ?? null,
-                                    },
-                                    View: (props: any) => React.createElement('View', props, props.children),
-                                    Image: (props: any) => React.createElement('Image', props, props.children),
-                                    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, props.children),
-                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                }
-    );
-});
 
 describe('FileBinaryState (svg previews)', () => {
     it('renders an SvgXml preview for svg data uris on native', async () => {

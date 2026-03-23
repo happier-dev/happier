@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -205,9 +204,7 @@ describe('FileActionToolbar', () => {
         const editButton = screen.findByTestId('file-details-edit');
         expect(editButton).toBeTruthy();
 
-        act(() => {
-            editButton?.props.onPress();
-        });
+        await screen.pressByTestIdAsync('file-details-edit');
         expect(onStartEditingFile).toHaveBeenCalledTimes(1);
     });
 

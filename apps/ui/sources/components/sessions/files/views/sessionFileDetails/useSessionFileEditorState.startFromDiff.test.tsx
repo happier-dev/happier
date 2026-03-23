@@ -2,35 +2,17 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionFileDetailsCommonModuleMocks } from './sessionFileDetailsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                    Platform: {
-                                                        OS: 'web',
-                                                    },
-                                                }
-    );
-});
+installSessionFileDetailsCommonModuleMocks();
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: vi.fn(async () => ({ success: true })),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 
 vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
     showDaemonUnavailableAlert: vi.fn(),

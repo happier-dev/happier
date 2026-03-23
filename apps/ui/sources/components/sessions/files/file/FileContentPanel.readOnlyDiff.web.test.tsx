@@ -2,26 +2,12 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionFileViewCommonModuleMocks } from './sessionFileViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    ScrollView: 'ScrollView',
-                                    Platform: {
-                                        OS: 'web',
-                                        select: (options: any) => options?.web ?? options?.default ?? null,
-                                    },
-                                    AppState: {
-                                        addEventListener: () => ({ remove: () => {} }),
-                                    },
-                                }
-    );
-});
+installSessionFileViewCommonModuleMocks();
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -42,11 +28,6 @@ vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () =>
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('FileContentPanel (web read-only diff)', () => {
     const theme = { colors: { textSecondary: '#999' } };

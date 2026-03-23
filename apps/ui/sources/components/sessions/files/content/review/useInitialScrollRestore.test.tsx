@@ -47,9 +47,11 @@ async function renderInitialScrollRestoreHarness(props: InitialScrollRestoreHarn
     });
 }
 
-async function advanceNextTimer(): Promise<void> {
+async function advanceRestoreTimers(times = 1): Promise<void> {
     await act(async () => {
-        await vi.advanceTimersToNextTimerAsync();
+        for (let index = 0; index < times; index += 1) {
+            await vi.advanceTimersToNextTimerAsync();
+        }
     });
 }
 
@@ -64,7 +66,7 @@ describe('useInitialScrollRestore', () => {
             applyInitialScrollTop: apply,
         });
 
-        await advanceNextTimer();
+        await advanceRestoreTimers();
 
         expect(apply).toHaveBeenCalledTimes(1);
         expect(apply).toHaveBeenCalledWith(1200);
@@ -84,7 +86,7 @@ describe('useInitialScrollRestore', () => {
             scrollTopRef.current = 250;
         });
 
-        await advanceNextTimer();
+        await advanceRestoreTimers();
 
         expect(apply).toHaveBeenCalledTimes(0);
     });
@@ -102,9 +104,7 @@ describe('useInitialScrollRestore', () => {
             applyInitialScrollTop: apply,
         });
 
-        await advanceNextTimer();
-        await advanceNextTimer();
-        await advanceNextTimer();
+        await advanceRestoreTimers(3);
 
         expect(apply).toHaveBeenCalledTimes(3);
         expect(apply).toHaveBeenLastCalledWith(1200);

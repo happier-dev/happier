@@ -6,6 +6,9 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import {
+    installFilesContentCommonModuleMocks,
+} from './filesContentTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -29,32 +32,9 @@ const sessionScmDiffFileSpy: any = vi.fn(async (_sessionId: string, req: any) =>
     error: null,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        View: 'View',
-                                        Image: 'Image',
-                                        Pressable: 'Pressable',
-                                        FlatList: 'FlatList',
-                                        ScrollView: 'ScrollView',
-                                        ActivityIndicator: 'ActivityIndicator',
-                                        TextInput: 'TextInput',
-                                        Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
-                                        useWindowDimensions: () => ({ width: 1200, height: 800 }),
-                                        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-                                    }
-    );
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -106,6 +86,38 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
         ),
 }));
 
+installFilesContentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock(
+            {
+                View: 'View',
+                Image: 'Image',
+                Pressable: 'Pressable',
+                FlatList: 'FlatList',
+                ScrollView: 'ScrollView',
+                ActivityIndicator: 'ActivityIndicator',
+                TextInput: 'TextInput',
+                Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
+                useWindowDimensions: () => ({ width: 1200, height: 800 }),
+                Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
+            },
+        );
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSetting: (key: string) => {
+                if (key === 'wrapLinesInDiffs') return true;
+                if (key === 'showLineNumbers') return true;
+                if (key === 'filesDiffInlineVirtualizationLineThreshold') return undefined;
+                if (key === 'filesDiffInlineVirtualizationByteThreshold') return undefined;
+                return undefined;
+            },
+        });
+    },
+});
+
 vi.mock('@/sync/ops', async (importOriginal) => {
     const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
     return createSyncOpsModuleMock({
@@ -113,19 +125,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
         overrides: {
             sessionScmDiffFile: (sessionId: string, req: any) => sessionScmDiffFileSpy(sessionId, req),
             sessionReadFile: vi.fn(async () => ({ success: false as const, content: '', error: 'nope' })),
-        },
-    });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useSetting: (key: string) => {
-            if (key === 'wrapLinesInDiffs') return true;
-            if (key === 'showLineNumbers') return true;
-            if (key === 'filesDiffInlineVirtualizationLineThreshold') return undefined;
-            if (key === 'filesDiffInlineVirtualizationByteThreshold') return undefined;
-            return undefined;
         },
     });
 });

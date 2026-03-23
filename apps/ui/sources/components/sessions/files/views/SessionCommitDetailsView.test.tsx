@@ -5,8 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
 import type { Session, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-
-import { SessionCommitDetailsView } from './SessionCommitDetailsView';
+import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -37,6 +36,7 @@ let sessionMock: Session | null = createCommitSessionFixture();
 let prefetchAheadCount = 1;
 let prefetchBehindCount = 1;
 const mountedTrees: renderer.ReactTestRenderer[] = [];
+let SessionCommitDetailsViewComponent: typeof import('./SessionCommitDetailsView').SessionCommitDetailsView | null = null;
 
 const stableSnapshot: ScmWorkingSnapshot = {
     projectKey: 'project-1',
@@ -94,7 +94,16 @@ async function settleCommitDetailsView(): Promise<void> {
     await flushHookEffects({ cycles: 2 });
 }
 
+async function loadSessionCommitDetailsViewComponent(): Promise<typeof import('./SessionCommitDetailsView').SessionCommitDetailsView> {
+    if (!SessionCommitDetailsViewComponent) {
+        const module = await import('./SessionCommitDetailsView');
+        SessionCommitDetailsViewComponent = module.SessionCommitDetailsView;
+    }
+    return SessionCommitDetailsViewComponent;
+}
+
 async function renderCommitDetailsView(): Promise<renderer.ReactTestRenderer> {
+    const SessionCommitDetailsView = await loadSessionCommitDetailsViewComponent();
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<SessionCommitDetailsView sessionId={commitSessionId} sha={commitSha} />)).tree;
     await settleCommitDetailsView();
@@ -102,55 +111,63 @@ async function renderCommitDetailsView(): Promise<renderer.ReactTestRenderer> {
     return tree;
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                    View: 'View',
-                                                    ActivityIndicator: 'ActivityIndicator',
-                                                    Pressable: 'Pressable',
-                                                    ScrollView: 'ScrollView',
-                                                    Dimensions: {
-                                                        get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-                                                    },
-                                                    Platform: {
-                                                        OS: 'web',
-                                                        select: (value: Record<string, unknown>) => value?.web ?? value?.default ?? null,
-                                                    },
-                                                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installSessionFilesViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            ActivityIndicator: 'ActivityIndicator',
+            Pressable: 'Pressable',
+            ScrollView: 'ScrollView',
+            Dimensions: {
+                get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+            },
+            Platform: {
+                OS: 'web',
+                select: (value: Record<string, unknown>) => value?.web ?? value?.default ?? null,
+            },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: vi.fn(async () => false),
+            },
+        }).module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: createStorageStoreMock({
+                upsertSessionReviewCommentDraft: () => {},
+                deleteSessionReviewCommentDraft: () => {},
+            }),
+            useSessions: () => sessionsMock,
+            useSession: () => sessionMock,
+            useProjectForSession: () => null,
+            useSessionProjectScmSnapshot: () => stableSnapshot,
+            useSessionProjectScmInFlightOperation: () => null,
+            useSessionReviewCommentsDrafts: () => [],
+            useSetting: (key: string) => {
+                if (key === 'wrapLinesInDiffs') return true;
+                if (key === 'showLineNumbers') return true;
+                if (key === 'scmReviewMaxFiles') return 1;
+                if (key === 'scmReviewMaxChangedLines') return 2000;
+                if (key === 'scmReviewPrefetchAheadCountWeb') return prefetchAheadCount;
+                if (key === 'scmReviewPrefetchBehindCountWeb') return prefetchBehindCount;
+                if (key === 'scmReviewPrefetchDebounceMs') return 0;
+                return undefined;
+            },
+            importOriginal,
+        });
+    },
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        mono: () => ({}),
-    },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => false),
-        },
-    }).module;
-});
 
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffCommit: (...args: Parameters<typeof sessionScmDiffCommitSpy>) => sessionScmDiffCommitSpy(...args),
@@ -160,32 +177,6 @@ vi.mock('@/sync/ops', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => (featureId === 'files.reviewComments' ? reviewCommentsEnabled : false),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: createStorageStoreMock({
-            upsertSessionReviewCommentDraft: () => {},
-            deleteSessionReviewCommentDraft: () => {},
-        }),
-    useSessions: () => sessionsMock,
-    useSession: () => sessionMock,
-    useProjectForSession: () => null,
-    useSessionProjectScmSnapshot: () => stableSnapshot,
-    useSessionProjectScmInFlightOperation: () => null,
-    useSessionReviewCommentsDrafts: () => [],
-    useSetting: (key: string) => {
-            if (key === 'wrapLinesInDiffs') return true;
-            if (key === 'showLineNumbers') return true;
-            if (key === 'scmReviewMaxFiles') return 1;
-            if (key === 'scmReviewMaxChangedLines') return 2000;
-            if (key === 'scmReviewPrefetchAheadCountWeb') return prefetchAheadCount;
-            if (key === 'scmReviewPrefetchBehindCountWeb') return prefetchBehindCount;
-            if (key === 'scmReviewPrefetchDebounceMs') return 0;
-            return undefined;
-        },
-});
-});
 
 vi.mock('@/track', () => ({
     tracking: null,
@@ -329,6 +320,7 @@ describe('SessionCommitDetailsView', () => {
 
     it('does not refetch the diff when the session object identity changes', async () => {
         const tree = await renderCommitDetailsView();
+        const SessionCommitDetailsView = await loadSessionCommitDetailsViewComponent();
 
         expect(sessionScmDiffCommitSpy).toHaveBeenCalledTimes(1);
 
@@ -344,6 +336,7 @@ describe('SessionCommitDetailsView', () => {
 
     it('keeps rendering the loaded diff if session metadata temporarily becomes unavailable', async () => {
         const tree = await renderCommitDetailsView();
+        const SessionCommitDetailsView = await loadSessionCommitDetailsViewComponent();
 
         expect(sessionScmDiffCommitSpy).toHaveBeenCalledTimes(1);
         expect(diffFilesListSpy).toHaveBeenCalled();
@@ -361,6 +354,7 @@ describe('SessionCommitDetailsView', () => {
 
     it('does not refetch the diff when sessions storage readiness toggles after the diff loads', async () => {
         const tree = await renderCommitDetailsView();
+        const SessionCommitDetailsView = await loadSessionCommitDetailsViewComponent();
 
         expect(sessionScmDiffCommitSpy).toHaveBeenCalledTimes(1);
 

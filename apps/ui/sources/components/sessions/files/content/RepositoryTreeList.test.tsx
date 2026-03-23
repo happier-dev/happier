@@ -163,11 +163,8 @@ function findDropTargetForTitle(screen: Awaited<ReturnType<typeof renderReposito
     )) ?? null;
 }
 
-async function settleRepositoryTree(options: { cycles?: number; advanceTimersMs?: number } = {}) {
-    await flushHookEffects({
-        cycles: options.cycles ?? 3,
-        advanceTimersMs: options.advanceTimersMs,
-    });
+async function settleRepositoryTree() {
+    await flushHookEffects({ cycles: 3 });
 }
 
 async function renderRepositoryTreeList(overrides: Partial<Readonly<{
@@ -217,7 +214,6 @@ async function renderRepositoryTreeList(overrides: Partial<Readonly<{
 
 describe('RepositoryTreeList', () => {
     beforeEach(() => {
-        vi.useFakeTimers();
         sessionListDirectorySpy.mockReset();
         sessionListDirectorySpy.mockResolvedValue({
             success: true,
@@ -227,7 +223,6 @@ describe('RepositoryTreeList', () => {
 
     afterEach(() => {
         standardCleanup();
-        vi.useRealTimers();
     });
 
     it('renders an error state when directory listing fails', async () => {

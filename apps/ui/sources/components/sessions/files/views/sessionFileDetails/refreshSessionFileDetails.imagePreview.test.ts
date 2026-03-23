@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { refreshSessionFileDetails } from './refreshSessionFileDetails';
+import { installSessionFileDetailsCommonModuleMocks } from './sessionFileDetailsTestHelpers';
 
 const sessionScmDiffFileSpy = vi.fn(async (..._args: any[]) => ({
     success: true,
@@ -22,10 +22,7 @@ vi.mock('@/hooks/session/files/sessionPathState', () => ({
     resolveSessionPathState: () => ({ status: 'ready', sessionPath: '/repo', homeDir: null }),
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
+installSessionFileDetailsCommonModuleMocks();
 
 vi.mock('@/scm/utils/filePresentation', () => ({
     isBinaryContent: () => true,
@@ -36,6 +33,8 @@ vi.mock('@/scm/utils/filePresentation', () => ({
 vi.mock('@/scm/diff/looksLikeUnifiedDiff', () => ({
     looksLikeUnifiedDiff: () => false,
 }));
+
+const { refreshSessionFileDetails } = await import('./refreshSessionFileDetails');
 
 describe('refreshSessionFileDetails (image preview)', () => {
     it('returns an inline image preview payload for known image files', async () => {

@@ -2,32 +2,28 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit';
+import { installSessionFileViewCommonModuleMocks } from './sessionFileViewTestHelpers';
 
 
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    ScrollView: 'ScrollView',
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
-                                    },
-                                    AppState: {
-                                        addEventListener: () => ({ remove: () => {} }),
-                                    },
-                                }
-    );
+installSessionFileViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            ScrollView: 'ScrollView',
+            Platform: {
+                OS: 'ios',
+                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
+    },
 });
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
 
 vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
     CodeLinesView: (props: any) => {
@@ -53,11 +49,6 @@ vi.mock('@/constants/Typography', () => ({
         default: () => ({}),
     },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 const diffViewerPropsState: { current: any | null } = { current: null };
 const codeLinesViewPropsState: { current: any | null } = { current: null };

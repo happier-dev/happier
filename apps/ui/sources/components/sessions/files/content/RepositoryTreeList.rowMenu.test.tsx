@@ -8,6 +8,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -77,32 +78,41 @@ const {
     };
 });
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
-                                            const header = ListHeaderComponent
-                                                ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
-                                                : null;
-                                            const items = (data ?? []).map((item: any, index: number) => {
-                                                const key = keyExtractor ? keyExtractor(item, index) : String(item?.path ?? index);
-                                                return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-                                            });
-                                            return React.createElement('FlatList', null, header, ...items);
-                                        },
-                                    }
-    );
+installFilesContentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
+                const header = ListHeaderComponent
+                    ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
+                    : null;
+                const items = (data ?? []).map((item: any, index: number) => {
+                    const key = keyExtractor ? keyExtractor(item, index) : String(item?.path ?? index);
+                    return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+                });
+                return React.createElement('FlatList', null, header, ...items);
+            },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        const modalMock = createModalModuleMock();
+        return {
+            Modal: {
+                ...modalMock.module.Modal,
+                show: modalShowStrategy,
+                prompt: modalPromptSpy,
+                confirm: modalConfirmSpy,
+                alert: modalAlertSpy,
+                hide: vi.fn(),
+            },
+        } as any;
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
 }));
 
 vi.mock('@/components/ui/media/FileIcon', () => ({
@@ -128,34 +138,9 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: (props: any) => React.createElement('RoundButton', props),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    return {
-        Modal: {
-            ...modalMock.module.Modal,
-            show: modalShowStrategy,
-            prompt: modalPromptSpy,
-            confirm: modalConfirmSpy,
-            alert: modalAlertSpy,
-            hide: vi.fn(),
-        },
-    } as any;
-});
 
 vi.mock('@/utils/ui/clipboard', () => ({
     setClipboardStringSafe: (value: string) => setClipboardStringSafeSpy(value),

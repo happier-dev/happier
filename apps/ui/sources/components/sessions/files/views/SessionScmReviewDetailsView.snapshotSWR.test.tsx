@@ -28,19 +28,19 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                                    Platform: {
-                                                        OS: 'web',
-                                                        select: (_: any) => 1,
-                                                    },
-                                                    View: (props: any) => React.createElement('View', props, props.children),
-                                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                                    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, null),
-                                                    AppState: {
-                                                        currentState: 'active',
-                                                        addEventListener: () => ({ remove: () => {} }),
-                                                        removeEventListener: () => {},
-                                                    },
-                                                }
+                                                            Platform: {
+                                                                OS: 'web',
+                                                                select: (_: any) => 1,
+                                                            },
+                                                            View: (props: any) => React.createElement('View', props, props.children),
+                                                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                                            ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, null),
+                                                            AppState: {
+                                                                currentState: 'active',
+                                                                addEventListener: () => ({ remove: () => {} }),
+                                                                removeEventListener: () => {},
+                                                            },
+                                                        }
     );
 });
 

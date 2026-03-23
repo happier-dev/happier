@@ -1,26 +1,39 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import {
-    flushHookEffects,
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                Platform: {
-                                                    OS: 'ios',
-                                                    select: (spec: Record<string, unknown>) =>
-                                                        spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-                                                },
-                                            }
-    );
+installSessionFilesViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (spec: Record<string, unknown>) =>
+                    spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
+            },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
+            useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1', host: 'mbp', path: sessionPath } }) as any,
+            useProjectForSession: () => ({ key: { machineId: 'm1', path: projectPath } }) as any,
+            useAllMachines: () => (
+                machineReachable
+                    ? [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
+                    : [{ id: 'm1', active: false, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
+            ) as any,
+            useMachine: () => ({ id: 'm1' }) as any,
+            useSessionRepositoryTreeExpandedPaths: () => [],
+            useSessionProjectScmSnapshot: () => null,
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -35,43 +48,6 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            dark: false,
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                accent: {
-                    blue: '#06f',
-                    indigo: '#33f',
-                    orange: '#f80',
-                    purple: '#a0f',
-                    green: '#0a0',
-                    red: '#f00',
-                    yellow: '#fc0',
-                },
-                groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#ddd',
-                modal: { border: '#ddd' },
-                shadow: { color: '#000', opacity: 0.2 },
-            },
-        },
-    });
-});
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
 
 let latestWorkspaceTransferParams: any = null;
 vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
@@ -114,22 +90,6 @@ let sessionPath: string | null = null;
 let projectPath: string | null = '/repo';
 let machineRpcTargetAvailable = true;
 const invalidateFromUserSpy = vi.fn();
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
-        useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1', host: 'mbp', path: sessionPath } }) as any,
-        useProjectForSession: () => ({ key: { machineId: 'm1', path: projectPath } }) as any,
-        useAllMachines: () => (
-            machineReachable
-                ? [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
-                : [{ id: 'm1', active: false, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
-        ) as any,
-        useMachine: () => ({ id: 'm1' }) as any,
-        useSessionRepositoryTreeExpandedPaths: () => [],
-        useSessionProjectScmSnapshot: () => null,
-    });
-});
 
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({
@@ -143,11 +103,6 @@ vi.mock('@/components/sessions/sourceControl/states', () => ({
     SourceControlSessionInactiveState: () =>
         React.createElement('View', { testID: 'source-control-session-inactive-state' }),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: vi.fn(async () => ({ success: true })),
@@ -187,20 +142,30 @@ async function renderRepositoryTreeBrowserView(
 }
 
 async function updateSearchQuery(screen: Awaited<ReturnType<typeof renderRepositoryTreeBrowserView>>['screen'], value: string) {
-    const input = screen.findByTestId('repository-tree-search');
-    expect(input).toBeTruthy();
+    expect(screen.findByTestId('repository-tree-search')).toBeTruthy();
     await act(async () => {
-        input?.props.onChangeText(value);
+        screen.changeTextByTestId('repository-tree-search', value);
     });
 }
 
-async function settleSearchEffects() {
-    await flushHookEffects({ cycles: 1, turns: 1, runOnlyPendingTimers: true });
+async function waitForTestId(screen: Awaited<ReturnType<typeof renderRepositoryTreeBrowserView>>['screen'], testID: string) {
+    const timeoutMs = 1000;
+    const pollMs = 5;
+    const start = Date.now();
+
+    while (!screen.findByTestId(testID)) {
+        if (Date.now() - start > timeoutMs) {
+            throw new Error(`Timed out waiting for testID "${testID}"`);
+        }
+
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, pollMs));
+        });
+    }
 }
 
 describe('SessionRepositoryTreeBrowserView', () => {
     beforeEach(() => {
-        vi.useFakeTimers();
         searchFilesSpy.mockReset();
         latestWorkspaceTransferParams = null;
         sessionActive = true;
@@ -238,11 +203,11 @@ describe('SessionRepositoryTreeBrowserView', () => {
         const { screen, onOpenFile } = await renderRepositoryTreeBrowserView();
 
         await updateSearchQuery(screen, 'api');
-        await settleSearchEffects();
+        await waitForTestId(screen, 'search-results:src/api.ts');
 
         expect(screen.findByTestId('search-results:src/api.ts')).toBeTruthy();
 
-        screen.pressByTestId('search-results:src/api.ts');
+        await screen.pressByTestIdAsync('search-results:src/api.ts');
 
         expect(searchFilesSpy).toHaveBeenCalled();
         expect(onOpenFile).toHaveBeenCalledWith('src/api.ts');
@@ -255,12 +220,12 @@ describe('SessionRepositoryTreeBrowserView', () => {
             ])
             .mockResolvedValueOnce([
                 { fileName: 'after.txt', filePath: '', fullPath: 'after.txt', fileType: 'file' },
-            ]);
+        ]);
 
         const { screen } = await renderRepositoryTreeBrowserView();
 
         await updateSearchQuery(screen, 'manual-qa-upload');
-        await settleSearchEffects();
+        await waitForTestId(screen, 'search-results:before.txt');
 
         expect(screen.findByTestId('search-results:before.txt')).toBeTruthy();
         expect(searchFilesSpy).toHaveBeenCalledTimes(1);
@@ -268,7 +233,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
         await act(async () => {
             await latestWorkspaceTransferParams.onAfterUploadSuccess();
         });
-        await settleSearchEffects();
+        await waitForTestId(screen, 'search-results:after.txt');
 
         expect(searchFilesSpy).toHaveBeenCalledTimes(2);
         expect(screen.findByTestId('search-results:after.txt')).toBeTruthy();

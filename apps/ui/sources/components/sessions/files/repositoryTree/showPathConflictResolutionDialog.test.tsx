@@ -1,7 +1,6 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -63,16 +62,14 @@ describe('showPathConflictResolutionDialog', () => {
         const modalConfig = showSpy.mock.calls[0]?.[0];
         expect(modalConfig).toBeDefined();
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(modalConfig.component, {
-                    ...(modalConfig.props ?? {}),
-                    onClose: vi.fn(),
-                }))).tree;
+        const screen = await renderScreen(React.createElement(modalConfig.component, {
+            ...(modalConfig.props ?? {}),
+            onClose: vi.fn(),
+        }));
 
-        const skip = tree.find((node: any) => node.props?.testID === 'upload-conflicts-skip');
-        await act(async () => {
-            await pressTestInstanceAsync(skip);
-        });
+        const skip = screen.findByTestId('upload-conflicts-skip');
+        expect(skip).toBeTruthy();
+        await screen.pressByTestIdAsync('upload-conflicts-skip');
 
         await expect(promise).resolves.toBe('skip');
         expect(hideSpy).toHaveBeenCalledWith('modal-1');

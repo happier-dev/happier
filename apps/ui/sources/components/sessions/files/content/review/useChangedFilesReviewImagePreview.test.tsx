@@ -2,18 +2,21 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installFilesContentCommonModuleMocks } from '../filesContentTestHelpers';
 
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'filesImagePreviewCacheMaxEntries') return 10;
-        if (key === 'filesImagePreviewCacheMaxTotalBytes') return 1_000_000;
-        if (key === 'filesImagePreviewMaxBytes') return 1_000_000;
-        return undefined;
+installFilesContentCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSetting: (key: string) => {
+                if (key === 'filesImagePreviewCacheMaxEntries') return 10;
+                if (key === 'filesImagePreviewCacheMaxTotalBytes') return 1_000_000;
+                if (key === 'filesImagePreviewMaxBytes') return 1_000_000;
+                return undefined;
+            },
+        });
     },
-});
 });
 
 vi.mock('@/sync/ops', () => ({

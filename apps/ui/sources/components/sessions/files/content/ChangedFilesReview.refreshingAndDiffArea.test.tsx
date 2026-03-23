@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
-import { flushHookEffects, pressTestInstance, renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, pressTestInstance, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1227,20 +1227,7 @@ describe('ChangedFilesReview', () => {
         await flushReviewEffects();
 
         const button = trailingScreen.findByProps({ testID: 'scm-change-open-file-src_a.ts' });
-        act(() => {
-            const eventWithThrowingNativeEvent = {
-                stopPropagation: vi.fn(),
-                preventDefault: vi.fn(),
-                get nativeEvent() {
-                    throw new Error('nativeEvent getter should not be required');
-                },
-            };
-            if (typeof button.props.onPress === 'function') {
-                button.props.onPress(eventWithThrowingNativeEvent);
-            } else if (typeof button.props.onClick === 'function') {
-                button.props.onClick(eventWithThrowingNativeEvent);
-            }
-        });
+        await pressTestInstanceAsync(button, 'scm-change-open-file-src_a.ts');
 
         expect(onFilePress).toHaveBeenCalledTimes(1);
         expect(onFilePress.mock.calls[0]?.[0]?.fullPath).toBe('src/a.ts');

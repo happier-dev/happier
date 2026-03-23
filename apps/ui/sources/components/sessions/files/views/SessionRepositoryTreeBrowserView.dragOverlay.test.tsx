@@ -6,6 +6,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,13 +17,22 @@ const readWebDroppedEntriesSpy = vi.fn(async (..._args: any[]) => [{ file: { nam
 let machineRpcTargetAvailable = true;
 let SessionRepositoryTreeBrowserView: typeof import('./SessionRepositoryTreeBrowserView').SessionRepositoryTreeBrowserView;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                Platform: { OS: 'web' },
-                                            }
-    );
+installSessionFilesViewCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        const modalModuleMock = createModalModuleMock();
+        modalModuleMock.spies.show.mockImplementation(() => 'm1');
+        return modalModuleMock.module;
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
+            useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
+            useSessionRepositoryTreeExpandedPaths: () => [],
+            useSessionProjectScmSnapshot: () => null,
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -55,30 +65,6 @@ vi.mock('@/hooks/ui/useWebFileDropZone', () => ({
     }),
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
-        useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
-        useSessionRepositoryTreeExpandedPaths: () => [],
-        useSessionProjectScmSnapshot: () => null,
-    });
-});
-
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({
         machineReachable: machineRpcTargetAvailable,
@@ -95,13 +81,6 @@ vi.mock('@/sync/domains/input/suggestionFile', () => ({
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: { invalidateFromUser: () => {} },
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalModuleMock = createModalModuleMock();
-    modalModuleMock.spies.show.mockImplementation(() => 'm1');
-    return modalModuleMock.module;
-});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: vi.fn(async () => ({ success: true })),

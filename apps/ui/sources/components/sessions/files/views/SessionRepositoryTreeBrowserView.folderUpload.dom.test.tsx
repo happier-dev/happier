@@ -5,59 +5,59 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
+import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const startUploadsSpy = vi.fn(async () => ({ ok: true }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-                                                View: ({ testID, children, onLayout: _onLayout, ...props }: any) =>
-                                                    React.createElement('div', { 'data-testid': testID, ...props }, children),
-                                                Pressable: ({ testID, onPress, children, accessibilityLabel, accessibilityRole, hitSlop: _hitSlop, ...props }: any) =>
-                                                    React.createElement(
-                                                        'button',
-                                                        {
-                                                            type: 'button',
-                                                            'data-testid': testID,
-                                                            'aria-label': accessibilityLabel,
-                                                            role: accessibilityRole,
-                                                            onClick: onPress,
-                                                            ...props,
-                                                        },
-                                                        children,
-                                                    ),
-                                                TextInput: ({ testID, onChangeText, children, placeholderTextColor: _placeholderTextColor, ...props }: any) =>
-                                                    React.createElement('input', {
-                                                        'data-testid': testID,
-                                                        onChange: (event: any) => onChangeText?.(event.target.value),
-                                                        ...props,
-                                                    }, children),
-                                            }
-    );
+installSessionFilesViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
+            View: ({ testID, children, onLayout: _onLayout, ...props }: any) =>
+                React.createElement('div', { 'data-testid': testID, ...props }, children),
+            Pressable: ({ testID, onPress, children, accessibilityLabel, accessibilityRole, hitSlop: _hitSlop, ...props }: any) =>
+                React.createElement(
+                    'button',
+                    {
+                        type: 'button',
+                        'data-testid': testID,
+                        'aria-label': accessibilityLabel,
+                        role: accessibilityRole,
+                        onClick: onPress,
+                        ...props,
+                    },
+                    children,
+                ),
+            TextInput: ({ testID, onChangeText, children, placeholderTextColor: _placeholderTextColor, ...props }: any) =>
+                React.createElement(
+                    'input',
+                    {
+                        'data-testid': testID,
+                        onChange: (event: any) => onChangeText?.(event.target.value),
+                        ...props,
+                    },
+                    children,
+                ),
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
+            useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
+            useSessionRepositoryTreeExpandedPaths: () => [],
+            useSessionProjectScmSnapshot: () => null,
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: (props: any) => React.createElement('span', props),
     Ionicons: (props: any) => React.createElement('span', props),
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
 
 vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
     RepositoryTreeList: () => React.createElement('div'),
@@ -141,16 +141,6 @@ vi.mock('@/sync/domains/input/suggestionFile', () => ({
     fileSearchCache: { clearCache: vi.fn() },
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
-        useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
-        useSessionRepositoryTreeExpandedPaths: () => [],
-        useSessionProjectScmSnapshot: () => null,
-    });
-});
-
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({
         machineReachable: true,
@@ -158,12 +148,6 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
         machineRpcTargetAvailable: true,
     }),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalModuleMock = createModalModuleMock();
-    return modalModuleMock.module;
-});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: vi.fn(async () => ({ success: true })),

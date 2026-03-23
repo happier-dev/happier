@@ -76,20 +76,30 @@ function Harness(props: Readonly<{ snapshot: any | null }>) {
 
 describe('useScmTreeBadgeIndex', () => {
     it('defers index computation on web for progressive rendering', async () => {
-        vi.useFakeTimers();
         const snapshot = makeSnapshot();
+        let scheduledCompute: (() => void) | undefined;
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: TimerHandler) => {
+            scheduledCompute = () => {
+                if (typeof callback === 'function') {
+                    callback();
+                }
+            };
+            return 1 as ReturnType<typeof setTimeout>;
+        }) as typeof setTimeout);
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<Harness snapshot={snapshot} />)).tree;
+        try {
+            let tree!: renderer.ReactTestRenderer;
+            tree = (await renderScreen(<Harness snapshot={snapshot} />)).tree;
 
-        expect(tree.findByType('Text').props.value).toBe('none');
+            expect(tree.findByType('Text').props.value).toBe('none');
 
-        await act(async () => {
-            vi.runAllTimers();
-        });
+            await act(async () => {
+                scheduledCompute?.();
+            });
 
-        expect(tree.findByType('Text').props.value).toBe('M:2:1');
-
-        vi.useRealTimers();
+            expect(tree.findByType('Text').props.value).toBe('M:2:1');
+        } finally {
+            setTimeoutSpy.mockRestore();
+        }
     });
 });

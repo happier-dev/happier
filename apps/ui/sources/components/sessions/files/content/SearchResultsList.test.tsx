@@ -2,32 +2,35 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'web',
-                                            },
-                                            TurboModuleRegistry: {
-                                                get: () => ({}),
-                                            },
-                                            FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
-                                                    const header = ListHeaderComponent
-                                                        ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
-                                                        : null;
-                                                    const items = (data ?? []).map((item: any, index: number) => {
-                                                        const key = keyExtractor ? keyExtractor(item, index) : String(item?.fullPath ?? index);
-                                                        return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-                                                    });
-                                                    return React.createElement('FlatList', null, header, ...items);
-                                                },
-                                        }
-    );
+installFilesContentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock(
+            {
+                Platform: {
+                    OS: 'web',
+                },
+                TurboModuleRegistry: {
+                    get: () => ({}),
+                },
+                FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
+                    const header = ListHeaderComponent
+                        ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
+                        : null;
+                    const items = (data ?? []).map((item: any, index: number) => {
+                        const key = keyExtractor ? keyExtractor(item, index) : String(item?.fullPath ?? index);
+                        return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+                    });
+                    return React.createElement('FlatList', null, header, ...items);
+                },
+            },
+        );
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({

@@ -1,23 +1,23 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { View as RNView } from 'react-native';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionFileViewCommonModuleMocks } from './sessionFileViewTestHelpers';
 
 
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        select: ({ default: value }: { default: number }) => value,
-                                    },
-                                    View: 'View',
-                                }
-    );
+installSessionFileViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                select: ({ default: value }: { default: number }) => value,
+            },
+            View: 'View',
+        });
+    },
 });
 
 vi.mock('@/components/ui/media/FileIcon', () => ({
@@ -80,7 +80,7 @@ describe('FileHeader', () => {
                     theme={theme as any}
                     fileName="README.md"
                     filePathDir=""
-                    rightElement={<RNView testID="right-child" />}
+                    rightElement={React.createElement('View', { testID: 'right-child' })}
                 />)).tree;
 
         expect(tree!.findByProps({ testID: 'file-header-right' })).toBeDefined();

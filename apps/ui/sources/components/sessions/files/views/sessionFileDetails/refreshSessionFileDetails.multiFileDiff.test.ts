@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { refreshSessionFileDetails } from './refreshSessionFileDetails';
+import { installSessionFileDetailsCommonModuleMocks } from './sessionFileDetailsTestHelpers';
 
 const sessionScmDiffFileSpy = vi.fn(async (..._args: any[]) => ({
     success: true,
@@ -28,6 +28,8 @@ const sessionReadFileSpy = vi.fn(async (..._args: any[]) => ({
     content: Buffer.from('hello\nworld\n').toString('base64'),
 }));
 
+installSessionFileDetailsCommonModuleMocks();
+
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffFile: (...args: any[]) => sessionScmDiffFileSpy(...args),
     sessionStatFile: vi.fn(async () => ({ success: true, exists: true, kind: 'file', sizeBytes: 1024, modifiedMs: 1 })),
@@ -38,16 +40,13 @@ vi.mock('@/hooks/session/files/sessionPathState', () => ({
     resolveSessionPathState: () => ({ status: 'ready', sessionPath: '/repo', homeDir: null }),
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 vi.mock('@/scm/utils/filePresentation', () => ({
     getImageMimeTypeFromPath: () => null,
     isBinaryContent: () => false,
     isKnownBinaryPath: () => false,
 }));
+
+const { refreshSessionFileDetails } = await import('./refreshSessionFileDetails');
 
 describe('refreshSessionFileDetails (multi-file diff)', () => {
     it('extracts the requested file diff when backend returns a combined patch', async () => {

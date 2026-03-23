@@ -5,46 +5,49 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setExpandedPathsSpy = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-                                            }
-    );
+installSessionFilesViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: setExpandedPathsSpy }) } as any,
+            useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
+            useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }) as any,
+            useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }] as any,
+            useMachine: () => ({ id: 'm1' }) as any,
+            useSessionRepositoryTreeExpandedPaths: () => ['src'],
+            useSessionProjectScmSnapshot: () => ({
+                projectKey: 'p',
+                fetchedAt: 1,
+                repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+                capabilities: {} as any,
+                branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                hasConflicts: false,
+                entries: [],
+                totals: {
+                    includedFiles: 0,
+                    pendingFiles: 0,
+                    untrackedFiles: 0,
+                    includedAdded: 0,
+                    includedRemoved: 0,
+                    pendingAdded: 0,
+                    pendingRemoved: 0,
+                },
+            }) as any,
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
-}));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
 
 vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
     useWorkspaceFileTransfers: () => ({
@@ -56,36 +59,6 @@ vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
         cancelDownload: vi.fn(),
     }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: setExpandedPathsSpy }) } as any,
-        useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
-        useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }) as any,
-        useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }] as any,
-        useMachine: () => ({ id: 'm1' }) as any,
-        useSessionRepositoryTreeExpandedPaths: () => ['src'],
-        useSessionProjectScmSnapshot: () => ({
-            projectKey: 'p',
-            fetchedAt: 1,
-            repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-            capabilities: {} as any,
-            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-            hasConflicts: false,
-            entries: [],
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 0,
-                untrackedFiles: 0,
-                includedAdded: 0,
-                includedRemoved: 0,
-                pendingAdded: 0,
-                pendingRemoved: 0,
-            },
-        }) as any,
-    });
-});
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
@@ -131,11 +104,6 @@ vi.mock('@/components/sessions/files/views/repositoryTreeBrowser/RepositoryTreeC
 vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
     SearchResultsList: () => React.createElement('SearchResultsList'),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: vi.fn(async () => ({ success: true })),

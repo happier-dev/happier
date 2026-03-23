@@ -4,46 +4,51 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, renderScreen } from '@/dev/testkit';
 import type { Session, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { Project } from '@/sync/runtime/orchestration/projectManager';
+import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                    Platform: {
-                                                        OS: 'ios',
-                                                        select: (spec: any) => spec?.ios ?? spec?.default,
-                                                    },
-                                                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/components/ui/layout/layout', () => ({
-  layout: { maxWidth: 1024 },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(),
-            prompt: vi.fn(),
-            show: vi.fn(),
-        },
-    }).module;
+installSessionFilesViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (spec: any) => spec?.ios ?? spec?.default,
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: vi.fn(),
+                prompt: vi.fn(),
+                show: vi.fn(),
+            },
+        }).module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSession: () => scmRefreshSession,
+            useProjectForSession: () => scmRefreshProject,
+            useSessions: () => [],
+            useSessionReviewCommentsDrafts: () => [],
+            useSessionProjectScmCommitSelectionPaths: () => [],
+            useSessionProjectScmCommitSelectionPatches: () => [],
+            useSessionProjectScmInFlightOperation: () => null,
+            useSessionProjectScmSnapshot: () => scmSnapshot,
+            useSetting: () => null,
+            importOriginal,
+        });
+    },
 });
 
 vi.mock('@/utils/code/fileLanguage', () => ({
@@ -215,21 +220,6 @@ vi.mock('./sessionFileDetails/refreshSessionFileDetails', () => ({
 }));
 
 let scmSnapshot: ScmWorkingSnapshot | null = null;
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSession: () => scmRefreshSession,
-    useProjectForSession: () => scmRefreshProject,
-    useSessions: () => [],
-    useSessionReviewCommentsDrafts: () => [],
-    useSessionProjectScmCommitSelectionPaths: () => [],
-    useSessionProjectScmCommitSelectionPatches: () => [],
-    useSessionProjectScmInFlightOperation: () => null,
-    useSessionProjectScmSnapshot: () => scmSnapshot,
-    useSetting: () => null,
-});
-});
 
 describe('SessionFileDetailsView (SCM refresh)', () => {
   it('refreshes diff content in-place when SCM entry fingerprint changes', async () => {

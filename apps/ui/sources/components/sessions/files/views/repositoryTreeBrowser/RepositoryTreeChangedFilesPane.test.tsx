@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Project } from '@/sync/runtime/orchestration/projectManager';
-import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,6 +15,10 @@ const repositoryProject: Project = {
     createdAt: 1,
     updatedAt: 1,
 };
+
+function findChipByLabel(screen: Awaited<ReturnType<typeof renderScreen>>, label: string) {
+    return screen.findAll((node) => node.props?.label === label)[0] ?? null;
+}
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -120,14 +124,14 @@ describe('RepositoryTreeChangedFilesPane', () => {
         expect(screen.findAllByType('ChangedFilesList' as any)).toHaveLength(1);
         expect(screen.findAllByType('ChangedFilesReview' as any)).toHaveLength(0);
 
-        const reviewToggle = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'files.toolbar.review');
+        const reviewToggle = findChipByLabel(screen, 'files.toolbar.review');
         expect(reviewToggle).toBeTruthy();
 
         await pressTestInstanceAsync(reviewToggle, 'files.toolbar.review');
 
         expect(screen.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
 
-        const allRepositoryFilesToggle = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'files.toolbar.allRepositoryFiles');
+        const allRepositoryFilesToggle = findChipByLabel(screen, 'files.toolbar.allRepositoryFiles');
         expect(allRepositoryFilesToggle).toBeTruthy();
 
         await pressTestInstanceAsync(allRepositoryFilesToggle, 'files.toolbar.allRepositoryFiles');

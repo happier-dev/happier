@@ -2,20 +2,41 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installFilesContentCommonModuleMocks,
+} from './filesContentTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: 'View',
-                                            Platform: {
-                                                select: (value: any) => value?.default ?? null,
-                                            },
-                                        }
-    );
+installFilesContentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Platform: {
+                select: (value: any) => value?.default ?? null,
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: Record<string, unknown>) => {
+                if (key === 'files.repositoryChangedFiles') return `Repository changed files (${String(params?.count ?? '')})`;
+                if (key === 'files.latestTurnChanges') return `Latest turn changes (${String(params?.count ?? '')})`;
+                if (key === 'files.latestTurnDescription') return 'Provider-backed changes from the most recent completed turn.';
+                if (key === 'files.sessionAttributedChanges') return `Session-attributed changes (${String(params?.count ?? '')})`;
+                if (key === 'files.otherRepositoryChanges') return `Other repository changes (${String(params?.count ?? '')})`;
+                if (key === 'files.noLatestTurnChanges') return 'No latest-turn changes currently detected.';
+                if (key === 'files.noSessionAttributedChanges') return 'No session-attributed changes currently detected.';
+                if (key === 'files.attributionReliabilityLimited') {
+                    return 'Reliability limited: multiple sessions are active for this repository';
+                }
+                return key;
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -44,23 +65,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
 vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) => {
-        if (key === 'files.repositoryChangedFiles') return `Repository changed files (${String(params?.count ?? '')})`;
-        if (key === 'files.latestTurnChanges') return `Latest turn changes (${String(params?.count ?? '')})`;
-        if (key === 'files.latestTurnDescription') return 'Provider-backed changes from the most recent completed turn.';
-        if (key === 'files.sessionAttributedChanges') return `Session-attributed changes (${String(params?.count ?? '')})`;
-        if (key === 'files.otherRepositoryChanges') return `Other repository changes (${String(params?.count ?? '')})`;
-        if (key === 'files.noLatestTurnChanges') return 'No latest-turn changes currently detected.';
-        if (key === 'files.noSessionAttributedChanges') return 'No session-attributed changes currently detected.';
-        if (key === 'files.attributionReliabilityLimited') {
-            return 'Reliability limited: multiple sessions are active for this repository';
-        }
-        return key;
-    } });
-});
 
 describe('ChangedFilesList', () => {
     const file = {

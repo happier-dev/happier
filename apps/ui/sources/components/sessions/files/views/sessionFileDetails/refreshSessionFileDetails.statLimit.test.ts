@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { refreshSessionFileDetails } from './refreshSessionFileDetails';
+import { installSessionFileDetailsCommonModuleMocks } from './sessionFileDetailsTestHelpers';
 
 const sessionScmDiffFileSpy = vi.fn(async (..._args: any[]) => ({
     success: true,
@@ -34,9 +34,12 @@ vi.mock('@/hooks/session/files/sessionPathState', () => ({
     resolveSessionPathState: () => ({ status: 'ready', sessionPath: '/repo', homeDir: null }),
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installSessionFileDetailsCommonModuleMocks({
+    text: () => ({
+        t: (key: string) => key,
+        tLoose: (key: string) => key,
+        getPreferredLanguage: () => 'en',
+    }),
 });
 
 vi.mock('@/scm/utils/filePresentation', () => ({
@@ -45,12 +48,26 @@ vi.mock('@/scm/utils/filePresentation', () => ({
     getImageMimeTypeFromPath: () => null,
 }));
 
+vi.mock('@/scm/diff/fallbackUnifiedDiff', () => ({
+    buildAddedFileUnifiedDiff: () => 'diff --git a/src/big.txt b/src/big.txt\n--- a/src/big.txt\n+++ b/src/big.txt\n@@\n+big\n',
+    decodeUtf8Base64: (value: string) => Buffer.from(value, 'base64').toString('utf8'),
+}));
+
+vi.mock('@/scm/diff/looksLikeUnifiedDiff', () => ({
+    looksLikeUnifiedDiff: () => true,
+}));
+
+vi.mock('@/scm/diff/extractUnifiedDiffForSingleFile', () => ({
+    extractUnifiedDiffForSingleFile: (input: { patch: string }) => input.patch,
+}));
+
 describe('refreshSessionFileDetails (stat size limit)', () => {
     it('returns an error without reading when the file is too large to preview', async () => {
         sessionScmDiffFileSpy.mockClear();
         sessionStatFileSpy.mockClear();
         sessionReadFileSpy.mockClear();
 
+        const { refreshSessionFileDetails } = await import('./refreshSessionFileDetails');
         const result = await refreshSessionFileDetails({
             sessionId: 's1',
             filePath: 'src/big.txt',
@@ -68,4 +85,3 @@ describe('refreshSessionFileDetails (stat size limit)', () => {
         expect(sessionReadFileSpy).toHaveBeenCalledTimes(0);
     });
 });
-

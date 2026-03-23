@@ -5,6 +5,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,13 +19,26 @@ const safePathSpy = vi.fn((value: string) => value === 'src/new-file.ts' || valu
 let sessionActive = true;
 let machineRpcTargetAvailable = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-                                            }
-    );
+installSessionFilesViewCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        const modalModuleMock = createModalModuleMock();
+        modalModuleMock.spies.prompt.mockImplementation((...args: any[]) => promptSpy(...args));
+        modalModuleMock.spies.alert.mockImplementation((...args: any[]) => alertSpy(...args));
+        return modalModuleMock.module;
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: setExpandedSpy }) } as any,
+            useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1' } }) as any,
+            useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }) as any,
+            useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }] as any,
+            useMachine: () => ({ id: 'm1' }) as any,
+            useSessionRepositoryTreeExpandedPaths: () => [],
+            useSessionProjectScmSnapshot: () => null,
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -45,20 +59,6 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), mono: () => ({}) },
-}));
-
 vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
     useWorkspaceFileTransfers: () => ({
         uploadState: { status: 'idle' },
@@ -69,19 +69,6 @@ vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
         cancelDownload: vi.fn(),
     }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: setExpandedSpy }) } as any,
-        useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1' } }) as any,
-        useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }) as any,
-        useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }] as any,
-        useMachine: () => ({ id: 'm1' }) as any,
-        useSessionRepositoryTreeExpandedPaths: () => [],
-        useSessionProjectScmSnapshot: () => null,
-    });
-});
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
@@ -133,14 +120,6 @@ vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
 vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
     ChangedFilesReview: () => React.createElement('ChangedFilesReview'),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalModuleMock = createModalModuleMock();
-    modalModuleMock.spies.prompt.mockImplementation((...args: any[]) => promptSpy(...args));
-    modalModuleMock.spies.alert.mockImplementation((...args: any[]) => alertSpy(...args));
-    return modalModuleMock.module;
-});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: (...args: any[]) => writeFileSpy(...args),

@@ -884,20 +884,18 @@ vi.mock('@/scm/isDirectoryLikeScmFileStatus', () => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        View: 'View',
-                                        Image: 'Image',
-                                        Pressable: 'Pressable',
-                                        FlatList: 'FlatList',
-                                        ScrollView: 'ScrollView',
-                                        ActivityIndicator: 'ActivityIndicator',
-                                        TextInput: 'TextInput',
-                                        Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
-                                        useWindowDimensions: () => ({ width: 1200, height: 800 }),
-                                        Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-                                    }
-    );
+    return createReactNativeWebMock({
+        View: 'View',
+        Image: 'Image',
+        Pressable: 'Pressable',
+        FlatList: 'FlatList',
+        ScrollView: 'ScrollView',
+        ActivityIndicator: 'ActivityIndicator',
+        TextInput: 'TextInput',
+        Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
+        useWindowDimensions: () => ({ width: 1200, height: 800 }),
+        Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
+    });
 });
 
 vi.mock('@expo/vector-icons', () => ({
