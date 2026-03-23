@@ -1,3 +1,7 @@
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkspaceReplicationBaselineStore } from './baseline/workspaceReplicationBaselineStore';
@@ -7,7 +11,7 @@ import type {
     WorkspaceReplicationRelationshipRecord,
     WorkspaceReplicationRelationshipStore,
 } from './relationships/workspaceReplicationRelationshipStore';
-import type { WorkspaceReplicationTransfers } from './transport/workspaceReplicationTransfers';
+import type { WorkspaceReplicationSourceOfferStore } from './transport/workspaceReplicationSourceOfferStore';
 import {
     buildWorkspaceReplicationDirectionId,
 } from './relationships/workspaceReplicationRelationshipStore';
@@ -70,26 +74,11 @@ function createStubJobStore(): WorkspaceReplicationJobStore {
     };
 }
 
-function createStubTransfers(): WorkspaceReplicationTransfers {
+function createStubSourceOfferStore(): WorkspaceReplicationSourceOfferStore {
     return {
-        publishDirectPeerSourceOffer: vi.fn(() => []),
-        requestDirectPeerSourceOffer: vi.fn(async () => {
-            throw new Error('not used in test');
-        }),
-        requestServerRoutedSourceOffer: vi.fn(async () => {
-            throw new Error('not used in test');
-        }),
-        publishDirectPeerBlobPack: vi.fn(() => []),
-        requestDirectPeerBlobPackToFile: vi.fn(async () => ({
-            destinationPath: '/tmp/blob-pack.bin',
-            manifestHash: 'sha256:00',
-            sizeBytes: 0,
-        })),
-        requestServerRoutedBlobPackToFile: vi.fn(async () => ({
-            destinationPath: '/tmp/blob-pack.bin',
-            manifestHash: 'sha256:00',
-            sizeBytes: 0,
-        })),
+        write: vi.fn(async () => ({ filePath: '/tmp/offer.txt', sizeBytes: 0 })),
+        read: vi.fn(async () => null),
+        resolveFilePath: vi.fn(() => '/tmp/offer.txt'),
     };
 }
 
@@ -102,12 +91,13 @@ describe('createWorkspaceReplicationEngine', () => {
             relationships: createStubRelationshipStore(),
             baselines: createStubBaselineStore(),
             jobs: createStubJobStore(),
+            sourceOffers: createStubSourceOfferStore(),
         };
-        const transfers = createStubTransfers();
         const createCasStore = vi.fn(() => stores.cas);
         const createRelationshipStore = vi.fn(() => stores.relationships);
         const createBaselineStore = vi.fn(() => stores.baselines);
         const createJobStore = vi.fn(() => stores.jobs);
+        const createSourceOfferStore = vi.fn(() => stores.sourceOffers);
         const createSourceOffer = vi.fn(async () => ({
             offerId: 'offer_1',
             relationshipId: 'rel_1',
@@ -121,12 +111,13 @@ describe('createWorkspaceReplicationEngine', () => {
         const { createWorkspaceReplicationEngine } = await import('./createWorkspaceReplicationEngine');
 
         const engine: unknown = createWorkspaceReplicationEngine(
-            { activeServerDir, localMachineId, transfers },
+            { activeServerDir, localMachineId },
             {
                 createCasStore,
                 createRelationshipStore,
                 createBaselineStore,
                 createJobStore,
+                createSourceOfferStore,
                 createSourceOffer,
                 executeJobInBackground,
             },
@@ -136,6 +127,7 @@ describe('createWorkspaceReplicationEngine', () => {
         expect(createRelationshipStore).toHaveBeenCalledWith({ activeServerDir });
         expect(createBaselineStore).toHaveBeenCalledWith({ activeServerDir });
         expect(createJobStore).toHaveBeenCalledWith({ activeServerDir });
+        expect(createSourceOfferStore).toHaveBeenCalledWith({ activeServerDir });
         expect(engine).toBeTruthy();
 
         const engineObject = engine as Record<string, unknown>;
@@ -255,6 +247,7 @@ describe('createWorkspaceReplicationEngine', () => {
             requestBlobPackToFile: vi.fn(async () => undefined),
             correlationId: 'corr_stub',
         });
+        expect(stores.sourceOffers.write).toHaveBeenCalled();
         expect(stores.jobs.write).toHaveBeenCalled();
         expect(executeJobInBackground).toHaveBeenCalled();
     });
@@ -273,7 +266,6 @@ describe('createWorkspaceReplicationEngine', () => {
                 {
                     activeServerDir: '/tmp/happier-active-server',
                     localMachineId: 'machine_local',
-                    transfers: createStubTransfers(),
                 },
                 {
                     createCasStore,
@@ -289,7 +281,6 @@ describe('createWorkspaceReplicationEngine', () => {
                 {
                     activeServerDir: '/tmp/happier-active-server',
                     localMachineId: 'machine_local',
-                    transfers: createStubTransfers(),
                 },
                 {
                     createCasStore,
@@ -305,6 +296,65 @@ describe('createWorkspaceReplicationEngine', () => {
                 code: 'engine_initialization_failed',
                 cause,
             });
+        }
+    });
+
+    it('persists started job source offers to disk in a streaming offer format (restart-safe offer resolution)', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-wsrepl-engine-offer-store-'));
+        try {
+            const { createWorkspaceReplicationEngine } = await import('./createWorkspaceReplicationEngine');
+            const {
+                isStreamingWorkspaceReplicationSourceOfferFile,
+                readWorkspaceReplicationSourceOfferFromFile,
+            } = await import('./transport/workspaceReplicationSourceOfferFileFormat');
+
+            const sourceOffer = {
+                offerId: 'offer_store_1',
+                relationshipId: 'rel_store_1',
+                directionId: 'dir_store_1',
+                sourceFingerprint: `sha256:${'a'.repeat(64)}`,
+                manifest: { entries: [], fingerprint: `sha256:${'a'.repeat(64)}` },
+                blobIndex: [],
+            };
+
+            const engine = createWorkspaceReplicationEngine(
+                { activeServerDir, localMachineId: 'machine_local' },
+                { executeJobInBackground: () => {} },
+            );
+
+            await engine.startJobFromOffer({
+                scope: {
+                    sourceMachineId: 'source',
+                    sourceWorkspaceRoot: '/source',
+                    targetMachineId: 'target',
+                    targetWorkspaceRoot: '/target',
+                    mode: 'one_way_safe',
+                },
+                sourceOffer,
+                apply: {
+                    targetPath: '/target',
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                },
+                requestBlobPackToFile: async () => undefined,
+                correlationId: 'corr_offer_store',
+            });
+
+            const offersDirectory = join(activeServerDir, 'workspace-replication', 'offers');
+            const entries = await readdir(offersDirectory);
+            const offerFileName = entries.find((name) => name.includes(sourceOffer.offerId));
+            expect(offerFileName).toBeTruthy();
+
+            const offerFilePath = join(offersDirectory, offerFileName!);
+            expect(await isStreamingWorkspaceReplicationSourceOfferFile(offerFilePath)).toBe(true);
+            const parsed = await readWorkspaceReplicationSourceOfferFromFile({
+                transferId: sourceOffer.offerId,
+                filePath: offerFilePath,
+                legacyWholeBufferMaxBytes: 10_000_000,
+            });
+            expect(parsed.offerId).toBe(sourceOffer.offerId);
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
         }
     });
 });

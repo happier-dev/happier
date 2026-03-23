@@ -1,4 +1,5 @@
 import type { WorkspaceManifest } from '@happier-dev/protocol';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { ScmBackendRegistry } from '@/scm/registry';
 import type { ScmSourceControllerWorkspaceTransferMetadata } from '@/scm/sourceController/workspaceTransfer';
@@ -7,6 +8,7 @@ import { fingerprintWorkspaceManifest } from '@/scm/sourceController/workspaceEx
 import type { WorkspaceManifestSafeFilterPolicy } from '@/scm/sourceController/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 import { objectKey } from '@/utils/deterministicJson';
 
+import { createWorkspaceReplicationCasStore } from '../cas/workspaceReplicationCasStore';
 import {
   buildWorkspaceReplicationDirectionId,
   createWorkspaceReplicationRelationshipStore,
@@ -58,6 +60,52 @@ function buildWorkspaceReplicationSourceOfferBlobIndex(
   return [...blobIndexByDigest.values()];
 }
 
+function resolveSafeWorkspaceFilePath(params: Readonly<{
+  workspaceRoot: string;
+  relativePath: string;
+}>): string {
+  // Workspace manifests are expected to contain root-relative paths. Fail closed to avoid path traversal.
+  const absolutePath = resolve(params.workspaceRoot, params.relativePath);
+  const rel = relative(params.workspaceRoot, absolutePath);
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`Invalid workspace manifest relativePath: ${params.relativePath}`);
+  }
+  return absolutePath;
+}
+
+async function seedWorkspaceReplicationCasFromManifest(input: Readonly<{
+  activeServerDir: string;
+  workspaceRoot: string;
+  manifest: WorkspaceManifest;
+}>): Promise<void> {
+  const casStore = createWorkspaceReplicationCasStore({
+    activeServerDir: input.activeServerDir,
+  });
+  const digestToSourcePath = new Map<string, string>();
+  for (const entry of input.manifest.entries) {
+    if (entry.kind !== 'file') {
+      continue;
+    }
+    if (digestToSourcePath.has(entry.digest)) {
+      continue;
+    }
+    digestToSourcePath.set(entry.digest, resolveSafeWorkspaceFilePath({
+      workspaceRoot: input.workspaceRoot,
+      relativePath: entry.relativePath,
+    }));
+  }
+
+  for (const [digest, sourcePath] of digestToSourcePath.entries()) {
+    if (await casStore.contains(digest)) {
+      continue;
+    }
+    await casStore.commitFile({
+      digest,
+      sourcePath,
+    });
+  }
+}
+
 export async function createWorkspaceReplicationSourceOfferFromManifest(input: Readonly<{
   activeServerDir: string;
   source: Readonly<{
@@ -72,6 +120,7 @@ export async function createWorkspaceReplicationSourceOfferFromManifest(input: R
   ignorePatterns?: readonly string[];
   manifest: WorkspaceManifest;
   sourceControllerMetadata?: ScmSourceControllerWorkspaceTransferMetadata;
+  seedCasFromWorkspaceRoot?: boolean;
 }>): Promise<WorkspaceReplicationSourceOffer> {
   const scope: WorkspaceReplicationDirectionScope = {
     sourceMachineId: input.source.machineId,
@@ -95,6 +144,14 @@ export async function createWorkspaceReplicationSourceOfferFromManifest(input: R
     entries: manifestEntries,
     fingerprint: sourceFingerprint,
   };
+
+  if (input.seedCasFromWorkspaceRoot) {
+    await seedWorkspaceReplicationCasFromManifest({
+      activeServerDir: input.activeServerDir,
+      workspaceRoot: input.source.rootPath,
+      manifest,
+    });
+  }
 
   return {
     offerId: `offer_${objectKey({

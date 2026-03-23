@@ -10,6 +10,13 @@ import { gcExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { findHappyProcessByPid } from '@/daemon/doctor';
 import { resolveComparableCliVersion } from '@/daemon/resolveComparableCliVersion';
 import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
+import { configuration } from '@/configuration';
+import {
+  gcWorkspaceReplicationCas,
+  gcWorkspaceReplicationJobs,
+  recoverWorkspaceReplicationJobsAfterRestart,
+} from '@/workspaces/replication/state/workspaceReplicationGc';
+import { recoverSessionHandoffPrepareTargetJobsAfterRestart } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 
 import { reportDaemonObservedSessionExit } from '../sessionTermination';
 import type { TrackedSession } from '../types';
@@ -82,7 +89,59 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     process.env.HAPPIER_DAEMON_EXECUTION_RUN_TERMINAL_TTL_MS,
     6 * 60 * 60 * 1000,
   );
+  const workspaceReplicationJobTerminalTtlMs = parseNonNegativeInt(
+    process.env.HAPPIER_DAEMON_WORKSPACE_REPLICATION_JOB_TERMINAL_TTL_MS,
+    14 * 24 * 60 * 60 * 1000,
+  );
+  const workspaceReplicationCasUnreferencedTtlMs = parseNonNegativeInt(
+    process.env.HAPPIER_DAEMON_WORKSPACE_REPLICATION_CAS_UNREFERENCED_TTL_MS,
+    14 * 24 * 60 * 60 * 1000,
+  );
+  const workspaceReplicationCasMaxBytes = parseNonNegativeInt(
+    process.env.HAPPIER_DAEMON_WORKSPACE_REPLICATION_CAS_MAX_BYTES,
+    0,
+  );
   let heartbeatRunning = false;
+  let workspaceReplicationRecoveryPromise: Promise<void> | null = null;
+  let sessionHandoffPrepareTargetRecoveryPromise: Promise<void> | null = null;
+
+  const ensureWorkspaceReplicationRecovery = (): Promise<void> => {
+    if (workspaceReplicationRecoveryPromise) {
+      return workspaceReplicationRecoveryPromise;
+    }
+    workspaceReplicationRecoveryPromise = (async () => {
+      try {
+        await recoverWorkspaceReplicationJobsAfterRestart({
+          activeServerDir: configuration.activeServerDir,
+          nowMs: Date.now(),
+        });
+      } catch (error) {
+        logger.debug('[DAEMON RUN] Failed to recover workspace replication jobs', error);
+      }
+    })();
+    return workspaceReplicationRecoveryPromise;
+  };
+
+  const ensureSessionHandoffPrepareTargetRecovery = (): Promise<void> => {
+    if (sessionHandoffPrepareTargetRecoveryPromise) {
+      return sessionHandoffPrepareTargetRecoveryPromise;
+    }
+    sessionHandoffPrepareTargetRecoveryPromise = (async () => {
+      try {
+        await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+          activeServerDir: configuration.activeServerDir,
+          nowMs: Date.now(),
+        });
+      } catch (error) {
+        logger.debug('[DAEMON RUN] Failed to recover session-handoff prepare-target jobs', error);
+      }
+    })();
+    return sessionHandoffPrepareTargetRecoveryPromise;
+  };
+
+  // Kick off recovery immediately; do not wait for the first heartbeat tick.
+  void ensureWorkspaceReplicationRecovery();
+  void ensureSessionHandoffPrepareTargetRecovery();
 
   const intervalHandle = setInterval(async () => {
     if (heartbeatRunning) {
@@ -93,6 +152,9 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       if (process.env.DEBUG) {
         logger.debug(`[DAEMON RUN] Health check started at ${new Date().toLocaleString()}`);
       }
+
+      await ensureWorkspaceReplicationRecovery();
+      await ensureSessionHandoffPrepareTargetRecovery();
 
       // Prune stale sessions
       for (const [pid, _] of pidToTrackedSession.entries()) {
@@ -172,6 +234,29 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         });
       } catch (error) {
         logger.debug('[DAEMON RUN] Failed to gc execution run markers', error);
+      }
+
+      try {
+        await gcWorkspaceReplicationJobs({
+          activeServerDir: configuration.activeServerDir,
+          nowMs: Date.now(),
+          terminalTtlMs: workspaceReplicationJobTerminalTtlMs,
+        });
+      } catch (error) {
+        logger.debug('[DAEMON RUN] Failed to gc workspace replication jobs', error);
+      }
+
+      try {
+        if (workspaceReplicationCasUnreferencedTtlMs > 0 || workspaceReplicationCasMaxBytes > 0) {
+          await gcWorkspaceReplicationCas({
+            activeServerDir: configuration.activeServerDir,
+            nowMs: Date.now(),
+            unreferencedTtlMs: workspaceReplicationCasUnreferencedTtlMs,
+            ...(workspaceReplicationCasMaxBytes > 0 ? { maxBytes: workspaceReplicationCasMaxBytes } : {}),
+          });
+        }
+      } catch (error) {
+        logger.debug('[DAEMON RUN] Failed to gc workspace replication cas', error);
       }
 
       // Cleanup any spawn resources for sessions no longer tracked (e.g. stopSession removed them).

@@ -15,6 +15,7 @@ import {
   createWorkspaceReplicationBlobPackEndMarkerBuffer,
   createWorkspaceReplicationBlobPackHeaderBuffer,
 } from './workspaceReplicationBlobPackFormatV1';
+import { assertSafeWorkspaceReplicationPackId } from './workspaceReplicationPackId';
 
 async function writeBufferPart(input: Readonly<{
   file: Awaited<ReturnType<typeof open>>;
@@ -31,12 +32,13 @@ export async function createWorkspaceReplicationBlobPackPayloadSource(input: Rea
   packId: string;
   digests: readonly string[];
 }>): Promise<TransferPayloadSource> {
+  const packId = assertSafeWorkspaceReplicationPackId(input.packId);
   const casStore = createWorkspaceReplicationCasStore({
     activeServerDir: input.activeServerDir,
   });
   const tempDirectory = join(tmpdir(), 'happier-workspace-replication-blob-packs');
   await mkdir(tempDirectory, { recursive: true });
-  const filePath = join(tempDirectory, `${input.packId}-${randomUUID()}.bin`);
+  const filePath = join(tempDirectory, `${packId}-${randomUUID()}.bin`);
   const file = await open(filePath, 'w');
   const hash = createHash('sha256');
   let sizeBytes = 0;

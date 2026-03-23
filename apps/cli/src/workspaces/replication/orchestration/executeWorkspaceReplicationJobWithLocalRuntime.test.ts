@@ -183,6 +183,7 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
         const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-target-workspace-sync-'));
 
         try {
+            const { createWorkspaceReplicationBaselineStore } = await import('../baseline/workspaceReplicationBaselineStore');
             const { createWorkspaceReplicationCasStore } = await import('../cas/workspaceReplicationCasStore');
             const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
             const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
@@ -205,7 +206,30 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
             const sourceFilePath = join(sourceWorkspaceRoot, 'README.md');
             await writeFile(sourceFilePath, fileContents, 'utf8');
 
-            await writeFile(join(targetWorkspaceRoot, 'DELETE_ME.txt'), 'remove me', 'utf8');
+            const deleteMeContents = 'remove me';
+            const deleteMeDigest = sha256DigestOfString(deleteMeContents);
+            await writeFile(join(targetWorkspaceRoot, 'DELETE_ME.txt'), deleteMeContents, 'utf8');
+
+            const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir });
+            await baselineStore.save({
+                scope,
+                baseline: {
+                    manifestFingerprint: sha256DigestOfString('baseline-fp'),
+                    manifest: {
+                        entries: [
+                            {
+                                kind: 'file',
+                                relativePath: 'DELETE_ME.txt',
+                                digest: deleteMeDigest,
+                                sizeBytes: Buffer.byteLength(deleteMeContents),
+                                executable: false,
+                            },
+                        ],
+                        fingerprint: sha256DigestOfString('baseline-manifest-fp'),
+                    },
+                    savedAtMs: 1,
+                },
+            });
 
             const sourceCas = createWorkspaceReplicationCasStore({ activeServerDir: sourceActiveServerDir });
             await sourceCas.commitFile({
@@ -308,6 +332,134 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
             await expect(access(join(appliedTargetPath, 'DELETE_ME.txt'))).rejects.toMatchObject({
                 code: 'ENOENT',
             });
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+            await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
+    });
+
+    it('aborts before receiving a blob pack when cancellation is requested after the pack download completes', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-cancel-after-download-target-'));
+        const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-cancel-after-download-source-'));
+        const sourceWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-cancel-after-download-source-workspace-'));
+        const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-cancel-after-download-target-workspace-'));
+
+        try {
+            const { createWorkspaceReplicationCasStore } = await import('../cas/workspaceReplicationCasStore');
+            const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+            const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+            const { createWorkspaceReplicationBlobPackPayloadSource } = await import('../transport/createWorkspaceReplicationBlobPackPayloadSource');
+            const { executeWorkspaceReplicationJobWithLocalRuntime } = await import('./executeWorkspaceReplicationJobWithLocalRuntime');
+
+            const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+            const scope = {
+                sourceMachineId: 'machine-source',
+                sourceWorkspaceRoot,
+                targetMachineId: 'machine-target',
+                targetWorkspaceRoot,
+                mode: 'one_way_safe' as const,
+            };
+            const relationship = await relationships.ensureRelationship(scope);
+
+            const fileContents = 'hello cancel after download\n';
+            const fileDigest = sha256DigestOfString(fileContents);
+            const sourceFilePath = join(sourceWorkspaceRoot, 'README.md');
+            await writeFile(sourceFilePath, fileContents, 'utf8');
+
+            const sourceCas = createWorkspaceReplicationCasStore({ activeServerDir: sourceActiveServerDir });
+            await sourceCas.commitFile({
+                digest: fileDigest,
+                sourcePath: sourceFilePath,
+            });
+
+            const offer: WorkspaceReplicationSourceOffer = {
+                offerId: 'offer_cancel_after_download',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_1',
+                sourceFingerprint: sha256DigestOfString('offer-fp-cancel'),
+                manifest: {
+                    entries: [
+                        {
+                            kind: 'file',
+                            relativePath: 'README.md',
+                            digest: fileDigest,
+                            sizeBytes: Buffer.byteLength(fileContents),
+                            executable: false,
+                        },
+                    ],
+                    fingerprint: sha256DigestOfString('manifest-fp-cancel'),
+                },
+                blobIndex: [{ digest: fileDigest, sizeBytes: Buffer.byteLength(fileContents) }],
+            };
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                schemaVersion: 1,
+                jobId: 'job_cancel_after_download_1',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_1',
+                offerId: offer.offerId,
+                mode: 'one_way_safe',
+                correlationId: 'corr_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'pending',
+                    phase: 'negotiate_missing_digests',
+                    checkpoint: 'job_created',
+                    progressCounters: {
+                        plannedFiles: 0,
+                        plannedBytes: 0,
+                        transferredFiles: 0,
+                        transferredBytes: 0,
+                        appliedFiles: 0,
+                        appliedBytes: 0,
+                    },
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            const result = await executeWorkspaceReplicationJobWithLocalRuntime({
+                activeServerDir,
+                jobStore,
+                relationships,
+                jobId: 'job_cancel_after_download_1',
+                now: () => 99,
+                relationshipScope: scope,
+                resolveSourceOfferById: async () => offer,
+                requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
+                    const payloadSource = await createWorkspaceReplicationBlobPackPayloadSource({
+                        activeServerDir: sourceActiveServerDir,
+                        packId,
+                        digests,
+                    });
+                    if (payloadSource.kind !== 'file') {
+                        throw new Error('expected file payload source');
+                    }
+                    await copyFile(payloadSource.filePath, destinationPath);
+                    await payloadSource.dispose?.();
+
+                    await jobStore.update('job_cancel_after_download_1', (current) => ({
+                        ...current,
+                        cancelRequestedAtMs: 50,
+                    }));
+                },
+                apply: {
+                    targetPath: targetWorkspaceRoot,
+                    strategy: 'transfer_snapshot',
+                    conflictPolicy: 'replace_existing',
+                },
+            });
+
+            expect(result.status.status).toBe('aborted');
+
+            const targetCas = createWorkspaceReplicationCasStore({ activeServerDir });
+            await expect(targetCas.contains(fileDigest)).resolves.toBe(false);
+
+            await expect(access(join(targetWorkspaceRoot, 'README.md'))).rejects.toThrow();
         } finally {
             await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
             await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);
@@ -471,7 +623,7 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
         }
     });
 
-    it('fails closed for one_way_safe sync_changes when the target workspace diverged since the last baseline', async () => {
+    it('marks the job awaiting_recovery for one_way_safe sync_changes when the target workspace diverged on paths the source would overwrite', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-diverged-target-'));
         const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-diverged-source-'));
         const sourceWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-diverged-source-workspace-'));
@@ -625,7 +777,7 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
             });
 
             expect(result.status).toMatchObject({
-                status: 'failed',
+                status: 'awaiting_recovery',
                 phase: 'planning',
                 checkpoint: 'relationship_resolved',
             });
@@ -634,12 +786,364 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
 
             await expect(jobStore.read('job_diverged_1')).resolves.toMatchObject({
                 jobId: 'job_diverged_1',
-                failedAtMs: 42,
+                awaitingRecoveryAtMs: 42,
                 status: {
-                    status: 'failed',
+                    status: 'awaiting_recovery',
                     checkpoint: 'relationship_resolved',
                 },
             });
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+            await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
+    });
+
+    it('does not block one_way_safe sync_changes when the target diverged only on paths the source would not overwrite', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-nonblocking-divergence-target-'));
+        const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-nonblocking-divergence-source-'));
+        const sourceWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-nonblocking-source-workspace-'));
+        const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-nonblocking-target-workspace-'));
+
+        try {
+            const { createWorkspaceReplicationBaselineStore } = await import('../baseline/workspaceReplicationBaselineStore');
+            const { createWorkspaceReplicationCasStore } = await import('../cas/workspaceReplicationCasStore');
+            const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+            const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+            const { createWorkspaceReplicationBlobPackPayloadSource } = await import('../transport/createWorkspaceReplicationBlobPackPayloadSource');
+            const { writeWorkspaceReplicationSourceOfferToFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+            const { executeWorkspaceReplicationJobWithLocalRuntime } = await import('./executeWorkspaceReplicationJobWithLocalRuntime');
+
+            const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+            const scope = {
+                sourceMachineId: 'machine-source',
+                sourceWorkspaceRoot,
+                targetMachineId: 'machine-target',
+                targetWorkspaceRoot,
+                mode: 'one_way_safe' as const,
+            };
+            const relationship = await relationships.ensureRelationship(scope);
+
+            const baselineReadmeContents = 'baseline readme\n';
+            const baselineReadmeDigest = sha256DigestOfString(baselineReadmeContents);
+            const baselineNotesContents = 'baseline notes\n';
+            const baselineNotesDigest = sha256DigestOfString(baselineNotesContents);
+
+            const divergedNotesContents = 'diverged notes\n';
+            const divergedNotesDigest = sha256DigestOfString(divergedNotesContents);
+            await writeFile(join(targetWorkspaceRoot, 'README.md'), baselineReadmeContents, 'utf8');
+            await writeFile(join(targetWorkspaceRoot, 'notes.txt'), divergedNotesContents, 'utf8');
+
+            const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir });
+            await baselineStore.save({
+                scope,
+                baseline: {
+                    manifestFingerprint: sha256DigestOfString('baseline-fp'),
+                    manifest: {
+                        entries: [
+                            {
+                                kind: 'file',
+                                relativePath: 'README.md',
+                                digest: baselineReadmeDigest,
+                                sizeBytes: Buffer.byteLength(baselineReadmeContents),
+                                executable: false,
+                            },
+                            {
+                                kind: 'file',
+                                relativePath: 'notes.txt',
+                                digest: baselineNotesDigest,
+                                sizeBytes: Buffer.byteLength(baselineNotesContents),
+                                executable: false,
+                            },
+                        ],
+                        fingerprint: sha256DigestOfString('baseline-manifest-fp'),
+                    },
+                    savedAtMs: 1,
+                },
+            });
+
+            const sourceReadmeContents = baselineReadmeContents;
+            const sourceReadmeDigest = baselineReadmeDigest;
+            const sourceFilePath = join(sourceWorkspaceRoot, 'README.md');
+            await writeFile(sourceFilePath, sourceReadmeContents, 'utf8');
+            const sourceNotesPath = join(sourceWorkspaceRoot, 'notes.txt');
+            await writeFile(sourceNotesPath, divergedNotesContents, 'utf8');
+
+            const sourceCas = createWorkspaceReplicationCasStore({ activeServerDir: sourceActiveServerDir });
+            await sourceCas.commitFile({
+                digest: sourceReadmeDigest,
+                sourcePath: sourceFilePath,
+            });
+            await sourceCas.commitFile({
+                digest: divergedNotesDigest,
+                sourcePath: sourceNotesPath,
+            });
+
+            const offer: WorkspaceReplicationSourceOffer = {
+                offerId: 'offer_nonblocking_divergence',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_1',
+                sourceFingerprint: sha256DigestOfString('offer-fp'),
+                manifest: {
+                    entries: [
+                        {
+                            kind: 'file',
+                            relativePath: 'README.md',
+                            digest: sourceReadmeDigest,
+                            sizeBytes: Buffer.byteLength(sourceReadmeContents),
+                            executable: false,
+                        },
+                        {
+                            kind: 'file',
+                            relativePath: 'notes.txt',
+                            digest: divergedNotesDigest,
+                            sizeBytes: Buffer.byteLength(divergedNotesContents),
+                            executable: false,
+                        },
+                    ],
+                    fingerprint: sha256DigestOfString('manifest-fp'),
+                },
+                blobIndex: [
+                    { digest: sourceReadmeDigest, sizeBytes: Buffer.byteLength(sourceReadmeContents) },
+                    { digest: divergedNotesDigest, sizeBytes: Buffer.byteLength(divergedNotesContents) },
+                ],
+            };
+
+            const offerTempDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-nonblocking-offer-'));
+            const offerPath = join(offerTempDir, 'source-offer.txt');
+            await writeWorkspaceReplicationSourceOfferToFile({
+                offer,
+                filePath: offerPath,
+            });
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                schemaVersion: 1,
+                jobId: 'job_nonblocking_1',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_1',
+                offerId: offer.offerId,
+                mode: 'one_way_safe',
+                correlationId: 'corr_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'pending',
+                    phase: 'negotiate_missing_digests',
+                    checkpoint: 'job_created',
+                    progressCounters: {
+                        plannedFiles: 0,
+                        plannedBytes: 0,
+                        transferredFiles: 0,
+                        transferredBytes: 0,
+                        appliedFiles: 0,
+                        appliedBytes: 0,
+                    },
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            const requestBlobPackToFile = vi.fn(async ({ packId, digests, destinationPath }) => {
+                const payloadSource = await createWorkspaceReplicationBlobPackPayloadSource({
+                    activeServerDir: sourceActiveServerDir,
+                    packId,
+                    digests,
+                });
+                if (payloadSource.kind !== 'file') {
+                    throw new Error('expected file payload source');
+                }
+                await copyFile(payloadSource.filePath, destinationPath);
+                await payloadSource.dispose?.();
+            });
+
+            const result = await executeWorkspaceReplicationJobWithLocalRuntime({
+                activeServerDir,
+                jobStore,
+                relationships,
+                jobId: 'job_nonblocking_1',
+                now: () => 42,
+                relationshipScope: scope,
+                resolveSourceOfferById: async () => {
+                    const { readWorkspaceReplicationSourceOfferFromFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+                    return await readWorkspaceReplicationSourceOfferFromFile({
+                        transferId: 'offer_transfer_nonblocking',
+                        filePath: offerPath,
+                        legacyWholeBufferMaxBytes: 1024 * 1024,
+                    });
+                },
+                requestBlobPackToFile,
+                apply: {
+                    targetPath: targetWorkspaceRoot,
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                },
+            });
+
+            expect(result.status.status).toBe('completed');
+            await expect(jobStore.read('job_nonblocking_1')).resolves.toMatchObject({
+                jobId: 'job_nonblocking_1',
+                completedAtMs: 42,
+                status: {
+                    status: 'completed',
+                },
+            });
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+            await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
+    });
+
+    it('bootstraps one_way_safe sync_changes when the baseline is missing (first run)', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-missing-baseline-'));
+        const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-missing-baseline-source-'));
+        const sourceWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-missing-baseline-source-workspace-'));
+        const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-missing-baseline-target-workspace-'));
+
+        try {
+            const { createWorkspaceReplicationCasStore } = await import('../cas/workspaceReplicationCasStore');
+            const { createWorkspaceReplicationBaselineStore } = await import('../baseline/workspaceReplicationBaselineStore');
+            const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+            const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+            const { createWorkspaceReplicationBlobPackPayloadSource } = await import('../transport/createWorkspaceReplicationBlobPackPayloadSource');
+            const { writeWorkspaceReplicationSourceOfferToFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+            const { executeWorkspaceReplicationJobWithLocalRuntime } = await import('./executeWorkspaceReplicationJobWithLocalRuntime');
+
+            const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+            const scope = {
+                sourceMachineId: 'machine-source',
+                sourceWorkspaceRoot,
+                targetMachineId: 'machine-target',
+                targetWorkspaceRoot,
+                mode: 'one_way_safe' as const,
+            };
+            const relationship = await relationships.ensureRelationship(scope);
+
+            const sourceContents = 'source\n';
+            const sourceDigest = sha256DigestOfString(sourceContents);
+            const sourceFilePath = join(sourceWorkspaceRoot, 'README.md');
+            await writeFile(sourceFilePath, sourceContents, 'utf8');
+
+            const sourceCas = createWorkspaceReplicationCasStore({ activeServerDir: sourceActiveServerDir });
+            await sourceCas.commitFile({
+                digest: sourceDigest,
+                sourcePath: sourceFilePath,
+            });
+
+            const offer: WorkspaceReplicationSourceOffer = {
+                offerId: 'offer_missing_baseline',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_1',
+                sourceFingerprint: sha256DigestOfString('offer-fp'),
+                manifest: {
+                    entries: [
+                        {
+                            kind: 'file',
+                            relativePath: 'README.md',
+                            digest: sourceDigest,
+                            sizeBytes: Buffer.byteLength(sourceContents),
+                            executable: false,
+                        },
+                    ],
+                    fingerprint: sha256DigestOfString('manifest-fp'),
+                },
+                blobIndex: [{ digest: sourceDigest, sizeBytes: Buffer.byteLength(sourceContents) }],
+            };
+
+            const offerTempDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-missing-baseline-offer-'));
+            const offerPath = join(offerTempDir, 'source-offer.txt');
+            await writeWorkspaceReplicationSourceOfferToFile({
+                offer,
+                filePath: offerPath,
+            });
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                schemaVersion: 1,
+                jobId: 'job_missing_baseline_1',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_1',
+                offerId: offer.offerId,
+                mode: 'one_way_safe',
+                correlationId: 'corr_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'pending',
+                    phase: 'negotiate_missing_digests',
+                    checkpoint: 'job_created',
+                    progressCounters: {
+                        plannedFiles: 0,
+                        plannedBytes: 0,
+                        transferredFiles: 0,
+                        transferredBytes: 0,
+                        appliedFiles: 0,
+                        appliedBytes: 0,
+                    },
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            const requestBlobPackToFile = vi.fn(async ({ packId, digests, destinationPath }) => {
+                const payloadSource = await createWorkspaceReplicationBlobPackPayloadSource({
+                    activeServerDir: sourceActiveServerDir,
+                    packId,
+                    digests,
+                });
+                if (payloadSource.kind !== 'file') {
+                    throw new Error('expected file payload source');
+                }
+                await copyFile(payloadSource.filePath, destinationPath);
+                await payloadSource.dispose?.();
+            });
+
+            const result = await executeWorkspaceReplicationJobWithLocalRuntime({
+                activeServerDir,
+                jobStore,
+                relationships,
+                jobId: 'job_missing_baseline_1',
+                now: () => 42,
+                relationshipScope: scope,
+                resolveSourceOfferById: async () => {
+                    const { readWorkspaceReplicationSourceOfferFromFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+                    return await readWorkspaceReplicationSourceOfferFromFile({
+                        transferId: 'offer_transfer_missing_baseline',
+                        filePath: offerPath,
+                        legacyWholeBufferMaxBytes: 1024 * 1024,
+                    });
+                },
+                requestBlobPackToFile,
+                apply: {
+                    targetPath: targetWorkspaceRoot,
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                },
+            });
+
+            expect(result.status.status).toBe('completed');
+            expect(requestBlobPackToFile).toHaveBeenCalled();
+            await expect(readFile(join(targetWorkspaceRoot, 'README.md'), 'utf8')).resolves.toBe(sourceContents);
+
+            await expect(jobStore.read('job_missing_baseline_1')).resolves.toMatchObject({
+                jobId: 'job_missing_baseline_1',
+                completedAtMs: 42,
+                status: {
+                    status: 'completed',
+                },
+            });
+
+            const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir });
+            const baseline = await baselineStore.load(scope);
+            expect(baseline).toEqual(expect.objectContaining({
+                manifestFingerprint: offer.sourceFingerprint,
+                manifest: expect.objectContaining({
+                    entries: expect.any(Array),
+                }),
+            }));
         } finally {
             await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
             await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);

@@ -23,7 +23,6 @@ export function createWorkspaceReplicationCasBackedImportArtifacts(input: Readon
   return {
     workspaceExportArtifacts: createScmSourceControllerWorkspaceExportArtifacts({
       manifest: input.sourceOffer.manifest,
-      blobContentsByDigest: new Map(),
       sourceControllerMetadata: input.sourceOffer.sourceControllerMetadata ?? null,
     }),
     blobProvider: {

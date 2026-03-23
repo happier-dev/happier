@@ -5,6 +5,7 @@ import type { WorkspaceReplicationSourceOffer } from './transport/createWorkspac
 import type {
     WorkspaceReplicationCreateSourceOfferInput,
     WorkspaceReplicationGcInput,
+    WorkspaceReplicationGcResult,
     WorkspaceReplicationListJobsInput,
     WorkspaceReplicationPlanResult,
     WorkspaceReplicationResolvedRelationship,
@@ -34,5 +35,5 @@ export type WorkspaceReplicationEngine = Readonly<{
     listJobs: (input?: WorkspaceReplicationListJobsInput) => Promise<readonly WorkspaceReplicationJobRecord[]>;
     abortJob: (jobId: string) => Promise<WorkspaceReplicationJobRecord>;
 
-    gc: (input: WorkspaceReplicationGcInput) => Promise<Readonly<{ removedJobIds: string[] }>>;
+    gc: (input: WorkspaceReplicationGcInput) => Promise<WorkspaceReplicationGcResult>;
 }>;

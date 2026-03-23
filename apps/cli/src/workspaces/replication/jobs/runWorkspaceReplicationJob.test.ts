@@ -28,22 +28,31 @@ describe('runWorkspaceReplicationJob', () => {
                 },
             });
 
-            const now = vi.fn(() => 25);
+            let runnerInvoked = false;
+            const now = vi.fn(() => {
+                if (!runnerInvoked) {
+                    throw new Error('now() called before runner completed');
+                }
+                return 25;
+            });
             const result = await runWorkspaceReplicationJob({
                 jobStore,
                 jobId: 'job_1',
                 now,
-                run: async (current) => ({
-                    ...current,
-                    updatedAtMs: 24,
-                    completedAtMs: 24,
-                    status: {
-                        ...current.status,
-                        status: 'completed',
-                        phase: 'commit_baseline',
-                        checkpoint: 'baseline_committed',
-                    },
-                }),
+                run: async (current) => {
+                    runnerInvoked = true;
+                    return {
+                        ...current,
+                        updatedAtMs: 24,
+                        completedAtMs: 24,
+                        status: {
+                            ...current.status,
+                            status: 'completed',
+                            phase: 'commit_baseline',
+                            checkpoint: 'baseline_committed',
+                        },
+                    };
+                },
             });
 
             expect(now).toHaveBeenCalledTimes(1);
@@ -95,11 +104,18 @@ describe('runWorkspaceReplicationJob', () => {
                 },
             });
 
+            let runnerInvoked = false;
             await expect(runWorkspaceReplicationJob({
                 jobStore,
                 jobId: 'job_2',
-                now: () => 44,
+                now: () => {
+                    if (!runnerInvoked) {
+                        throw new Error('now() called before runner completed');
+                    }
+                    return 44;
+                },
                 run: async () => {
+                    runnerInvoked = true;
                     throw new Error('boom');
                 },
             })).rejects.toThrow('boom');
@@ -144,11 +160,18 @@ describe('runWorkspaceReplicationJob', () => {
                 },
             });
 
+            let runnerInvoked = false;
             await expect(runWorkspaceReplicationJob({
                 jobStore,
                 jobId: 'job_cancel_1',
-                now: () => 60,
+                now: () => {
+                    if (!runnerInvoked) {
+                        throw new Error('now() called before runner completed');
+                    }
+                    return 60;
+                },
                 run: async () => {
+                    runnerInvoked = true;
                     throw new WorkspaceReplicationJobCancelRequestedError('job_cancel_1');
                 },
             })).rejects.toThrow(WorkspaceReplicationJobCancelRequestedError);
@@ -162,6 +185,69 @@ describe('runWorkspaceReplicationJob', () => {
                     status: 'aborted',
                     phase: 'transfer_missing_blobs_to_target_cas',
                     checkpoint: 'blob_transfer_started',
+                },
+            });
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not lose a concurrent cancellation request while persisting runner progress (cancelRequestedAtMs is sticky)', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-run-job-cancel-sticky-'));
+
+        try {
+            const { createWorkspaceReplicationJobStore } = await import('./workspaceReplicationJobStore');
+            const { runWorkspaceReplicationJob } = await import('./runWorkspaceReplicationJob');
+            const { abortWorkspaceReplicationJob } = await import('./abortWorkspaceReplicationJob');
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                jobId: 'job_cancel_sticky_1',
+                correlationId: 'handoff_cancel_sticky_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'in_progress',
+                    phase: 'transfer_missing_blobs_to_target_cas',
+                    checkpoint: 'blob_transfer_started',
+                    progressCounters: {},
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            await runWorkspaceReplicationJob({
+                jobStore,
+                jobId: 'job_cancel_sticky_1',
+                now: () => 60,
+                run: async (current) => {
+                    // Simulate a cancellation request arriving while the job runner is still executing.
+                    await abortWorkspaceReplicationJob({
+                        jobStore,
+                        jobId: 'job_cancel_sticky_1',
+                        now: () => 50,
+                    });
+
+                    // Return a progress update that does not include cancelRequestedAtMs.
+                    return {
+                        ...current,
+                        status: {
+                            ...current.status,
+                            status: 'in_progress',
+                            phase: 'apply',
+                            checkpoint: 'apply_started',
+                        },
+                    };
+                },
+            });
+
+            await expect(jobStore.read('job_cancel_sticky_1')).resolves.toMatchObject({
+                jobId: 'job_cancel_sticky_1',
+                cancelRequestedAtMs: 50,
+                status: {
+                    status: 'in_progress',
+                    phase: 'apply',
+                    checkpoint: 'apply_started',
                 },
             });
         } finally {

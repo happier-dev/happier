@@ -1,6 +1,7 @@
 import type {
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
+  SessionHandoffMetadataV2,
   SessionHandoffTransportStrategy,
   WorkspaceManifest,
   SessionHandoffWorkspaceTransfer,
@@ -10,18 +11,15 @@ import type {
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
 import type { ScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
-import { applyWorkspaceReplicationPlan } from '@/workspaces/replication/apply/applyWorkspaceReplicationPlan';
 import { createWorkspaceReplicationEngine } from '@/workspaces/replication/createWorkspaceReplicationEngine';
+import { abortWorkspaceReplicationJob } from '@/workspaces/replication/jobs/abortWorkspaceReplicationJob';
+import { createWorkspaceReplicationJobStore } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';
+import { assertSafeWorkspaceReplicationPackId } from '@/workspaces/replication/transport/workspaceReplicationPackId';
 import {
   createWorkspaceReplicationTransfers,
   type WorkspaceReplicationTransfers,
 } from '@/workspaces/replication/transport/workspaceReplicationTransfers';
 
-import {
-  buildSessionHandoffWorkspaceExportArtifacts,
-  buildSessionHandoffWorkspaceExportPayload,
-  importSessionHandoffWorkspaceArtifacts,
-} from '../workspace/sessionHandoffWorkspaceArtifacts';
 import {
   buildSessionHandoffWorkspaceReplicationSourceOffer,
   createSessionHandoffWorkspaceReplicationMetadata,
@@ -30,35 +28,47 @@ import {
 import {
   type PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers,
   publishSessionHandoffWorkspaceReplicationDirectPeerTransfers,
-  receiveDirectPeerSessionHandoffWorkspaceReplication,
-  type SessionHandoffWorkspaceReplicationDirectPeerPublication,
+  buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId,
 } from '../workspace/sessionHandoffWorkspaceReplicationDirectPeer';
 import {
   createSessionHandoffWorkspaceReplicationBlobPackPayloadSource,
-  createSessionHandoffWorkspaceReplicationSourceOfferPayloadSource,
   buildSessionHandoffWorkspaceBlobPackTransferId,
+  buildSessionHandoffWorkspaceManifestTransferId,
   parseSessionHandoffWorkspaceBlobPackTransferId,
-  parseSessionHandoffWorkspaceSourceOfferTransferId,
-  receiveServerRoutedSessionHandoffWorkspaceReplication,
 } from '../workspace/sessionHandoffWorkspaceReplicationServerRouted';
-import {
-  createSessionHandoffTransferredBundles,
-  createSessionHandoffTransferredBundlesPayloadSource,
-  normalizeCurrentSessionHandoffTransferredPayloadForStorage,
-  receiveSessionHandoffTransferredBundlesPayloadFile,
-  type ReceivedSessionHandoffTransferredBundlesPayloadFile,
-  type SessionHandoffTransferredBundles,
-} from '../transfer/sessionHandoffTransferredBundles';
-import {
-  createSessionHandoffMetadataV2,
-  type SessionHandoffMetadataV2,
-} from '../transfer/sessionHandoffMetadataV2';
 import type { SessionHandoffProviderBundleTransferPublication } from '../sessionHandoffProviderBundleTransferPublication';
+
+function rewriteDirectPeerEndpointCandidatesForTransferId(input: Readonly<{
+  endpointCandidates: readonly TransferEndpointCandidate[];
+  transferId: string;
+}>): readonly TransferEndpointCandidate[] {
+  const encodedKey = Buffer.from(input.transferId, 'utf8').toString('base64url');
+  const marker = '/machine-transfers/direct/';
+
+  return input.endpointCandidates.map((candidate) => {
+    if (candidate.kind !== 'http' && candidate.kind !== 'https') {
+      return candidate;
+    }
+    const parsed = new URL(candidate.url);
+    const markerIndex = parsed.pathname.indexOf(marker);
+    if (markerIndex < 0) {
+      throw new Error(`Invalid direct-peer endpoint candidate URL for ${input.transferId}`);
+    }
+    parsed.pathname = `${parsed.pathname.slice(0, markerIndex + marker.length)}${encodedKey}`;
+    // Direct-peer candidates should not rely on query params for auth or routing.
+    parsed.search = '';
+    parsed.hash = '';
+    return {
+      ...candidate,
+      url: parsed.toString(),
+    };
+  });
+}
 
 type DirectPeerTransferPublisher = Readonly<{
   publishTransfer: (input: Readonly<{
     transferId: string;
-    payload: ReturnType<typeof createSessionHandoffTransferredBundles>;
+    payload: Readonly<Record<never, never>>;
     payloadSource?: TransferPayloadSource;
   }>) => readonly TransferEndpointCandidate[];
 }>;
@@ -70,13 +80,9 @@ type MachineTransferChannel = Readonly<{
 
 export {
   createSessionHandoffWorkspaceReplicationBlobPackPayloadSource,
-  createSessionHandoffWorkspaceReplicationSourceOfferPayloadSource,
   parseSessionHandoffWorkspaceBlobPackTransferId,
-  parseSessionHandoffWorkspaceSourceOfferTransferId,
   type PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers,
-  type SessionHandoffWorkspaceReplicationDirectPeerPublication,
   type SessionHandoffWorkspaceReplicationMetadata,
-  type SessionHandoffTransferredBundles,
 };
 
 export type SessionHandoffWorkspaceReplicationSourceOffer =
@@ -108,35 +114,6 @@ async function waitForTerminalWorkspaceReplicationJob(params: Readonly<{
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 10);
     });
-  }
-}
-
-async function defaultLoadCurrentTargetManifest(input: Readonly<{
-  activeServerDir: string;
-  targetPath: string;
-  workspaceTransfer: SessionHandoffWorkspaceTransfer;
-  buildWorkspaceExportPayload?: typeof buildSessionHandoffWorkspaceExportPayload;
-}>): Promise<WorkspaceManifest> {
-  try {
-    const workspaceExport = await (input.buildWorkspaceExportPayload ?? buildSessionHandoffWorkspaceExportPayload)({
-      activeServerDir: input.activeServerDir,
-      sourcePath: input.targetPath,
-      workspaceTransfer: input.workspaceTransfer,
-    });
-    if (!workspaceExport.workspaceExportArtifacts) {
-      return { entries: [] };
-    }
-    return {
-      entries: workspaceExport.workspaceExportArtifacts.manifest.entries.map((entry) => ({ ...entry })),
-      ...(workspaceExport.workspaceExportArtifacts.manifest.fingerprint
-        ? { fingerprint: workspaceExport.workspaceExportArtifacts.manifest.fingerprint }
-        : {}),
-    };
-  } catch (error) {
-    if (isMissingPathError(error)) {
-      return { entries: [] };
-    }
-    throw error;
   }
 }
 
@@ -176,9 +153,6 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
       manifest: workspaceReplicationMetadata.manifest,
       directPeerTransfer: input.directPeerTransfer,
       blobProvider: input.blobProvider,
-      ...(input.workspaceExportArtifacts
-        ? { workspaceExportArtifacts: input.workspaceExportArtifacts }
-        : {}),
     });
 
   return {
@@ -195,7 +169,6 @@ export async function resolveSessionHandoffWorkspaceReplicationSourceOffer(input
   targetMachineId: string;
   targetPath: string;
   metadata?: SessionHandoffWorkspaceReplicationMetadata;
-  directPeerPublication?: SessionHandoffWorkspaceReplicationDirectPeerPublication;
   persistedBlobProvider?: WorkspaceExportBlobProvider;
   machineTransferChannel?: MachineTransferChannel;
   transfers: WorkspaceReplicationTransfers;
@@ -203,49 +176,58 @@ export async function resolveSessionHandoffWorkspaceReplicationSourceOffer(input
   blobPackMaxBlobs: number;
   blobPackMaxSingleBlobBytes: number;
 }>): Promise<Awaited<ReturnType<typeof buildSessionHandoffWorkspaceReplicationSourceOffer>> | null> {
-  if (!input.metadata) {
-    return null;
-  }
-
-  if (input.actualTransportStrategy === 'server_routed_stream' && input.machineTransferChannel) {
-    return (await receiveServerRoutedSessionHandoffWorkspaceReplication({
+  if (input.metadata) {
+    return await buildSessionHandoffWorkspaceReplicationSourceOffer({
       activeServerDir: input.activeServerDir,
-      handoffId: input.handoffId,
-      sourceMachineId: input.sourceMachineId,
-      targetPath: input.targetPath,
-      machineTransferChannel: input.machineTransferChannel,
-      transfers: input.transfers,
-      blobPackTargetBytes: input.blobPackTargetBytes,
-      blobPackMaxBlobs: input.blobPackMaxBlobs,
-      blobPackMaxSingleBlobBytes: input.blobPackMaxSingleBlobBytes,
-    })).sourceOffer;
-  }
-
-  if (
-    input.actualTransportStrategy === 'direct_peer'
-    && input.directPeerPublication
-    && !input.persistedBlobProvider
-  ) {
-    return (await receiveDirectPeerSessionHandoffWorkspaceReplication({
-      activeServerDir: input.activeServerDir,
-      handoffId: input.handoffId,
       sourceMachineId: input.sourceMachineId,
       targetMachineId: input.targetMachineId,
       targetPath: input.targetPath,
       metadata: input.metadata,
-      directPeerPublication: input.directPeerPublication,
-      transfers: input.transfers,
-      maxSingleBlobBytes: input.blobPackMaxSingleBlobBytes,
-    })).sourceOffer;
+    });
   }
 
-  return await buildSessionHandoffWorkspaceReplicationSourceOffer({
-    activeServerDir: input.activeServerDir,
-    sourceMachineId: input.sourceMachineId,
-    targetMachineId: input.targetMachineId,
-    targetPath: input.targetPath,
-    metadata: input.metadata,
-  });
+  return null;
+}
+
+async function loadCurrentTargetManifestViaEnginePlan(input: Readonly<{
+  activeServerDir: string;
+  sourceMachineId: string;
+  sourceRootPath: string;
+  targetMachineId: string;
+  targetPath: string;
+  sourceManifest: WorkspaceManifest;
+  transfers: WorkspaceReplicationTransfers;
+}>): Promise<WorkspaceManifest> {
+  try {
+    const engine = createWorkspaceReplicationEngine({
+      activeServerDir: input.activeServerDir,
+      localMachineId: input.targetMachineId,
+    });
+
+    const scope = {
+      sourceMachineId: input.sourceMachineId,
+      sourceWorkspaceRoot: input.sourceRootPath,
+      targetMachineId: input.targetMachineId,
+      targetWorkspaceRoot: input.targetPath,
+      mode: 'one_way_safe' as const,
+    };
+
+    const plan = await engine.plan({
+      scope,
+      sourceManifest: input.sourceManifest,
+      targetWorkspaceRoot: input.targetPath,
+    });
+
+    return {
+      entries: plan.targetManifest.entries.map((entry) => ({ ...entry })),
+      ...(plan.targetManifest.fingerprint ? { fingerprint: plan.targetManifest.fingerprint } : {}),
+    };
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return { entries: [] };
+    }
+    throw error;
+  }
 }
 
 export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
@@ -257,57 +239,43 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
   targetPath: string;
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
   metadata?: SessionHandoffWorkspaceReplicationMetadata;
-  directPeerPublication?: SessionHandoffWorkspaceReplicationDirectPeerPublication;
+  directPeerManifestEndpointCandidates?: readonly TransferEndpointCandidate[];
   persistedBlobProvider?: WorkspaceExportBlobProvider;
   machineTransferChannel?: MachineTransferChannel;
   transfers: WorkspaceReplicationTransfers;
   blobPackTargetBytes: number;
   blobPackMaxBlobs: number;
   blobPackMaxSingleBlobBytes: number;
-  persistedTransferredBundles: SessionHandoffTransferredBundles;
+  onWorkspaceReplicationJobStarted?: (jobId: string) => Promise<void>;
   assertCanContinue?: () => Promise<void>;
-  buildWorkspaceExportPayload?: typeof buildSessionHandoffWorkspaceExportPayload;
-  loadCurrentTargetManifest?: (params: Readonly<{
-    targetPath: string;
-    workspaceTransfer: SessionHandoffWorkspaceTransfer;
-  }>) => Promise<WorkspaceManifest>;
-  importWorkspaceBundle?: (params: Readonly<{
-    workspaceExportArtifacts?: ScmSourceControllerWorkspaceExportArtifacts;
-    blobProvider?: WorkspaceExportBlobProvider;
-    targetPath: string;
-    workspaceTransfer?: SessionHandoffWorkspaceTransfer;
-    assertCanContinue?: () => Promise<void>;
-  }>) => Promise<Readonly<{ targetPath: string }>>;
-  applyReplicationPlan?: (params: Readonly<{
-    activeServerDir: string;
-    sourceOffer: SessionHandoffWorkspaceReplicationSourceOffer;
-    targetPath: string;
-    strategy: NonNullable<SessionHandoffWorkspaceTransfer['strategy']>;
-    conflictPolicy: SessionHandoffWorkspaceTransfer['conflictPolicy'];
-    assertCanContinue?: () => Promise<void>;
-    currentTargetManifest?: WorkspaceManifest;
-  }>) => Promise<Readonly<{ targetPath: string }>>;
 }>): Promise<Readonly<{
   importedWorkspace: Readonly<{ targetPath: string }>;
   currentTargetManifest: WorkspaceManifest;
   sourceOffer: SessionHandoffWorkspaceReplicationSourceOffer | null;
 }>> {
   const correlationId = `session_handoff_workspace_prepare_target:${input.handoffId}`;
+  const metadata = input.metadata;
+  if (!input.workspaceTransfer?.enabled) {
+    // Workspace transfer is explicitly disabled; do not attempt any legacy import path.
+    return {
+      importedWorkspace: { targetPath: input.targetPath },
+      currentTargetManifest: { entries: [] },
+      sourceOffer: null,
+    };
+  }
 
   const currentTargetManifest =
-    input.workspaceTransfer?.enabled && input.workspaceTransfer.strategy === 'sync_changes'
-      ? await (input.loadCurrentTargetManifest ?? (async (params: Readonly<{
-        targetPath: string;
-        workspaceTransfer: SessionHandoffWorkspaceTransfer;
-      }>) => await defaultLoadCurrentTargetManifest({
+    input.workspaceTransfer?.enabled
+    && input.workspaceTransfer.strategy === 'sync_changes'
+    && metadata
+      ? await loadCurrentTargetManifestViaEnginePlan({
         activeServerDir: input.activeServerDir,
-        ...params,
-        ...(input.buildWorkspaceExportPayload
-          ? { buildWorkspaceExportPayload: input.buildWorkspaceExportPayload }
-          : {}),
-      })))({
+        sourceMachineId: input.sourceMachineId,
+        sourceRootPath: metadata.sourceRootPath,
+        targetMachineId: input.targetMachineId,
         targetPath: input.targetPath,
-        workspaceTransfer: input.workspaceTransfer,
+        sourceManifest: metadata.manifest,
+        transfers: input.transfers,
       })
       : { entries: [] };
 
@@ -321,7 +289,6 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
         targetMachineId: input.targetMachineId,
         targetPath: input.targetPath,
         metadata: input.metadata,
-        directPeerPublication: input.directPeerPublication,
         persistedBlobProvider: input.persistedBlobProvider,
         machineTransferChannel: input.machineTransferChannel,
         transfers: input.transfers,
@@ -331,106 +298,113 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
       })
       : null;
 
+  if (input.workspaceTransfer?.enabled && !sourceOffer) {
+    throw new Error('Missing workspace replication source offer');
+  }
+  const resolvedSourceOffer = sourceOffer as NonNullable<typeof sourceOffer>;
+
   // one_way_safe divergence gating, job lifecycle, and baseline persistence are owned by the engine job runner.
 
   const importedWorkspace =
-    input.workspaceTransfer?.enabled && sourceOffer && (
-      (input.actualTransportStrategy === 'server_routed_stream' && input.machineTransferChannel)
-      || (input.actualTransportStrategy === 'direct_peer' && input.directPeerPublication && !input.persistedBlobProvider)
-    )
-      ? await (async () => {
-        const engine = createWorkspaceReplicationEngine({
-          activeServerDir: input.activeServerDir,
-          localMachineId: input.targetMachineId,
-          transfers: input.transfers,
-        });
-
-        const metadata = input.metadata;
-        const workspaceTransfer = input.workspaceTransfer;
-        if (!metadata || !workspaceTransfer) {
-          throw new Error('Missing workspace replication metadata or transfer configuration');
-        }
-
-        const scope = {
-          sourceMachineId: input.sourceMachineId,
-          sourceWorkspaceRoot: metadata.sourceRootPath,
-          targetMachineId: input.targetMachineId,
-          targetWorkspaceRoot: input.targetPath,
-          mode: 'one_way_safe' as const,
-        };
-
-        const { jobId } = await engine.startJobFromOffer({
-          scope,
-          sourceOffer,
-          correlationId,
-          apply: {
-            targetPath: input.targetPath,
-            strategy: workspaceTransfer.strategy,
-            conflictPolicy: workspaceTransfer.conflictPolicy,
-          },
-          requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
-            if (input.actualTransportStrategy === 'server_routed_stream' && input.machineTransferChannel) {
-              await input.transfers.requestServerRoutedBlobPackToFile({
-                transferId: buildSessionHandoffWorkspaceBlobPackTransferId({
-                  handoffId: input.handoffId,
-                  packId,
-                  digests,
-                }),
-                sourceMachineId: input.sourceMachineId,
-                machineTransferChannel: input.machineTransferChannel,
-                destinationPath,
-              });
-              return;
-            }
-            throw new Error(`Unexpected workspace blob-pack request for ${packId} (direct_peer packs should already be staged)`);
-          },
-        });
-
-        const completed = await waitForTerminalWorkspaceReplicationJob({
-          engine,
-          jobId,
-          assertCanContinue: input.assertCanContinue,
-        });
-
-        if (completed.status.status !== 'completed') {
-          const reason =
-            completed.lastErrorMessage
-            ?? (completed.status.status === 'aborted'
-              ? 'Workspace replication job aborted'
-              : `Workspace replication job did not complete successfully: ${completed.status.status}`);
-          throw new Error(reason);
-        }
-        if (!completed.result?.targetPath) {
-          throw new Error(`Workspace replication job completed without a target path: ${jobId}`);
-        }
-
-        return {
-          targetPath: completed.result.targetPath,
-        };
-      })()
-      : input.workspaceTransfer?.enabled && sourceOffer
-      ? await (input.applyReplicationPlan ?? applyWorkspaceReplicationPlan)({
+    await (async () => {
+      const engine = createWorkspaceReplicationEngine({
         activeServerDir: input.activeServerDir,
-        sourceOffer,
-        targetPath: input.targetPath,
-        strategy: input.workspaceTransfer.strategy,
-        conflictPolicy: input.workspaceTransfer.conflictPolicy,
-        assertCanContinue: input.assertCanContinue,
-        ...(input.workspaceTransfer.strategy === 'sync_changes'
-          ? {
-            currentTargetManifest,
+        localMachineId: input.targetMachineId,
+      });
+
+      const metadata = input.metadata;
+      const workspaceTransfer = input.workspaceTransfer;
+      if (!metadata || !workspaceTransfer) {
+        throw new Error('Missing workspace replication metadata or transfer configuration');
+      }
+
+      const scope = {
+        sourceMachineId: input.sourceMachineId,
+        sourceWorkspaceRoot: metadata.sourceRootPath,
+        targetMachineId: input.targetMachineId,
+        targetWorkspaceRoot: input.targetPath,
+        mode: 'one_way_safe' as const,
+      };
+
+      const { jobId } = await engine.startJobFromOffer({
+        scope,
+        sourceOffer: resolvedSourceOffer,
+        correlationId,
+        apply: {
+          targetPath: input.targetPath,
+          strategy: workspaceTransfer.strategy,
+          conflictPolicy: workspaceTransfer.conflictPolicy,
+        },
+        blobPackPlanningMode: 'missing_only',
+        requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
+          if (input.actualTransportStrategy === 'server_routed_stream' && input.machineTransferChannel) {
+            await input.transfers.requestServerRoutedBlobPackToFile({
+              transferId: buildSessionHandoffWorkspaceBlobPackTransferId({
+                handoffId: input.handoffId,
+                packId,
+                digests,
+              }),
+              sourceMachineId: input.sourceMachineId,
+              machineTransferChannel: input.machineTransferChannel,
+              destinationPath,
+            });
+            return;
           }
-          : {}),
-      })
-      : await (input.importWorkspaceBundle ?? importSessionHandoffWorkspaceArtifacts)({
-        ...(input.persistedTransferredBundles.workspaceExportArtifacts
-          ? { workspaceExportArtifacts: input.persistedTransferredBundles.workspaceExportArtifacts }
-          : {}),
-        ...(input.persistedBlobProvider ? { blobProvider: input.persistedBlobProvider } : {}),
-        targetPath: input.targetPath,
-        workspaceTransfer: input.workspaceTransfer,
+          if (input.actualTransportStrategy === 'direct_peer') {
+            const endpointCandidates = input.directPeerManifestEndpointCandidates;
+            if (!endpointCandidates?.length) {
+              throw new Error('Direct peer transfer is unavailable for workspace replication');
+            }
+            const safePackId = assertSafeWorkspaceReplicationPackId(packId);
+            const transferId = buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId({
+              handoffId: input.handoffId,
+              packId: safePackId,
+            });
+            await input.transfers.requestDirectPeerBlobPackToFile({
+              transferId,
+              endpointCandidates: rewriteDirectPeerEndpointCandidatesForTransferId({
+                endpointCandidates,
+                transferId,
+              }),
+              destinationPath,
+              openBody: {
+                t: 'workspace_replication_blob_pack_v1',
+                packId: safePackId,
+                digests: [...digests],
+              },
+            });
+            return;
+          }
+          throw new Error(`Unexpected workspace blob-pack request for ${packId} (${input.actualTransportStrategy})`);
+        },
+      });
+
+      if (input.onWorkspaceReplicationJobStarted) {
+        await input.onWorkspaceReplicationJobStarted(jobId);
+      }
+
+      const completed = await waitForTerminalWorkspaceReplicationJob({
+        engine,
+        jobId,
         assertCanContinue: input.assertCanContinue,
       });
+
+      if (completed.status.status !== 'completed') {
+        const reason =
+          completed.lastErrorMessage
+          ?? (completed.status.status === 'aborted'
+            ? 'Workspace replication job aborted'
+            : `Workspace replication job did not complete successfully: ${completed.status.status}`);
+        throw new Error(reason);
+      }
+      if (!completed.result?.targetPath) {
+        throw new Error(`Workspace replication job completed without a target path: ${jobId}`);
+      }
+
+      return {
+        targetPath: completed.result.targetPath,
+      };
+    })();
 
   return {
     importedWorkspace,
@@ -453,66 +427,81 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
   publishedWorkspaceDirectPeerTransfers?: PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers;
   handoffMetadataV2?: SessionHandoffMetadataV2;
-  transferredBundles: SessionHandoffTransferredBundles;
-  transferredPayloadSource: TransferPayloadSource;
-  storedTransferredPayload: ReceivedSessionHandoffTransferredBundlesPayloadFile;
-  includeWorkspaceBlobPayloads: boolean;
 }>> {
-  const workspaceReplicationState = await createSessionHandoffWorkspaceReplicationState({
-    handoffId: input.handoffId,
-    activeServerDir: input.activeServerDir,
-    negotiatedTransportStrategy: input.negotiatedTransportStrategy,
-    workspaceTransfer: input.workspaceTransfer,
-    directPeerTransfer: input.directPeerTransfer,
-    sourceRootPath: input.sourceRootPath,
-    blobProvider: input.blobProvider,
-    ...(input.workspaceExportArtifacts
-      ? { workspaceExportArtifacts: input.workspaceExportArtifacts }
-      : {}),
-  });
-  const workspaceReplicationMetadata = workspaceReplicationState.workspaceReplicationMetadata;
-  const publishedWorkspaceDirectPeerTransfers =
-    workspaceReplicationState.publishedWorkspaceDirectPeerTransfers;
-  const handoffMetadataV2 = createSessionHandoffMetadataV2({
-    ...(input.providerBundleTransferPublication
-      ? { providerBundleTransferPublication: input.providerBundleTransferPublication }
-      : {}),
-    ...(workspaceReplicationMetadata
-      ? { workspaceReplicationMetadata }
-      : {}),
-    ...(publishedWorkspaceDirectPeerTransfers
-      ? { workspaceReplicationDirectPeerPublication: publishedWorkspaceDirectPeerTransfers.publication }
-      : {}),
-  });
-  const includeWorkspaceBlobPayloads = !(workspaceReplicationMetadata && input.workspaceTransfer?.enabled);
-  const transferredBundles = createSessionHandoffTransferredBundles({
-    ...(input.workspaceExportArtifacts
-      ? { workspaceExportArtifacts: input.workspaceExportArtifacts }
-      : {}),
-  });
-  const transferredPayloadSource = await createSessionHandoffTransferredBundlesPayloadSource(
-    transferredBundles,
-    {
+  const workspaceTransferEnabled = input.workspaceTransfer?.enabled === true;
+  const workspaceReplicationState = workspaceTransferEnabled
+    ? await createSessionHandoffWorkspaceReplicationState({
+      handoffId: input.handoffId,
+      activeServerDir: input.activeServerDir,
+      negotiatedTransportStrategy: input.negotiatedTransportStrategy,
+      workspaceTransfer: input.workspaceTransfer,
+      directPeerTransfer: input.directPeerTransfer,
+      sourceRootPath: input.sourceRootPath,
       blobProvider: input.blobProvider,
-      includeWorkspaceBlobPayloads,
-      ...(handoffMetadataV2 ? { handoffMetadataV2 } : {}),
-    },
-  );
-  const storedTransferredPayload = await normalizeCurrentSessionHandoffTransferredPayloadForStorage({
-    activeServerDir: input.activeServerDir,
-    transferredBundles,
-    ...(handoffMetadataV2 ? { handoffMetadataV2 } : {}),
-    ...(input.blobProvider ? { blobProvider: input.blobProvider } : {}),
-  });
+      ...(input.workspaceExportArtifacts
+        ? { workspaceExportArtifacts: input.workspaceExportArtifacts }
+        : {}),
+    })
+    : null;
+  const workspaceReplicationMetadata = workspaceReplicationState?.workspaceReplicationMetadata;
+  const publishedWorkspaceDirectPeerTransfers = workspaceReplicationState?.publishedWorkspaceDirectPeerTransfers;
+
+  const workspaceReplicationManifestTransferPublication =
+    publishedWorkspaceDirectPeerTransfers?.manifestTransferPublication
+    ?? (workspaceReplicationMetadata && input.workspaceTransfer?.enabled
+      ? {
+          transferId: buildSessionHandoffWorkspaceManifestTransferId({
+            handoffId: input.handoffId,
+          }),
+          endpointCandidates: undefined,
+        }
+      : undefined);
+
+  const providerBundleTransferPublication = input.providerBundleTransferPublication
+    ? {
+        transferId: input.providerBundleTransferPublication.transferId,
+        sizeBytes: input.providerBundleTransferPublication.sizeBytes,
+        manifestHash: input.providerBundleTransferPublication.manifestHash,
+        ...(input.providerBundleTransferPublication.endpointCandidates
+          ? { endpointCandidates: [...input.providerBundleTransferPublication.endpointCandidates] }
+          : {}),
+      }
+    : undefined;
+
+  const workspaceReplicationManifestTransferPublicationNormalized = workspaceReplicationManifestTransferPublication
+    ? {
+        transferId: workspaceReplicationManifestTransferPublication.transferId,
+        ...(workspaceReplicationManifestTransferPublication.endpointCandidates
+          ? { endpointCandidates: [...workspaceReplicationManifestTransferPublication.endpointCandidates] }
+          : {}),
+      }
+    : undefined;
+
+  const handoffMetadataV2: SessionHandoffMetadataV2 | undefined =
+    providerBundleTransferPublication
+    || workspaceReplicationMetadata
+    || workspaceReplicationManifestTransferPublicationNormalized
+    || publishedWorkspaceDirectPeerTransfers
+      ? {
+          ...(providerBundleTransferPublication
+            ? { providerBundleTransferPublication: providerBundleTransferPublication }
+            : {}),
+          ...(workspaceReplicationMetadata
+            ? { workspaceReplicationSourceRootPath: workspaceReplicationMetadata.sourceRootPath }
+            : {}),
+          ...(workspaceReplicationManifestTransferPublicationNormalized
+            ? { workspaceReplicationManifestTransferPublication: workspaceReplicationManifestTransferPublicationNormalized }
+            : {}),
+          ...(workspaceReplicationMetadata?.sourceControllerMetadata
+            ? { workspaceReplicationSourceControllerMetadata: workspaceReplicationMetadata.sourceControllerMetadata }
+            : {}),
+        }
+      : undefined;
 
   return {
     ...(workspaceReplicationMetadata ? { workspaceReplicationMetadata } : {}),
     ...(publishedWorkspaceDirectPeerTransfers ? { publishedWorkspaceDirectPeerTransfers } : {}),
     ...(handoffMetadataV2 ? { handoffMetadataV2 } : {}),
-    transferredBundles,
-    transferredPayloadSource,
-    storedTransferredPayload,
-    includeWorkspaceBlobPayloads,
   };
 }
 
@@ -522,12 +511,11 @@ export function createSessionHandoffWorkspaceReplicationAdapter(): Readonly<{
   resolveSourceOffer: typeof resolveSessionHandoffWorkspaceReplicationSourceOffer;
   prepareTargetWorkspace: typeof prepareSessionHandoffWorkspaceTarget;
   prepareSourceWorkspaceTransfer: typeof prepareSessionHandoffSourceWorkspaceTransfer;
-  buildWorkspaceExportArtifacts: typeof buildSessionHandoffWorkspaceExportArtifacts;
-  importWorkspaceArtifacts: typeof importSessionHandoffWorkspaceArtifacts;
-  createTransferredBundles: typeof createSessionHandoffTransferredBundles;
-  createTransferredBundlesPayloadSource: typeof createSessionHandoffTransferredBundlesPayloadSource;
-  normalizeTransferredPayloadForStorage: typeof normalizeCurrentSessionHandoffTransferredPayloadForStorage;
-  receiveTransferredBundlesPayloadFile: typeof receiveSessionHandoffTransferredBundlesPayloadFile;
+  abortWorkspaceReplicationJob: (input: Readonly<{
+    activeServerDir: string;
+    jobId: string;
+    now?: () => number;
+  }>) => Promise<void>;
 }> {
   return {
     createReplicationTransfers: createWorkspaceReplicationTransfers,
@@ -535,11 +523,13 @@ export function createSessionHandoffWorkspaceReplicationAdapter(): Readonly<{
     resolveSourceOffer: resolveSessionHandoffWorkspaceReplicationSourceOffer,
     prepareTargetWorkspace: prepareSessionHandoffWorkspaceTarget,
     prepareSourceWorkspaceTransfer: prepareSessionHandoffSourceWorkspaceTransfer,
-    buildWorkspaceExportArtifacts: buildSessionHandoffWorkspaceExportArtifacts,
-    importWorkspaceArtifacts: importSessionHandoffWorkspaceArtifacts,
-    createTransferredBundles: createSessionHandoffTransferredBundles,
-    createTransferredBundlesPayloadSource: createSessionHandoffTransferredBundlesPayloadSource,
-    normalizeTransferredPayloadForStorage: normalizeCurrentSessionHandoffTransferredPayloadForStorage,
-    receiveTransferredBundlesPayloadFile: receiveSessionHandoffTransferredBundlesPayloadFile,
+    abortWorkspaceReplicationJob: async (input) => {
+      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir: input.activeServerDir });
+      await abortWorkspaceReplicationJob({
+        jobStore,
+        jobId: input.jobId,
+        now: input.now,
+      });
+    },
   };
 }

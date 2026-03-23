@@ -8,6 +8,8 @@ export type WorkspaceReplicationPaths = Readonly<{
   stagingDirectory: string;
 }>;
 
+const VALID_JOB_ID_REGEX = /^[A-Za-z0-9._-]+$/u;
+
 export function createWorkspaceReplicationPaths(input: Readonly<{
   activeServerDir: string;
 }>): WorkspaceReplicationPaths {
@@ -39,10 +41,20 @@ export function resolveWorkspaceReplicationJobPath(input: Readonly<{
   jobsDirectory: string;
   jobId: string;
 }>): string {
-  if (!/^[A-Za-z0-9._-]+$/u.test(input.jobId)) {
+  if (!VALID_JOB_ID_REGEX.test(input.jobId)) {
     throw new Error(`Invalid workspace replication job id: ${input.jobId}`);
   }
   return join(input.jobsDirectory, `${input.jobId}.json`);
+}
+
+export function resolveWorkspaceReplicationJobStagingDirectory(input: Readonly<{
+  stagingDirectory: string;
+  jobId: string;
+}>): string {
+  if (!VALID_JOB_ID_REGEX.test(input.jobId)) {
+    throw new Error(`Invalid workspace replication job id: ${input.jobId}`);
+  }
+  return join(input.stagingDirectory, input.jobId);
 }
 
 export function resolveWorkspaceReplicationRelationshipDirectory(input: Readonly<{

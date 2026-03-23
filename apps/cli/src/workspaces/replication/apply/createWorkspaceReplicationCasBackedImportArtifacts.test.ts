@@ -72,7 +72,6 @@ describe('createWorkspaceReplicationCasBackedImportArtifacts', () => {
           ],
           fingerprint: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         },
-        blobContentsByDigest: new Map(),
         sourceControllerMetadata: {
           nestedRepositories: ['vendor/tools'],
           supportsSafeReplace: true,
@@ -120,7 +119,6 @@ describe('createWorkspaceReplicationCasBackedImportArtifacts', () => {
           ],
           fingerprint: 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
         },
-        blobContentsByDigest: new Map(),
       });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });

@@ -109,4 +109,102 @@ describe('workspaceReplicationJobStore', () => {
       await rm(activeServerDir, { recursive: true, force: true });
     }
   });
+
+  it('fails closed when a persisted job file uses an unsupported schemaVersion', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-jobs-schema-'));
+
+    try {
+      const { createWorkspaceReplicationPaths, resolveWorkspaceReplicationJobPath } = await import('../state/workspaceReplicationPaths');
+      const { createWorkspaceReplicationJobStore } = await import('./workspaceReplicationJobStore');
+
+      const paths = createWorkspaceReplicationPaths({ activeServerDir });
+      const jobPath = resolveWorkspaceReplicationJobPath({
+        jobsDirectory: paths.jobsDirectory,
+        jobId: 'job_schema_unsupported',
+      });
+
+      await mkdir(paths.jobsDirectory, { recursive: true });
+      await writeFile(jobPath, JSON.stringify({
+        schemaVersion: 2,
+        jobId: 'job_schema_unsupported',
+        correlationId: 'handoff_schema',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'completed',
+          phase: 'commit_baseline',
+          checkpoint: 'baseline_committed',
+        },
+      }), 'utf8');
+
+      const store = createWorkspaceReplicationJobStore({ activeServerDir });
+      await expect(store.read('job_schema_unsupported')).resolves.toBeNull();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves correlation/relationship identity fields across partial writes (sticky job identity)', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-jobs-sticky-identity-'));
+
+    try {
+      const {
+        createWorkspaceReplicationJobStore,
+      } = await import('./workspaceReplicationJobStore');
+
+      const store = createWorkspaceReplicationJobStore({
+        activeServerDir,
+      });
+
+      await store.write({
+        schemaVersion: 1,
+        jobId: 'job_identity_1',
+        correlationId: 'corr_identity_1',
+        relationshipId: 'rel_identity_1',
+        directionId: 'dir_identity_1',
+        offerId: 'offer_identity_1',
+        mode: 'one_way_safe',
+        createdAtMs: 100,
+        updatedAtMs: 100,
+        status: {
+          status: 'pending',
+          phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {},
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      // Simulate a stale/partial writer that does not include identity fields.
+      await store.write({
+        schemaVersion: 1,
+        jobId: 'job_identity_1',
+        createdAtMs: 100,
+        updatedAtMs: 200,
+        status: {
+          status: 'in_progress',
+          phase: 'planning',
+          checkpoint: 'relationship_resolved',
+          progressCounters: {},
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      await expect(store.read('job_identity_1')).resolves.toMatchObject({
+        jobId: 'job_identity_1',
+        correlationId: 'corr_identity_1',
+        relationshipId: 'rel_identity_1',
+        directionId: 'dir_identity_1',
+        offerId: 'offer_identity_1',
+        mode: 'one_way_safe',
+        status: {
+          checkpoint: 'relationship_resolved',
+        },
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
 });

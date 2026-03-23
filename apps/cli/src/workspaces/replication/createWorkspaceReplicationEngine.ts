@@ -6,9 +6,11 @@ import { createWorkspaceReplicationRelationshipStore } from './relationships/wor
 import type { WorkspaceReplicationDirectionScope } from './relationships/relationshipScope';
 import { buildWorkspaceReplicationDirectionId } from './relationships/workspaceReplicationRelationshipStore';
 import { scanWorkspaceManifestIntoCas } from './scan/scanWorkspaceManifestIntoCas';
-import { gcWorkspaceReplicationJobs } from './state/workspaceReplicationGc';
+import { gcWorkspaceReplicationCas, gcWorkspaceReplicationJobs } from './state/workspaceReplicationGc';
+import { WORKSPACE_REPLICATION_SCHEMA_VERSION } from './state/workspaceReplicationSchemaVersion';
 import { WorkspaceReplicationError } from './workspaceReplicationError';
 import type { WorkspaceReplicationEngine } from './workspaceReplicationEngine';
+import { createWorkspaceReplicationSourceOfferStore } from './transport/workspaceReplicationSourceOfferStore';
 import type {
     WorkspaceReplicationEngineDependencies,
     WorkspaceReplicationEngineInput,
@@ -50,6 +52,7 @@ export function createWorkspaceReplicationEngine(
     const createRelationshipStore = dependencies.createRelationshipStore ?? createWorkspaceReplicationRelationshipStore;
     const createBaselineStore = dependencies.createBaselineStore ?? createWorkspaceReplicationBaselineStore;
     const createJobStore = dependencies.createJobStore ?? createWorkspaceReplicationJobStore;
+    const createSourceOfferStore = dependencies.createSourceOfferStore ?? createWorkspaceReplicationSourceOfferStore;
     const createSourceOfferImpl = dependencies.createSourceOffer ?? createWorkspaceReplicationSourceOffer;
     const scanManifestIntoCasImpl = dependencies.scanManifestIntoCas ?? scanWorkspaceManifestIntoCas;
     const executeJobWithLocalRuntimeImpl =
@@ -62,6 +65,7 @@ export function createWorkspaceReplicationEngine(
             relationships: createRelationshipStore({ activeServerDir: input.activeServerDir }),
             baselines: createBaselineStore({ activeServerDir: input.activeServerDir }),
             jobs: createJobStore({ activeServerDir: input.activeServerDir }),
+            sourceOffers: createSourceOfferStore({ activeServerDir: input.activeServerDir }),
         } as const;
         const now = input.now ?? (() => Date.now());
 
@@ -169,8 +173,10 @@ export function createWorkspaceReplicationEngine(
                 nowMs,
             })}`;
 
+            await stores.sourceOffers.write(params.sourceOffer);
+
             const initialStatus: WorkspaceReplicationJobRecord = {
-                schemaVersion: 1,
+                schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION,
                 jobId,
                 ...(params.correlationId ? { correlationId: params.correlationId } : {}),
                 relationshipId: relationship.relationshipId,
@@ -204,6 +210,7 @@ export function createWorkspaceReplicationEngine(
                 sourceOffer: params.sourceOffer,
                 apply: params.apply,
                 requestBlobPackToFile: params.requestBlobPackToFile,
+                ...(params.blobPackPlanningMode ? { blobPackPlanningMode: params.blobPackPlanningMode } : {}),
             } as const;
 
             if (executeJobInBackground) {
@@ -218,13 +225,15 @@ export function createWorkspaceReplicationEngine(
                         now,
                         relationshipScope: params.scope,
                         resolveSourceOfferById: async (offerId) => {
-                            if (offerId !== params.sourceOffer.offerId) {
+                            const offer = await stores.sourceOffers.read(offerId);
+                            if (!offer) {
                                 throw new Error(`Workspace replication source offer not found: ${offerId}`);
                             }
-                            return params.sourceOffer;
+                            return offer;
                         },
                         requestBlobPackToFile: params.requestBlobPackToFile,
                         apply: params.apply,
+                        ...(params.blobPackPlanningMode ? { blobPackPlanningMode: params.blobPackPlanningMode } : {}),
                     }).catch(() => undefined);
                 });
             }
@@ -270,11 +279,27 @@ export function createWorkspaceReplicationEngine(
         }
 
         async function gc(gcInput: WorkspaceReplicationGcInput) {
-            return await gcWorkspaceReplicationJobs({
+            const nowMs = gcInput.nowMs ?? now();
+            const jobs = await gcWorkspaceReplicationJobs({
                 activeServerDir: input.activeServerDir,
-                nowMs: gcInput.nowMs ?? now(),
+                nowMs,
                 terminalTtlMs: gcInput.terminalTtlMs,
             });
+            const cas =
+                typeof gcInput.casUnreferencedTtlMs === 'number'
+                || typeof gcInput.casMaxBytes === 'number'
+                    ? await gcWorkspaceReplicationCas({
+                        activeServerDir: input.activeServerDir,
+                        nowMs,
+                        unreferencedTtlMs: gcInput.casUnreferencedTtlMs ?? 0,
+                        ...(typeof gcInput.casMaxBytes === 'number' ? { maxBytes: gcInput.casMaxBytes } : {}),
+                    })
+                    : undefined;
+
+            return {
+                jobs,
+                ...(cas ? { cas } : {}),
+            };
         }
 
         return {

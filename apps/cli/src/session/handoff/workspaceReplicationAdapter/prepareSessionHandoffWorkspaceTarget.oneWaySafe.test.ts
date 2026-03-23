@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
@@ -12,7 +12,6 @@ import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replicatio
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 import { createWorkspaceReplicationJobStore } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';
 
-import { createSessionHandoffTransferredBundles } from '../transfer/sessionHandoffTransferredBundles';
 import { createSessionHandoffWorkspaceReplicationMetadata } from '../workspace/sessionHandoffWorkspaceReplicationMetadata';
 
 import { prepareSessionHandoffWorkspaceTarget } from './sessionHandoffWorkspaceReplicationAdapter';
@@ -42,6 +41,10 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
         sourcePath: seedPath,
       });
 
+      // `sync_changes` in one_way_safe mode requires an existing baseline. Seed it by asserting that the target
+      // currently matches the baseline state (so divergence checks can pass).
+      await writeFile(join(targetWorkspaceRoot, 'README.md'), fileContents, 'utf8');
+
       const sourceManifest = makeManifest([
         {
           relativePath: 'README.md',
@@ -56,8 +59,7 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
         sourceRootPath: '/source',
         workspaceExportArtifacts: {
           manifest: sourceManifest,
-          blobContentsByDigest: new Map(),
-        } as any,
+        },
       });
       if (!metadata) {
         throw new Error('Expected workspace replication metadata to be available');
@@ -71,6 +73,24 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
         manifest: sourceManifest,
         blobIndex: [{ digest: fileDigest, sizeBytes: Buffer.byteLength(fileContents) }],
       } as const;
+
+      const onWorkspaceReplicationJobStarted = vi.fn(async () => undefined);
+
+      const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir });
+      await baselineStore.save({
+        scope: {
+          sourceMachineId: 'machine_source',
+          sourceWorkspaceRoot: '/source',
+          targetMachineId: 'machine_target',
+          targetWorkspaceRoot,
+          mode: 'one_way_safe',
+        },
+        baseline: {
+          manifestFingerprint: sourceManifest.fingerprint!,
+          manifest: sourceManifest,
+          savedAtMs: 1,
+        },
+      });
 
       await prepareSessionHandoffWorkspaceTarget({
         activeServerDir,
@@ -98,23 +118,16 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
         blobPackTargetBytes: 1024,
         blobPackMaxBlobs: 10,
         blobPackMaxSingleBlobBytes: 1024 * 1024,
-        persistedTransferredBundles: createSessionHandoffTransferredBundles({}),
-        loadCurrentTargetManifest: async () => ({ entries: [] }),
-        importWorkspaceBundle: async () => {
-          throw new Error('Unexpected legacy importWorkspaceBundle path');
-        },
-        applyReplicationPlan: async () => {
-          throw new Error('Unexpected legacy applyReplicationPlan path');
-        },
+        onWorkspaceReplicationJobStarted,
       });
 
       const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
       const jobRecord = await jobStore.findByCorrelationId('session_handoff_workspace_prepare_target:handoff_1');
       expect(jobRecord).not.toBeNull();
+      expect(onWorkspaceReplicationJobStarted).toHaveBeenCalledWith(jobRecord!.jobId);
       expect(jobRecord!.status.status).toBe('completed');
       expect(jobRecord!.status.checkpoint).toBe('baseline_committed');
 
-      const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir });
       const baseline = await baselineStore.load({
         sourceMachineId: 'machine_source',
         sourceWorkspaceRoot: '/source',
@@ -169,7 +182,7 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
           sourceMachineId: 'machine_source',
           sourceWorkspaceRoot: '/source',
           targetMachineId: 'machine_target',
-          targetWorkspaceRoot: '/target',
+          targetWorkspaceRoot,
           mode: 'one_way_safe',
         },
         baseline: {
@@ -218,14 +231,6 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
           blobPackTargetBytes: 1,
           blobPackMaxBlobs: 1,
           blobPackMaxSingleBlobBytes: 1,
-          persistedTransferredBundles: createSessionHandoffTransferredBundles({}),
-          loadCurrentTargetManifest: async () => ({ entries: [] }),
-          importWorkspaceBundle: async () => {
-            throw new Error('Unexpected legacy importWorkspaceBundle path');
-          },
-          applyReplicationPlan: async () => {
-            throw new Error('Unexpected legacy applyReplicationPlan path');
-          },
         }),
       ).rejects.toThrow(/diverged/i);
     } finally {

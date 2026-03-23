@@ -87,6 +87,7 @@ export const WorkspaceReplicationJobRecordSchema = z
     cancelRequestedAtMs: z.number().int().min(0).optional(),
     abortedAtMs: z.number().int().min(0).optional(),
     completedAtMs: z.number().int().min(0).optional(),
+    awaitingRecoveryAtMs: z.number().int().min(0).optional(),
     failedAtMs: z.number().int().min(0).optional(),
     lastErrorMessage: z.string().min(1).optional(),
     result: z
@@ -120,6 +121,105 @@ export type WorkspaceReplicationJobStore = Readonly<{
     updater: (current: WorkspaceReplicationJobRecord) => WorkspaceReplicationJobRecordInput,
   ) => Promise<WorkspaceReplicationJobRecord | null>;
 }>;
+
+const TERMINAL_JOB_STATUSES = new Set<WorkspaceReplicationJobRecord['status']['status']>([
+  'completed',
+  'aborted',
+  'failed',
+  'awaiting_recovery',
+]);
+
+const CHECKPOINT_ORDER: readonly WorkspaceReplicationJobRecord['status']['checkpoint'][] = [
+  'job_created',
+  'relationship_resolved',
+  'missing_digests_negotiated',
+  'blob_transfer_started',
+  'blob_transfer_completed',
+  'apply_started',
+  'apply_completed',
+  'baseline_committed',
+] as const;
+
+function isTerminalJobStatus(status: WorkspaceReplicationJobRecord['status']['status']): boolean {
+  return TERMINAL_JOB_STATUSES.has(status);
+}
+
+function compareCheckpoint(
+  a: WorkspaceReplicationJobRecord['status']['checkpoint'],
+  b: WorkspaceReplicationJobRecord['status']['checkpoint'],
+): number {
+  return CHECKPOINT_ORDER.indexOf(a) - CHECKPOINT_ORDER.indexOf(b);
+}
+
+function mergeProgressCounters(
+  a: WorkspaceReplicationJobRecord['status']['progressCounters'],
+  b: WorkspaceReplicationJobRecord['status']['progressCounters'],
+): WorkspaceReplicationJobRecord['status']['progressCounters'] {
+  return {
+    plannedFiles: Math.max(a.plannedFiles, b.plannedFiles),
+    plannedBytes: Math.max(a.plannedBytes, b.plannedBytes),
+    transferredFiles: Math.max(a.transferredFiles, b.transferredFiles),
+    transferredBytes: Math.max(a.transferredBytes, b.transferredBytes),
+    appliedFiles: Math.max(a.appliedFiles, b.appliedFiles),
+    appliedBytes: Math.max(a.appliedBytes, b.appliedBytes),
+  };
+}
+
+function mergeWorkspaceReplicationJobRecordsForWrite(
+  existing: WorkspaceReplicationJobRecord | null,
+  incoming: WorkspaceReplicationJobRecord,
+): WorkspaceReplicationJobRecord {
+  if (!existing) {
+    return incoming;
+  }
+
+  // Fail closed: never allow a terminal record to be downgraded by a stale writer.
+  if (isTerminalJobStatus(existing.status.status)) {
+    return existing;
+  }
+
+  let base = incoming;
+
+  // Fail closed: prevent checkpoint regressions from stale writers.
+  if (compareCheckpoint(existing.status.checkpoint, incoming.status.checkpoint) > 0) {
+    base = {
+      ...incoming,
+      status: existing.status,
+    };
+  } else if (existing.status.checkpoint === incoming.status.checkpoint) {
+    base = {
+      ...incoming,
+      status: {
+        ...incoming.status,
+        progressCounters: mergeProgressCounters(existing.status.progressCounters, incoming.status.progressCounters),
+      },
+    };
+  }
+
+  const cancelRequestedAtMs = existing.cancelRequestedAtMs ?? incoming.cancelRequestedAtMs;
+  const correlationId = incoming.correlationId ?? existing.correlationId;
+  const relationshipId = incoming.relationshipId ?? existing.relationshipId;
+  const directionId = incoming.directionId ?? existing.directionId;
+  const offerId = incoming.offerId ?? existing.offerId;
+  const mode = incoming.mode ?? existing.mode;
+  return {
+    ...base,
+    // Identity fields must be sticky so partial/stale writers can't clear them.
+    createdAtMs: existing.createdAtMs,
+    ...(correlationId === undefined ? {} : { correlationId }),
+    ...(relationshipId === undefined ? {} : { relationshipId }),
+    ...(directionId === undefined ? {} : { directionId }),
+    ...(offerId === undefined ? {} : { offerId }),
+    ...(mode === undefined ? {} : { mode }),
+    ...(cancelRequestedAtMs === undefined ? {} : { cancelRequestedAtMs }),
+    ...(base.abortedAtMs === undefined && existing.abortedAtMs !== undefined ? { abortedAtMs: existing.abortedAtMs } : {}),
+    ...(base.completedAtMs === undefined && existing.completedAtMs !== undefined ? { completedAtMs: existing.completedAtMs } : {}),
+    ...(base.failedAtMs === undefined && existing.failedAtMs !== undefined ? { failedAtMs: existing.failedAtMs } : {}),
+    ...(base.awaitingRecoveryAtMs === undefined && existing.awaitingRecoveryAtMs !== undefined ? { awaitingRecoveryAtMs: existing.awaitingRecoveryAtMs } : {}),
+    ...(base.lastErrorMessage === undefined && existing.lastErrorMessage !== undefined ? { lastErrorMessage: existing.lastErrorMessage } : {}),
+    ...(base.result === undefined && existing.result !== undefined ? { result: existing.result } : {}),
+  };
+}
 
 function normalizeWorkspaceReplicationJobPhase(raw: unknown): z.infer<typeof WorkspaceReplicationJobPhaseSchema> {
   const parsed = WorkspaceReplicationJobPhaseSchema.safeParse(raw);
@@ -174,7 +274,9 @@ function normalizeWorkspaceReplicationJobRecordValue(raw: unknown): Record<strin
     raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
     ...value,
-    schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION,
+    // Preserve an explicit schemaVersion so we can fail closed on future incompatible bumps.
+    // Missing schemaVersion remains backwards-compatible via the zod default.
+    ...('schemaVersion' in value ? {} : { schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION }),
     status: normalizeWorkspaceReplicationJobStatusValue(value.status),
   };
 }
@@ -213,7 +315,10 @@ export function createWorkspaceReplicationJobStore(input: Readonly<{
         ...record,
         schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION,
       });
-      await writeJsonAtomic(resolveJobPath(parsed.jobId), parsed);
+      const jobPath = resolveJobPath(parsed.jobId);
+      const existing = await readWorkspaceReplicationJobFile(jobPath);
+      const merged = mergeWorkspaceReplicationJobRecordsForWrite(existing, parsed);
+      await writeJsonAtomic(jobPath, merged);
     },
     async read(jobId) {
       return await readWorkspaceReplicationJobFile(resolveJobPath(jobId));
@@ -233,11 +338,14 @@ export function createWorkspaceReplicationJobStore(input: Readonly<{
       return latestMatch;
     },
     async update(jobId, updater) {
-      const current = await readWorkspaceReplicationJobFile(resolveJobPath(jobId));
+      const jobPath = resolveJobPath(jobId);
+      const current = await readWorkspaceReplicationJobFile(jobPath);
       if (!current) return null;
       const next = WorkspaceReplicationJobRecordSchema.parse(updater(current));
-      await writeJsonAtomic(resolveJobPath(jobId), next);
-      return next;
+      const latest = await readWorkspaceReplicationJobFile(jobPath);
+      const merged = mergeWorkspaceReplicationJobRecordsForWrite(latest, next);
+      await writeJsonAtomic(jobPath, merged);
+      return merged;
     },
   };
 }

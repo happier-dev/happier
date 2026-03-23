@@ -14,6 +14,7 @@ import {
   parseWorkspaceReplicationBlobPackEndMarker,
   parseWorkspaceReplicationBlobPackHeader,
 } from './workspaceReplicationBlobPackFormatV1';
+import { assertSafeWorkspaceReplicationPackId } from './workspaceReplicationPackId';
 
 const BLOB_PACK_STREAM_CHUNK_BYTES = 64 * 1024;
 
@@ -96,6 +97,8 @@ export async function receiveWorkspaceReplicationBlobPack(input: Readonly<{
   packFilePath: string;
   maxSingleBlobBytes: number;
 }>): Promise<ReceiveWorkspaceReplicationBlobPackResult> {
+  assertSafeWorkspaceReplicationPackId(input.packId);
+
   const paths = createWorkspaceReplicationPaths({
     activeServerDir: input.activeServerDir,
   });

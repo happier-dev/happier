@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -14,6 +15,27 @@ const ENGINE_SURFACE_FILES = [
     './state/workspaceReplicationSchemaVersion.ts',
 ] as const;
 
+async function listFilesRecursively(directory: string): Promise<string[]> {
+    const entries = await readdir(directory, { withFileTypes: true });
+    const results: string[] = [];
+    for (const entry of entries) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) {
+            results.push(...(await listFilesRecursively(path)));
+        } else {
+            results.push(path);
+        }
+    }
+    return results;
+}
+
+function assertDoesNotDependOnHandoff(content: string) {
+    expect(content).not.toContain('session/handoff');
+    expect(content).not.toContain('SessionHandoff');
+    expect(content).not.toContain('sessionControl/handoff');
+    expect(content).not.toContain('handoffStatus');
+}
+
 describe('workspace replication engine (import-boundary)', () => {
     it('does not depend on session/handoff modules or protocol schemas', async () => {
         const contents = await Promise.all(
@@ -24,8 +46,21 @@ describe('workspace replication engine (import-boundary)', () => {
         );
 
         for (const content of contents) {
-            expect(content).not.toContain('session/handoff');
-            expect(content).not.toContain('SessionHandoff');
+            assertDoesNotDependOnHandoff(content);
+        }
+    });
+
+    it('keeps the entire replication engine folder handoff-agnostic', async () => {
+        const engineRoot = fileURLToPath(new URL('.', import.meta.url));
+        const files = (await listFilesRecursively(engineRoot)).filter((filePath) =>
+            filePath.endsWith('.ts')
+            && !filePath.endsWith('.test.ts')
+            && !filePath.endsWith('.spec.ts'),
+        );
+
+        for (const filePath of files) {
+            const content = await readFile(filePath, 'utf8');
+            assertDoesNotDependOnHandoff(content);
         }
     });
 });

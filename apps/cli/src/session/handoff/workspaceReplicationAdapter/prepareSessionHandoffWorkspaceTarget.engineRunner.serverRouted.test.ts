@@ -9,7 +9,6 @@ import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope, Works
 
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 
-import { createSessionHandoffTransferredBundles } from '../transfer/sessionHandoffTransferredBundles';
 import type { SessionHandoffWorkspaceReplicationMetadata } from '../workspace/sessionHandoffWorkspaceReplicationMetadata';
 
 import { prepareSessionHandoffWorkspaceTarget } from './sessionHandoffWorkspaceReplicationAdapter';
@@ -86,17 +85,9 @@ describe('prepareSessionHandoffWorkspaceTarget (engine-runner, server_routed_str
                         throw new Error('Unexpected blob-pack request (CAS already seeded)');
                     },
                 } as any,
-                blobPackTargetBytes: 1024,
-                blobPackMaxBlobs: 10,
-                blobPackMaxSingleBlobBytes: 1024 * 1024,
-                persistedTransferredBundles: createSessionHandoffTransferredBundles({}),
-                loadCurrentTargetManifest: async () => ({ entries: [] }),
-                importWorkspaceBundle: async () => {
-                    throw new Error('Unexpected legacy importWorkspaceBundle path');
-                },
-                applyReplicationPlan: async () => {
-                    throw new Error('Unexpected legacy applyReplicationPlan path');
-                },
+	                blobPackTargetBytes: 1024,
+	                blobPackMaxBlobs: 10,
+	                blobPackMaxSingleBlobBytes: 1024 * 1024,
             });
 
             const importedTargetPath = result.importedWorkspace.targetPath;

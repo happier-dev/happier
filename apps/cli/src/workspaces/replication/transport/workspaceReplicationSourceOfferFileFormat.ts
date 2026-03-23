@@ -1,5 +1,5 @@
-import { createReadStream, createWriteStream } from 'node:fs';
-import { open, readFile, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { open, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 
 import {
@@ -9,7 +9,6 @@ import {
 import { z } from 'zod';
 
 import type { WorkspaceReplicationSourceOffer } from './createWorkspaceReplicationSourceOffer';
-import { workspaceReplicationSourceOfferCodec } from './workspaceReplicationSourceOfferCodec';
 
 export const WORKSPACE_REPLICATION_SOURCE_OFFER_STREAM_MAGIC = 'HAPPIER_WORKSPACE_REPLICATION_SOURCE_OFFER_V1';
 
@@ -55,11 +54,9 @@ export async function readWorkspaceReplicationSourceOfferFromFile(input: Readonl
         `Workspace replication source offer exceeds max payload bytes for ${input.transferId}: ${input.legacyWholeBufferMaxBytes}`,
       );
     }
-    const payload = await readFile(input.filePath);
-    return workspaceReplicationSourceOfferCodec.decode({
-      transferId: input.transferId,
-      payload,
-    });
+    // Legacy offers were whole-buffer JSON payloads. They are intentionally rejected so large offers
+    // cannot regress to whole-buffer reads/parses during transport/storage hardening.
+    throw new Error(`Legacy workspace replication source offer format is not supported: ${input.transferId}`);
   }
 
   const stream = createReadStream(input.filePath, { encoding: 'utf8' });
@@ -139,29 +136,24 @@ export async function writeWorkspaceReplicationSourceOfferToFile(input: Readonly
   offer: WorkspaceReplicationSourceOffer;
   filePath: string;
 }>): Promise<Readonly<{ filePath: string; sizeBytes: number }>> {
-  const stream = createWriteStream(input.filePath, { encoding: 'utf8' });
+  const header = {
+    offerId: input.offer.offerId,
+    relationshipId: input.offer.relationshipId,
+    directionId: input.offer.directionId,
+    sourceFingerprint: input.offer.sourceFingerprint,
+    ...(input.offer.manifest.fingerprint ? { manifestFingerprint: input.offer.manifest.fingerprint } : {}),
+    ...(input.offer.sourceControllerMetadata ? { sourceControllerMetadata: input.offer.sourceControllerMetadata } : {}),
+  };
+
+  const file = await open(input.filePath, 'w', 0o600);
   try {
-    const header = {
-      offerId: input.offer.offerId,
-      relationshipId: input.offer.relationshipId,
-      directionId: input.offer.directionId,
-      sourceFingerprint: input.offer.sourceFingerprint,
-      ...(input.offer.manifest.fingerprint ? { manifestFingerprint: input.offer.manifest.fingerprint } : {}),
-      ...(input.offer.sourceControllerMetadata ? { sourceControllerMetadata: input.offer.sourceControllerMetadata } : {}),
-    };
-
-    stream.write(`${WORKSPACE_REPLICATION_SOURCE_OFFER_STREAM_MAGIC}\n`);
-    stream.write(`${JSON.stringify(header)}\n`);
+    await file.write(`${WORKSPACE_REPLICATION_SOURCE_OFFER_STREAM_MAGIC}\n`);
+    await file.write(`${JSON.stringify(header)}\n`);
     for (const entry of input.offer.manifest.entries) {
-      stream.write(`${JSON.stringify(entry)}\n`);
+      await file.write(`${JSON.stringify(entry)}\n`);
     }
-
-    await new Promise<void>((resolve, reject) => {
-      stream.end(() => resolve());
-      stream.on('error', reject);
-    });
   } finally {
-    stream.destroy();
+    await file.close().catch(() => undefined);
   }
 
   const stats = await stat(input.filePath);

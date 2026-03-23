@@ -5,6 +5,32 @@ import { runWorkspaceReplicationJob } from '../jobs/runWorkspaceReplicationJob';
 import type { WorkspaceReplicationJobRecord, WorkspaceReplicationJobStore } from '../jobs/workspaceReplicationJobStore';
 import { WorkspaceReplicationError } from '../workspaceReplicationError';
 import { WorkspaceReplicationJobCancelRequestedError } from '../safety/workspaceReplicationJobCancelRequestedError';
+import {
+  releaseWorkspaceReplicationJobLease,
+  removeWorkspaceReplicationJobStagingDirectory,
+  renewWorkspaceReplicationJobLease,
+  resolveWorkspaceReplicationJobLeaseTtlMs,
+  tryAcquireWorkspaceReplicationJobLease,
+} from '../state/workspaceReplicationJobLease';
+import { startWorkspaceReplicationJobLeaseHeartbeat } from '../state/workspaceReplicationJobLeaseHeartbeat';
+
+const CHECKPOINT_ORDER: readonly WorkspaceReplicationJobRecord['status']['checkpoint'][] = [
+  'job_created',
+  'relationship_resolved',
+  'missing_digests_negotiated',
+  'blob_transfer_started',
+  'blob_transfer_completed',
+  'apply_started',
+  'apply_completed',
+  'baseline_committed',
+] as const;
+
+function isCheckpointAtOrAfter(
+  current: WorkspaceReplicationJobRecord['status']['checkpoint'],
+  required: WorkspaceReplicationJobRecord['status']['checkpoint'],
+): boolean {
+  return CHECKPOINT_ORDER.indexOf(current) >= CHECKPOINT_ORDER.indexOf(required);
+}
 
 function resolveNowMs(now?: () => number): number {
   return now?.() ?? Date.now();
@@ -27,17 +53,42 @@ function isCancelRequestedError(error: unknown): error is WorkspaceReplicationJo
 }
 
 async function abortJobAndReturn(params: Readonly<{
+  activeServerDir: string;
   jobStore: WorkspaceReplicationJobStore;
   jobId: string;
   now?: () => number;
 }>): Promise<WorkspaceReplicationJobRecord> {
   const nowMs = resolveNowMs(params.now);
-  return await runWorkspaceReplicationJob({
+  const record = await runWorkspaceReplicationJob({
     jobStore: params.jobStore,
     jobId: params.jobId,
     now: params.now,
     run: async (record) => abortRecord(record, nowMs),
   });
+  await removeWorkspaceReplicationJobStagingDirectory({
+    activeServerDir: params.activeServerDir,
+    jobId: params.jobId,
+  });
+  return record;
+}
+
+async function abortIfCancellationRequested(params: Readonly<{
+  activeServerDir: string;
+  jobStore: WorkspaceReplicationJobStore;
+  jobId: string;
+  now?: () => number;
+}>): Promise<WorkspaceReplicationJobRecord | null> {
+  const current = await params.jobStore.read(params.jobId);
+  if (!current) {
+    throw new WorkspaceReplicationError({
+      code: 'job_not_found',
+      message: `Workspace replication job not found: ${params.jobId}`,
+    });
+  }
+  if (!current.cancelRequestedAtMs && current.status.status !== 'aborted') {
+    return null;
+  }
+  return await abortJobAndReturn(params);
 }
 
 async function markJobFailedAndRethrow(params: Readonly<{
@@ -68,10 +119,14 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
   assertSafeToApply?: (input: Readonly<{
     job: WorkspaceReplicationJobRecord;
     offer: WorkspaceReplicationSourceOffer;
-  }>) => Promise<null | Readonly<{
-    blockingDivergenceCandidates: readonly unknown[];
-    lastErrorMessage?: string;
-  }>>;
+  }>) => Promise<
+    | null
+    | WorkspaceReplicationJobRecord
+    | Readonly<{
+        blockingDivergenceCandidates: readonly string[];
+        lastErrorMessage?: string;
+      }>
+  >;
   transferMissingBlobsToTargetCas: (input: Readonly<{
     job: WorkspaceReplicationJobRecord;
     offer: WorkspaceReplicationSourceOffer;
@@ -95,15 +150,70 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     });
   }
 
-  if (current.cancelRequestedAtMs || current.status.status === 'aborted') {
-    const nowMs = resolveNowMs(params.now);
-    return await runWorkspaceReplicationJob({
-      jobStore: params.jobStore,
-      jobId: params.jobId,
-      now: params.now,
-      run: async (record) => abortRecord(record, nowMs),
-    });
+  if (current.status.status === 'completed' || current.status.status === 'failed' || current.status.status === 'awaiting_recovery') {
+    return current;
   }
+
+  const leaseOwnerId = `cli-daemon:${process.pid}`;
+  const leaseTtlMs = resolveWorkspaceReplicationJobLeaseTtlMs();
+  const leaseAttempt = await tryAcquireWorkspaceReplicationJobLease({
+    activeServerDir: params.activeServerDir,
+    jobId: params.jobId,
+    ownerId: leaseOwnerId,
+    nowMs: resolveNowMs(params.now),
+    ttlMs: leaseTtlMs,
+  });
+  if (!leaseAttempt.acquired) {
+    return current;
+  }
+
+  const heartbeat = startWorkspaceReplicationJobLeaseHeartbeat({
+    activeServerDir: params.activeServerDir,
+    jobId: params.jobId,
+    ownerId: leaseOwnerId,
+    ttlMs: leaseTtlMs,
+    nowMs: () => resolveNowMs(params.now),
+  });
+
+  const stopIfLeaseLost = async (): Promise<WorkspaceReplicationJobRecord | null> => {
+    const nowMs = resolveNowMs(params.now);
+	    const renewed = await renewWorkspaceReplicationJobLease({
+	      activeServerDir: params.activeServerDir,
+	      jobId: params.jobId,
+	      ownerId: leaseOwnerId,
+	      nowMs,
+	      ttlMs: leaseTtlMs,
+	    }).catch(() => ({ renewed: false, lease: null }));
+
+    if (renewed.renewed) {
+      return null;
+    }
+
+    const latest = await params.jobStore.read(params.jobId);
+    if (!latest) {
+      throw new WorkspaceReplicationError({
+        code: 'job_not_found',
+        message: `Workspace replication job not found: ${params.jobId}`,
+      });
+    }
+    return latest;
+  };
+
+  try {
+    if (current.cancelRequestedAtMs || current.status.status === 'aborted') {
+      const nowMs = resolveNowMs(params.now);
+      const aborted = await runWorkspaceReplicationJob({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        run: async (record) => abortRecord(record, nowMs),
+      });
+      await removeWorkspaceReplicationJobStagingDirectory({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
+      });
+      return aborted;
+    }
 
   if (!current.relationshipId) {
     return await markJobFailedAndRethrow({
@@ -135,28 +245,35 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
   const offer = await params.resolveSourceOfferById(current.offerId);
 
   // 1) relationship resolved
-  let latest = await runWorkspaceReplicationJob({
-    jobStore: params.jobStore,
-    jobId: params.jobId,
-    now: params.now,
-    run: async (record) => {
-      if (record.cancelRequestedAtMs) {
-        return abortRecord(record, resolveNowMs(params.now));
-      }
-      return {
-        ...record,
-        relationshipId: relationship.relationshipId,
-        status: {
-          ...record.status,
-          status: 'in_progress',
-          phase: 'planning',
-          checkpoint: 'relationship_resolved',
-        },
-      };
-    },
-  });
+  let latest: WorkspaceReplicationJobRecord = current;
+  if (!isCheckpointAtOrAfter(latest.status.checkpoint, 'relationship_resolved')) {
+    latest = await runWorkspaceReplicationJob({
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+      run: async (record) => {
+        if (record.cancelRequestedAtMs) {
+          return abortRecord(record, resolveNowMs(params.now));
+        }
+        return {
+          ...record,
+          relationshipId: relationship.relationshipId,
+          status: {
+            ...record.status,
+            status: 'in_progress',
+            phase: 'planning',
+            checkpoint: 'relationship_resolved',
+          },
+        };
+      },
+    });
+  }
 
   if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
+    await removeWorkspaceReplicationJobStagingDirectory({
+      activeServerDir: params.activeServerDir,
+      jobId: params.jobId,
+    });
     return latest;
   }
 
@@ -168,6 +285,7 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     }).catch(async (error: unknown) => {
       if (isCancelRequestedError(error)) {
         return await abortJobAndReturn({
+          activeServerDir: params.activeServerDir,
           jobStore: params.jobStore,
           jobId: params.jobId,
           now: params.now,
@@ -193,278 +311,387 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
         now: params.now,
         run: async (record) => ({
           ...record,
-          failedAtMs: record.failedAtMs ?? nowMs,
+          awaitingRecoveryAtMs: record.awaitingRecoveryAtMs ?? nowMs,
           lastErrorMessage: safeCheck.lastErrorMessage ?? record.lastErrorMessage ?? 'Target workspace diverged since last baseline',
           status: {
             ...record.status,
-            status: 'failed',
+            status: 'awaiting_recovery',
             phase: 'planning',
-            checkpoint: 'relationship_resolved',
+            checkpoint: record.status.checkpoint,
             blockingDivergenceCandidates: [...safeCheck.blockingDivergenceCandidates],
           },
         }),
+      });
+      await removeWorkspaceReplicationJobStagingDirectory({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
       });
       return latest;
     }
   }
 
-  // 2) missing digests negotiated (local CAS contains check)
-  const missingPlan = await planWorkspaceReplicationMissingBlobs({
-    activeServerDir: params.activeServerDir,
-    blobIndex: offer.blobIndex,
-  });
+  if (!isCheckpointAtOrAfter(latest.status.checkpoint, 'blob_transfer_completed')) {
+    // 2) missing digests negotiated (local CAS contains check)
+    const missingPlan = await planWorkspaceReplicationMissingBlobs({
+      activeServerDir: params.activeServerDir,
+      blobIndex: offer.blobIndex,
+    });
 
-  latest = await runWorkspaceReplicationJob({
-    jobStore: params.jobStore,
-    jobId: params.jobId,
-    now: params.now,
-    run: async (record) => {
-      if (record.cancelRequestedAtMs) {
-        return abortRecord(record, resolveNowMs(params.now));
-      }
-      return {
-        ...record,
-        status: {
-          ...record.status,
-          status: 'in_progress',
-          phase: 'negotiate_missing_digests',
-          checkpoint: 'missing_digests_negotiated',
-          progressCounters: {
-            ...record.status.progressCounters,
-            plannedFiles: missingPlan.plannedFileCount,
-            plannedBytes: missingPlan.plannedByteCount,
-          },
-        },
-      };
-    },
-  });
-
-  if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-    return latest;
-  }
-
-  // 3) transfer missing blobs into target CAS
-  latest = await runWorkspaceReplicationJob({
-    jobStore: params.jobStore,
-    jobId: params.jobId,
-    now: params.now,
-    run: async (record) => {
-      if (record.cancelRequestedAtMs) {
-        return abortRecord(record, resolveNowMs(params.now));
-      }
-      return {
-        ...record,
-        status: {
-          ...record.status,
-          status: 'in_progress',
-          phase: 'transfer_missing_blobs_to_target_cas',
-          checkpoint: 'blob_transfer_started',
-        },
-      };
-    },
-  });
-
-  if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-    return latest;
-  }
-
-  const transferResult = await params.transferMissingBlobsToTargetCas({
-    job: latest,
-    offer,
-    missingDigests: missingPlan.missingBlobs.map((blob) => blob.digest),
-    missingBytes: missingPlan.plannedByteCount,
-  }).catch(async (error: unknown) => {
-    if (isCancelRequestedError(error)) {
-      return await abortJobAndReturn({
+    if (!isCheckpointAtOrAfter(latest.status.checkpoint, 'missing_digests_negotiated')) {
+      latest = await runWorkspaceReplicationJob({
         jobStore: params.jobStore,
         jobId: params.jobId,
         now: params.now,
+        run: async (record) => {
+          if (record.cancelRequestedAtMs) {
+            return abortRecord(record, resolveNowMs(params.now));
+          }
+          return {
+            ...record,
+            status: {
+              ...record.status,
+              status: 'in_progress',
+              phase: 'negotiate_missing_digests',
+              checkpoint: 'missing_digests_negotiated',
+              progressCounters: {
+                ...record.status.progressCounters,
+                plannedFiles: missingPlan.plannedFileCount,
+                plannedBytes: missingPlan.plannedByteCount,
+              },
+            },
+          };
+        },
       });
     }
-    return await markJobFailedAndRethrow({
-      jobStore: params.jobStore,
-      jobId: params.jobId,
-      now: params.now,
-      error,
-    });
-  });
 
-  if ('jobId' in transferResult) {
-    // abortJobAndReturn returned a job record; stop execution immediately.
-    return transferResult;
-  }
+    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
+      await removeWorkspaceReplicationJobStagingDirectory({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
+      });
+      return latest;
+    }
 
-  latest = await runWorkspaceReplicationJob({
-    jobStore: params.jobStore,
-    jobId: params.jobId,
-    now: params.now,
-    run: async (record) => {
-      if (record.cancelRequestedAtMs) {
-        return abortRecord(record, resolveNowMs(params.now));
-      }
-      return {
-        ...record,
-        status: {
-          ...record.status,
-          status: 'in_progress',
-          phase: 'transfer_missing_blobs_to_target_cas',
-          checkpoint: 'blob_transfer_completed',
-          progressCounters: {
-            ...record.status.progressCounters,
-            transferredFiles: transferResult.transferredFiles,
-            transferredBytes: transferResult.transferredBytes,
-          },
-        },
-      };
-    },
-  });
-
-  if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-    return latest;
-  }
-
-  // 4) apply
-  latest = await runWorkspaceReplicationJob({
-    jobStore: params.jobStore,
-    jobId: params.jobId,
-    now: params.now,
-    run: async (record) => {
-      if (record.cancelRequestedAtMs) {
-        return abortRecord(record, resolveNowMs(params.now));
-      }
-      return {
-        ...record,
-        status: {
-          ...record.status,
-          status: 'in_progress',
-          phase: 'apply',
-          checkpoint: 'apply_started',
-        },
-      };
-    },
-  });
-
-  if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-    return latest;
-  }
-
-  const applyResult = await params.applyPlan({
-    job: latest,
-    offer,
-  }).catch(async (error: unknown) => {
-    if (isCancelRequestedError(error)) {
-      return await abortJobAndReturn({
+    // 3) transfer missing blobs into target CAS
+    if (!isCheckpointAtOrAfter(latest.status.checkpoint, 'blob_transfer_started')) {
+      latest = await runWorkspaceReplicationJob({
         jobStore: params.jobStore,
         jobId: params.jobId,
         now: params.now,
+        run: async (record) => {
+          if (record.cancelRequestedAtMs) {
+            return abortRecord(record, resolveNowMs(params.now));
+          }
+          return {
+            ...record,
+            status: {
+              ...record.status,
+              status: 'in_progress',
+              phase: 'transfer_missing_blobs_to_target_cas',
+              checkpoint: 'blob_transfer_started',
+            },
+          };
+        },
       });
     }
-    return await markJobFailedAndRethrow({
+
+    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
+      await removeWorkspaceReplicationJobStagingDirectory({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
+      });
+      return latest;
+    }
+
+    const cancelledBeforeTransfer = await abortIfCancellationRequested({
+      activeServerDir: params.activeServerDir,
       jobStore: params.jobStore,
       jobId: params.jobId,
       now: params.now,
-      error,
     });
-  });
+    if (cancelledBeforeTransfer) {
+      return cancelledBeforeTransfer;
+    }
 
-  if ('jobId' in applyResult) {
-    return applyResult;
-  }
-
-  latest = await runWorkspaceReplicationJob({
-    jobStore: params.jobStore,
-    jobId: params.jobId,
-    now: params.now,
-    run: async (record) => {
-      if (record.cancelRequestedAtMs) {
-        return abortRecord(record, resolveNowMs(params.now));
+    const transferResult = await params.transferMissingBlobsToTargetCas({
+      job: latest,
+      offer,
+      missingDigests: missingPlan.missingBlobs.map((blob) => blob.digest),
+      missingBytes: missingPlan.plannedByteCount,
+    }).catch(async (error: unknown) => {
+      if (isCancelRequestedError(error)) {
+        return await abortJobAndReturn({
+          activeServerDir: params.activeServerDir,
+          jobStore: params.jobStore,
+          jobId: params.jobId,
+          now: params.now,
+        });
       }
-      return {
-        ...record,
-        result: {
-          targetPath: applyResult.targetPath,
-        },
-        status: {
-          ...record.status,
-          status: 'in_progress',
-          phase: 'apply',
-          checkpoint: 'apply_completed',
-          progressCounters: {
-            ...record.status.progressCounters,
-            appliedFiles: applyResult.appliedFiles,
-            appliedBytes: applyResult.appliedBytes,
-          },
-        },
-      };
-    },
-  });
-
-  if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-    return latest;
-  }
-
-  // 5) commit baseline
-  latest = await runWorkspaceReplicationJob({
-    jobStore: params.jobStore,
-    jobId: params.jobId,
-    now: params.now,
-    run: async (record) => {
-      if (record.cancelRequestedAtMs) {
-        return abortRecord(record, resolveNowMs(params.now));
-      }
-      return {
-        ...record,
-        status: {
-          ...record.status,
-          status: 'in_progress',
-          phase: 'commit_baseline',
-          checkpoint: 'apply_completed',
-        },
-      };
-    },
-  });
-
-  await params.commitBaseline({
-    job: latest,
-    offer,
-  }).catch(async (error: unknown) => {
-    if (isCancelRequestedError(error)) {
-      return await abortJobAndReturn({
+      return await markJobFailedAndRethrow({
         jobStore: params.jobStore,
         jobId: params.jobId,
         now: params.now,
+        error,
       });
+    });
+
+    if ('jobId' in transferResult) {
+      // abortJobAndReturn returned a job record; stop execution immediately.
+      return transferResult;
     }
-    return await markJobFailedAndRethrow({
+
+    const lostLeaseAfterTransfer = await stopIfLeaseLost();
+    if (lostLeaseAfterTransfer) {
+      return lostLeaseAfterTransfer;
+    }
+
+    latest = await runWorkspaceReplicationJob({
       jobStore: params.jobStore,
       jobId: params.jobId,
       now: params.now,
-      error,
-    });
-  });
-
-  // If commitBaseline threw cancellation, it was converted into an abort record update.
-  const afterCommit = await params.jobStore.read(params.jobId);
-  if (afterCommit?.status.status === 'aborted') {
-    return afterCommit;
-  }
-
-  const completedAtMs = resolveNowMs(params.now);
-  latest = await runWorkspaceReplicationJob({
-    jobStore: params.jobStore,
-    jobId: params.jobId,
-    now: params.now,
-    run: async (record) => ({
-      ...record,
-      completedAtMs,
-      status: {
-        ...record.status,
-        status: 'completed',
-        phase: 'commit_baseline',
-        checkpoint: 'baseline_committed',
+      run: async (record) => {
+        if (record.cancelRequestedAtMs) {
+          return abortRecord(record, resolveNowMs(params.now));
+        }
+        return {
+          ...record,
+          status: {
+            ...record.status,
+            status: 'in_progress',
+            phase: 'transfer_missing_blobs_to_target_cas',
+            checkpoint: 'blob_transfer_completed',
+            progressCounters: {
+              ...record.status.progressCounters,
+              transferredFiles: transferResult.transferredFiles,
+              transferredBytes: transferResult.transferredBytes,
+            },
+          },
+        };
       },
-    }),
-  });
+    });
+
+    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
+      await removeWorkspaceReplicationJobStagingDirectory({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
+      });
+      return latest;
+    }
+  }
+
+  if (!isCheckpointAtOrAfter(latest.status.checkpoint, 'apply_completed')) {
+    const lostLeaseBeforeApply = await stopIfLeaseLost();
+    if (lostLeaseBeforeApply) {
+      return lostLeaseBeforeApply;
+    }
+
+    // 4) apply
+    if (!isCheckpointAtOrAfter(latest.status.checkpoint, 'apply_started')) {
+      latest = await runWorkspaceReplicationJob({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        run: async (record) => {
+          if (record.cancelRequestedAtMs) {
+            return abortRecord(record, resolveNowMs(params.now));
+          }
+          return {
+            ...record,
+            status: {
+              ...record.status,
+              status: 'in_progress',
+              phase: 'apply',
+              checkpoint: 'apply_started',
+            },
+          };
+        },
+      });
+    }
+
+    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
+      await removeWorkspaceReplicationJobStagingDirectory({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
+      });
+      return latest;
+    }
+
+    const cancelledBeforeApply = await abortIfCancellationRequested({
+      activeServerDir: params.activeServerDir,
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+    });
+    if (cancelledBeforeApply) {
+      return cancelledBeforeApply;
+    }
+
+    const applyResult = await params.applyPlan({
+      job: latest,
+      offer,
+    }).catch(async (error: unknown) => {
+      if (isCancelRequestedError(error)) {
+        return await abortJobAndReturn({
+          activeServerDir: params.activeServerDir,
+          jobStore: params.jobStore,
+          jobId: params.jobId,
+          now: params.now,
+        });
+      }
+      return await markJobFailedAndRethrow({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        error,
+      });
+    });
+
+    if ('jobId' in applyResult) {
+      return applyResult;
+    }
+
+    const lostLeaseAfterApply = await stopIfLeaseLost();
+    if (lostLeaseAfterApply) {
+      return lostLeaseAfterApply;
+    }
+
+    latest = await runWorkspaceReplicationJob({
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+      run: async (record) => {
+        if (record.cancelRequestedAtMs) {
+          return abortRecord(record, resolveNowMs(params.now));
+        }
+        return {
+          ...record,
+          result: {
+            targetPath: applyResult.targetPath,
+          },
+          status: {
+            ...record.status,
+            status: 'in_progress',
+            phase: 'apply',
+            checkpoint: 'apply_completed',
+            progressCounters: {
+              ...record.status.progressCounters,
+              appliedFiles: applyResult.appliedFiles,
+              appliedBytes: applyResult.appliedBytes,
+            },
+          },
+        };
+      },
+    });
+
+    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
+      await removeWorkspaceReplicationJobStagingDirectory({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
+      });
+      return latest;
+    }
+  }
+
+  if (!isCheckpointAtOrAfter(latest.status.checkpoint, 'baseline_committed')) {
+    const lostLeaseBeforeBaselineCommit = await stopIfLeaseLost();
+    if (lostLeaseBeforeBaselineCommit) {
+      return lostLeaseBeforeBaselineCommit;
+    }
+
+    // 5) commit baseline
+    latest = await runWorkspaceReplicationJob({
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+      run: async (record) => {
+        if (record.cancelRequestedAtMs) {
+          return abortRecord(record, resolveNowMs(params.now));
+        }
+        return {
+          ...record,
+          status: {
+            ...record.status,
+            status: 'in_progress',
+            phase: 'commit_baseline',
+            checkpoint: record.status.checkpoint,
+          },
+        };
+      },
+    });
+
+    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
+      await removeWorkspaceReplicationJobStagingDirectory({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
+      });
+      return latest;
+    }
+
+    const cancelledBeforeBaselineCommit = await abortIfCancellationRequested({
+      activeServerDir: params.activeServerDir,
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+    });
+    if (cancelledBeforeBaselineCommit) {
+      return cancelledBeforeBaselineCommit;
+    }
+
+    await params.commitBaseline({
+      job: latest,
+      offer,
+    }).catch(async (error: unknown) => {
+      if (isCancelRequestedError(error)) {
+        return await abortJobAndReturn({
+          activeServerDir: params.activeServerDir,
+          jobStore: params.jobStore,
+          jobId: params.jobId,
+          now: params.now,
+        });
+      }
+      return await markJobFailedAndRethrow({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        error,
+      });
+    });
+
+    // If commitBaseline threw cancellation, it was converted into an abort record update.
+    const afterCommit = await params.jobStore.read(params.jobId);
+    if (afterCommit?.status.status === 'aborted') {
+      await removeWorkspaceReplicationJobStagingDirectory({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
+      });
+      return afterCommit;
+    }
+
+    const completedAtMs = resolveNowMs(params.now);
+    latest = await runWorkspaceReplicationJob({
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+      run: async (record) => ({
+        ...record,
+        completedAtMs,
+        status: {
+          ...record.status,
+          status: 'completed',
+          phase: 'commit_baseline',
+          checkpoint: 'baseline_committed',
+        },
+      }),
+    });
+  }
 
   return latest;
+  } finally {
+    await heartbeat.stop().catch(() => undefined);
+    await releaseWorkspaceReplicationJobLease({
+      activeServerDir: params.activeServerDir,
+      jobId: params.jobId,
+      ownerId: leaseOwnerId,
+    }).catch(() => undefined);
+  }
 }

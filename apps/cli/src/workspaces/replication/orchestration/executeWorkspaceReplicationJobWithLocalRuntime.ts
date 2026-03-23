@@ -21,8 +21,10 @@ import { applyWorkspaceReplicationPlan } from '../apply/applyWorkspaceReplicatio
 import { buildOneWaySafeReplicationPlan } from '../planning/buildOneWaySafeReplicationPlan';
 import { assertWorkspaceReplicationJobNotCancelled } from '../safety/assertWorkspaceReplicationJobNotCancelled';
 import { scanWorkspaceManifestIntoCas } from '../scan/scanWorkspaceManifestIntoCas';
+import { runWorkspaceReplicationJob } from '../jobs/runWorkspaceReplicationJob';
 
 import { executeWorkspaceReplicationJob } from './executeWorkspaceReplicationJob';
+import type { WorkspaceReplicationBlobPackPlanningMode } from '../workspaceReplicationTypes';
 
 function sumAppliedBytes(offer: WorkspaceReplicationSourceOffer): number {
     let total = 0;
@@ -73,6 +75,7 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
         conflictPolicy: ScmSourceControllerWorkspaceTransferConflictPolicy;
         registry?: ScmBackendRegistry;
     }>;
+    blobPackPlanningMode?: WorkspaceReplicationBlobPackPlanningMode;
 }>): Promise<Awaited<ReturnType<typeof executeWorkspaceReplicationJob>>> {
   const baselineStore = createWorkspaceReplicationBaselineStore({
     activeServerDir: params.activeServerDir,
@@ -112,43 +115,71 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
 
       const baseline = await baselineStore.load(params.relationshipScope);
       if (!baseline) {
-        return null;
+        // `sync_changes` requires a baseline. The first successful run must be a snapshot transfer
+        // (or another baseline-establishing action) so subsequent runs can safely diff.
+        const nowMs = params.now?.() ?? Date.now();
+        return await runWorkspaceReplicationJob({
+          jobStore: params.jobStore,
+          jobId: params.jobId,
+          now: params.now,
+          run: async (record) => ({
+            ...record,
+            awaitingRecoveryAtMs: record.awaitingRecoveryAtMs ?? nowMs,
+            lastErrorMessage: record.lastErrorMessage ?? 'Workspace replication baseline missing; run transfer_snapshot first',
+            status: {
+              ...record.status,
+              status: 'awaiting_recovery',
+              phase: 'planning',
+              checkpoint: 'relationship_resolved',
+              blockingDivergenceCandidates: [],
+            },
+          }),
+        });
       }
 
       const targetManifest = toMutableWorkspaceManifest(await getScannedTargetManifest(offer));
-	      const safePlan = buildOneWaySafeReplicationPlan({
-	        baseline,
-	        sourceManifest: toMutableWorkspaceManifest(offer.manifest),
-	        targetManifest,
-	      });
-	      if (!safePlan.hasTargetDivergence) {
-	        return null;
-	      }
+      const safePlan = buildOneWaySafeReplicationPlan({
+        baseline,
+        sourceManifest: toMutableWorkspaceManifest(offer.manifest),
+        targetManifest,
+      });
+      if (!safePlan.hasTargetDivergence) {
+        return null;
+      }
+      if (safePlan.canApplySafely) {
+        // Divergence exists, but not on any path the source would overwrite.
+        return null;
+      }
 
-	      const candidates =
-	        safePlan.blockingTargetDivergencePaths.length > 0
-	          ? safePlan.blockingTargetDivergencePaths
-	          : safePlan.targetDivergencePaths;
-	      const count = candidates.length;
-	      return {
-	        blockingDivergenceCandidates: candidates,
-	        lastErrorMessage: `Target workspace diverged since last baseline (${count} paths)`,
-	      };
-	    },
+      const candidates = safePlan.blockingTargetDivergencePaths;
+      const count = candidates.length;
+      return {
+        blockingDivergenceCandidates: candidates,
+        lastErrorMessage: `Target workspace diverged since last baseline (${count} paths)`,
+      };
+    },
     transferMissingBlobsToTargetCas: async ({ job, offer, missingDigests }) => {
       const missingDigestsSet = new Set(missingDigests);
-      const missingBlobs = offer.blobIndex.filter((blob) => missingDigestsSet.has(blob.digest));
+      const planningMode = params.blobPackPlanningMode ?? 'missing_only';
+      const blobsForPacking =
+        planningMode === 'stable_full_offer'
+          ? offer.blobIndex
+          : offer.blobIndex.filter((blob) => missingDigestsSet.has(blob.digest));
       const packs = buildWorkspaceReplicationBlobPacks({
-                blobs: missingBlobs,
-                blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
-                blobPackMaxBlobs: configuration.workspaceReplicationBlobPackMaxBlobs,
-                blobPackMaxSingleBlobBytes: configuration.workspaceReplicationBlobPackMaxSingleBlobBytes,
-            });
+        blobs: blobsForPacking,
+        blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
+        blobPackMaxBlobs: configuration.workspaceReplicationBlobPackMaxBlobs,
+        blobPackMaxSingleBlobBytes: configuration.workspaceReplicationBlobPackMaxSingleBlobBytes,
+      });
+      const packsToRequest =
+        planningMode === 'stable_full_offer'
+          ? packs.filter((pack) => pack.digests.some((digest) => missingDigestsSet.has(digest)))
+          : packs;
 
             let transferredFiles = 0;
             let transferredBytes = 0;
 
-            for (const pack of packs) {
+            for (const pack of packsToRequest) {
                 await assertWorkspaceReplicationJobNotCancelled({
                     jobStore: params.jobStore,
                     jobId: job.jobId,
@@ -161,6 +192,12 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
                         packId: pack.packId,
                         digests: pack.digests,
                         destinationPath,
+                    });
+                    // If cancellation is requested while the blob pack is downloading, do not continue
+                    // with CAS mutations (receive/commit) after the download completes.
+                    await assertWorkspaceReplicationJobNotCancelled({
+                        jobStore: params.jobStore,
+                        jobId: job.jobId,
                     });
                     const result = await receiveWorkspaceReplicationBlobPack({
                         activeServerDir: params.activeServerDir,

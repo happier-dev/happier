@@ -10,6 +10,41 @@ function createSha256Digest(payload: Buffer): string {
 }
 
 describe('createWorkspaceReplicationBlobPackPayloadSource', () => {
+  it('fails closed when the packId contains path traversal segments', async () => {
+    const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-blob-pack-source-'));
+    const sourceFilePath = join(sourceActiveServerDir, 'source.txt');
+    const payload = Buffer.from('hello\n', 'utf8');
+    const digest = createSha256Digest(payload);
+
+    try {
+      const {
+        createWorkspaceReplicationCasStore,
+      } = await import('../cas/workspaceReplicationCasStore');
+      const {
+        createWorkspaceReplicationBlobPackPayloadSource,
+      } = await import('./createWorkspaceReplicationBlobPackPayloadSource');
+
+      await writeFile(sourceFilePath, payload);
+      const sourceCasStore = createWorkspaceReplicationCasStore({
+        activeServerDir: sourceActiveServerDir,
+      });
+      await sourceCasStore.commitFile({
+        digest,
+        sourcePath: sourceFilePath,
+      });
+
+      await expect(createWorkspaceReplicationBlobPackPayloadSource({
+        activeServerDir: sourceActiveServerDir,
+        packId: '../escape',
+        digests: [digest],
+      })).rejects.toMatchObject({
+        code: 'invalid_pack_id',
+      });
+    } finally {
+      await rm(sourceActiveServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('builds a file-backed blob pack payload source that round-trips into target CAS', async () => {
     const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-blob-pack-source-'));
     const targetActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-blob-pack-target-'));

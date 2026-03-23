@@ -210,6 +210,660 @@ describe('executeWorkspaceReplicationJob', () => {
     }
   });
 
+  it('hard-stops before blob transfer when cancellation is requested after blob_transfer_started is persisted', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-job-cancel-mid-transfer-'));
+
+    try {
+      const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { executeWorkspaceReplicationJob } = await import('./executeWorkspaceReplicationJob');
+
+      const rawJobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+
+      const relationship = await relationships.ensureRelationship({
+        sourceMachineId: 'machine-source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine-target',
+        targetWorkspaceRoot: '/target',
+        mode: 'one_way_safe',
+      });
+
+      const offer: WorkspaceReplicationSourceOffer = {
+        offerId: 'offer_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        sourceFingerprint: 'fp_1',
+        manifest: { entries: [], fingerprint: 'fp_1' },
+        blobIndex: [{ digest: 'sha256:deadbeef', sizeBytes: 10 }],
+      };
+
+      await rawJobStore.write({
+        schemaVersion: 1,
+        jobId: 'job_cancel_mid_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        offerId: offer.offerId,
+        mode: 'one_way_safe',
+        correlationId: 'corr_1',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'pending',
+          phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      const jobStore = {
+        ...rawJobStore,
+        write: async (record: any) => {
+          await rawJobStore.write(record);
+          if (record.jobId === 'job_cancel_mid_1' && record.status?.checkpoint === 'blob_transfer_started') {
+            await rawJobStore.update('job_cancel_mid_1', (current: any) => ({
+              ...current,
+              cancelRequestedAtMs: 55,
+            }));
+          }
+        },
+      } as any;
+
+      const transferMissingBlobsToTargetCas = vi.fn(async () => ({
+        transferredFiles: 1,
+        transferredBytes: 10,
+      }));
+      const applyPlan = vi.fn();
+      const commitBaseline = vi.fn();
+
+      const result = await executeWorkspaceReplicationJob({
+        activeServerDir,
+        jobStore,
+        relationships,
+        jobId: 'job_cancel_mid_1',
+        now: () => 99,
+        resolveSourceOfferById: async () => offer,
+        transferMissingBlobsToTargetCas,
+        applyPlan,
+        commitBaseline,
+      });
+
+      expect(result.status.status).toBe('aborted');
+      expect(transferMissingBlobsToTargetCas).not.toHaveBeenCalled();
+      expect(applyPlan).not.toHaveBeenCalled();
+      expect(commitBaseline).not.toHaveBeenCalled();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('hard-stops before apply when cancellation is requested after apply_started is persisted', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-job-cancel-mid-apply-'));
+
+    try {
+      const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { executeWorkspaceReplicationJob } = await import('./executeWorkspaceReplicationJob');
+
+      const rawJobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+
+      const relationship = await relationships.ensureRelationship({
+        sourceMachineId: 'machine-source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine-target',
+        targetWorkspaceRoot: '/target',
+        mode: 'one_way_safe',
+      });
+
+      const offer: WorkspaceReplicationSourceOffer = {
+        offerId: 'offer_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        sourceFingerprint: 'fp_1',
+        manifest: { entries: [], fingerprint: 'fp_1' },
+        blobIndex: [],
+      };
+
+      await rawJobStore.write({
+        schemaVersion: 1,
+        jobId: 'job_cancel_mid_2',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        offerId: offer.offerId,
+        mode: 'one_way_safe',
+        correlationId: 'corr_1',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'pending',
+          phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      const jobStore = {
+        ...rawJobStore,
+        write: async (record: any) => {
+          await rawJobStore.write(record);
+          if (record.jobId === 'job_cancel_mid_2' && record.status?.checkpoint === 'apply_started') {
+            await rawJobStore.update('job_cancel_mid_2', (current: any) => ({
+              ...current,
+              cancelRequestedAtMs: 66,
+            }));
+          }
+        },
+      } as any;
+
+      const transferMissingBlobsToTargetCas = vi.fn(async () => ({
+        transferredFiles: 0,
+        transferredBytes: 0,
+      }));
+      const applyPlan = vi.fn(async () => ({
+        appliedFiles: 0,
+        appliedBytes: 0,
+        targetPath: '/target-applied',
+      }));
+      const commitBaseline = vi.fn();
+
+      const result = await executeWorkspaceReplicationJob({
+        activeServerDir,
+        jobStore,
+        relationships,
+        jobId: 'job_cancel_mid_2',
+        now: () => 99,
+        resolveSourceOfferById: async () => offer,
+        transferMissingBlobsToTargetCas,
+        applyPlan,
+        commitBaseline,
+      });
+
+      expect(result.status.status).toBe('aborted');
+      expect(applyPlan).not.toHaveBeenCalled();
+      expect(commitBaseline).not.toHaveBeenCalled();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('hard-stops before baseline commit when cancellation is requested after commit_baseline phase is persisted', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-job-cancel-mid-baseline-'));
+
+    try {
+      const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { executeWorkspaceReplicationJob } = await import('./executeWorkspaceReplicationJob');
+
+      const rawJobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+
+      const relationship = await relationships.ensureRelationship({
+        sourceMachineId: 'machine-source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine-target',
+        targetWorkspaceRoot: '/target',
+        mode: 'one_way_safe',
+      });
+
+      const offer: WorkspaceReplicationSourceOffer = {
+        offerId: 'offer_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        sourceFingerprint: 'fp_1',
+        manifest: { entries: [], fingerprint: 'fp_1' },
+        blobIndex: [],
+      };
+
+      await rawJobStore.write({
+        schemaVersion: 1,
+        jobId: 'job_cancel_mid_3',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        offerId: offer.offerId,
+        mode: 'one_way_safe',
+        correlationId: 'corr_1',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'pending',
+          phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      const jobStore = {
+        ...rawJobStore,
+        write: async (record: any) => {
+          await rawJobStore.write(record);
+          if (record.jobId === 'job_cancel_mid_3' && record.status?.phase === 'commit_baseline') {
+            await rawJobStore.update('job_cancel_mid_3', (current: any) => ({
+              ...current,
+              cancelRequestedAtMs: 77,
+            }));
+          }
+        },
+      } as any;
+
+      const transferMissingBlobsToTargetCas = vi.fn(async () => ({
+        transferredFiles: 0,
+        transferredBytes: 0,
+      }));
+      const applyPlan = vi.fn(async () => ({
+        appliedFiles: 0,
+        appliedBytes: 0,
+        targetPath: '/target-applied',
+      }));
+      const commitBaseline = vi.fn(async () => undefined);
+
+      const result = await executeWorkspaceReplicationJob({
+        activeServerDir,
+        jobStore,
+        relationships,
+        jobId: 'job_cancel_mid_3',
+        now: () => 99,
+        resolveSourceOfferById: async () => offer,
+        transferMissingBlobsToTargetCas,
+        applyPlan,
+        commitBaseline,
+      });
+
+      expect(result.status.status).toBe('aborted');
+      expect(commitBaseline).not.toHaveBeenCalled();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when another runner holds the job lease (does not perform transfer/apply mutations)', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-lease-held-'));
+
+    try {
+      const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { tryAcquireWorkspaceReplicationJobLease } = await import('../state/workspaceReplicationJobLease');
+      const { executeWorkspaceReplicationJob } = await import('./executeWorkspaceReplicationJob');
+
+      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+
+      const relationship = await relationships.ensureRelationship({
+        sourceMachineId: 'machine-source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine-target',
+        targetWorkspaceRoot: '/target',
+        mode: 'one_way_safe' as const,
+      });
+
+      const offer: WorkspaceReplicationSourceOffer = {
+        offerId: 'offer_lease_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        sourceFingerprint: 'fp_1',
+        manifest: { entries: [], fingerprint: 'fp_1' },
+        blobIndex: [],
+      };
+
+      await jobStore.write({
+        schemaVersion: 1,
+        jobId: 'job_lease_held_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        offerId: offer.offerId,
+        mode: 'one_way_safe',
+        correlationId: 'corr_lease_1',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'pending',
+          phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      await tryAcquireWorkspaceReplicationJobLease({
+        activeServerDir,
+        jobId: 'job_lease_held_1',
+        ownerId: 'other-runner',
+        nowMs: 1000,
+        ttlMs: 60_000,
+      });
+      await expect(tryAcquireWorkspaceReplicationJobLease({
+        activeServerDir,
+        jobId: 'job_lease_held_1',
+        ownerId: 'sanity-runner',
+        nowMs: 2000,
+        ttlMs: 60_000,
+      })).resolves.toMatchObject({ acquired: false });
+
+      const transferMissingBlobsToTargetCas = vi.fn(async () => ({ transferredFiles: 0, transferredBytes: 0 }));
+      const applyPlan = vi.fn(async () => ({ appliedFiles: 0, appliedBytes: 0, targetPath: '/target' }));
+
+      const result = await executeWorkspaceReplicationJob({
+        activeServerDir,
+        jobStore,
+        relationships,
+        jobId: 'job_lease_held_1',
+        now: () => 2000,
+        resolveSourceOfferById: async () => offer,
+        transferMissingBlobsToTargetCas,
+        applyPlan,
+        commitBaseline: async () => undefined,
+      });
+
+      expect(transferMissingBlobsToTargetCas).not.toHaveBeenCalled();
+      expect(applyPlan).not.toHaveBeenCalled();
+      expect(result.jobId).toBe('job_lease_held_1');
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('hard-stops and does not call apply when the lease is stolen mid-transfer (lost lease is fail-closed)', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-lease-stolen-'));
+
+    const previousLeaseTtl = process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_LEASE_TTL_MS;
+    process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_LEASE_TTL_MS = '5000';
+
+    try {
+      const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { tryAcquireWorkspaceReplicationJobLease } = await import('../state/workspaceReplicationJobLease');
+      const { executeWorkspaceReplicationJob } = await import('./executeWorkspaceReplicationJob');
+
+      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+
+      const relationship = await relationships.ensureRelationship({
+        sourceMachineId: 'machine-source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine-target',
+        targetWorkspaceRoot: '/target',
+        mode: 'one_way_safe' as const,
+      });
+
+      const offer: WorkspaceReplicationSourceOffer = {
+        offerId: 'offer_lease_stolen_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        sourceFingerprint: 'fp_1',
+        manifest: { entries: [], fingerprint: 'fp_1' },
+        blobIndex: [{ digest: 'sha256:deadbeef', sizeBytes: 10 }],
+      };
+
+      await jobStore.write({
+        schemaVersion: 1,
+        jobId: 'job_lease_stolen_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        offerId: offer.offerId,
+        mode: 'one_way_safe',
+        correlationId: 'corr_lease_stolen_1',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'pending',
+          phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      const transferMissingBlobsToTargetCas = vi.fn(async () => {
+        // Lease is held by the current process, but it expires; simulate another runner stealing it mid-flight.
+        await tryAcquireWorkspaceReplicationJobLease({
+          activeServerDir,
+          jobId: 'job_lease_stolen_1',
+          ownerId: 'other-runner',
+          nowMs: 7001,
+          ttlMs: 60_000,
+        });
+        return { transferredFiles: 1, transferredBytes: 10 };
+      });
+
+      const applyPlan = vi.fn(async () => ({ appliedFiles: 0, appliedBytes: 0, targetPath: '/target' }));
+      const commitBaseline = vi.fn(async () => undefined);
+
+      const result = await executeWorkspaceReplicationJob({
+        activeServerDir,
+        jobStore,
+        relationships,
+        jobId: 'job_lease_stolen_1',
+        now: () => 1000,
+        resolveSourceOfferById: async () => offer,
+        transferMissingBlobsToTargetCas,
+        applyPlan,
+        commitBaseline,
+      });
+
+      expect(transferMissingBlobsToTargetCas).toHaveBeenCalledTimes(1);
+      expect(applyPlan).not.toHaveBeenCalled();
+      expect(commitBaseline).not.toHaveBeenCalled();
+      expect(result.status.checkpoint).not.toBe('apply_started');
+      expect(result.status.checkpoint).not.toBe('apply_completed');
+      expect(result.status.checkpoint).not.toBe('baseline_committed');
+    } finally {
+      if (previousLeaseTtl === undefined) {
+        delete process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_LEASE_TTL_MS;
+      } else {
+        process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_LEASE_TTL_MS = previousLeaseTtl;
+      }
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('resumes from blob_transfer_completed without re-transferring blobs', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-resume-transfer-'));
+
+    try {
+      const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { executeWorkspaceReplicationJob } = await import('./executeWorkspaceReplicationJob');
+
+      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+
+      const relationship = await relationships.ensureRelationship({
+        sourceMachineId: 'machine-source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine-target',
+        targetWorkspaceRoot: '/target',
+        mode: 'one_way_safe' as const,
+      });
+
+      const offer: WorkspaceReplicationSourceOffer = {
+        offerId: 'offer_resume_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        sourceFingerprint: 'fp_1',
+        manifest: { entries: [], fingerprint: 'fp_1' },
+        blobIndex: [],
+      };
+
+      await jobStore.write({
+        schemaVersion: 1,
+        jobId: 'job_resume_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        offerId: offer.offerId,
+        mode: 'one_way_safe',
+        correlationId: 'corr_resume_1',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'in_progress',
+          phase: 'transfer_missing_blobs_to_target_cas',
+          checkpoint: 'blob_transfer_completed',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+      await expect(jobStore.read('job_resume_1')).resolves.toMatchObject({
+        status: { checkpoint: 'blob_transfer_completed' },
+      });
+
+      const transferMissingBlobsToTargetCas = vi.fn(async () => ({ transferredFiles: 0, transferredBytes: 0 }));
+      const applyPlan = vi.fn(async () => ({ appliedFiles: 0, appliedBytes: 0, targetPath: '/target' }));
+      const commitBaseline = vi.fn(async () => undefined);
+
+      const result = await executeWorkspaceReplicationJob({
+        activeServerDir,
+        jobStore,
+        relationships,
+        jobId: 'job_resume_1',
+        now: () => 42,
+        resolveSourceOfferById: async () => offer,
+        transferMissingBlobsToTargetCas,
+        applyPlan,
+        commitBaseline,
+      });
+
+      expect(transferMissingBlobsToTargetCas).not.toHaveBeenCalled();
+      expect(applyPlan).toHaveBeenCalledTimes(1);
+      expect(commitBaseline).toHaveBeenCalledTimes(1);
+      expect(result.status.checkpoint).toBe('baseline_committed');
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('removes job staging on abort (cancel requested) before returning an aborted status', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-abort-cleanup-'));
+
+    try {
+      const { mkdir, writeFile, readFile } = await import('node:fs/promises');
+      const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { createWorkspaceReplicationPaths } = await import('../state/workspaceReplicationPaths');
+      const { executeWorkspaceReplicationJob } = await import('./executeWorkspaceReplicationJob');
+
+      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+      const relationship = await relationships.ensureRelationship({
+        sourceMachineId: 'machine-source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine-target',
+        targetWorkspaceRoot: '/target',
+        mode: 'one_way_safe' as const,
+      });
+
+      const offer: WorkspaceReplicationSourceOffer = {
+        offerId: 'offer_abort_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        sourceFingerprint: 'fp_1',
+        manifest: { entries: [], fingerprint: 'fp_1' },
+        blobIndex: [],
+      };
+
+      await jobStore.write({
+        schemaVersion: 1,
+        jobId: 'job_abort_cleanup_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        offerId: offer.offerId,
+        mode: 'one_way_safe',
+        correlationId: 'corr_abort_1',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        cancelRequestedAtMs: 11,
+        status: {
+          status: 'in_progress',
+          phase: 'transfer_missing_blobs_to_target_cas',
+          checkpoint: 'blob_transfer_started',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      const paths = createWorkspaceReplicationPaths({ activeServerDir });
+      const stagingPath = join(paths.stagingDirectory, 'job_abort_cleanup_1');
+      await mkdir(stagingPath, { recursive: true });
+      await writeFile(join(stagingPath, 'marker.txt'), 'staging\n');
+      await expect(readFile(join(stagingPath, 'marker.txt'), 'utf8')).resolves.toBe('staging\n');
+
+      const result = await executeWorkspaceReplicationJob({
+        activeServerDir,
+        jobStore,
+        relationships,
+        jobId: 'job_abort_cleanup_1',
+        now: () => 50,
+        resolveSourceOfferById: async () => offer,
+        transferMissingBlobsToTargetCas: async () => ({ transferredFiles: 0, transferredBytes: 0 }),
+        applyPlan: async () => ({ appliedFiles: 0, appliedBytes: 0, targetPath: '/target' }),
+        commitBaseline: async () => undefined,
+      });
+
+      expect(result.status.status).toBe('aborted');
+      await expect(readFile(join(stagingPath, 'marker.txt'), 'utf8')).rejects.toThrow();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('marks the job failed when a handler throws', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-job-failed-'));
 

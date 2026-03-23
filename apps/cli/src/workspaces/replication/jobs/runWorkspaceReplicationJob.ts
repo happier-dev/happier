@@ -37,26 +37,28 @@ export async function runWorkspaceReplicationJob(params: Readonly<{
     return current;
   }
 
-  const nowMs = params.now?.() ?? Date.now();
+  const nowMs = () => params.now?.() ?? Date.now();
 
   try {
     const next = await params.run(current);
     if (next.jobId !== current.jobId) {
       throw new Error(`Workspace replication job runner returned mismatched job id: ${next.jobId}`);
     }
+    const persistedAtMs = nowMs();
     const persisted: WorkspaceReplicationJobRecord = {
       ...next,
-      updatedAtMs: nowMs,
+      updatedAtMs: persistedAtMs,
     };
     await params.jobStore.write(persisted);
     return persisted;
   } catch (error) {
+    const failedAtMs = nowMs();
     if (isCancelRequestedError(error)) {
       const abortedRecord: WorkspaceReplicationJobRecord = {
         ...current,
-        updatedAtMs: nowMs,
-        cancelRequestedAtMs: current.cancelRequestedAtMs ?? nowMs,
-        abortedAtMs: current.abortedAtMs ?? nowMs,
+        updatedAtMs: failedAtMs,
+        cancelRequestedAtMs: current.cancelRequestedAtMs ?? failedAtMs,
+        abortedAtMs: current.abortedAtMs ?? failedAtMs,
         status: {
           ...current.status,
           status: 'aborted',
@@ -68,8 +70,8 @@ export async function runWorkspaceReplicationJob(params: Readonly<{
 
     const failedRecord: WorkspaceReplicationJobRecord = {
       ...current,
-      updatedAtMs: nowMs,
-      failedAtMs: nowMs,
+      updatedAtMs: failedAtMs,
+      failedAtMs: failedAtMs,
       lastErrorMessage: resolveJobFailureMessage(error),
       status: {
         ...current.status,

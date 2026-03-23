@@ -1,8 +1,5 @@
-import { createHash } from 'node:crypto';
-
-import { deterministicStringify } from '@/utils/deterministicJson';
-
 import type { WorkspaceReplicationSourceOfferBlob } from './createWorkspaceReplicationSourceOffer';
+import { createWorkspaceReplicationPackIdForDigests } from './workspaceReplicationPackId';
 
 export type WorkspaceReplicationBlobPack = Readonly<{
   packId: string;
@@ -14,18 +11,10 @@ function compareBlobsByDigest(left: WorkspaceReplicationSourceOfferBlob, right: 
   return left.digest.localeCompare(right.digest);
 }
 
-function createBlobPackId(digests: readonly string[]): string {
-  const payload = deterministicStringify({
-    schemaVersion: 1,
-    digests,
-  });
-  return `pack_${createHash('sha256').update(payload).digest('hex')}`;
-}
-
 function createBlobPack(blobs: readonly WorkspaceReplicationSourceOfferBlob[]): WorkspaceReplicationBlobPack {
   const digests = blobs.map((blob) => blob.digest);
   return {
-    packId: createBlobPackId(digests),
+    packId: createWorkspaceReplicationPackIdForDigests(digests),
     digests,
     totalBytes: blobs.reduce((total, blob) => total + blob.sizeBytes, 0),
   };

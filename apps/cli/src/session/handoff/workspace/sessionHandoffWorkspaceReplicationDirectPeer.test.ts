@@ -1,197 +1,213 @@
-import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-function createSha256Digest(payload: Buffer): string {
-    return `sha256:${createHash('sha256').update(payload).digest('hex')}`;
+import type { TransferEndpointCandidate, WorkspaceManifest } from '@happier-dev/protocol';
+
+import { disposeTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
+
+function createSha256DigestForPayload(payload: Buffer): string {
+  return `sha256:${createHash('sha256').update(payload).digest('hex')}`;
 }
 
-describe('sessionHandoffWorkspaceReplicationDirectPeer', () => {
-    afterEach(() => {
-        delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS;
-    });
+describe('session handoff direct-peer workspace replication publication', () => {
+  const envSnapshot = { ...process.env };
 
-    it('receives direct-peer workspace blob packs from publication metadata carried through the transferred-bundles file header', async () => {
-        process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+  afterEach(async () => {
+    process.env = { ...envSnapshot };
+    vi.resetModules();
+  });
 
-        const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-session-handoff-workspace-direct-peer-source-'));
-        const targetActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-session-handoff-workspace-direct-peer-target-'));
+  it('publishes blob-pack transferIds that fit within the direct-peer URL param length budget (no embedded digests)', async () => {
+    process.env.HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_TARGET_BYTES = String(1024 * 1024 * 1024);
+    process.env.HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_BLOBS = '256';
+    process.env.HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_SINGLE_BLOB_BYTES = String(1024 * 1024 * 1024);
 
-        const {
-            createDirectPeerTransferRegistry,
-            requestDirectPeerTransferToFile,
-            startDirectPeerTransferServer,
-        } = await import('@/machines/transfer/directPeerTransport');
-        const { createWorkspaceReplicationCasStore } = await import('@/workspaces/replication/cas/workspaceReplicationCasStore');
-        const { createWorkspaceReplicationTransfers } = await import('@/workspaces/replication/transport/workspaceReplicationTransfers');
-        const {
-            createSessionHandoffTransferredBundles,
-            createSessionHandoffTransferredBundlesPayloadSource,
-            receiveSessionHandoffTransferredBundlesPayloadFile,
-        } = await import('../transfer/sessionHandoffTransferredBundles');
-        const {
-            createSessionHandoffMetadataV2,
-        } = await import('../transfer/sessionHandoffMetadataV2');
-        const {
-            createSessionHandoffWorkspaceReplicationMetadata,
-        } = await import('./sessionHandoffWorkspaceReplicationMetadata');
-        const {
-            publishSessionHandoffWorkspaceReplicationDirectPeerTransfers,
-            receiveDirectPeerSessionHandoffWorkspaceReplication,
-        } = await import('./sessionHandoffWorkspaceReplicationDirectPeer');
+    vi.resetModules();
+    const { publishSessionHandoffWorkspaceReplicationDirectPeerTransfers } = await import(
+      './sessionHandoffWorkspaceReplicationDirectPeer'
+    );
+    const { buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId } = await import(
+      './sessionHandoffWorkspaceReplicationDirectPeer'
+    );
+    const { createWorkspaceReplicationPackIdForDigests } = await import(
+      '@/workspaces/replication/transport/workspaceReplicationPackId'
+    );
 
-        let registry: ReturnType<typeof createDirectPeerTransferRegistry> | null = null;
-        const publishedTransferPayloads = new Map<string, unknown>();
-        const server = await startDirectPeerTransferServer({
-            readPublishedTransfer: (input) => registry?.readPublishedTransfer(input) ?? null,
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-publication-'));
+    try {
+      const blobPathsByDigest = new Map<string, string>();
+      const blobProviderRoot = join(activeServerDir, 'blob-provider');
+      await mkdir(blobProviderRoot, { recursive: true });
+      const entries: WorkspaceManifest['entries'] = [];
+      for (let i = 0; i < 257; i++) {
+        const filePath = join(blobProviderRoot, `${i.toString(16).padStart(4, '0')}.bin`);
+        const payload = Buffer.from(`payload-${i}`, 'utf8');
+        await writeFile(filePath, payload);
+        const digest = createSha256DigestForPayload(payload);
+        blobPathsByDigest.set(digest, filePath);
+        entries.push({
+          kind: 'file',
+          relativePath: `files/file-${i}.txt`,
+          digest,
+          sizeBytes: payload.byteLength,
+          executable: false,
         });
-        registry = createDirectPeerTransferRegistry({
-            advertisedPort: server.port,
+      }
+
+      const manifest: WorkspaceManifest = { entries };
+
+      const publishedTransfers: Array<Readonly<{ transferId: string; endpointCandidates: readonly TransferEndpointCandidate[] }>> = [];
+      const publishedInputs: Array<Readonly<{ transferId: string; onDemandScope?: unknown }>> = [];
+      const directPeerTransfer = {
+        publishTransfer: (input: Readonly<{
+          transferId: string;
+          payload: unknown;
+          payloadSource?: unknown;
+          onDemandScope?: unknown;
+        }>) => {
+          const endpointCandidates: readonly TransferEndpointCandidate[] = [{
+            kind: 'http',
+            url: `http://127.0.0.1:1234/${encodeURIComponent(input.transferId)}`,
+            expiresAt: Date.now() + 60_000,
+          }];
+          publishedTransfers.push({
+            transferId: input.transferId,
+            endpointCandidates,
+          });
+          publishedInputs.push({
+            transferId: input.transferId,
+            onDemandScope: input.onDemandScope,
+          });
+          return endpointCandidates;
+        },
+      } as const;
+
+      const result = await publishSessionHandoffWorkspaceReplicationDirectPeerTransfers({
+        handoffId: 'handoff-1',
+        activeServerDir,
+        manifest,
+        directPeerTransfer,
+        blobProvider: {
+          getBlobFilePath: (digest: string) => blobPathsByDigest.get(digest) ?? null,
+        },
+      });
+
+      // Manifest + blob packs must be file-backed payload sources (no unbounded whole-buffer assembly).
+      expect(result.payloadSources.every(({ payloadSource }) => payloadSource.kind === 'file')).toBe(true);
+
+      expect(publishedTransfers.some((entry) => entry.transferId.includes(':workspace-manifest'))).toBe(true);
+      // Blob packs are resolved on demand (no pre-published blob-pack transfer ids).
+      expect(publishedTransfers.some((entry) => entry.transferId.includes(':workspace-pack-direct:'))).toBe(false);
+      expect(publishedInputs.some((entry) => String(entry.transferId).includes(':workspace-pack-direct:'))).toBe(false);
+
+      const scopeCarrier = publishedInputs.find((entry) => entry.transferId.includes(':workspace-manifest'));
+      expect(scopeCarrier?.onDemandScope).toBeDefined();
+      const onDemandScope = scopeCarrier?.onDemandScope as {
+        allowTransferId: (transferId: string) => boolean;
+        resolvePayloadSourceOnOpen: (input: Readonly<{ transferId: string; requestBody: unknown }>) => Promise<unknown>;
+      };
+
+      const packDigests = entries
+        .filter((entry) => entry.kind === 'file')
+        .slice(0, 2)
+        .map((entry) => (entry as { digest: string }).digest)
+        .sort((left, right) => left.localeCompare(right));
+      const packId = createWorkspaceReplicationPackIdForDigests(packDigests);
+      const packTransferId = buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId({
+        handoffId: 'handoff-1',
+        packId,
+      });
+
+      expect(onDemandScope.allowTransferId(packTransferId)).toBe(true);
+
+      // directPeerTransport encodes transferId into a base64url path param and Fastify caps params at 4k chars.
+      const encodedPathKeyLength = Buffer.from(packTransferId, 'utf8').toString('base64url').length;
+      expect(encodedPathKeyLength).toBeLessThanOrEqual(4096);
+
+      const resolved = await onDemandScope.resolvePayloadSourceOnOpen({
+        transferId: packTransferId,
+        requestBody: {
+          t: 'workspace_replication_blob_pack_v1',
+          packId,
+          digests: packDigests,
+        },
+      });
+      expect(resolved).toMatchObject({ kind: 'file' });
+
+      for (const { payloadSource } of result.payloadSources) {
+        await disposeTransferPayloadSource(payloadSource);
+      }
+      await disposeTransferPayloadSource(resolved as any);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('sets maxResolvedTransfers high enough to serve worst-case pack requests for large manifests (no fixed 10k cap)', async () => {
+    vi.resetModules();
+    const { publishSessionHandoffWorkspaceReplicationDirectPeerTransfers } = await import(
+      './sessionHandoffWorkspaceReplicationDirectPeer'
+    );
+
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-max-resolved-'));
+    try {
+      const entries: WorkspaceManifest['entries'] = [];
+      const digestCount = 12_345;
+      for (let i = 0; i < digestCount; i++) {
+        entries.push({
+          kind: 'file',
+          relativePath: `files/file-${i}.txt`,
+          digest: `sha256:${i.toString(16).padStart(64, '0')}`,
+          sizeBytes: 1,
+          executable: false,
         });
+      }
+      const manifest: WorkspaceManifest = { entries };
 
-        try {
-            const payload = Buffer.from('direct-peer workspace payload\n', 'utf8');
-            const digest = createSha256Digest(payload);
-            const sourceBlobPath = join(sourceActiveServerDir, 'README.md');
-            await writeFile(sourceBlobPath, payload);
+      const publishedInputs: Array<Readonly<{ transferId: string; onDemandScope?: unknown }>> = [];
+      const directPeerTransfer = {
+        publishTransfer: (input: Readonly<{
+          transferId: string;
+          payload: unknown;
+          payloadSource?: unknown;
+          onDemandScope?: unknown;
+        }>) => {
+          publishedInputs.push({
+            transferId: input.transferId,
+            onDemandScope: input.onDemandScope,
+          });
+          return [{
+            kind: 'http',
+            url: `http://127.0.0.1:1234/${encodeURIComponent(input.transferId)}`,
+            expiresAt: Date.now() + 60_000,
+          }] satisfies readonly TransferEndpointCandidate[];
+        },
+      } as const;
 
-            const sourceCasStore = createWorkspaceReplicationCasStore({
-                activeServerDir: sourceActiveServerDir,
-            });
-            await sourceCasStore.commitFile({
-                digest,
-                sourcePath: sourceBlobPath,
-            });
+      const result = await publishSessionHandoffWorkspaceReplicationDirectPeerTransfers({
+        handoffId: 'handoff-large-1',
+        activeServerDir,
+        manifest,
+        directPeerTransfer,
+        blobProvider: {
+          getBlobFilePath: () => null,
+        },
+      });
 
-            const workspaceExportArtifacts = {
-                manifest: {
-                    entries: [
-                        {
-                            relativePath: 'README.md',
-                            kind: 'file' as const,
-                            digest,
-                            sizeBytes: payload.byteLength,
-                            executable: false,
-                        },
-                    ],
-                    fingerprint: createSha256Digest(Buffer.from('manifest-fingerprint', 'utf8')),
-                },
-                blobContentsByDigest: new Map<string, Uint8Array>([
-                    [digest, payload],
-                ]),
-                sourceControllerMetadata: {
-                    scmBackendId: 'git',
-                },
-            };
-            const transferredBundles = createSessionHandoffTransferredBundles({
-                workspaceExportArtifacts,
-            });
-            const workspaceReplicationMetadata = createSessionHandoffWorkspaceReplicationMetadata({
-                sourceRootPath: '/Users/tester/projects/direct-peer',
-                workspaceExportArtifacts,
-            });
+      const scopeCarrier = publishedInputs.find((entry) => entry.transferId.includes(':workspace-manifest'));
+      expect(scopeCarrier?.onDemandScope).toBeDefined();
+      const onDemandScope = scopeCarrier?.onDemandScope as { maxResolvedTransfers?: number };
+      expect(onDemandScope.maxResolvedTransfers).toBeGreaterThanOrEqual(digestCount);
 
-            const publishedWorkspaceTransfers =
-                await publishSessionHandoffWorkspaceReplicationDirectPeerTransfers({
-                    handoffId: 'handoff_direct_peer_test',
-                    activeServerDir: sourceActiveServerDir,
-                    manifest: workspaceExportArtifacts.manifest,
-                    directPeerTransfer: {
-                        publishTransfer: ({ transferId, payload, payloadSource }) => {
-                            publishedTransferPayloads.set(transferId, payload);
-                            return registry!.publishTransfer({
-                                transferId,
-                                payloadSource,
-                            }).endpointCandidates;
-                        },
-                    },
-                    workspaceExportArtifacts,
-                });
-            const publishedBlobPack = publishedWorkspaceTransfers.publication.blobPacks[0];
-            expect(publishedBlobPack).toBeDefined();
-            expect(publishedTransferPayloads.get(publishedBlobPack.transferId)).toEqual({});
-            expect(publishedBlobPack.endpointCandidates[0]).toMatchObject({
-                kind: 'http',
-                authorizationToken: expect.any(String),
-            });
-            expect(
-                registry.readPublishedTransfer({
-                    transferId: publishedBlobPack.transferId,
-                    transferToken: publishedBlobPack.endpointCandidates[0]!.authorizationToken!,
-                }),
-            ).not.toBeNull();
-
-            const directRequestPath = join(targetActiveServerDir, 'preheader-pack.bin');
-            await expect(requestDirectPeerTransferToFile({
-                transferId: publishedBlobPack.transferId,
-                endpointCandidates: publishedBlobPack.endpointCandidates,
-                destinationPath: directRequestPath,
-            })).resolves.toMatchObject({
-                destinationPath: directRequestPath,
-            });
-
-            const transferredPayloadSource = await createSessionHandoffTransferredBundlesPayloadSource(
-                transferredBundles,
-                {
-                    includeWorkspaceBlobPayloads: false,
-                    handoffMetadataV2: createSessionHandoffMetadataV2({
-                        workspaceReplicationMetadata,
-                        workspaceReplicationDirectPeerPublication: publishedWorkspaceTransfers.publication,
-                    }),
-                },
-            );
-            if (transferredPayloadSource.kind !== 'file') {
-                throw new Error('Expected a file-backed transferred payload source');
-            }
-
-            const receivedTransferredPayload = await receiveSessionHandoffTransferredBundlesPayloadFile({
-                activeServerDir: targetActiveServerDir,
-                payloadFilePath: transferredPayloadSource.filePath,
-            });
-            expect(receivedTransferredPayload).not.toHaveProperty('workspaceReplicationMetadata');
-            expect(receivedTransferredPayload.handoffMetadataV2?.workspaceReplicationMetadata).toEqual(
-                workspaceReplicationMetadata,
-            );
-            expect(
-                receivedTransferredPayload.handoffMetadataV2?.workspaceReplicationDirectPeerPublication?.blobPacks[0]?.endpointCandidates[0],
-            ).toMatchObject({
-                kind: 'http',
-                authorizationToken: expect.any(String),
-            });
-
-            const result = await receiveDirectPeerSessionHandoffWorkspaceReplication({
-                activeServerDir: targetActiveServerDir,
-                handoffId: 'handoff_direct_peer_test',
-                sourceMachineId: 'machine_source',
-                targetMachineId: 'machine_target',
-                targetPath: '/Users/tester/projects/target',
-                metadata: receivedTransferredPayload.handoffMetadataV2!.workspaceReplicationMetadata!,
-                directPeerPublication: receivedTransferredPayload.handoffMetadataV2!.workspaceReplicationDirectPeerPublication!,
-                transfers: createWorkspaceReplicationTransfers(),
-                maxSingleBlobBytes: 1024 * 1024,
-            });
-
-            expect(result.transferredPackCount).toBe(1);
-            expect(result.transferredBlobs).toBe(1);
-            expect(result.transferredBytes).toBeGreaterThan(0);
-
-            const targetCasStore = createWorkspaceReplicationCasStore({
-                activeServerDir: targetActiveServerDir,
-            });
-            await expect(targetCasStore.contains(digest)).resolves.toBe(true);
-
-            await transferredPayloadSource.dispose?.();
-            for (const publishedPayloadSource of publishedWorkspaceTransfers.payloadSources) {
-                registry.clearPublishedTransfer(publishedPayloadSource.transferId);
-                await publishedPayloadSource.payloadSource.dispose?.();
-            }
-        } finally {
-            await server.stop();
-            await rm(sourceActiveServerDir, { recursive: true, force: true });
-            await rm(targetActiveServerDir, { recursive: true, force: true });
-        }
-    });
+      for (const { payloadSource } of result.payloadSources) {
+        await disposeTransferPayloadSource(payloadSource);
+      }
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -13,12 +13,10 @@ import type { WorkspaceReplicationJobRecord, WorkspaceReplicationJobStore } from
 import type { WorkspaceReplicationRelationshipStore } from './relationships/workspaceReplicationRelationshipStore';
 import type { WorkspaceReplicationDirectionScope } from './relationships/relationshipScope';
 import type { WorkspaceReplicationSourceOffer } from './transport/createWorkspaceReplicationSourceOffer';
-import type { WorkspaceReplicationTransfers } from './transport/workspaceReplicationTransfers';
 
 export type WorkspaceReplicationEngineInput = Readonly<{
     activeServerDir: string;
     localMachineId: string;
-    transfers: WorkspaceReplicationTransfers;
     scmRegistry?: ScmBackendRegistry;
     now?: () => number;
 }>;
@@ -44,11 +42,15 @@ type ScanWorkspaceManifestIntoCas = typeof import('./scan/scanWorkspaceManifestI
 type ExecuteWorkspaceReplicationJobWithLocalRuntime =
     typeof import('./orchestration/executeWorkspaceReplicationJobWithLocalRuntime').executeWorkspaceReplicationJobWithLocalRuntime;
 
+type CreateWorkspaceReplicationSourceOfferStore =
+    typeof import('./transport/workspaceReplicationSourceOfferStore').createWorkspaceReplicationSourceOfferStore;
+
 export type WorkspaceReplicationEngineDependencies = Readonly<{
     createCasStore?: CreateWorkspaceReplicationCasStore;
     createRelationshipStore?: CreateWorkspaceReplicationRelationshipStore;
     createBaselineStore?: CreateWorkspaceReplicationBaselineStore;
     createJobStore?: CreateWorkspaceReplicationJobStore;
+    createSourceOfferStore?: CreateWorkspaceReplicationSourceOfferStore;
     createSourceOffer?: CreateWorkspaceReplicationSourceOffer;
     scanManifestIntoCas?: ScanWorkspaceManifestIntoCas;
     executeJobWithLocalRuntime?: ExecuteWorkspaceReplicationJobWithLocalRuntime;
@@ -98,12 +100,20 @@ export type WorkspaceReplicationBlobPackRequestToFile = (input: Readonly<{
     destinationPath: string;
 }>) => Promise<void>;
 
+export type WorkspaceReplicationBlobPackPlanningMode =
+    // Default: request packs built from the missing digest subset (minimizes bytes; best for server-routed/on-demand).
+    | 'missing_only'
+    // Request packs built from the full source-offer blob index, then select packs that include missing digests.
+    // This yields stable pack boundaries even when the missing set is sparse (best for pre-published packs, e.g. direct-peer).
+    | 'stable_full_offer';
+
 export type WorkspaceReplicationStartJobFromOfferInput = Readonly<{
     scope: WorkspaceReplicationDirectionScope;
     sourceOffer: WorkspaceReplicationSourceOffer;
     apply: WorkspaceReplicationApplyInput;
     requestBlobPackToFile: WorkspaceReplicationBlobPackRequestToFile;
     correlationId?: string;
+    blobPackPlanningMode?: WorkspaceReplicationBlobPackPlanningMode;
 }>;
 
 export type WorkspaceReplicationStartJobFromOfferResult = Readonly<{
@@ -119,6 +129,16 @@ export type WorkspaceReplicationListJobsInput = Readonly<{
 export type WorkspaceReplicationGcInput = Readonly<{
     nowMs?: number;
     terminalTtlMs: number;
+    casUnreferencedTtlMs?: number;
+    casMaxBytes?: number;
+}>;
+
+export type WorkspaceReplicationGcResult = Readonly<{
+    jobs: Readonly<{ removedJobIds: string[] }>;
+    cas?: Readonly<{
+        skippedDueToActiveJobs: boolean;
+        removedDigests: readonly string[];
+    }>;
 }>;
 
 export type WorkspaceReplicationJobExecutionInput = Readonly<{
@@ -127,5 +147,5 @@ export type WorkspaceReplicationJobExecutionInput = Readonly<{
     sourceOffer: WorkspaceReplicationSourceOffer;
     apply: WorkspaceReplicationApplyInput;
     requestBlobPackToFile: WorkspaceReplicationBlobPackRequestToFile;
+    blobPackPlanningMode?: WorkspaceReplicationBlobPackPlanningMode;
 }>;
-
