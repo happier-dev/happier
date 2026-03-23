@@ -80,7 +80,7 @@ export function SessionHandoffFailureRecoveryModal({ onClose, title, message, de
     return (
         <View testID="session-handoff-recovery-modal" style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.title}>{title}</Text>
+                <Text testID="session-handoff-recovery-title" style={styles.title}>{title}</Text>
                 <Pressable
                     testID="session-handoff-recovery-close"
                     onPress={() => handleResolve(null)}
@@ -93,8 +93,8 @@ export function SessionHandoffFailureRecoveryModal({ onClose, title, message, de
                 </Pressable>
             </View>
             <View style={styles.body}>
-                <Text style={styles.message}>{message}</Text>
-                {details ? <Text style={styles.details}>{details}</Text> : null}
+                <Text testID="session-handoff-recovery-message" style={styles.message}>{message}</Text>
+                {details ? <Text testID="session-handoff-recovery-details" style={styles.details}>{details}</Text> : null}
             </View>
             <View style={styles.footer}>
                 <RoundButton

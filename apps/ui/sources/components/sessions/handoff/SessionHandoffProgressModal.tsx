@@ -218,26 +218,11 @@ function isKnownCheckpoint(value: unknown): value is SessionHandoffProgressCheck
 }
 
 function shouldUseFullCheckpointTimeline(status: SessionHandoffStatus | undefined, checkpoint: SessionHandoffProgressCheckpoint | null): boolean {
-    const progress = status?.progress ?? null;
-
-    // If the daemon is already emitting a granular checkpoint, trust that workspace transfer is in play.
-    if (checkpoint && checkpoint !== 'stage_target' && checkpoint !== 'import_session' && checkpoint !== 'finalize') {
-        return true;
-    }
-
-    // When workspace replication is enabled, the daemon includes a preflight summary.
-    if (status?.workspacePreflightSummary) {
-        return true;
-    }
-
-    // Some daemon paths don't emit the summary but still include concrete plan/transfer counters.
-    const plannedBytes = typeof progress?.planned?.totalBytes === 'number' ? progress.planned.totalBytes : 0;
-    const plannedFiles = typeof progress?.planned?.totalFiles === 'number' ? progress.planned.totalFiles : 0;
-    const transferredBytes = typeof progress?.transferred?.bytes === 'number' ? progress.transferred.bytes : 0;
-    const transferredFiles = typeof progress?.transferred?.files === 'number' ? progress.transferred.files : 0;
-    const transferredBlobs = typeof progress?.transferred?.blobs === 'number' ? progress.transferred.blobs : 0;
-
-    return plannedBytes > 0 || plannedFiles > 0 || transferredBytes > 0 || transferredFiles > 0 || transferredBlobs > 0;
+    void status;
+    // Keep the UI timeline aligned with daemon-emitted checkpoints. The daemon can attach workspace
+    // preflight/progress counters while still reporting only minimal checkpoints (e.g. `import_session`);
+    // in that case the full timeline would be misleading.
+    return checkpoint === 'scan_source' || checkpoint === 'plan' || checkpoint === 'transfer_blobs' || checkpoint === 'apply';
 }
 
 function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): string {
