@@ -1,12 +1,11 @@
 import * as React from 'react';
-import { InteractionManager, Pressable, View } from 'react-native';
+import { InteractionManager, Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { MultiTextInput, type MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
@@ -16,28 +15,51 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         backgroundColor: theme.colors.surface,
         paddingHorizontal: 16,
-        paddingVertical: 14,
+        // Match the path popover header padding more closely.
+        paddingVertical: 12,
     },
     inputSection: {
         width: '100%',
     },
     inputContainer: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: 12,
+        backgroundColor: theme.colors.input.background,
+        borderRadius: 10,
         paddingHorizontal: 12,
-        paddingVertical: 10,
+        paddingVertical: 8,
+        minHeight: 40,
+        justifyContent: 'center',
         borderWidth: 0.5,
         borderColor: theme.colors.divider,
     },
+    textInput: {
+        flex: 1,
+        color: theme.colors.input.text,
+        paddingVertical: 0,
+        minHeight: 24,
+        textAlignVertical: 'center',
+        ...Typography.default(),
+        ...(Platform.OS === 'web'
+            ? ({
+                outlineStyle: 'none',
+                outlineWidth: 0,
+                boxShadow: 'none',
+            } as any)
+            : undefined),
+    },
     buttonRow: {
         flexDirection: 'row',
-        gap: 10,
         marginTop: 12,
         alignItems: 'center',
-        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    buttonRowLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        flexShrink: 1,
     },
     button: {
-        minWidth: 60,
         paddingHorizontal: 10,
         paddingVertical: 7,
         borderRadius: 10,
@@ -62,16 +84,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     buttonTextSecondary: {
         color: theme.colors.text,
     },
-    clearButton: {
-        marginTop: 12,
-        alignSelf: 'flex-start',
-        paddingVertical: 8,
-        alignItems: 'center',
-    },
-    clearButtonText: {
-        fontSize: 14,
+    buttonTextDestructive: {
         color: theme.colors.textDestructive,
-        ...Typography.default('semiBold'),
+    },
+    clearButton: {
+        paddingVertical: 7,
+        paddingHorizontal: 6,
     },
     helpText: {
         fontSize: 13,
@@ -99,7 +117,7 @@ export type NewSessionResumeSelectionContentProps = Readonly<{
 export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectionContentProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const inputRef = React.useRef<MultiTextInputHandle>(null);
+    const inputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
     const agentType = isAgentId(props.agentType) ? props.agentType : DEFAULT_AGENT_ID;
     const agentLabel = t(getAgentCore(agentType).displayNameKey);
 
@@ -107,7 +125,7 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
         let cancelled = false;
         const focus = () => {
             if (cancelled) return;
-            inputRef.current?.focus();
+            inputRef.current?.focus?.();
         };
 
         focus();
@@ -183,63 +201,75 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
         <View style={[styles.container, props.maxHeight ? { maxHeight: props.maxHeight } : null]}>
             <View style={styles.inputSection}>
                 <View style={styles.inputContainer}>
-                    <MultiTextInput
+                    <TextInput
                         ref={inputRef}
                         value={props.value}
                         onChangeText={props.onChangeValue}
                         placeholder={t('newSession.resume.placeholder', { agent: agentLabel })}
+                        placeholderTextColor={theme.colors.input.placeholder}
                         autoFocus={true}
-                        maxHeight={80}
-                        paddingTop={0}
-                        paddingBottom={0}
+                        style={styles.textInput}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        autoComplete="off"
+                        textContentType="none"
+                        importantForAutofill="no"
+                        returnKeyType="done"
+                        blurOnSubmit={true}
+                        multiline={false}
                     />
                 </View>
 
                 <View style={styles.buttonRow}>
-                    <Pressable
-                        onPress={() => {
-                            void handlePaste();
-                        }}
-                        style={({ pressed }) => [
-                            styles.button,
-                            styles.buttonSecondary,
-                            { opacity: pressed ? 0.7 : 1 },
-                        ]}
-                    >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Ionicons name="clipboard-outline" size={16} color={theme.colors.text} />
-                            <Text style={[styles.buttonText, styles.buttonTextSecondary]}>
-                                {t('newSession.resume.paste')}
+                    <View style={styles.buttonRowLeft}>
+                        <Pressable
+                            onPress={() => {
+                                void handlePaste();
+                            }}
+                            style={({ pressed }) => [
+                                styles.button,
+                                styles.buttonSecondary,
+                                { opacity: pressed ? 0.7 : 1 },
+                            ]}
+                        >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Ionicons name="clipboard-outline" size={16} color={theme.colors.text} />
+                                <Text style={[styles.buttonText, styles.buttonTextSecondary]}>
+                                    {t('newSession.resume.paste')}
+                                </Text>
+                            </View>
+                        </Pressable>
+                        <Pressable
+                            onPress={handleSave}
+                            style={({ pressed }) => [
+                                styles.button,
+                                styles.buttonPrimary,
+                                { opacity: pressed ? 0.7 : 1 },
+                            ]}
+                        >
+                            <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
+                                {t('newSession.resume.save')}
                             </Text>
-                        </View>
-                    </Pressable>
-                    <Pressable
-                        onPress={handleSave}
-                        style={({ pressed }) => [
-                            styles.button,
-                            styles.buttonPrimary,
-                            { opacity: pressed ? 0.7 : 1 },
-                        ]}
-                    >
-                        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-                            {t('newSession.resume.save')}
-                        </Text>
-                    </Pressable>
-                </View>
+                        </Pressable>
+                    </View>
 
-                {props.value.trim() ? (
-                    <Pressable
-                        onPress={handleClear}
-                        style={({ pressed }) => [
-                            styles.clearButton,
-                            { opacity: pressed ? 0.7 : 1 },
-                        ]}
-                    >
-                        <Text style={styles.clearButtonText}>
-                            {t('newSession.resume.clearAndRemove')}
-                        </Text>
-                    </Pressable>
-                ) : null}
+                    {props.value.trim() ? (
+                        <Pressable
+                            onPress={handleClear}
+                            style={({ pressed }) => [
+                                styles.clearButton,
+                                { opacity: pressed ? 0.7 : 1 },
+                            ]}
+                        >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Ionicons name="close-circle-outline" size={16} color={theme.colors.textDestructive} />
+                                <Text style={[styles.buttonText, styles.buttonTextDestructive]}>
+                                    {t('newSession.resume.clearAndRemove')}
+                                </Text>
+                            </View>
+                        </Pressable>
+                    ) : null}
+                </View>
 
                 <Text style={styles.helpText}>
                     {t('newSession.resume.helpText')}

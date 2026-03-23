@@ -46,6 +46,7 @@ import { Metadata } from '@/sync/domains/state/storageTypes';
 import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -568,6 +569,12 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         fontSize: 13,
         ...Typography.default('semiBold'),
     },
+    sessionInputText: {
+        fontSize: 14,
+    },
+    newSessionInputText: {
+        fontSize: 16,
+    },
 }));
 
 export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, AgentInputProps>((props, ref) => {
@@ -907,7 +914,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [agentId, props.metadata]);
 
     const submitCustomModel = React.useCallback((value: string) => {
-        hapticsLight();
         const normalized = value.trim();
         if (!normalized) return;
         props.onModelModeChange?.(normalized);
@@ -1285,7 +1291,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return [{
             id: `engine:${props.agentType}`,
             label: props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
-            icon: <AgentIcon agentId={props.agentType} size={12} />,
+            icon: (
+                <AgentIcon
+                    agentId={props.agentType}
+                    size={12}
+                    style={{ transform: [{ scale: getAgentPickerIconScale(props.agentType) }] }}
+                />
+            ),
             renderDetailContent: () => renderResolvedEngineDetail('carded'),
         }];
     }, [
@@ -2050,6 +2062,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         <MultiTextInput
                             ref={inputRef}
                             testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
+                            textStyle={props.sessionId ? styles.sessionInputText : styles.newSessionInputText}
                             value={props.value}
                             paddingTop={Platform.OS === 'web' ? 10 : 8}
                             paddingBottom={Platform.OS === 'web' ? 10 : 8}
@@ -2192,8 +2205,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             resumeSessionId={props.resumeSessionId}
                                             resumeChipAnchorRef={resumeChipAnchorRef}
                                             onResumeClick={handleResumePress}
-                                            resumeLabelTitle={t('newSession.resume.title')}
-                                            resumeLabelOptional={t('newSession.resume.optional')}
+                                            resumeLabelTitle={t('newSession.resume.chipOptional', {
+                                                agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                            })}
+                                            resumeLabelOptional={t('newSession.resume.chipOptional', {
+                                                agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
+                                            })}
                                         />
                             ) : null,
                         ]}</View>
