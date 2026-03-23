@@ -110,6 +110,49 @@ const GEMINI_STATIC_MODELS = Object.freeze([
   },
 ] satisfies readonly AgentModelDescriptor[]);
 
+const CODEX_STATIC_MODELS = Object.freeze([
+  {
+    id: 'gpt-5.4',
+    name: 'GPT 5.4',
+    description: 'Latest frontier agentic coding model.',
+  },
+  {
+    id: 'gpt-5.4-mini',
+    name: 'GPT 5.4 Mini',
+    description: 'Smaller frontier agentic coding model.',
+  },
+  {
+    id: 'gpt-5.3-codex',
+    name: 'GPT 5.3 Codex',
+    description: 'Frontier Codex-optimized agentic coding model.',
+  },
+  {
+    id: 'gpt-5.3-codex-spark',
+    name: 'GPT 5.3 Codex Spark',
+    description: 'Ultra-fast coding model.',
+  },
+  {
+    id: 'gpt-5.2-codex',
+    name: 'GPT 5.2 Codex',
+    description: 'Frontier agentic coding model.',
+  },
+  {
+    id: 'gpt-5.2',
+    name: 'GPT 5.2',
+    description: 'Optimized for professional work and long-running agents.',
+  },
+  {
+    id: 'gpt-5.1-codex-max',
+    name: 'GPT 5.1 Codex Max',
+    description: 'Codex-optimized model for deep and fast reasoning.',
+  },
+  {
+    id: 'gpt-5.1-codex-mini',
+    name: 'GPT 5.1 Codex Mini',
+    description: 'Optimized for codex. Cheaper, faster, but less capable.',
+  },
+] satisfies readonly AgentModelDescriptor[]);
+
 export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = Object.freeze({
   claude: {
     supportsSelection: true,
@@ -126,7 +169,10 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     nonAcpApplyScope: 'spawn_only',
     acpModelConfigOptionId: 'model',
     defaultMode: 'default',
-    allowedModes: ['default'],
+    allowedModes: [
+      ...CODEX_STATIC_MODELS.map((model) => model.id),
+    ],
+    staticModels: CODEX_STATIC_MODELS,
   },
   opencode: {
     supportsSelection: true,

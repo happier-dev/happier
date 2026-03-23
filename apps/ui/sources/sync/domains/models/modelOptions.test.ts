@@ -60,7 +60,7 @@ describe('modelOptions', () => {
         expect(values.length).toBeGreaterThan(1);
         expect(options.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
             value: 'claude-opus-4-6',
-            label: 'Claude Opus 4.6',
+            label: 'Opus 4.6',
             description: expect.any(String),
         });
     });

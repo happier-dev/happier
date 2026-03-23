@@ -9,6 +9,30 @@ import {
 
 describe('providerDetailsInfo', () => {
     it('builds a de-duplicated catalog model list with default first', () => {
+        expect(buildCatalogModelList({
+            defaultMode: 'gemini-2.5-pro',
+            allowedModes: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+            staticModels: [
+                { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+                { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
+            ],
+        })).toEqual([
+            'Gemini 2.5 Pro',
+            'Gemini 2.5 Flash',
+        ]);
+
+        expect(buildCatalogModelList({
+            defaultMode: 'claude-opus-4-6',
+            allowedModes: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+            staticModels: [
+                { id: 'claude-opus-4-6', name: 'Opus 4.6' },
+                { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' },
+            ],
+        })).toEqual([
+            'Opus 4.6',
+            'Sonnet 4.6',
+        ]);
+
         expect(buildCatalogModelList({ defaultMode: 'gemini-2.5-pro', allowedModes: ['gemini-2.5-pro', 'gemini-2.5-flash'] })).toEqual([
             'gemini-2.5-pro',
             'gemini-2.5-flash',

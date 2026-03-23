@@ -11,7 +11,7 @@ describe('agent model config', () => {
 
     expect(claude.staticModels?.find((model) => model.id === 'claude-opus-4-6')).toMatchObject({
       id: 'claude-opus-4-6',
-      name: 'Claude Opus 4.6',
+      name: 'Opus 4.6',
       description: expect.any(String),
     });
     expect(gemini.staticModels?.find((model) => model.id === 'gemini-3.1-pro-preview')).toMatchObject({
@@ -23,9 +23,20 @@ describe('agent model config', () => {
     expect(gemini.staticModels?.map((model) => model.id)).toEqual(gemini.allowedModes);
     expect(claudeModels[0]).toEqual({
       id: 'claude-opus-4-6',
-      name: 'Claude Opus 4.6',
+      name: 'Opus 4.6',
       description: expect.any(String),
     });
     expect(geminiModels[0]?.name).toBe('Gemini 2.5 Pro');
+  });
+
+  it('ships a non-empty static model list for Codex as a robust fallback when dynamic probing fails', () => {
+    const codex = getAgentModelConfig('codex');
+    const codexModels = getAgentStaticModels('codex');
+
+    // Codex dynamic probing can fail transiently (missing CLI, auth not ready). The UI should still
+    // have a usable model picker without requiring a refresh.
+    expect(codex.supportsSelection).toBe(true);
+    expect(codexModels.length).toBeGreaterThan(1);
+    expect(codexModels.map((model) => model.id)).toContain('gpt-5.4');
   });
 });

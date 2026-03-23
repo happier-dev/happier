@@ -4,6 +4,7 @@ import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { Metadata } from '../state/storageTypes';
 import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
 import {
+    getAgentStaticModels,
     LEGACY_ACP_SESSION_MODELS_STATE_KEY,
     readMetadataAliasValue,
     SESSION_MODELS_STATE_KEY,
@@ -107,12 +108,30 @@ export function getModelOptionsForModes(modes: readonly ModelMode[]): readonly M
     }));
 }
 
+function getStaticModelOptionsForAgentType(agentType: AgentType): readonly ModelOption[] {
+    const seen = new Set<string>(['default']);
+    const out: ModelOption[] = [
+        { value: 'default', label: getModelLabel('default'), description: '' },
+    ];
+
+    for (const model of getAgentStaticModels(agentType)) {
+        const value = typeof model.id === 'string' ? model.id.trim() : '';
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        out.push({
+            value,
+            label: model.name,
+            description: typeof model.description === 'string' ? model.description : '',
+        });
+    }
+
+    return out;
+}
+
 export function getModelOptionsForAgentType(agentType: AgentType): readonly ModelOption[] {
     const core = getAgentCore(agentType);
     if (core.model.supportsSelection !== true) return [];
-    const withDefault = ['default', ...core.model.allowedModes];
-    const unique = Array.from(new Set(withDefault));
-    return getModelOptionsForModes(unique);
+    return getStaticModelOptionsForAgentType(agentType);
 }
 
 export function getModelOptionsForAgentTypeOrPreflight(params: {

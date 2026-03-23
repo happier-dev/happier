@@ -1,11 +1,11 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import { CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
 import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { flushHookEffects } from './serverFeatureHookHarness.testHelpers';
-import { renderScreen } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -140,7 +140,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         const p2 = prefetchMachineCapabilities({ machineId: 'm1', request, timeoutMs: 10_000 });
 
         // Flush the queued fetch start (serialized per machine cache key).
-        await Promise.resolve();
+        await flushHookEffects();
 
         expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
         expect(resolvers).toHaveLength(1);
@@ -222,11 +222,10 @@ describe('useMachineCapabilitiesCache (hook)', () => {
 
     it('retries error states after a short backoff even when staleMs is large', async () => {
         vi.resetModules();
-        vi.useFakeTimers();
         process.env.EXPO_PUBLIC_HAPPIER_MACHINE_CAPABILITIES_ERROR_BACKOFF_MS = '1000';
 
+        const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
         try {
-            vi.setSystemTime(1_000_000);
             const machineCapabilitiesDetect = vi.fn(async () => {
                 throw new Error('boom');
             });
@@ -245,7 +244,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             });
             expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
 
-            vi.setSystemTime(1_000_000 + 999);
+            nowSpy.mockReturnValue(1_000_000 + 999);
             await prefetchMachineCapabilitiesIfStale({
                 machineId: 'm1',
                 staleMs: 24 * 60 * 60 * 1000,
@@ -254,7 +253,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             });
             expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
 
-            vi.setSystemTime(1_000_000 + 1000);
+            nowSpy.mockReturnValue(1_000_000 + 1000);
             await prefetchMachineCapabilitiesIfStale({
                 machineId: 'm1',
                 staleMs: 24 * 60 * 60 * 1000,
@@ -263,7 +262,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             });
             expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(2);
         } finally {
-            vi.useRealTimers();
+            nowSpy.mockRestore();
             delete process.env.EXPO_PUBLIC_HAPPIER_MACHINE_CAPABILITIES_ERROR_BACKOFF_MS;
         }
     });
@@ -331,27 +330,22 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         const requestA = newSessionRequest();
         const requestB = newSessionRequest();
 
-        let latestRefresh: null | (() => void) = null;
-
-        function Test({ request }: { request: CapabilitiesDetectRequest }) {
-            const { refresh } = useMachineCapabilitiesCache({
+        const hook = await renderHook(
+            ({ request }: { request: CapabilitiesDetectRequest }) => useMachineCapabilitiesCache({
                 machineId: 'm1',
                 enabled: false,
                 request,
                 timeoutMs: 1,
-            });
-            latestRefresh = refresh;
-            return React.createElement('View');
-        }
+            }),
+            {
+                initialProps: { request: requestA },
+                flushOptions: { cycles: 1, turns: 1 },
+            },
+        );
+        const refreshA = hook.getCurrent().refresh;
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        tree = (await renderScreen(React.createElement(Test, { request: requestA }))).tree;
-        const refreshA = latestRefresh!;
-
-        act(() => {
-            tree!.update(React.createElement(Test, { request: requestB }));
-        });
-        const refreshB = latestRefresh!;
+        await hook.rerender({ request: requestB });
+        const refreshB = hook.getCurrent().refresh;
 
         expect(refreshB).toBe(refreshA);
 
@@ -362,6 +356,129 @@ describe('useMachineCapabilitiesCache (hook)', () => {
 
         expect(machineCapabilitiesDetect).toHaveBeenCalled();
         expect(machineCapabilitiesDetect.mock.calls[0][1]).toBe(requestB);
+    });
+
+    it('can force a fresh bypass-cache detect for checklist requests through refresh({ bypassCache: true })', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesDetect = vi.fn(async (_machineId: string, _request: CapabilitiesDetectRequest) => {
+            return { supported: true, response: { protocolVersion: 1, results: {} } };
+        });
+
+        vi.doMock('@/sync/ops', () => {
+            return {
+                machineCapabilitiesDetect,
+            };
+        });
+
+        const { useMachineCapabilitiesCache } = await import('./useMachineCapabilitiesCache');
+
+        const hook = await renderHook(() => useMachineCapabilitiesCache({
+            machineId: 'm1',
+            enabled: false,
+            request: newSessionRequest(),
+            timeoutMs: 1,
+        }), {
+            flushOptions: { cycles: 1, turns: 1 },
+        });
+
+        await act(async () => {
+            hook.getCurrent().refresh({ bypassCache: true });
+            await flushHookEffects();
+        });
+
+        expect(machineCapabilitiesDetect).toHaveBeenCalledWith(
+            'm1',
+            expect.objectContaining({
+                checklistId: CHECKLIST_IDS.NEW_SESSION,
+                bypassCache: true,
+            }),
+            expect.anything(),
+        );
+
+        await hook.unmount();
+    });
+
+    it('refetches when the cache key salt changes even if the cached entry is otherwise fresh', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesDetect = vi.fn()
+            .mockResolvedValueOnce({
+                supported: true,
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        'cli.codex': { ok: true, checkedAt: 1, data: { available: false } },
+                    },
+                },
+            })
+            .mockResolvedValueOnce({
+                supported: true,
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        'cli.codex': { ok: true, checkedAt: 2, data: { available: true } },
+                    },
+                },
+            });
+
+        vi.doMock('@/sync/ops', () => {
+            return {
+                machineCapabilitiesDetect,
+            };
+        });
+
+        const { useMachineCapabilitiesCache } = await import('./useMachineCapabilitiesCache');
+
+        const hook = await renderHook(
+            ({ cacheKeySalt }: { cacheKeySalt: number }) => useMachineCapabilitiesCache({
+                machineId: 'm1',
+                enabled: true,
+                request: { requests: [{ id: 'cli.codex' }] as any },
+                timeoutMs: 1,
+                staleMs: 60_000,
+                cacheKeySalt,
+            }),
+            {
+                initialProps: { cacheKeySalt: 1 },
+                flushOptions: { cycles: 1, turns: 1 },
+            },
+        );
+
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().state).toMatchObject({
+            status: 'loaded',
+            snapshot: {
+                response: {
+                    results: {
+                        'cli.codex': {
+                            ok: true,
+                            checkedAt: 1,
+                        },
+                    },
+                },
+            },
+        });
+
+        await hook.rerender({ cacheKeySalt: 2 });
+        await flushHookEffects();
+
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().state).toMatchObject({
+            status: 'loaded',
+            snapshot: {
+                response: {
+                    results: {
+                        'cli.codex': {
+                            ok: true,
+                            checkedAt: 2,
+                        },
+                    },
+                },
+            },
+        });
+
+        await hook.unmount();
     });
 
     it('uses a longer default timeout for machine-details detection', async () => {
@@ -833,10 +950,9 @@ describe('useMachineCapabilitiesCache (hook)', () => {
 
     it('does not refetch when cache age is exactly the stale threshold', async () => {
         vi.resetModules();
-        vi.useFakeTimers();
 
+        const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
         try {
-            vi.setSystemTime(1_000_000);
             const machineCapabilitiesDetect = vi.fn(async () => {
                 return { supported: true, response: { protocolVersion: 1, results: {} } };
             });
@@ -858,7 +974,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             });
             expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
 
-            vi.setSystemTime(1_000_000 + staleMs);
+            nowSpy.mockReturnValue(1_000_000 + staleMs);
             await prefetchMachineCapabilitiesIfStale({
                 machineId: 'm1',
                 staleMs,
@@ -867,7 +983,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             });
             expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
         } finally {
-            vi.useRealTimers();
+            nowSpy.mockRestore();
         }
     });
 });

@@ -5,7 +5,56 @@ import type { AgentCoreRuntimeControlSurface, AgentId } from '../types.js';
 import { resolvePersistedCodexRuntimeIdentity } from './codexRuntimeIdentity.js';
 import { readOpenCodeSessionAffinityFromMetadata } from './opencodeSessionRuntimeHandle.js';
 
-function resolveConfiguredAgentRuntimeKind(params: Readonly<{
+export function normalizeAgentRuntimeKindOverride(params: Readonly<{
+  agentId: AgentId;
+  value: unknown;
+}>): AgentRuntimeKind | null {
+  const normalized = typeof params.value === 'string' ? params.value.trim() : '';
+  if (!normalized) return null;
+
+  if (params.agentId === 'codex') {
+    return normalized === 'mcp' || normalized === 'acp' || normalized === 'appServer'
+      ? normalized
+      : null;
+  }
+
+  if (params.agentId === 'opencode') {
+    return normalized === 'server' || normalized === 'acp'
+      ? normalized
+      : null;
+  }
+
+  return null;
+}
+
+export function applyAgentRuntimeKindOverrideToAccountSettings(params: Readonly<{
+  agentId: AgentId;
+  accountSettings: Record<string, unknown> | null;
+  runtimeKindOverride: unknown;
+}>): Record<string, unknown> | null {
+  const runtimeKind = normalizeAgentRuntimeKindOverride({ agentId: params.agentId, value: params.runtimeKindOverride });
+  if (!runtimeKind) {
+    return params.accountSettings;
+  }
+
+  if (params.agentId === 'codex') {
+    return {
+      ...(params.accountSettings ?? {}),
+      codexBackendMode: runtimeKind,
+    };
+  }
+
+  if (params.agentId === 'opencode') {
+    return {
+      ...(params.accountSettings ?? {}),
+      opencodeBackendMode: runtimeKind,
+    };
+  }
+
+  return params.accountSettings;
+}
+
+export function resolveAgentConfiguredRuntimeKind(params: Readonly<{
   agentId: AgentId;
   accountSettings?: Record<string, unknown> | null;
 }>): AgentRuntimeKind | null {
@@ -33,7 +82,7 @@ export function resolveCodexSessionBackendMode(params: Readonly<{
     return persistedIdentity.backendMode;
   }
 
-  const configuredKind = resolveConfiguredAgentRuntimeKind({ agentId: 'codex', accountSettings: params.accountSettings });
+  const configuredKind = resolveAgentConfiguredRuntimeKind({ agentId: 'codex', accountSettings: params.accountSettings });
   return configuredKind === 'mcp' || configuredKind === 'acp' || configuredKind === 'appServer' ? configuredKind : null;
 }
 
@@ -46,7 +95,7 @@ export function resolveOpenCodeSessionBackendMode(params: Readonly<{
     return persistedMode;
   }
 
-  const configuredKind = resolveConfiguredAgentRuntimeKind({ agentId: 'opencode', accountSettings: params.accountSettings });
+  const configuredKind = resolveAgentConfiguredRuntimeKind({ agentId: 'opencode', accountSettings: params.accountSettings });
   return configuredKind === 'server' || configuredKind === 'acp' ? configuredKind : null;
 }
 
@@ -58,7 +107,7 @@ export function resolveAgentRuntimeControlSurfaceForSession(params: Readonly<{
   if (params.agentId === 'codex') {
     const runtimeKind = resolvePersistedCodexRuntimeIdentity(params.metadata)?.backendMode
       ?? (() => {
-        const configured = resolveConfiguredAgentRuntimeKind({ agentId: 'codex', accountSettings: params.accountSettings });
+        const configured = resolveAgentConfiguredRuntimeKind({ agentId: 'codex', accountSettings: params.accountSettings });
         return configured === 'mcp' || configured === 'acp' || configured === 'appServer' ? configured : null;
       })();
     return resolveAgentRuntimeControlSurface('codex', runtimeKind);
@@ -67,7 +116,7 @@ export function resolveAgentRuntimeControlSurfaceForSession(params: Readonly<{
   if (params.agentId === 'opencode') {
     const runtimeKind = readOpenCodeSessionAffinityFromMetadata(params.metadata).backendMode
       ?? (() => {
-        const configured = resolveConfiguredAgentRuntimeKind({ agentId: 'opencode', accountSettings: params.accountSettings });
+        const configured = resolveAgentConfiguredRuntimeKind({ agentId: 'opencode', accountSettings: params.accountSettings });
         return configured === 'server' || configured === 'acp' ? configured : null;
       })();
     return resolveAgentRuntimeControlSurface('opencode', runtimeKind);

@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { useMachine } from '@/sync/domains/state/storage';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
-import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
+import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import type { CapabilityDetectResult, CliAuthStatusData, CliCapabilityData, TmuxCapabilityData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { AGENT_IDS, type AgentId, getAgentCore } from '@/agents/catalog/catalog';
 import { isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
@@ -179,9 +179,10 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
         [automaticLoginStatusAgentIds, scopedAgentIds],
     );
 
-    const { state: cached, refresh } = useMachineCapabilitiesCache({
+    const { state: cached, refresh } = useDaemonScopedMachineCapabilitiesCache({
         machineId,
         serverId: options?.serverId,
+        daemonStateVersion: machine?.daemonStateVersion ?? 0,
         enabled: isOnline && options?.autoDetect !== false,
         request,
         staleMs: automaticLoginStatusAgentIds.length > 0 ? 5 * 60_000 : undefined,

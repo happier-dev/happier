@@ -1,6 +1,5 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -25,7 +24,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    useMachine: vi.fn(() => ({ id: 'm1', metadata: {} })),
+    useMachine: vi.fn(() => ({ id: 'm1', metadata: {}, daemonStateVersion: 42 })),
 });
 });
 
@@ -44,21 +43,15 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => {
 const { useCLIDetection } = await import('./useCLIDetection');
 
 describe('useCLIDetection (hook)', () => {
-    function renderHookState(run: () => unknown) {
+    async function renderHookState(run: () => unknown) {
         let latest: unknown = null;
-        let root: renderer.ReactTestRenderer | null = null;
         function Test() {
             latest = run();
             return React.createElement('View');
         }
 
-        act(() => {
-            root = renderer.create(React.createElement(Test));
-        });
-
-        act(() => {
-            root?.unmount();
-        });
+        const screen = await renderScreen(React.createElement(Test));
+        await screen.unmount();
 
         return latest as any;
     }
@@ -82,7 +75,7 @@ describe('useCLIDetection (hook)', () => {
             refresh: vi.fn(),
         });
 
-        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
+        const latest = await renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
 
         expect(latest?.tmux).toBe(true);
     });
@@ -105,7 +98,7 @@ describe('useCLIDetection (hook)', () => {
             refresh: vi.fn(),
         });
 
-        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
+        const latest = await renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
 
         expect(latest?.tmux).toBe(null);
     });
@@ -134,8 +127,7 @@ describe('useCLIDetection (hook)', () => {
                 return React.createElement('View');
             }
 
-            let root: any = null;
-            root = (await renderScreen(React.createElement(Test))).tree;
+            const screen = await renderScreen(React.createElement(Test));
             expect(latest?.timestamp).toBe(1000);
 
             vi.setSystemTime(2000);
@@ -153,9 +145,7 @@ describe('useCLIDetection (hook)', () => {
                 refresh: vi.fn(),
             });
 
-            act(() => {
-                root.update(React.createElement(Test));
-            });
+            await screen.update(React.createElement(Test));
 
             expect(latest?.timestamp).toBe(1000);
         } finally {
@@ -169,7 +159,7 @@ describe('useCLIDetection (hook)', () => {
             refresh: vi.fn(),
         });
 
-        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false, includeLoginStatus: true }));
+        const latest = await renderHookState(() => useCLIDetection('m1', { autoDetect: false, includeLoginStatus: true }));
 
         const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
         expect(firstCall?.request?.checklistId).toBeDefined();
@@ -186,7 +176,7 @@ describe('useCLIDetection (hook)', () => {
             refresh: vi.fn(),
         });
 
-        renderHookState(() => useCLIDetection('m1', {
+        await renderHookState(() => useCLIDetection('m1', {
             autoDetect: false,
             includeLoginStatus: true,
             agentIds: ['codex'],
@@ -205,13 +195,25 @@ describe('useCLIDetection (hook)', () => {
         expect(firstCall?.request?.overrides).toBeUndefined();
     });
 
+    it('scopes the capability cache entry by daemon state version', async () => {
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: { status: 'loading' },
+            refresh: vi.fn(),
+        });
+
+        await renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
+
+        const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
+        expect(firstCall?.cacheKeySalt).toBe(42);
+    });
+
     it('uses each provider detect key when scoping detection requests', async () => {
         useMachineCapabilitiesCacheMock.mockReturnValue({
             state: { status: 'loading' },
             refresh: vi.fn(),
         });
 
-        renderHookState(() => useCLIDetection('m1', {
+        await renderHookState(() => useCLIDetection('m1', {
             autoDetect: false,
             agentIds: ['kiro'],
         }));
@@ -250,7 +252,7 @@ describe('useCLIDetection (hook)', () => {
             refresh: vi.fn(),
         });
 
-        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false, includeLoginStatus: true }));
+        const latest = await renderHookState(() => useCLIDetection('m1', { autoDetect: false, includeLoginStatus: true }));
 
         expect(latest?.authStatus?.codex).toMatchObject({
             state: 'logged_in',
@@ -267,7 +269,7 @@ describe('useCLIDetection (hook)', () => {
             refresh,
         });
 
-        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false, includeLoginStatus: true }));
+        const latest = await renderHookState(() => useCLIDetection('m1', { autoDetect: false, includeLoginStatus: true }));
 
         latest?.refresh?.({ bypassCache: true });
 
@@ -292,7 +294,7 @@ describe('useCLIDetection (hook)', () => {
             refresh,
         });
 
-        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
+        const latest = await renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
 
         latest?.refresh?.({ bypassCache: true, includeLoginStatusForAgentIds: ['kiro'] });
 
@@ -328,12 +330,9 @@ describe('useCLIDetection (hook)', () => {
             return React.createElement('View');
         }
 
-        let root: renderer.ReactTestRenderer | null = null;
-        root = (await renderScreen(React.createElement(Test, { agentIds: ['codex'] }))).tree;
+        const screen = await renderScreen(React.createElement(Test, { agentIds: ['codex'] }));
 
-        act(() => {
-            root?.update(React.createElement(Test, { agentIds: ['kiro'] }));
-        });
+        await screen.update(React.createElement(Test, { agentIds: ['kiro'] }));
 
         latest?.refresh?.({ bypassCache: true });
 
@@ -343,9 +342,7 @@ describe('useCLIDetection (hook)', () => {
             }),
         }));
 
-        act(() => {
-            root?.unmount();
-        });
+        await screen.unmount();
     });
 
     it('reads auth status from the latest capabilities snapshot even when background login-status checks are disabled', async () => {
@@ -377,7 +374,7 @@ describe('useCLIDetection (hook)', () => {
             refresh: vi.fn(),
         });
 
-        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
+        const latest = await renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
 
         expect(latest?.login?.kiro).toBe(false);
         expect(latest?.authStatus?.kiro).toMatchObject({
@@ -393,7 +390,7 @@ describe('useCLIDetection (hook)', () => {
             refresh: vi.fn(),
         });
 
-        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
+        const latest = await renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
 
         expect(latest?.error).toBe('Detection error');
         expect(latest?.timestamp).toBe(0);
@@ -405,7 +402,7 @@ describe('useCLIDetection (hook)', () => {
             refresh: vi.fn(),
         });
 
-        renderHookState(() => useCLIDetection('m1', { autoDetect: false, serverId: 'server-b' }));
+        await renderHookState(() => useCLIDetection('m1', { autoDetect: false, serverId: 'server-b' }));
 
         const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
         expect(firstCall?.serverId).toBe('server-b');
@@ -443,7 +440,7 @@ describe('useCLIDetection (hook)', () => {
             refresh: vi.fn(),
         });
 
-        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
+        const latest = await renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
 
         expect(latest?.resolvedPath?.codex).toBe('/opt/codex/bin/codex');
         expect(latest?.resolvedPath?.claude).toBe('/usr/local/bin/claude');

@@ -166,6 +166,9 @@ export {
   type OpenCodeRuntimeDescriptorProviderExtraRuntimeHandle,
 } from './sessionControls/opencodeRuntimeDescriptorExtra.js';
 export {
+  applyAgentRuntimeKindOverrideToAccountSettings,
+  normalizeAgentRuntimeKindOverride,
+  resolveAgentConfiguredRuntimeKind,
   resolveAgentRuntimeControlSurfaceForSession,
   resolveCodexSessionBackendMode,
   resolveOpenCodeSessionBackendMode,

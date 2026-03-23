@@ -1,3 +1,4 @@
+import type { AgentModelDescriptor } from '@happier-dev/agents';
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 
 type ResumeSupportKind =
@@ -17,15 +18,26 @@ type RuntimeSwitchInput = 'none' | 'metadata-gating' | 'acp-setSessionMode' | 'p
 
 type RuntimeSwitchKind = 'none' | 'metadataGating' | 'acpSetSessionMode' | 'providerNative';
 
-export function buildCatalogModelList(input: Readonly<{ defaultMode: string; allowedModes: readonly string[] }>): string[] {
+export function buildCatalogModelList(input: Readonly<{
+    defaultMode: string;
+    allowedModes: readonly string[];
+    staticModels?: readonly AgentModelDescriptor[];
+}>): string[] {
     const out: string[] = [];
+    const staticNamesById = new Map(
+        (input.staticModels ?? [])
+            .filter((model) => typeof model.id === 'string' && model.id.trim().length > 0 && typeof model.name === 'string' && model.name.trim().length > 0)
+            .map((model) => [model.id.trim(), model.name] as const),
+    );
     if (input.defaultMode.trim().length > 0) {
-        out.push(input.defaultMode);
+        out.push(staticNamesById.get(input.defaultMode) ?? input.defaultMode);
     }
     for (const mode of input.allowedModes) {
         if (typeof mode !== 'string' || mode.trim().length === 0) continue;
-        if (out.includes(mode)) continue;
-        out.push(mode);
+        const normalized = mode.trim();
+        const label = staticNamesById.get(normalized) ?? normalized;
+        if (out.includes(label)) continue;
+        out.push(label);
     }
     return out;
 }

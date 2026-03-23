@@ -21,15 +21,15 @@ describe('buildDynamicModelProbeCacheKey', () => {
     ).toBe(JSON.stringify(['dynamicModelProbe', 'active', 'machine-1', 'agent:codex', '/repo']));
   });
 
-    it('includes the Codex backend mode override when present', () => {
+    it('includes extra key suffix parts when present', () => {
         expect(
             buildDynamicModelProbeCacheKey({
                 machineId: 'machine-1',
                 targetKey: 'agent:codex',
                 serverId: 'server-a',
                 cwd: '/repo',
-                codexBackendModeOverride: 'appServer',
-            } as any),
+                extraKeySuffixParts: ['appServer'],
+            }),
         ).toBe(JSON.stringify(['dynamicModelProbe', 'server-a', 'machine-1', 'agent:codex', '/repo', 'appServer']));
     });
 });
