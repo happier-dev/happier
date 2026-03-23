@@ -720,7 +720,10 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   const shouldDeferSourcePreparation = (request: SessionHandoffStartRequest): boolean =>
     params.machineTransferChannel !== undefined
     && request.sourceMachineId !== request.targetMachineId
-    && request.negotiatedTransportStrategy === 'server_routed_stream'
+    && (
+      request.negotiatedTransportStrategy === 'server_routed_stream'
+      || request.negotiatedTransportStrategy === 'direct_peer'
+    )
     && request.workspaceTransfer?.enabled === true;
   const prepareStartedHandoffState = async (input: Readonly<{
     handoffId: string;
@@ -1190,6 +1193,9 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             handoffMetadataV2: requestHandoffMetadataV2,
           });
 
+          const allowServerRoutedFallback = parsed.data.allowServerRoutedFallback !== false;
+          const canFallbackToServerRouted = allowServerRoutedFallback && params.machineTransferChannel !== undefined;
+
           const hasStoredProviderBundlePayloadSource = current?.providerBundlePayloadSource?.kind === 'file';
           const hasProviderBundleTransferPublication =
             requestResolvedHandoffMetadataV2?.providerBundleTransferPublication !== undefined;
@@ -1198,7 +1204,13 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             && !hasStoredProviderBundlePayloadSource
             && !hasProviderBundleTransferPublication
           ) {
-            throw new Error(missingHandoffMetadataV2().error);
+            if (canFallbackToServerRouted) {
+              // Direct-peer starts can be deferred (to avoid socket ack timeouts) which means the
+              // provider bundle publication won't exist yet. Fail over to server-routed when allowed.
+              actualTransportStrategy = 'server_routed_stream';
+            } else {
+              throw new Error(missingHandoffMetadataV2().error);
+            }
           }
 
           const needsWorkspaceReplicationMetadata =
@@ -1213,8 +1225,6 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           }
 
           if (actualTransportStrategy === 'direct_peer') {
-            const allowServerRoutedFallback = parsed.data.allowServerRoutedFallback !== false;
-            const canFallbackToServerRouted = allowServerRoutedFallback && params.machineTransferChannel !== undefined;
             const directPeerRequester = params.directPeerTransfer?.requestPayloadFile;
             const providerEndpointCandidates =
               requestResolvedHandoffMetadataV2?.providerBundleTransferPublication?.endpointCandidates;

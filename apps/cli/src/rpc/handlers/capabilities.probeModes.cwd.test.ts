@@ -148,7 +148,7 @@ describe('capabilities.invoke(cli.* probeModes)', () => {
     }));
     vi.doMock('@/backends/catalog', () => ({
       AGENTS: {
-        codex: { id: 'codex' },
+        codex: { id: 'codex', needsAccountSettingsForProbes: true },
       },
     }));
 
