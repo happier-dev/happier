@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
 import { ChatFooter } from './ChatFooter';
 
 (
@@ -11,35 +12,37 @@ import { ChatFooter } from './ChatFooter';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        View: 'View',
-                        Text: 'Text',
-                        Pressable: 'Pressable',
-                        Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null },
-                        AppState: { addEventListener: () => ({ remove: () => {} }) },
-                    }
-    );
+installTranscriptCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null },
+            AppState: { addEventListener: () => ({ remove: () => {} }) },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                surface: '#fff',
+                divider: '#ddd',
+                groupped: { sectionTitle: '#444' },
+                shadow: { color: '#000', opacity: 0.2 },
+                box: { warning: { background: '#fff3cd', text: '#856404' } },
+            },
+        });
+    },
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+        translate: (key: string) => key,
+    }),
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            surface: '#fff',
-            divider: '#ddd',
-            groupped: { sectionTitle: '#444' },
-            shadow: { color: '#000', opacity: 0.2 },
-            box: { warning: { background: '#fff3cd', text: '#856404' } },
-        },
-    });
-});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
@@ -47,10 +50,6 @@ vi.mock('@/constants/Typography', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 800 },
-}));
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key: string) => key,
 }));
 
 vi.mock('@/components/sessions/SessionNoticeBanner', () => ({
@@ -62,7 +61,10 @@ async function renderFooter(props: React.ComponentProps<typeof ChatFooter>) {
 }
 
 describe('ChatFooter (local control)', () => {
-    afterEach(standardCleanup);
+    afterEach(() => {
+        resetTranscriptCommonModuleMockState();
+        standardCleanup();
+    });
 
     it('renders a switch-to-remote button when controlled by user', async () => {
         const screen = await renderFooter({

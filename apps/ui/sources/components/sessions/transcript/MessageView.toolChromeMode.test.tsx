@@ -1,26 +1,44 @@
 import React from 'react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createReducer } from '@/sync/reducer/reducer';
+import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Dimensions: {
-                            get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-                        },
-                        useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-                        View: 'View',
-                        Text: 'Text',
-                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                    }
-    );
-});
+let toolChromeMode: 'cards' | 'activity_feed' = 'cards';
+const renderedToolViewProps: any[] = [];
+const renderedToolTimelineRowProps: any[] = [];
+const routerPushSpy = vi.fn();
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installMessageViewCommonModuleMocks({
+    reactNative: async () =>
+        createReactNativeWebMock({
+            Dimensions: {
+                get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+            View: 'View',
+            Text: 'Text',
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        }),
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: routerPushSpy },
+        });
+        return routerMock.module;
+    },
+    storage: async (importOriginal) =>
+        await createPartialStorageModuleMock(importOriginal, {
+            useSetting: (key: string) => {
+                if (key === 'sessionThinkingDisplayMode') return 'inline';
+                if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
+                return null;
+            },
+            useSession: () => null,
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesReducerState: () => createReducer(),
+        }),
 });
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
@@ -45,16 +63,6 @@ vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
     shouldShowMessageCopyButton: () => false,
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
 vi.mock('@/sync/sync', () => ({
     sync: {
         submitMessage: vi.fn(),
@@ -73,15 +81,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-const routerPushSpy = vi.fn();
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
-
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
     isCommittedMessageDiscarded: () => false,
 }));
@@ -98,22 +97,6 @@ vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => 
 vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
     LinkedWorkspaceFilesRow: () => null,
 }));
-
-let toolChromeMode: 'cards' | 'activity_feed' = 'cards';
-const renderedToolViewProps: any[] = [];
-const renderedToolTimelineRowProps: any[] = [];
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    await createPartialStorageModuleMock(importOriginal, {
-        useSetting: (key: string) => {
-            if (key === 'sessionThinkingDisplayMode') return 'inline';
-            if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
-            return null;
-        },
-        useSession: () => null,
-        useSessionMessagesById: () => ({}),
-        useSessionMessagesReducerState: () => createReducer(),
-    }),
-);
 
 afterEach(() => {
     toolChromeMode = 'cards';

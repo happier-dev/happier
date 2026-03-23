@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,50 +12,73 @@ const captured = vi.hoisted(() => ({
     thinkingRowProps: [] as any[],
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Easing: {
-                            bezier: () => ({}),
-                            linear: () => ({}),
-                        },
-                        Animated: {
-                            Value: class AnimatedValue {
-                                constructor(public _value: number) {}
-                                interpolate() {
-                                    return this as any;
-                                }
-                            },
-                            timing: (_value: any, _config: any) => ({
-                                start: (cb?: any) => {
-                                    cb?.();
-                                },
-                            }),
-                            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-                        },
-                        Dimensions: {
-                            get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-                        },
-                        useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-                        View: 'View',
-                        Text: 'Text',
-                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+installMessageViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Easing: {
+                bezier: () => ({}),
+                linear: () => ({}),
+            },
+            Animated: {
+                Value: class AnimatedValue {
+                    constructor(public _value: number) {}
+                    interpolate() {
+                        return this as any;
                     }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+                },
+                timing: (_value: any, _config: any) => ({
+                    start: (cb?: any) => {
+                        cb?.();
+                    },
+                }),
+                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+            },
+            Dimensions: {
+                get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+            View: 'View',
+            Text: 'Text',
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: vi.fn() },
+        });
+        return routerMock.module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'sessionThinkingDisplayMode') return 'inline';
+                    if (key === 'sessionThinkingInlinePresentation') return 'full';
+                    if (key === 'sessionThinkingInlineChrome') return 'plain';
+                    return null;
+                },
+                useSession: () => null,
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 vi.mock('@/sync/sync', () => ({ sync: { submitMessage: vi.fn(), sendMessage: vi.fn() } }));
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: any) => {
@@ -72,21 +96,8 @@ vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', ()
     StructuredMessageBlock: () => React.createElement('StructuredMessageBlock'),
 }));
 vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({ shouldShowMessageCopyButton: () => false }));
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({ isCommittedMessageDiscarded: () => false }));
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: vi.fn() },
-    });
-    return routerMock.module;
-});
 vi.mock('@/utils/url/sessionFileDeepLink', () => ({ buildSessionFileDeepLink: () => '' }));
 vi.mock('@/utils/system/fireAndForget', () => ({ fireAndForget: (p: any) => p }));
 vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => ({ extractWorkspaceFileMentions: () => [] }));
@@ -115,22 +126,6 @@ vi.mock('@/components/sessions/transcript/thinking/ThinkingTimelineRow', async (
             return React.createElement(actual.ThinkingTimelineRow, props, props.children);
         },
     };
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'sessionThinkingDisplayMode') return 'inline';
-                if (key === 'sessionThinkingInlinePresentation') return 'full';
-                if (key === 'sessionThinkingInlineChrome') return 'plain';
-                return null;
-            },
-            useSession: () => null,
-        },
-    });
 });
 
 afterEach(() => {

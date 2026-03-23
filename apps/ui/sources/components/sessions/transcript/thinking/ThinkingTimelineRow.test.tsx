@@ -1,38 +1,41 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installTranscriptCommonModuleMocks,
+    resetTranscriptCommonModuleMockState,
+} from '../transcriptTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                            View: ({ children, ...props }: any) => React.createElement('View', props, children),
-                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                input: { background: '#222' },
-                text: '#fff',
-                textSecondary: '#aaa',
-                surface: '#111',
-                surfaceHigh: '#222',
-                surfacePressedOverlay: '#333',
+installTranscriptCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    input: { background: '#222' },
+                    text: '#fff',
+                    textSecondary: '#aaa',
+                    surface: '#111',
+                    surfaceHigh: '#222',
+                    surfacePressedOverlay: '#333',
+                },
             },
-        },
-    });
+        });
+    },
 });
+
+vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -43,6 +46,10 @@ vi.mock('@/components/sessions/transcript/motion/ThinkingPulseLabel', () => ({
 }));
 
 describe('ThinkingTimelineRow', () => {
+    afterEach(() => {
+        resetTranscriptCommonModuleMockState();
+    });
+
     it('shows summary with ellipsis when collapsed and hides it when expanded', async () => {
         const { ThinkingTimelineRow } = await import('./ThinkingTimelineRow');
 

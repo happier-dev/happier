@@ -6,19 +6,35 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default ?? null },
-                        View: 'View',
-                        Text: 'Text',
-                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                    }
-    );
+installTranscriptCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default ?? null },
+            View: 'View',
+            Text: 'Text',
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    header: { background: '#fff', tint: '#111' },
+                    surface: '#fff',
+                    surfaceHigh: '#f5f5f5',
+                    divider: '#ddd',
+                    textSecondary: '#666',
+                    shadow: { color: '#000', opacity: 0.2 },
+                },
+            },
+        });
+    },
 });
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -67,6 +83,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 describe('ChatHeaderView', () => {
     afterEach(standardCleanup);
+    afterEach(resetTranscriptCommonModuleMockState);
 
     it('uses elevation to keep the header above scroll content on Android', async () => {
         const { ChatHeaderView } = await import('./ChatHeaderView');

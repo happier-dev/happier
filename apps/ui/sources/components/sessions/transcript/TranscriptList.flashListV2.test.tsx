@@ -2,6 +2,10 @@ import * as React from 'react';
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installTranscriptCommonModuleMocks,
+    resetTranscriptCommonModuleMockState,
+} from './transcriptTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -43,22 +47,29 @@ vi.mock('@shopify/flash-list', () => ({
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Platform: {
-                                OS: 'web',
-                                select: (values: any) => values?.web ?? values?.default,
-                            },
-                            View: (props: any) => React.createElement('View', props, props.children),
-                            ActivityIndicator: () => React.createElement('ActivityIndicator'),
-                            FlatList: (_props: any) => {
-                                    renderedFlatListCount++;
-                                    return React.createElement('FlatList');
-                                },
-                        }
-    );
+installTranscriptCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (values: any) => values?.web ?? values?.default,
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+            ActivityIndicator: () => React.createElement('ActivityIndicator'),
+            FlatList: (_props: any) => {
+                renderedFlatListCount++;
+                return React.createElement('FlatList');
+            },
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) =>
+                key === 'transcriptListImplementation' ? transcriptListImplementationSetting : undefined,
+        });
+    },
 });
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -68,13 +79,6 @@ vi.mock('@/utils/platform/responsive', () => ({
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => (key === 'transcriptListImplementation' ? transcriptListImplementationSetting : undefined),
-});
-});
 
 vi.mock('./MessageView', () => ({
     MessageView: () => React.createElement('MessageView'),
@@ -86,6 +90,7 @@ vi.mock('./ChatFooter', () => ({
 
 describe('TranscriptList (FlashList v2)', () => {
     beforeEach(() => {
+        resetTranscriptCommonModuleMockState();
         capturedFlashListProps = null;
         renderedFlatListCount = 0;
         transcriptListImplementationSetting = 'flash_v2';

@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  createLegacyChatListReactNativeMock,
   getCapturedFlatListProps,
   legacyChatListHarnessState,
   renderLegacyChatList,
   resetLegacyChatListHarness,
 } from './ChatList.legacyListTestHarness';
+import { installLegacyChatListHarnessCommonModuleMocks } from './chatListLegacyHarnessTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,25 +14,7 @@ let capturedMessageViewProps: any[] = [];
 
 const buildChatListItemsMock = vi.fn((..._args: any[]): any[] => []);
 
-vi.mock('@shopify/flash-list', () => ({
-  FlashList: () => null,
-}));
-
-vi.mock('react-native', async () => (
-    (await import('@/dev/testkit/harness/chatListHarness')).createLegacyChatListReactNativeMock()
-));
-
-vi.mock('@/utils/platform/responsive', () => ({
-  useHeaderHeight: () => 0,
-}));
-
-vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => (
-    (await import('@/dev/testkit/harness/chatListHarness')).createLegacyChatListStorageMock(importOriginal)
-));
+installLegacyChatListHarnessCommonModuleMocks();
 
 vi.mock('@/components/sessions/chatListItems', () => ({
   buildChatListItems: buildChatListItemsMock,

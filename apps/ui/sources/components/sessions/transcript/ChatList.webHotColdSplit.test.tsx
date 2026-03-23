@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installTranscriptCommonModuleMocks } from './transcriptTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,20 +37,51 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
     }),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            ActivityIndicator: () => React.createElement('ActivityIndicator'),
-                            FlatList: () => React.createElement('FlatList'),
-                            Platform: {
-                                OS: 'web',
-                                select: (values: any) => values?.web ?? values?.default,
-                            },
-                            View: ({ children, ...props }: any) => React.createElement('View', props, children),
-                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                        }
-    );
+installTranscriptCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            ActivityIndicator: () => React.createElement('ActivityIndicator'),
+            FlatList: () => React.createElement('FlatList'),
+            Platform: {
+                OS: 'web',
+                select: (values: any) => values?.web ?? values?.default,
+            },
+            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useForkedTranscriptSnapshot: () => null,
+            useMessage: (_sessionId: string, messageId: string) =>
+                sessionMessagesState.messages.find((message) => message.id === messageId) ?? null,
+            useSession: () => sessionState,
+            useSessionActionDrafts: () => [],
+            useSessionLatestThinkingMessageId: () => null,
+            useSessionLatestThinkingMessageActivityAtMs: () => null,
+            useSessionMessagesById: () =>
+                Object.fromEntries(sessionMessagesState.messages.map((message) => [message.id, message])),
+            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+            useSessionTranscriptIds: () => ({
+                ids: sessionMessagesState.messages.map((message) => message.id),
+                isLoaded: sessionMessagesState.isLoaded,
+            }),
+            useSetting: (key: string) => settingValues[key],
+            getStorage: () => ({
+                getState: () => ({
+                    sessionMessages: {
+                        [sessionState.id]: {
+                            messageIdsOldestFirst: sessionMessagesState.messages.map((message) => message.id),
+                            messagesById: Object.fromEntries(sessionMessagesState.messages.map((message) => [message.id, message])),
+                            messagesMap: Object.fromEntries(sessionMessagesState.messages.map((message) => [message.id, message])),
+                        },
+                    },
+                }),
+            }),
+        });
+    },
 });
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -59,38 +91,6 @@ vi.mock('@/utils/platform/responsive', () => ({
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useForkedTranscriptSnapshot: () => null,
-    useMessage: (_sessionId: string, messageId: string) =>
-        sessionMessagesState.messages.find((message) => message.id === messageId) ?? null,
-    useSession: () => sessionState,
-    useSessionActionDrafts: () => [],
-    useSessionLatestThinkingMessageId: () => null,
-    useSessionLatestThinkingMessageActivityAtMs: () => null,
-    useSessionMessagesById: () =>
-        Object.fromEntries(sessionMessagesState.messages.map((message) => [message.id, message])),
-    useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
-    useSessionTranscriptIds: () => ({
-        ids: sessionMessagesState.messages.map((message) => message.id),
-        isLoaded: sessionMessagesState.isLoaded,
-    }),
-    useSetting: (key: string) => settingValues[key],
-    getStorage: () => ({
-        getState: () => ({
-            sessionMessages: {
-                [sessionState.id]: {
-                    messageIdsOldestFirst: sessionMessagesState.messages.map((message) => message.id),
-                    messagesById: Object.fromEntries(sessionMessagesState.messages.map((message) => [message.id, message])),
-                    messagesMap: Object.fromEntries(sessionMessagesState.messages.map((message) => [message.id, message])),
-                },
-            },
-        }),
-    }),
-});
-});
 
 vi.mock('@/components/sessions/chatListItems', () => ({
     buildChatListItems: ({ messageIdsOldestFirst, messagesById }: any) =>

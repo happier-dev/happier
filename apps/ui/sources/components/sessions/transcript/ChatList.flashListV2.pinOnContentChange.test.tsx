@@ -6,6 +6,7 @@ import {
   renderFlashListChatList,
   resetFlashListChatListHarness,
   standardCleanup,
+  withFlashListChatListWebScrollerDom,
 } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -134,31 +135,29 @@ describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
   });
 
   it('pins to bottom when content size grows while pinned', async () => {
-    const raf = (cb: any) => {
-      cb(0);
-      return 1;
-    };
-    (globalThis as any).requestAnimationFrame = raf;
-    (globalThis as any).cancelAnimationFrame = () => {};
+    await withFlashListChatListWebScrollerDom(
+      {},
+      async () => {
+        const { ChatList } = await import('./ChatList');
 
-    const { ChatList } = await import('./ChatList');
+        const screen = await renderFlashListChatList(
+          <ChatList session={flashListChatListHarnessState.sessionState} />
+        );
 
-    const screen = await renderFlashListChatList(
-      <ChatList session={flashListChatListHarnessState.sessionState} />
+        expect(screen.getCapturedFlashListProps()).toBeTruthy();
+
+        // Clear mount-time pin attempts; we want to assert pinning is driven by content-size growth.
+        scrollToOffsetSpy.mockClear();
+
+        await screen.triggerInitialFill({
+          layoutHeight: 500,
+          contentHeight: 1000,
+          contentWidth: 0,
+        });
+
+        expect(scrollToOffsetSpy).toHaveBeenCalled();
+        expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 500, animated: false });
+      },
     );
-
-    expect(screen.getCapturedFlashListProps()).toBeTruthy();
-
-    // Clear mount-time pin attempts; we want to assert pinning is driven by content-size growth.
-    scrollToOffsetSpy.mockClear();
-
-    await screen.triggerInitialFill({
-      layoutHeight: 500,
-      contentHeight: 1000,
-      contentWidth: 0,
-    });
-
-    expect(scrollToOffsetSpy).toHaveBeenCalled();
-    expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 500, animated: false });
   });
 });

@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import renderer from 'react-test-renderer';
 
-import { makeToolCall } from '@/components/tools/shell/views/ToolView.testHelpers';
+import { makeToolCall } from '@/dev/testkit';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { renderScreen } from '@/dev/testkit';
 

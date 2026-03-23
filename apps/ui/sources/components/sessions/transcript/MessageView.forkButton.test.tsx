@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -75,28 +76,87 @@ function findAncestor(instance: any, predicate: (node: any) => boolean) {
   return null;
 }
 
-vi.mock('react-native', async () => {
+installMessageViewCommonModuleMocks({
+  reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
-                    useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-                    Platform: {
-                      OS: 'web',
-                      select: <T,>(options: { web?: T; default?: T; native?: T; ios?: T; android?: T }) =>
-                        options?.web ?? options?.default ?? options?.native ?? options?.ios ?? options?.android,
-                    },
-                    View: ({ children, style, ...props }: any) => React.createElement('View', { ...props, style: flattenStyleProp(style) }, children),
-                    Text: 'Text',
-                    ActivityIndicator: 'ActivityIndicator',
-                    Pressable: 'Pressable',
-                  }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
+    return createReactNativeWebMock({
+      Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
+      useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+      Platform: {
+        OS: 'web',
+        select: <T,>(options: { web?: T; default?: T; native?: T; ios?: T; android?: T }) =>
+          options?.web ?? options?.default ?? options?.native ?? options?.ios ?? options?.android,
+      },
+      View: ({ children, style, ...props }: any) =>
+        React.createElement('View', { ...props, style: flattenStyleProp(style) }, children),
+      Text: 'Text',
+      ActivityIndicator: 'ActivityIndicator',
+      Pressable: 'Pressable',
+    });
+  },
+  unistyles: async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
+  },
+  text: async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+      translate: (key: string) => key,
+    });
+  },
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMock.spies.alert.mockImplementation((...args: any[]) => modalAlertSpy(...args));
+    return modalMock.module;
+  },
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock();
+    routerMock.spies.push.mockImplementation((value: unknown) => routerPushSpy(value));
+    return routerMock.module;
+  },
+  storage: async (importOriginal) => {
+    const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+      useSetting: (key: string) => {
+        if (key === 'sessionReplayEnabled') return replayEnabled;
+        if (key === 'sessionThinkingDisplayMode') return 'inline';
+        if (key === 'toolViewTimelineChromeMode') return 'cards';
+        return null;
+      },
+      useSession: () => ({
+        id: 's1',
+        seq: 1,
+        createdAt: 0,
+        updatedAt: 0,
+        active: true,
+        activeAt: 0,
+        metadata: sessionMetadata,
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 1,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+      }),
+      useSessionMessagesById: () => ({}),
+      useSessionMessagesReducerState: () => ({} as any),
+      storage: createStorageStoreMock({
+        sessions: {
+          s1: {
+            id: 's1',
+            metadata: sessionMetadata,
+            updatedAt: 0,
+            active: true,
+          },
+        },
+        machines: machinesState,
+        getProjectForSession: (sessionId: string) => (sessionId === 's1' ? projectForSession : null),
+        updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
+      } as any),
+    });
+  },
 });
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
@@ -106,20 +166,6 @@ vi.mock('@/components/markdown/MarkdownView', () => ({
 vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
   shouldShowMessageCopyButton: () => copyButtonsVisible,
 }));
-
-vi.mock('@/text', async () => {
-  const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-  return createTextModuleMock({
-    translate: (key: string) => key,
-  });
-});
-
-vi.mock('@/modal', async () => {
-  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-  const modalMock = createModalModuleMock();
-  modalMock.spies.alert.mockImplementation((...args: any[]) => modalAlertSpy(...args));
-  return modalMock.module;
-});
 
 vi.mock('@/sync/ops', () => ({
   forkSession: (...args: any[]) => forkSessionSpy(...args),
@@ -132,55 +178,6 @@ vi.mock('@/sync/sync', () => ({
     patchSessionMetadataWithRetry: (...args: any[]) => patchSessionMetadataWithRetrySpy(...args),
   },
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-  const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-  return createStorageModuleStub({
-    useSetting: (key: string) => {
-      if (key === 'sessionReplayEnabled') return replayEnabled;
-      if (key === 'sessionThinkingDisplayMode') return 'inline';
-      if (key === 'toolViewTimelineChromeMode') return 'cards';
-      return null;
-    },
-    useSession: () => ({
-      id: 's1',
-      seq: 1,
-      createdAt: 0,
-      updatedAt: 0,
-      active: true,
-      activeAt: 0,
-      metadata: sessionMetadata,
-      metadataVersion: 1,
-      agentState: null,
-      agentStateVersion: 1,
-      thinking: false,
-      thinkingAt: 0,
-      presence: 'online',
-    }),
-    useSessionMessagesById: () => ({}),
-    useSessionMessagesReducerState: () => ({} as any),
-    storage: createStorageStoreMock({
-      sessions: {
-        s1: {
-          id: 's1',
-          metadata: sessionMetadata,
-          updatedAt: 0,
-          active: true,
-        },
-      },
-      machines: machinesState,
-      getProjectForSession: (sessionId: string) => (sessionId === 's1' ? projectForSession : null),
-      updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
-    } as any),
-  });
-});
-
-vi.mock('expo-router', async () => {
-  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-  const routerMock = createExpoRouterMock();
-  routerMock.spies.push.mockImplementation((value: unknown) => routerPushSpy(value));
-  return routerMock.module;
-});
 
 vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(),
@@ -331,9 +328,7 @@ describe('MessageView (fork button)', () => {
 
     const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const pressables = screen.findAllByType('Pressable' as any);
-    const a11y = pressables.map((p) => p.props.accessibilityLabel).filter(Boolean);
-    expect(a11y).not.toContain('session.forking.forkFromMessageA11y');
+    expect(screen.findByTestId('transcript-message-fork:m1')).toBeNull();
   });
 
   it('forks before a committed user message and restores it as a draft', async () => {
@@ -456,7 +451,7 @@ describe('MessageView (fork button)', () => {
 
     const forkButton = screen.findByTestId('transcript-message-fork:m1');
     expect(forkButton).toBeTruthy();
-    expect(forkButton!.findByType('ActivityIndicator' as any)).toBeTruthy();
+    expect(screen.findAllByType('ActivityIndicator' as any)).toHaveLength(1);
 
     await act(async () => {
       resolveFork?.({ ok: true, childSessionId: 'child-loading' });

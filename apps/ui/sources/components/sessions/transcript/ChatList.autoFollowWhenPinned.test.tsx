@@ -9,32 +9,18 @@ import {
   renderLegacyChatList,
   resetLegacyChatListHarness,
 } from './ChatList.legacyListTestHarness';
+import { installLegacyChatListHarnessCommonModuleMocks } from './chatListLegacyHarnessTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const scrollToOffsetSpy = vi.fn();
 
-vi.mock('@shopify/flash-list', () => ({
-  FlashList: () => null,
-}));
-
-vi.mock('react-native', async () => (
+installLegacyChatListHarnessCommonModuleMocks({
+  reactNative: async () =>
     (await import('@/dev/testkit/harness/chatListHarness')).createLegacyChatListReactNativeMock({
-    platformOs: 'ios',
-  })
-));
-
-vi.mock('@/utils/platform/responsive', () => ({
-  useHeaderHeight: () => 0,
-}));
-
-vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => (
-    (await import('@/dev/testkit/harness/chatListHarness')).createLegacyChatListStorageMock(importOriginal)
-));
+      platformOs: 'ios',
+    }),
+});
 
 vi.mock('@/components/sessions/chatListItems', () => ({
   buildChatListItems: buildLegacyChatListItems,

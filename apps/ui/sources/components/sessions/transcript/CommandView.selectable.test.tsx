@@ -1,38 +1,38 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                            Platform: {
-                                OS: 'ios',
-                                select: (values: any) => values?.ios ?? values?.default,
-                            },
-                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-      colors: {
-        success: '#0a0',
-        text: '#111',
-        textSecondary: '#555',
-        warning: '#bb0',
-        warningCritical: '#a00',
-        textDestructive: '#a00',
-      },
+installTranscriptCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Platform: {
+                OS: 'ios',
+                select: (values: any) => values?.ios ?? values?.default,
+            },
+        });
     },
-    });
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    success: '#0a0',
+                    text: '#111',
+                    textSecondary: '#555',
+                    warning: '#bb0',
+                    warningCritical: '#a00',
+                    textDestructive: '#a00',
+                },
+            },
+        });
+    },
 });
 
 vi.mock('@/text', async () => {
@@ -45,6 +45,8 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('CommandView (selection)', () => {
+    afterEach(resetTranscriptCommonModuleMockState);
+
   it('renders command + output text as selectable', async () => {
     const { CommandView } = await import('./CommandView');
 
@@ -80,4 +82,3 @@ describe('CommandView (selection)', () => {
     }
   });
 });
-

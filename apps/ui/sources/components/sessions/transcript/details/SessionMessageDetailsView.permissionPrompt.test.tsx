@@ -1,10 +1,14 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installTranscriptCommonModuleMocks,
+    resetTranscriptCommonModuleMockState,
+} from '../transcriptTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,25 +30,7 @@ const recipientStateState = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#000',
-            },
-        },
-    });
-});
+installTranscriptCommonModuleMocks();
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
@@ -260,4 +246,8 @@ describe('SessionMessageDetailsView permission prompt fallback', () => {
             ]),
         }));
     });
+});
+
+afterEach(() => {
+    resetTranscriptCommonModuleMockState();
 });

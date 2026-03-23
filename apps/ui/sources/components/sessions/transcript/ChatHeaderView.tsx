@@ -190,6 +190,7 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'flex-start',
+        minWidth: 0,
     },
     titleRow: {
         flexDirection: 'row',

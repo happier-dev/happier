@@ -9,52 +9,54 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { createReducer } from '@/sync/reducer/reducer';
+import { installToolCallsGroupViewCommonModuleMocks } from './toolCallsGroupViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default ?? null },
-                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', async () => {
-    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
-    return {
-        ...createExpoVectorIconsMock(),
-        Ionicons: (props: any) => React.createElement('Ionicons', { ...props, testID: `ionicons:${props.name}` }),
-    };
-});
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key: string) => key,
-}));
-
 let toolChromeMode: 'activity_feed' | 'cards' = 'activity_feed';
 let toolCallsGroupShowBackground: boolean = false;
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
-                if (key === 'transcriptToolCallsCollapsedPreviewCount') return 0;
-                if (key === 'transcriptToolCallsGroupShowBackground') return toolCallsGroupShowBackground;
-                return null;
+installToolCallsGroupViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock(
+            {
+                Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default ?? null },
             },
-            useSessionMessagesById: () => ({}),
-            useSessionMessagesReducerState: () => createReducer(),
-        },
-    });
+        );
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
+    },
+    icons: async () => {
+        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+        return {
+            ...createExpoVectorIconsMock(),
+            Ionicons: (props: any) => React.createElement('Ionicons', { ...props, testID: `ionicons:${props.name}` }),
+        };
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
+                    if (key === 'transcriptToolCallsCollapsedPreviewCount') return 0;
+                    if (key === 'transcriptToolCallsGroupShowBackground') return toolCallsGroupShowBackground;
+                    return null;
+                },
+                useSessionMessagesById: () => ({}),
+                useSessionMessagesReducerState: () => createReducer(),
+            },
+        });
+    },
 });
 
 vi.mock('@/components/tools/shell/views/ToolView', () => ({
@@ -167,7 +169,7 @@ describe('ToolCallsGroupView (motion wiring)', () => {
             expanded: true,
         });
 
-        expect(screen.root.findAllByType('ToolView' as any)).toHaveLength(1);
-        expect(screen.root.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
+        expect(screen.findAllByType('ToolView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
     });
 });

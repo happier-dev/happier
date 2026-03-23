@@ -1,7 +1,11 @@
 import * as React from 'react';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installTranscriptCommonModuleMocks,
+    resetTranscriptCommonModuleMockState,
+} from '../transcriptTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -9,18 +13,14 @@ import { renderScreen } from '@/dev/testkit';
 let messageById: Record<string, any> = {};
 let renderedToolCallsGroupViewProps: any[] = [];
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: (props: any) => React.createElement('View', props, props.children),
-                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installTranscriptCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useMessagesByIds: (_sessionId: string, messageIds: readonly string[]) =>
+                messageIds.map((id) => messageById[id]).filter(Boolean),
+        });
+    },
 });
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => ({
@@ -33,14 +33,6 @@ vi.mock('@/components/sessions/transcript/turns/toolCalls/ToolCallsGroupView', (
     return React.createElement('ToolCallsGroupView', props);
   },
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useMessagesByIds: (_sessionId: string, messageIds: readonly string[]) =>
-    messageIds.map((id) => messageById[id]).filter(Boolean),
-});
-});
 
 describe('ToolCallsGroupRow', () => {
   beforeEach(() => {
@@ -95,4 +87,8 @@ describe('ToolCallsGroupRow', () => {
       ]),
     );
   });
+});
+
+afterEach(() => {
+    resetTranscriptCommonModuleMockState();
 });

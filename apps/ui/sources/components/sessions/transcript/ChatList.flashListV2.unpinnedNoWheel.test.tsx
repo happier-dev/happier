@@ -8,10 +8,24 @@ import {
   standardCleanup,
   withFlashListChatListWebScrollerDom,
 } from '@/dev/testkit';
+import {
+  installTranscriptCommonModuleMocks,
+  resetTranscriptCommonModuleMockState,
+} from './transcriptTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+installTranscriptCommonModuleMocks({
+  reactNative: async () =>
+    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListReactNativeMock({
+      platformOs: 'web',
+    }),
+  storage: async (importOriginal) =>
+    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListStorageMock(importOriginal),
+});
+
 beforeEach(() => {
+  resetTranscriptCommonModuleMockState();
   resetFlashListChatListHarness({ platformOs: 'web' });
   flashListChatListHarnessState.sessionMessagesState = {
     messages: [{ kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'hi' }],
@@ -31,16 +45,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetTranscriptCommonModuleMockState();
   standardCleanup();
 });
 
 vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () =>
   (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListModuleMock()
 );
-
-vi.mock('react-native', async () => (
-    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListReactNativeMock({ platformOs: 'web' })
-));
 
 vi.mock('@/utils/platform/responsive', () => ({
   useHeaderHeight: () => 0,
@@ -49,10 +60,6 @@ vi.mock('@/utils/platform/responsive', () => ({
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListStorageMock(importOriginal)
-);
 
 vi.mock('@/components/sessions/chatListItems', async () =>
   (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock(({ messageIdsOldestFirst, messagesById }: any) =>

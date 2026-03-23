@@ -1,8 +1,12 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 
-import { createPartialStorageModuleMock, createSessionMessagesFixture, createStorageStoreMock, renderScreen } from '@/dev/testkit';
+import { createSessionMessagesFixture, createStorageStoreMock, renderScreen } from '@/dev/testkit';
+import {
+    installTranscriptCommonModuleMocks,
+    resetTranscriptCommonModuleMockState,
+} from './transcriptTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,37 +18,37 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            FlatList: (props: any) => {
-                                    // Render ListHeaderComponent so ListFooter executes (this is where the null session crash happened).
-                                    return React.createElement('FlatList', null, props.ListHeaderComponent ?? null);
-                                },
-                        }
-    );
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    await createPartialStorageModuleMock(importOriginal, {
-        getStorage: () => createStorageStoreMock({
-            sessionMessages: {
-                'session-1': createSessionMessagesFixture(),
+installTranscriptCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            FlatList: (props: any) => {
+                // Render ListHeaderComponent so ListFooter executes (this is where the null session crash happened).
+                return React.createElement('FlatList', null, props.ListHeaderComponent ?? null);
             },
-        }),
-        useSession: () => null,
-        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-        useSessionMessagesById: () => ({}),
-        useForkedTranscriptSnapshot: () => null,
-        useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: false }),
-        useSessionActionDrafts: () => ([]),
-        useSessionLatestThinkingMessageId: () => null,
-        useSessionLatestThinkingMessageActivityAtMs: () => null,
-        useMessage: () => null,
-        useSetting: (key: string) => (key === 'transcriptListImplementation' ? 'flatlist_legacy' : undefined),
-    }),
-);
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            getStorage: () => createStorageStoreMock({
+                sessionMessages: {
+                    'session-1': createSessionMessagesFixture(),
+                },
+            }),
+            useSession: () => null,
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionMessagesById: () => ({}),
+            useForkedTranscriptSnapshot: () => null,
+            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: false }),
+            useSessionActionDrafts: () => ([]),
+            useSessionLatestThinkingMessageId: () => null,
+            useSessionLatestThinkingMessageActivityAtMs: () => null,
+            useMessage: () => null,
+            useSetting: (key: string) => (key === 'transcriptListImplementation' ? 'flatlist_legacy' : undefined),
+        });
+    },
+});
 
 vi.mock('@/components/sessions/chatListItems', () => ({
     buildChatListItems: () => [],
@@ -76,6 +80,10 @@ vi.mock('@/sync/domains/state/agentStateCapabilities', () => ({
 }));
 
 describe('ChatList', () => {
+    afterEach(() => {
+        resetTranscriptCommonModuleMockState();
+    });
+
     it('does not crash when useSession(sessionId) returns null in ListFooter', async () => {
         const { ChatList } = await import('./ChatList');
 

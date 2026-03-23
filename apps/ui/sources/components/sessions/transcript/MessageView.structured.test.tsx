@@ -1,48 +1,98 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createReducer } from '@/sync/reducer/reducer';
+import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Easing: {
-                            bezier: () => ({}),
-                            linear: () => ({}),
-                        },
-                        Dimensions: {
-                            get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-                        },
-                        useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-                        Animated: {
-                            Value: class AnimatedValue {
-                                constructor(public _value: number) {}
-                                interpolate() {
-                                    return this as any;
-                                }
-                            },
-                            timing: (_value: any, _config: any) => ({
-                                start: (cb?: any) => {
-                                    cb?.();
-                                },
-                            }),
-                            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-                        },
-                        View: 'View',
-                        Text: 'Text',
-                        ScrollView: 'ScrollView',
-                        Image: 'Image',
-                        ActivityIndicator: 'ActivityIndicator',
-                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+installMessageViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Easing: {
+                bezier: () => ({}),
+                linear: () => ({}),
+            },
+            Dimensions: {
+                get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+            Animated: {
+                Value: class AnimatedValue {
+                    constructor(public _value: number) {}
+                    interpolate() {
+                        return this as any;
                     }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+                },
+                timing: (_value: any, _config: any) => ({
+                    start: (cb?: any) => {
+                        cb?.();
+                    },
+                }),
+                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+            },
+            View: 'View',
+            Text: 'Text',
+            ScrollView: 'ScrollView',
+            Image: 'Image',
+            ActivityIndicator: 'ActivityIndicator',
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: any) => {
+                if (key === 'session.reviewFindings.findingTitle' && params && typeof params.title === 'string') {
+                    return params.title;
+                }
+                if (typeof key === 'string' && key.startsWith('session.reviewFindings.status.')) {
+                    return key.split('.').pop();
+                }
+                if (key === 'session.reviewFindings.title' && params && typeof params.count === 'number') {
+                    return `Review findings (${params.count})`;
+                }
+                if (key === 'session.reviewFindings.actions.applyAcceptedFindings') return 'Implement selected fixes';
+                if (key === 'session.reviewFindings.actions.applyTriage') return 'Apply review actions';
+                if (key === 'session.reviewFindings.actions.sending') return 'Sending…';
+                if (key === 'session.reviewFindings.actions.applying') return 'Applying…';
+                return key;
+            },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        const modalMock = createModalModuleMock();
+        modalMock.spies.show.mockImplementation((config: unknown) => {
+            modalShowSpy(config);
+            return 'modal-id';
+        });
+        return modalMock.module;
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: routerPushSpy },
+        });
+        return routerMock.module;
+    },
+    storage: async (importOriginal) =>
+        createPartialStorageModuleMock(importOriginal, {
+            useSession: () => null,
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSetting: (key: string) => {
+                if (key === 'sessionThinkingDisplayMode') return thinkingDisplayMode;
+                if (key === 'sessionThinkingInlinePresentation') return thinkingInlinePresentation;
+                if (key === 'filesImagePreviewMaxBytes') return filesImagePreviewMaxBytes;
+                if (key === 'toolViewTimelineChromeMode') return toolViewTimelineChromeMode;
+                return null;
+            },
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesReducerState: () => createReducer(),
+        }),
 });
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
@@ -61,38 +111,7 @@ vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
     shouldShowMessageCopyButton: () => false,
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string, params?: any) => {
-            if (key === 'session.reviewFindings.findingTitle' && params && typeof params.title === 'string') {
-                return params.title;
-            }
-            if (typeof key === 'string' && key.startsWith('session.reviewFindings.status.')) {
-                return key.split('.').pop();
-            }
-            if (key === 'session.reviewFindings.title' && params && typeof params.count === 'number') {
-                return `Review findings (${params.count})`;
-            }
-            if (key === 'session.reviewFindings.actions.applyAcceptedFindings') return 'Implement selected fixes';
-            if (key === 'session.reviewFindings.actions.applyTriage') return 'Apply review actions';
-            if (key === 'session.reviewFindings.actions.sending') return 'Sending…';
-            if (key === 'session.reviewFindings.actions.applying') return 'Applying…';
-            return key;
-        },
-    });
-});
-
 const modalShowSpy = vi.fn();
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    modalMock.spies.show.mockImplementation((config: unknown) => {
-        modalShowSpy(config);
-        return 'modal-id';
-    });
-    return modalMock.module;
-});
 
 const sendMessageSpy = vi.fn<
     (
@@ -143,21 +162,6 @@ let thinkingDisplayMode: 'inline' | 'tool' | 'hidden' = 'inline';
 let thinkingInlinePresentation: 'full' | 'summary' = 'full';
 let filesImagePreviewMaxBytes: number | null = null;
 let toolViewTimelineChromeMode: 'activity_feed' | 'cards' | null = null;
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    await createPartialStorageModuleMock(importOriginal, {
-        useSession: () => null,
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useSetting: (key: string) => {
-            if (key === 'sessionThinkingDisplayMode') return thinkingDisplayMode;
-            if (key === 'sessionThinkingInlinePresentation') return thinkingInlinePresentation;
-            if (key === 'filesImagePreviewMaxBytes') return filesImagePreviewMaxBytes;
-            if (key === 'toolViewTimelineChromeMode') return toolViewTimelineChromeMode;
-            return null;
-        },
-        useSessionMessagesById: () => ({}),
-        useSessionMessagesReducerState: () => createReducer(),
-    }),
-);
 
 afterEach(() => {
     thinkingDisplayMode = 'inline';
@@ -172,13 +176,6 @@ vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
 }));
 
 const routerPushSpy = vi.fn();
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
 
 describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
     it('renders a structured review-comments card when meta.happier.kind is review_comments.v1', async () => {

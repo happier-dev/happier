@@ -2,48 +2,44 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createExpoVectorIconsMock, createToolCallMessageFixture, renderScreen } from '@/dev/testkit';
+import { createToolCallMessageFixture, renderScreen } from '@/dev/testkit';
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import { createReducer } from '@/sync/reducer/reducer';
+import { installToolCallsGroupViewCommonModuleMocks } from './toolCallsGroupViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default ?? null },
-                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', async () => createExpoVectorIconsMock());
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key: string) => key,
-}));
-
 let collapsedPreviewCount = 1;
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'toolViewTimelineChromeMode') return 'activity_feed';
-                if (key === 'transcriptToolCallsCollapsedPreviewCount') return collapsedPreviewCount;
-                if (key === 'transcriptToolCallsGroupShowBackground') return false;
-                return null;
+
+installToolCallsGroupViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default ?? null },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewTimelineChromeMode') return 'activity_feed';
+                    if (key === 'transcriptToolCallsCollapsedPreviewCount') return collapsedPreviewCount;
+                    if (key === 'transcriptToolCallsGroupShowBackground') return false;
+                    return null;
+                },
+                useSessionMessagesById: () => ({}),
+                useSessionMessagesReducerState: () => createReducer(),
             },
-            useSessionMessagesById: () => ({}),
-            useSessionMessagesReducerState: () => createReducer(),
-        },
-    });
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
 });
 
 const renderedMessageViews: any[] = [];

@@ -2,6 +2,11 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    getTranscriptModalMockRef,
+    installTranscriptCommonModuleMocks,
+    resetTranscriptCommonModuleMockState,
+} from './transcriptTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,47 +15,40 @@ const updateSessionDraftSpy = vi.fn();
 const createDefaultActionExecutorSpy = vi.fn((_: unknown) => ({
     execute: (actionId: unknown, input: unknown, ctx: unknown) => executeSpy(actionId, input, ctx),
 }));
-const modalMockRuntime = vi.hoisted(() => ({ current: null as any }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
-                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                        ActivityIndicator: 'ActivityIndicator',
-                        AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-                    }
-    );
-});
-
-vi.mock('@expo/vector-icons', async () => {
-    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
-    return createExpoVectorIconsMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                textSecondary: '#555',
+installTranscriptCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            ActivityIndicator: 'ActivityIndicator',
+            AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    textSecondary: '#555',
+                },
             },
-        },
-    });
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                storage: createStorageStoreMock({
+                    updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
+                }),
+            },
+        });
+    },
 });
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    modalMockRuntime.current = modalMock;
-    return modalMock.module;
-});
+resetTranscriptCommonModuleMockState();
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: (opts?: unknown) => createDefaultActionExecutorSpy(opts),
@@ -81,7 +79,7 @@ describe('TranscriptRollbackActionButton', () => {
         executeSpy.mockReset();
         updateSessionDraftSpy.mockReset();
         createDefaultActionExecutorSpy.mockClear();
-        modalMockRuntime.current?.spies.alert?.mockReset();
+        getTranscriptModalMockRef().current?.spies.alert?.mockReset();
     });
 
     it('executes the latest-turn rollback action for the session', async () => {
@@ -107,7 +105,8 @@ describe('TranscriptRollbackActionButton', () => {
                 surface: 'ui_button',
             },
         );
-        expect(modalMockRuntime.current.spies.alert).not.toHaveBeenCalled();
+        expect(getTranscriptModalMockRef().current).not.toBeNull();
+        expect(getTranscriptModalMockRef().current.spies.alert).not.toHaveBeenCalled();
         expect(screen.findByTestId('rollback-action')?.props.accessibilityLabel).toBe('session.rollback.latestTurnA11y');
         expect(createDefaultActionExecutorSpy).toHaveBeenCalledWith(expect.objectContaining({
             resolveServerIdForSessionId: expect.any(Function),
@@ -127,7 +126,8 @@ describe('TranscriptRollbackActionButton', () => {
         );
         await screen.pressByTestIdAsync('rollback-action');
 
-        expect(modalMockRuntime.current.spies.alert).toHaveBeenCalledWith('common.error', 'nope');
+        expect(getTranscriptModalMockRef().current).not.toBeNull();
+        expect(getTranscriptModalMockRef().current.spies.alert).toHaveBeenCalledWith('common.error', 'nope');
         await screen.unmount();
     });
 
