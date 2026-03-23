@@ -5,14 +5,9 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
-import {
-  buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries,
-  createScmSourceControllerWorkspaceExportArtifacts,
-} from './workspaceExportArtifacts';
 import { hashWorkspaceFile } from './workspaceExportPackaging/hashWorkspaceFile';
 import { scanWorkspaceManifest } from './workspaceExportPackaging/scanWorkspaceManifest';
 import {
-  createWorkspaceSyncArtifacts,
   createWorkspaceSyncArtifactsFromManifest,
 } from './workspaceSyncArtifacts';
 import { applyWorkspaceSyncArtifacts } from './applyWorkspaceSyncArtifacts';
@@ -39,8 +34,23 @@ afterEach(async () => {
   }));
 });
 
+function createSourcePathBlobProviderFromManifest(sourceRoot: string, manifest: WorkspaceManifest): Readonly<{
+  getBlobFilePath: (digest: string) => string | null;
+}> {
+  const firstPathByDigest = new Map<string, string>();
+  for (const entry of manifest.entries) {
+    if (entry.kind !== 'file') continue;
+    if (!firstPathByDigest.has(entry.digest)) {
+      firstPathByDigest.set(entry.digest, join(sourceRoot, entry.relativePath));
+    }
+  }
+  return {
+    getBlobFilePath: (digest) => firstPathByDigest.get(digest) ?? null,
+  };
+}
+
 describe('applyWorkspaceSyncArtifacts', () => {
-  it('applies changed workspace artifacts and removals onto the target workspace', async () => {
+  it('fails closed when file changes are present but the blobProvider cannot resolve required blob digests', async () => {
     const targetRoot = await makeTempDir('handoff-sync-apply-target-');
     await writeFile(join(targetRoot, 'README.md'), 'old-readme\n', 'utf8');
     await writeFile(join(targetRoot, 'keep.txt'), 'keep\n', 'utf8');
@@ -56,31 +66,22 @@ describe('applyWorkspaceSyncArtifacts', () => {
     await writeFile(join(sourceRoot, 'new.ts'), 'export {}\n', 'utf8');
     await symlink('README.md', join(sourceRoot, 'readme-link'));
 
-    const workspaceExportArtifacts = await buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries({
-      entries: [
-        { relativePath: 'README.md', sourcePath: join(sourceRoot, 'README.md') },
-        { relativePath: 'keep.txt', sourcePath: join(sourceRoot, 'keep.txt') },
-        { relativePath: 'new.ts', sourcePath: join(sourceRoot, 'new.ts') },
-        { relativePath: 'readme-link', sourcePath: join(sourceRoot, 'readme-link') },
-      ],
-    });
+    const nextManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
+      workspaceRoot: sourceRoot,
+    }));
 
-    const syncArtifacts = createWorkspaceSyncArtifacts({
+    const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
       currentManifest,
-      workspaceExportArtifacts,
+      nextManifest,
     });
 
-    const applied = await applyWorkspaceSyncArtifacts({
+    await expect(applyWorkspaceSyncArtifacts({
       targetPath: targetRoot,
       syncArtifacts,
-    });
-
-    expect(applied).toEqual({ targetPath: targetRoot });
-    await expect(readFile(join(targetRoot, 'README.md'), 'utf8')).resolves.toBe('new-readme\n');
-    await expect(readFile(join(targetRoot, 'keep.txt'), 'utf8')).resolves.toBe('keep\n');
-    await expect(readFile(join(targetRoot, 'new.ts'), 'utf8')).resolves.toBe('export {}\n');
-    await expect(readlink(join(targetRoot, 'readme-link'))).resolves.toBe('README.md');
-    await expect(readFile(join(targetRoot, 'old.ts'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      blobProvider: {
+        getBlobFilePath: () => null,
+      },
+    })).rejects.toThrow(/blob/i);
   });
 
   it('applies changed workspace artifacts from a CAS-backed blob provider when inline blobs are absent', async () => {
@@ -96,15 +97,12 @@ describe('applyWorkspaceSyncArtifacts', () => {
     await writeFile(join(sourceRoot, 'README.md'), 'new-readme\n', 'utf8');
     await writeFile(join(sourceRoot, 'keep.txt'), 'keep\n', 'utf8');
 
-    const workspaceExportArtifacts = await buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries({
-      entries: [
-        { relativePath: 'README.md', sourcePath: join(sourceRoot, 'README.md') },
-        { relativePath: 'keep.txt', sourcePath: join(sourceRoot, 'keep.txt') },
-      ],
-    });
+    const nextManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
+      workspaceRoot: sourceRoot,
+    }));
     const casStore = createWorkspaceReplicationCasStore({ activeServerDir });
 
-    for (const entry of workspaceExportArtifacts.manifest.entries) {
+    for (const entry of nextManifest.entries) {
       if (entry.kind !== 'file') {
         continue;
       }
@@ -116,7 +114,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
       currentManifest,
-      nextManifest: workspaceExportArtifacts.manifest,
+      nextManifest,
       sourceControllerMetadata: null,
     });
 
@@ -144,36 +142,27 @@ describe('applyWorkspaceSyncArtifacts', () => {
       filePath: join(targetRoot, 'README.md'),
     });
     const syncArtifacts = {
-      ...createWorkspaceSyncArtifacts({
+      ...createWorkspaceSyncArtifactsFromManifest({
         currentManifest,
-        workspaceExportArtifacts: createScmSourceControllerWorkspaceExportArtifacts({
-          manifest: { entries: [], fingerprint: 'sha256:empty' },
-          blobContentsByDigest: new Map(),
-          sourceControllerMetadata: null,
-        }),
+        nextManifest: { entries: [] },
       }),
       removedRelativePaths: ['../outside'],
-      changedWorkspaceArtifacts: createScmSourceControllerWorkspaceExportArtifacts({
-        manifest: {
-          entries: [
-            {
-              kind: 'file' as const,
-              relativePath: 'README.md',
-              digest,
-              executable: false,
-              sizeBytes: 6,
-            },
-          ],
-          fingerprint: 'sha256:stay',
-        },
-        blobContentsByDigest: new Map([[digest, Buffer.from('hello\n', 'utf8')]]),
-        sourceControllerMetadata: null,
-      }),
     };
 
     await expect(applyWorkspaceSyncArtifacts({
       targetPath: targetRoot,
       syncArtifacts,
+      blobProvider: createSourcePathBlobProviderFromManifest(targetRoot, {
+        entries: [
+          {
+            kind: 'file',
+            relativePath: 'README.md',
+            digest,
+            executable: false,
+            sizeBytes: 6,
+          },
+        ],
+      }),
     })).rejects.toThrow('Workspace transfer path escapes target: ../outside');
   });
 
@@ -186,33 +175,26 @@ describe('applyWorkspaceSyncArtifacts', () => {
     }));
 
     const syncArtifacts = {
-      ...createWorkspaceSyncArtifacts({
+      ...createWorkspaceSyncArtifactsFromManifest({
         currentManifest,
-        workspaceExportArtifacts: createScmSourceControllerWorkspaceExportArtifacts({
-          manifest: { entries: [], fingerprint: 'sha256:empty' },
-          blobContentsByDigest: new Map(),
-          sourceControllerMetadata: null,
-        }),
-      }),
-      changedWorkspaceArtifacts: createScmSourceControllerWorkspaceExportArtifacts({
-        manifest: {
+        nextManifest: {
           entries: [
             {
-              kind: 'symlink' as const,
+              kind: 'symlink',
               relativePath: 'escape-link',
               target: '../outside',
             },
           ],
-          fingerprint: 'sha256:escape',
         },
-        blobContentsByDigest: new Map(),
-        sourceControllerMetadata: null,
       }),
     };
 
     await expect(applyWorkspaceSyncArtifacts({
       targetPath: targetRoot,
       syncArtifacts,
+      blobProvider: {
+        getBlobFilePath: () => null,
+      },
     })).rejects.toThrow('Workspace transfer symlink target escapes target: ../outside');
   });
 
@@ -225,22 +207,34 @@ describe('applyWorkspaceSyncArtifacts', () => {
     }));
 
     const sourceRoot = await makeTempDir('handoff-sync-apply-parent-conflict-source-');
-    await writeFile(join(sourceRoot, 'src-index.ts'), 'export const ready = true;\n', 'utf8');
+    await mkdir(join(sourceRoot, 'src'), { recursive: true });
+    await writeFile(join(sourceRoot, 'src', 'index.ts'), 'export const ready = true;\n', 'utf8');
 
-    const workspaceExportArtifacts = await buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries({
+    const nextManifest: WorkspaceManifest = {
       entries: [
-        { relativePath: 'src/index.ts', sourcePath: join(sourceRoot, 'src-index.ts') },
+        {
+          kind: 'directory',
+          relativePath: 'src',
+        },
+        {
+          kind: 'file',
+          relativePath: 'src/index.ts',
+          digest: await hashWorkspaceFile({ filePath: join(sourceRoot, 'src', 'index.ts') }),
+          executable: false,
+          sizeBytes: Buffer.byteLength('export const ready = true;\n'),
+        },
       ],
-    });
+    };
 
-    const syncArtifacts = createWorkspaceSyncArtifacts({
+    const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
       currentManifest,
-      workspaceExportArtifacts,
+      nextManifest,
     });
 
     await expect(applyWorkspaceSyncArtifacts({
       targetPath: targetRoot,
       syncArtifacts,
+      blobProvider: createSourcePathBlobProviderFromManifest(sourceRoot, nextManifest),
     })).resolves.toEqual({ targetPath: targetRoot });
     await expect(readFile(join(targetRoot, 'src/index.ts'), 'utf8')).resolves.toBe('export const ready = true;\n');
   });
@@ -261,22 +255,20 @@ describe('applyWorkspaceSyncArtifacts', () => {
     await writeFile(join(sourceRoot, '000-first.txt'), 'new\n', 'utf8');
     await writeFile(join(sourceRoot, 'locked', 'new.txt'), 'new-file\n', 'utf8');
 
-    const workspaceExportArtifacts = await buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries({
-      entries: [
-        { relativePath: '000-first.txt', sourcePath: join(sourceRoot, '000-first.txt') },
-        { relativePath: 'locked/new.txt', sourcePath: join(sourceRoot, 'locked', 'new.txt') },
-      ],
-    });
+    const nextManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
+      workspaceRoot: sourceRoot,
+    }));
 
-    const syncArtifacts = createWorkspaceSyncArtifacts({
+    const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
       currentManifest,
-      workspaceExportArtifacts,
+      nextManifest,
     });
 
     try {
       await expect(applyWorkspaceSyncArtifacts({
         targetPath: targetRoot,
         syncArtifacts,
+        blobProvider: createSourcePathBlobProviderFromManifest(sourceRoot, nextManifest),
       })).rejects.toMatchObject({
         code: expect.stringMatching(/^(EACCES|EPERM)$/),
       });
@@ -301,16 +293,13 @@ describe('applyWorkspaceSyncArtifacts', () => {
     await writeFile(join(sourceRoot, '000-first.txt'), 'new\n', 'utf8');
     await writeFile(join(sourceRoot, 'nested', 'new.txt'), 'new-file\n', 'utf8');
 
-    const workspaceExportArtifacts = await buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries({
-      entries: [
-        { relativePath: '000-first.txt', sourcePath: join(sourceRoot, '000-first.txt') },
-        { relativePath: 'nested/new.txt', sourcePath: join(sourceRoot, 'nested', 'new.txt') },
-      ],
-    });
+    const nextManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
+      workspaceRoot: sourceRoot,
+    }));
 
-    const syncArtifacts = createWorkspaceSyncArtifacts({
+    const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
       currentManifest,
-      workspaceExportArtifacts,
+      nextManifest,
     });
 
     const params: Parameters<typeof applyWorkspaceSyncArtifacts>[0] & Readonly<{
@@ -318,6 +307,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
     }> = {
       targetPath: targetRoot,
       syncArtifacts,
+      blobProvider: createSourcePathBlobProviderFromManifest(sourceRoot, nextManifest),
       assertCanContinue: async () => {
         const firstFile = await readFile(join(targetRoot, '000-first.txt'), 'utf8').catch(() => null);
         if (firstFile === 'new\n') {

@@ -2,7 +2,7 @@ import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import type { WorkspaceStagingRoot } from './createWorkspaceStagingRoot';
 import { stageWorkspaceDirectory, type StagedWorkspaceDirectory } from './stageWorkspaceDirectory';
-import { stageWorkspaceFileEntry, stageWorkspaceFileEntryFromFile } from './stageWorkspaceFileEntry';
+import { stageWorkspaceFileEntry } from './stageWorkspaceFileEntry';
 import type { StagedWorkspaceFileBlob } from './stageWorkspaceFileBlob';
 import { stageWorkspaceSymlink, type StagedWorkspaceSymlink } from './stageWorkspaceSymlink';
 import { verifyStagedWorkspace, type VerifyStagedWorkspaceResult } from './verifyStagedWorkspace';
@@ -22,33 +22,9 @@ export type WorkspaceExportBlobProvider = Readonly<{
     getBlobFilePath: (digest: string) => string | null | undefined;
 }>;
 
-type WorkspaceBlobSource = Readonly<
-    | {
-        kind: 'content';
-        content: Uint8Array;
-    }
-    | {
-        kind: 'file';
-        sourceFilePath: string;
-    }
->;
-
-function readRequiredBlobContent(params: Readonly<{
-    blobContentsByDigest: ReadonlyMap<string, Uint8Array>;
-    digest: string;
-}>): Uint8Array {
-    const blobContent = params.blobContentsByDigest.get(params.digest);
-    if (blobContent !== undefined) {
-        return blobContent;
-    }
-
-    throw new Error(`Missing staged blob contents for digest ${params.digest}`);
-}
-
 export async function stageWorkspaceEntries(params: Readonly<{
     stagingRoot: WorkspaceStagingRoot;
     expectedManifest: WorkspaceManifest;
-    blobContentsByDigest?: ReadonlyMap<string, Uint8Array>;
     blobProvider?: WorkspaceExportBlobProvider;
 }>): Promise<StageWorkspaceEntriesResult> {
     const fileEntries = params.expectedManifest.entries.filter(
@@ -61,8 +37,7 @@ export async function stageWorkspaceEntries(params: Readonly<{
         (entry): entry is WorkspaceSymlinkManifestEntry => entry.kind === 'symlink',
     );
     const uniqueBlobDigests = [...new Set(fileEntries.map((entry) => entry.digest))];
-    const blobSourcesByDigest = resolveWorkspaceBlobSources({
-        blobContentsByDigest: params.blobContentsByDigest,
+    const blobSourcePathsByDigest = resolveWorkspaceBlobSourcePaths({
         blobProvider: params.blobProvider,
         digests: uniqueBlobDigests,
     });
@@ -86,26 +61,18 @@ export async function stageWorkspaceEntries(params: Readonly<{
 
     const stagedBlobsByDigest = new Map<string, StagedWorkspaceFileBlob>();
     for (const entry of fileEntries) {
-        const blobSource = blobSourcesByDigest.get(entry.digest);
-        if (blobSource === undefined) {
-            throw new Error(`Missing staged blob contents for digest ${entry.digest}`);
+        const sourceFilePath = blobSourcePathsByDigest.get(entry.digest);
+        if (!sourceFilePath) {
+            throw new Error(`Missing staged blob source for digest ${entry.digest}`);
         }
 
-        const stagedFile = blobSource.kind === 'file'
-            ? await stageWorkspaceFileEntryFromFile({
-                stagingRoot: params.stagingRoot,
-                relativePath: entry.relativePath,
-                digest: entry.digest,
-                sourceFilePath: blobSource.sourceFilePath,
-                executable: entry.executable,
-            })
-            : await stageWorkspaceFileEntry({
-                stagingRoot: params.stagingRoot,
-                relativePath: entry.relativePath,
-                digest: entry.digest,
-                content: blobSource.content,
-                executable: entry.executable,
-            });
+        const stagedFile = await stageWorkspaceFileEntry({
+            stagingRoot: params.stagingRoot,
+            relativePath: entry.relativePath,
+            digest: entry.digest,
+            sourceFilePath,
+            executable: entry.executable,
+        });
         stagedBlobsByDigest.set(stagedFile.blob.digest, stagedFile.blob);
     }
     const stagedBlobs = [...stagedBlobsByDigest.values()];
@@ -125,32 +92,24 @@ export async function stageWorkspaceEntries(params: Readonly<{
     };
 }
 
-function resolveWorkspaceBlobSources(params: Readonly<{
-    blobContentsByDigest?: ReadonlyMap<string, Uint8Array>;
+function resolveWorkspaceBlobSourcePaths(params: Readonly<{
     blobProvider?: WorkspaceExportBlobProvider;
     digests: readonly string[];
-}>): ReadonlyMap<string, WorkspaceBlobSource> {
-    const blobSources = new Map<string, WorkspaceBlobSource>();
-
-    for (const digest of params.digests) {
-        const blobFilePath = params.blobProvider?.getBlobFilePath(digest);
-        if (blobFilePath !== undefined && blobFilePath !== null) {
-            blobSources.set(digest, {
-                kind: 'file',
-                sourceFilePath: blobFilePath,
-            });
-            continue;
-        }
-
-        if (params.blobContentsByDigest === undefined) {
-            throw new Error(`Missing staged blob contents for digest ${digest}`);
-        }
-
-        blobSources.set(digest, {
-            kind: 'content',
-            content: readRequiredBlobContent({ blobContentsByDigest: params.blobContentsByDigest, digest }),
-        });
+}>): ReadonlyMap<string, string> {
+    if (!params.blobProvider) {
+        throw new Error('Workspace staging requires a file-backed blobProvider (blobContentsByDigest is not supported)');
     }
 
-    return blobSources;
+    const blobSourcePaths = new Map<string, string>();
+
+    for (const digest of params.digests) {
+        const blobFilePath = params.blobProvider.getBlobFilePath(digest);
+        if (blobFilePath !== undefined && blobFilePath !== null) {
+            blobSourcePaths.set(digest, blobFilePath);
+            continue;
+        }
+        throw new Error(`Missing staged blob file for digest ${digest}`);
+    }
+
+    return blobSourcePaths;
 }

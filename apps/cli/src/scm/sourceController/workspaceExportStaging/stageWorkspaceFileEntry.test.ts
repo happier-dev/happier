@@ -36,7 +36,7 @@ describe('stageWorkspaceFileEntry', () => {
             stagingRoot,
             relativePath: 'docs/README.md',
             digest,
-            content,
+            sourceFilePath: digestSourcePath,
             executable: false,
         });
 
@@ -62,7 +62,7 @@ describe('stageWorkspaceFileEntry', () => {
             stagingRoot,
             relativePath: '../outside.txt',
             digest,
-            content,
+            sourceFilePath: digestSourcePath,
             executable: false,
         })).rejects.toThrow(/workspace root/i);
         await expect(access(join(stagingRoot.workspaceDirectory, 'outside.txt'))).rejects.toThrow();
@@ -74,11 +74,16 @@ describe('stageWorkspaceFileEntry', () => {
             stagingId: 'stage_file_entry_digest_mismatch',
         });
 
+        const wrongContent = Buffer.from('# wrong digest\n', 'utf8');
+        const sourceDirectory = await makeTempDir('workspace-staging-file-entry-digest-mismatch-source-');
+        const sourceFilePath = join(sourceDirectory, 'README.md');
+        await writeFile(sourceFilePath, wrongContent);
+
         await expect(stageWorkspaceFileEntry({
             stagingRoot,
             relativePath: 'README.md',
             digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
-            content: Buffer.from('# wrong digest\n', 'utf8'),
+            sourceFilePath,
             executable: true,
         })).rejects.toThrow(/digest mismatch/i);
         await expect(access(join(stagingRoot.workspaceDirectory, 'README.md'))).rejects.toThrow();
@@ -91,11 +96,15 @@ describe('stageWorkspaceFileEntry', () => {
             stagingId: 'missing_marker',
         });
 
+        const sourceDirectory = await makeTempDir('workspace-staging-file-entry-unverified-source-');
+        const sourceFilePath = join(sourceDirectory, 'README.md');
+        await writeFile(sourceFilePath, '# staged workspace\n', 'utf8');
+
         await expect(stageWorkspaceFileEntry({
             stagingRoot,
             relativePath: 'README.md',
             digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
-            content: Buffer.from('# staged workspace\n', 'utf8'),
+            sourceFilePath,
             executable: false,
         })).rejects.toThrow(/workspace staging root marker/i);
     });

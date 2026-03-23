@@ -6,7 +6,6 @@ import { resolveWorkspaceRelativePath } from '../workspaceExportPackaging/resolv
 
 import { type WorkspaceStagingRoot } from './createWorkspaceStagingRoot';
 import {
-    stageWorkspaceFileBlob,
     stageWorkspaceFileBlobFromFile,
     type StagedWorkspaceFileBlob,
 } from './stageWorkspaceFileBlob';
@@ -20,27 +19,6 @@ export type StagedWorkspaceFileEntry = Readonly<{
 }>;
 
 export async function stageWorkspaceFileEntry(params: Readonly<{
-    stagingRoot: WorkspaceStagingRoot;
-    relativePath: string;
-    digest: string;
-    content: Uint8Array;
-    executable: boolean;
-}>): Promise<StagedWorkspaceFileEntry> {
-    const stagedBlob = await stageWorkspaceFileBlob({
-        stagingRoot: params.stagingRoot,
-        digest: params.digest,
-        content: params.content,
-    });
-    return await materializeStagedWorkspaceFileEntry({
-        stagingRoot: params.stagingRoot,
-        relativePath: params.relativePath,
-        digest: params.digest,
-        executable: params.executable,
-        stagedBlob,
-    });
-}
-
-export async function stageWorkspaceFileEntryFromFile(params: Readonly<{
     stagingRoot: WorkspaceStagingRoot;
     relativePath: string;
     digest: string;

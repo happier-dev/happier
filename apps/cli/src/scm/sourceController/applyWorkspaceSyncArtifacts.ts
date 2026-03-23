@@ -420,7 +420,7 @@ async function applyChangedWorkspaceEntries(params: Readonly<{
 export async function applyWorkspaceSyncArtifacts(params: Readonly<{
     targetPath: string;
     syncArtifacts: WorkspaceSyncArtifacts;
-    blobProvider?: WorkspaceExportBlobProvider;
+    blobProvider: WorkspaceExportBlobProvider;
     registry?: ScmBackendRegistry;
     assertCanContinue?: () => Promise<void>;
 }>): Promise<Readonly<{ targetPath: string }>> {
@@ -451,7 +451,6 @@ export async function applyWorkspaceSyncArtifacts(params: Readonly<{
         const staged = await stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: params.syncArtifacts.changedWorkspaceArtifacts.manifest,
-            blobContentsByDigest: params.syncArtifacts.changedWorkspaceArtifacts.blobContentsByDigest,
             blobProvider: params.blobProvider,
         });
         if (!staged.verification.isVerified) {

@@ -17,17 +17,15 @@ function createManifest(entries: WorkspaceManifest['entries']): WorkspaceManifes
 function createWorkspaceExportArtifacts(
   input: Readonly<{
     manifest: WorkspaceManifest;
-    blobContentsByDigest: ReadonlyMap<string, Uint8Array>;
   }>,
 ): ScmSourceControllerWorkspaceExportArtifacts {
   return {
     manifest: input.manifest,
-    blobContentsByDigest: new Map(input.blobContentsByDigest),
   };
 }
 
 describe('workspaceSyncArtifacts', () => {
-  it('derives changed sync artifacts and required file blobs from manifest comparison', () => {
+  it('derives changed sync artifacts from manifest comparison without requiring inline file blobs', () => {
     const currentManifest = createManifest([
       {
         kind: 'directory',
@@ -74,10 +72,6 @@ describe('workspaceSyncArtifacts', () => {
           target: 'README.md',
         },
       ]),
-      blobContentsByDigest: new Map([
-        ['sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', Buffer.from('updated-readme', 'utf8')],
-        ['sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', Buffer.from('export {}\n', 'utf8')],
-      ]),
     });
 
     const syncArtifacts = createWorkspaceSyncArtifacts({
@@ -108,10 +102,6 @@ describe('workspaceSyncArtifacts', () => {
         sizeBytes: 6,
       },
     ]);
-    expect([...syncArtifacts.changedWorkspaceArtifacts.blobContentsByDigest.keys()]).toEqual([
-      'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-      'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-    ]);
   });
 
   it('returns an empty changed-artifact set when manifests are equivalent', () => {
@@ -134,7 +124,6 @@ describe('workspaceSyncArtifacts', () => {
           sizeBytes: 8,
         },
       ]),
-      blobContentsByDigest: new Map(),
     });
 
     const syncArtifacts = createWorkspaceSyncArtifacts({
@@ -145,7 +134,6 @@ describe('workspaceSyncArtifacts', () => {
     expect(syncArtifacts.comparison.hasChanges).toBe(false);
     expect(syncArtifacts.removedRelativePaths).toEqual([]);
     expect(syncArtifacts.changedWorkspaceArtifacts.manifest.entries).toEqual([]);
-    expect([...syncArtifacts.changedWorkspaceArtifacts.blobContentsByDigest.keys()]).toEqual([]);
   });
 
   it('derives changed sync artifacts without inline blobs for manifest-only transfer inputs', () => {
@@ -194,27 +182,5 @@ describe('workspaceSyncArtifacts', () => {
         sizeBytes: 12,
       },
     ]);
-    expect([...syncArtifacts.changedWorkspaceArtifacts.blobContentsByDigest.keys()]).toEqual([]);
-  });
-
-  it('fails closed when a required changed file blob is missing', () => {
-    const currentManifest = createManifest([]);
-    const workspaceExportArtifacts = createWorkspaceExportArtifacts({
-      manifest: createManifest([
-        {
-          kind: 'file',
-          relativePath: 'README.md',
-          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          executable: false,
-          sizeBytes: 8,
-        },
-      ]),
-      blobContentsByDigest: new Map(),
-    });
-
-    expect(() => createWorkspaceSyncArtifacts({
-      currentManifest,
-      workspaceExportArtifacts,
-    })).toThrow('Missing workspace blob for sync artifact: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   });
 });

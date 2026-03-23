@@ -32,16 +32,6 @@ function collectChangedNextEntries(comparison: WorkspaceManifestComparison): Wor
     ].sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
-function collectRequiredBlobDigests(entries: WorkspaceManifest['entries']): readonly string[] {
-    const digests = new Set<string>();
-    for (const entry of entries) {
-        if (entry.kind === 'file') {
-            digests.add(entry.digest);
-        }
-    }
-    return [...digests];
-}
-
 function createChangedWorkspaceManifest(changedEntries: WorkspaceManifest['entries']): WorkspaceManifest {
     const manifest: WorkspaceManifest = {
         entries: changedEntries.map((entry) => ({ ...entry })),
@@ -52,28 +42,6 @@ function createChangedWorkspaceManifest(changedEntries: WorkspaceManifest['entri
         });
     }
     return manifest;
-}
-
-function createChangedWorkspaceArtifacts(params: Readonly<{
-    changedEntries: WorkspaceManifest['entries'];
-    sourceArtifacts: ScmSourceControllerWorkspaceExportArtifacts;
-}>): ScmSourceControllerWorkspaceExportArtifacts {
-    const requiredBlobDigests = collectRequiredBlobDigests(params.changedEntries);
-    const blobContentsByDigest = new Map<string, Uint8Array>();
-
-    for (const digest of requiredBlobDigests) {
-        const blobContent = params.sourceArtifacts.blobContentsByDigest.get(digest);
-        if (!blobContent) {
-            throw new Error(`Missing workspace blob for sync artifact: ${digest}`);
-        }
-        blobContentsByDigest.set(digest, blobContent);
-    }
-
-    return createScmSourceControllerWorkspaceExportArtifacts({
-        manifest: createChangedWorkspaceManifest(params.changedEntries),
-        blobContentsByDigest,
-        sourceControllerMetadata: params.sourceArtifacts.sourceControllerMetadata ?? null,
-    });
 }
 
 function createWorkspaceSyncArtifactsCore(params: Readonly<{
@@ -118,7 +86,6 @@ export function createWorkspaceSyncArtifactsFromManifest(params: Readonly<{
         removedRelativePaths: syncArtifacts.comparison.removed.map((entry) => entry.relativePath),
         changedWorkspaceArtifacts: createScmSourceControllerWorkspaceExportArtifacts({
             manifest: createChangedWorkspaceManifest(syncArtifacts.changedEntries),
-            blobContentsByDigest: new Map(),
             sourceControllerMetadata: params.sourceControllerMetadata ?? null,
         }),
     };
@@ -128,19 +95,9 @@ export function createWorkspaceSyncArtifacts(params: Readonly<{
     currentManifest: WorkspaceManifest;
     workspaceExportArtifacts: ScmSourceControllerWorkspaceExportArtifacts;
 }>): WorkspaceSyncArtifacts {
-    const syncArtifacts = createWorkspaceSyncArtifactsCore({
+    return createWorkspaceSyncArtifactsFromManifest({
         currentManifest: params.currentManifest,
         nextManifest: params.workspaceExportArtifacts.manifest,
+        sourceControllerMetadata: params.workspaceExportArtifacts.sourceControllerMetadata ?? null,
     });
-
-    return {
-        currentManifest: syncArtifacts.currentManifest,
-        nextManifest: syncArtifacts.nextManifest,
-        comparison: syncArtifacts.comparison,
-        removedRelativePaths: syncArtifacts.comparison.removed.map((entry) => entry.relativePath),
-        changedWorkspaceArtifacts: createChangedWorkspaceArtifacts({
-            changedEntries: syncArtifacts.changedEntries,
-            sourceArtifacts: params.workspaceExportArtifacts,
-        }),
-    };
 }

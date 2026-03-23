@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-    buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries,
+    buildScmSourceControllerWorkspaceExportArtifactsWithBlobProviderFromTransferEntries,
     createScmSourceControllerWorkspaceExportArtifacts,
 } from './workspaceExportArtifacts';
 
@@ -32,7 +32,7 @@ describe('sourceController workspace export artifacts', () => {
         await writeFile(join(root, 'README.md'), 'hello\n');
         await symlink('../README.md', join(root, 'docs', 'readme-link'));
 
-        const artifacts = await buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries({
+        const { workspaceExportArtifacts: artifacts, blobProvider } = await buildScmSourceControllerWorkspaceExportArtifactsWithBlobProviderFromTransferEntries({
             entries: [
                 { relativePath: 'docs/readme-link', sourcePath: join(root, 'docs', 'readme-link') },
                 { relativePath: 'bin/run.sh', sourcePath: join(root, 'bin', 'run.sh') },
@@ -57,8 +57,8 @@ describe('sourceController workspace export artifacts', () => {
         );
         expect(shellEntries).toHaveLength(2);
         expect(new Set(shellEntries.map((entry) => entry.digest)).size).toBe(1);
-        expect(artifacts.blobContentsByDigest.size).toBe(2);
-        expect(Buffer.from(artifacts.blobContentsByDigest.get(shellEntries[0]!.digest) ?? []).toString('utf8')).toBe('#!/bin/sh\necho hi\n');
+        expect(artifacts).not.toHaveProperty('blobContentsByDigest');
+        expect(blobProvider.getBlobFilePath(shellEntries[0]!.digest)).toBe(join(root, 'bin', 'run.sh'));
     });
 
     it('skips unreadable transfer entries when the caller marks the access error as ignorable', async () => {
@@ -68,7 +68,7 @@ describe('sourceController workspace export artifacts', () => {
         await chmod(join(root, 'blocked.txt'), 0o000);
 
         try {
-            const artifacts = await buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries({
+            const { workspaceExportArtifacts: artifacts } = await buildScmSourceControllerWorkspaceExportArtifactsWithBlobProviderFromTransferEntries({
                 entries: [
                     { relativePath: 'README.md', sourcePath: join(root, 'README.md') },
                     { relativePath: 'blocked.txt', sourcePath: join(root, 'blocked.txt') },
@@ -86,7 +86,7 @@ describe('sourceController workspace export artifacts', () => {
         }
     });
 
-    it('clones manifests and blob maps and omits null source-controller metadata', () => {
+    it('clones the manifest and omits null source-controller metadata for manifest-only inputs', () => {
         const originalManifest = {
             entries: [{
                 relativePath: 'README.md',
@@ -97,13 +97,9 @@ describe('sourceController workspace export artifacts', () => {
             }],
             fingerprint: 'sha256:test',
         };
-        const originalBlobContentsByDigest = new Map<string, Uint8Array>([
-            ['sha256:test', Buffer.from('hello\n', 'utf8')],
-        ]);
 
         const artifacts = createScmSourceControllerWorkspaceExportArtifacts({
             manifest: originalManifest,
-            blobContentsByDigest: originalBlobContentsByDigest,
             sourceControllerMetadata: null,
         });
 
@@ -114,7 +110,6 @@ describe('sourceController workspace export artifacts', () => {
             sizeBytes: 7,
             executable: true,
         };
-        originalBlobContentsByDigest.set('sha256:other', Buffer.from('other\n', 'utf8'));
 
         expect(artifacts.manifest).toEqual({
             entries: [{
@@ -126,7 +121,7 @@ describe('sourceController workspace export artifacts', () => {
             }],
             fingerprint: 'sha256:test',
         });
-        expect(artifacts.blobContentsByDigest.has('sha256:other')).toBe(false);
+        expect(artifacts).not.toHaveProperty('blobContentsByDigest');
         expect(artifacts).not.toHaveProperty('sourceControllerMetadata');
     });
 });

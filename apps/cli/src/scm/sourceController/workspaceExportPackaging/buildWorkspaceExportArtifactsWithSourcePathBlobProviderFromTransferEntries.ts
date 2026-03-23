@@ -5,7 +5,7 @@ import type { WorkspaceManifest } from '@happier-dev/protocol';
 import type { WorkspaceExportBlobProvider } from '../workspaceExportStaging/stageWorkspaceEntries';
 
 import { buildWorkspaceManifestEntry, type WorkspaceManifestEntry } from './buildWorkspaceManifestEntry';
-import type { WorkspaceExportTransferEntry } from './buildWorkspaceExportArtifactsFromTransferEntries';
+import type { WorkspaceExportTransferEntry } from './workspaceExportTransferEntry';
 import { fingerprintWorkspaceManifest } from './fingerprintWorkspaceManifest';
 import { hashWorkspaceFile } from './hashWorkspaceFile';
 

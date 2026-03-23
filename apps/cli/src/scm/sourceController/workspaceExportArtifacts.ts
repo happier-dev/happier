@@ -1,36 +1,20 @@
-import {
-    buildWorkspaceExportArtifactsFromTransferEntries,
-    type WorkspaceExportArtifacts,
-    type WorkspaceExportTransferEntry,
-} from './workspaceExportPackaging/buildWorkspaceExportArtifactsFromTransferEntries';
+import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import type { ScmSourceControllerWorkspaceTransferMetadata } from './workspaceTransfer';
+import type { WorkspaceExportBlobProvider } from './workspaceExportStaging/stageWorkspaceEntries';
+import { buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries } from './workspaceExportPackaging/buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries';
+import type { WorkspaceExportTransferEntry } from './workspaceExportPackaging/workspaceExportTransferEntry';
 
-export type ScmSourceControllerWorkspaceExportArtifacts = WorkspaceExportArtifacts & Readonly<{
+export type ScmSourceControllerWorkspaceExportArtifacts = Readonly<{
+    manifest: WorkspaceManifest;
     sourceControllerMetadata?: ScmSourceControllerWorkspaceTransferMetadata;
 }>;
 
 export type ScmSourceControllerWorkspaceExportTransferEntry = WorkspaceExportTransferEntry;
 
-export type ScmSourceControllerWorkspaceExportArtifactsWirePayload = Readonly<{
-    manifest: WorkspaceExportArtifacts['manifest'];
-    blobs?: readonly Readonly<{
-        digest: string;
-        contentBase64: string;
-    }>[];
-    sourceControllerMetadata?: ScmSourceControllerWorkspaceTransferMetadata;
-}>;
-
-export async function buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries(input: Readonly<{
-    entries: readonly ScmSourceControllerWorkspaceExportTransferEntry[];
-    shouldIgnoreAccessError?: (error: unknown) => boolean;
-}>): Promise<WorkspaceExportArtifacts> {
-    return await buildWorkspaceExportArtifactsFromTransferEntries(input);
-}
-
 export function cloneScmSourceControllerWorkspaceExportManifest(
-    manifest: WorkspaceExportArtifacts['manifest'],
-): WorkspaceExportArtifacts['manifest'] {
+    manifest: ScmSourceControllerWorkspaceExportArtifacts['manifest'],
+): ScmSourceControllerWorkspaceExportArtifacts['manifest'] {
     return {
         entries: manifest.entries.map((entry) => ({ ...entry })),
         fingerprint: manifest.fingerprint,
@@ -38,41 +22,32 @@ export function cloneScmSourceControllerWorkspaceExportManifest(
 }
 
 export function createScmSourceControllerWorkspaceExportArtifacts(input: Readonly<{
-    manifest: WorkspaceExportArtifacts['manifest'];
-    blobContentsByDigest: WorkspaceExportArtifacts['blobContentsByDigest'];
+    manifest: ScmSourceControllerWorkspaceExportArtifacts['manifest'];
     sourceControllerMetadata?: ScmSourceControllerWorkspaceTransferMetadata | null;
 }>): ScmSourceControllerWorkspaceExportArtifacts {
     return {
         manifest: cloneScmSourceControllerWorkspaceExportManifest(input.manifest),
-        blobContentsByDigest: new Map(input.blobContentsByDigest),
         ...(input.sourceControllerMetadata ? { sourceControllerMetadata: input.sourceControllerMetadata } : {}),
     };
 }
 
-export function createScmSourceControllerWorkspaceExportArtifactsWirePayload(
-    workspaceExportArtifacts: ScmSourceControllerWorkspaceExportArtifacts,
-): ScmSourceControllerWorkspaceExportArtifactsWirePayload {
-    const blobs = [...workspaceExportArtifacts.blobContentsByDigest.entries()].map(([digest, content]) => ({
-        digest,
-        contentBase64: Buffer.from(content).toString('base64'),
-    }));
-    return {
-        manifest: cloneScmSourceControllerWorkspaceExportManifest(workspaceExportArtifacts.manifest),
-        ...(blobs.length > 0 ? { blobs } : {}),
-        ...(workspaceExportArtifacts.sourceControllerMetadata
-            ? { sourceControllerMetadata: workspaceExportArtifacts.sourceControllerMetadata }
-            : {}),
-    };
-}
-
-export function parseScmSourceControllerWorkspaceExportArtifactsWirePayload(
-    wirePayload: ScmSourceControllerWorkspaceExportArtifactsWirePayload,
-): ScmSourceControllerWorkspaceExportArtifacts {
-    return createScmSourceControllerWorkspaceExportArtifacts({
-        manifest: wirePayload.manifest,
-        blobContentsByDigest: new Map(
-            (wirePayload.blobs ?? []).map((blob) => [blob.digest, Buffer.from(blob.contentBase64, 'base64')]),
-        ),
-        sourceControllerMetadata: wirePayload.sourceControllerMetadata ?? null,
+export async function buildScmSourceControllerWorkspaceExportArtifactsWithBlobProviderFromTransferEntries(input: Readonly<{
+    entries: readonly ScmSourceControllerWorkspaceExportTransferEntry[];
+    shouldIgnoreAccessError?: (error: unknown) => boolean;
+}>): Promise<Readonly<{
+    workspaceExportArtifacts: ScmSourceControllerWorkspaceExportArtifacts;
+    blobProvider: WorkspaceExportBlobProvider;
+}>> {
+    const packaged = await buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries({
+        entries: input.entries,
+        shouldIgnoreAccessError: input.shouldIgnoreAccessError,
     });
+
+    return {
+        workspaceExportArtifacts: createScmSourceControllerWorkspaceExportArtifacts({
+            manifest: packaged.manifest,
+            sourceControllerMetadata: null,
+        }),
+        blobProvider: packaged.blobProvider,
+    };
 }

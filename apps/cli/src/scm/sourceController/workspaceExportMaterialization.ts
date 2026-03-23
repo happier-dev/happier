@@ -90,7 +90,7 @@ export async function materializeWorkspaceExportArtifactsWithSourceController(pa
     workspaceExportArtifacts: ScmSourceControllerWorkspaceExportArtifacts;
     targetPath: string;
     conflictPolicy: ScmSourceControllerWorkspaceTransferConflictPolicy;
-    blobProvider?: WorkspaceExportBlobProvider;
+    blobProvider: WorkspaceExportBlobProvider;
     registry?: ScmBackendRegistry;
     sourcePath?: string;
     naming: WorkspaceExportMaterializationNaming;
@@ -131,7 +131,6 @@ export async function materializeWorkspaceExportArtifactsWithSourceController(pa
         const staged = await stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: params.workspaceExportArtifacts.manifest,
-            blobContentsByDigest: params.workspaceExportArtifacts.blobContentsByDigest,
             blobProvider: params.blobProvider,
         });
         if (!staged.verification.isVerified) {

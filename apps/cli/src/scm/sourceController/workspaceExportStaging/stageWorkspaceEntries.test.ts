@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hashWorkspaceFile } from '../workspaceExportPackaging/hashWorkspaceFile';
 import { createWorkspaceStagingRoot } from './createWorkspaceStagingRoot';
 import type { StagedWorkspaceDirectory } from './stageWorkspaceDirectory';
-import { stageWorkspaceEntries } from './stageWorkspaceEntries';
+import { stageWorkspaceEntries, type WorkspaceExportBlobProvider } from './stageWorkspaceEntries';
 import type { StagedWorkspaceFileBlob } from './stageWorkspaceFileBlob';
 import type { StagedWorkspaceSymlink } from './stageWorkspaceSymlink';
 
@@ -24,6 +24,7 @@ async function createFileEntryFixture(): Promise<Readonly<{
     manifest: WorkspaceManifest;
     digest: string;
     content: Uint8Array;
+    filePath: string;
 }>> {
     const fixtureDirectory = await makeTempDir('workspace-stage-entries-fixture-');
     const filePath = join(fixtureDirectory, 'README.md');
@@ -56,12 +57,9 @@ async function createFileEntryFixture(): Promise<Readonly<{
         },
         digest,
         content,
+        filePath,
     };
 }
-
-type WorkspaceExportBlobProvider = Readonly<{
-    getBlobFilePath: (digest: string) => string | null | undefined;
-}>;
 
 describe('stageWorkspaceEntries', () => {
     afterEach(async () => {
@@ -78,7 +76,9 @@ describe('stageWorkspaceEntries', () => {
         const result = await stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: fixture.manifest,
-            blobContentsByDigest: new Map([[fixture.digest, fixture.content]]),
+            blobProvider: {
+                getBlobFilePath: (digest: string) => (digest === fixture.digest ? fixture.filePath : null),
+            },
         });
 
         expect(result.stagedDirectories.map((entry: StagedWorkspaceDirectory) => entry.relativePath)).toEqual(['docs']);
@@ -99,7 +99,9 @@ describe('stageWorkspaceEntries', () => {
         await expect(stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: fixture.manifest,
-            blobContentsByDigest: new Map(),
+            blobProvider: {
+                getBlobFilePath: () => null,
+            },
         })).rejects.toThrow(fixture.digest);
         await expect(access(join(stagingRoot.workspaceDirectory, 'docs'))).rejects.toThrow();
         await expect(access(join(stagingRoot.workspaceDirectory, 'blobs', 'sha256'))).rejects.toThrow();
@@ -133,7 +135,9 @@ describe('stageWorkspaceEntries', () => {
         const result = await stageWorkspaceEntries({
             stagingRoot,
             expectedManifest,
-            blobContentsByDigest: new Map([[expectedDigest, Buffer.from('# staged workspace\n', 'utf8')]]),
+            blobProvider: {
+                getBlobFilePath: (digest: string) => (digest === expectedDigest ? filePath : null),
+            },
         });
 
         expect(result.verification.isVerified).toBe(false);
@@ -157,16 +161,32 @@ describe('stageWorkspaceEntries', () => {
         const result = await stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: fixture.manifest,
-            blobContentsByDigest: new Map([[fixture.digest, fixture.content]]),
             blobProvider,
-        } satisfies Parameters<typeof stageWorkspaceEntries>[0] & Readonly<{
-            blobProvider: WorkspaceExportBlobProvider;
-        }>);
+        });
 
         expect(blobProvider.getBlobFilePath).toHaveBeenCalledTimes(1);
         expect(blobProvider.getBlobFilePath).toHaveBeenCalledWith(fixture.digest);
         expect(result.stagedBlobs.map((entry: StagedWorkspaceFileBlob) => entry.digest)).toEqual([fixture.digest]);
         await expect(readFile(join(stagingRoot.workspaceDirectory, 'README.md'))).resolves.toEqual(fixture.content);
         expect(result.verification.isVerified).toBe(true);
+    });
+
+    it('requires a file-backed blobProvider and does not fall back to in-memory blobContentsByDigest', async () => {
+        const stagingRoot = await createWorkspaceStagingRoot({
+            parentDirectory: await makeTempDir('workspace-stage-entries-require-provider-'),
+            stagingId: 'stage_entries_require_provider',
+        });
+        const fixture = await createFileEntryFixture();
+
+        const legacyInput = {
+            stagingRoot,
+            expectedManifest: fixture.manifest,
+            blobContentsByDigest: new Map([[fixture.digest, fixture.content]]),
+        } as unknown as Parameters<typeof stageWorkspaceEntries>[0];
+
+        await expect(stageWorkspaceEntries(legacyInput)).rejects.toThrow(/blobProvider/i);
+
+        await expect(access(join(stagingRoot.workspaceDirectory, 'docs'))).rejects.toThrow();
+        await expect(access(join(stagingRoot.workspaceDirectory, 'blobs', 'sha256'))).rejects.toThrow();
     });
 });
