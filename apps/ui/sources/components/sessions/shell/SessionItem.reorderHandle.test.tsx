@@ -4,6 +4,7 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,21 +20,33 @@ vi.mock('react-native-gesture-handler', () => ({
     GestureDetector: (props: any) => React.createElement('GestureDetector', { gesture: props.gesture }, props.children),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             Platform: {
                 OS: 'web',
             },
-        }
-    );
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useHasUnreadMessages: () => false,
+            useProfile: () => ({ id: 'u1' }),
+            useSession: () => null,
+            useSessionListMeaningfulActivityAt: () => null,
+        });
+    },
 });
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
 
 vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
@@ -72,26 +85,6 @@ vi.mock('@/sync/ops', () => ({
     sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
     sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useHasUnreadMessages: () => false,
-    useProfile: () => ({ id: 'u1' }),
-    useSession: () => null,
-    useSessionListMeaningfulActivityAt: () => null,
-});
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 
 const sessionItemModulePromise = import('./SessionItem');
 

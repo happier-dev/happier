@@ -2,43 +2,44 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            Platform: {
-                                                            OS: 'web',
-                                                            select: (_: any) => 1,
-                                                        },
-                                                            ActivityIndicator: 'ActivityIndicator',
-                                                            View: 'View',
-                                                            Pressable: 'Pressable',
-                                                            ScrollView: 'ScrollView',
-                                                            AppState: {
-                                                            currentState: 'active',
-                                                            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                                                        },
-                                                        }
-    );
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (_: any) => 1,
+            },
+            ActivityIndicator: 'ActivityIndicator',
+            View: 'View',
+            Pressable: 'Pressable',
+            ScrollView: 'ScrollView',
+            AppState: {
+                currentState: 'active',
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: (key: string) => {
+                if (key === 'editorFocusModeEnabled') return false;
+                return null;
+            },
+            useLocalSettingMutable: () => [false, vi.fn()],
+        });
+    },
 });
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
@@ -84,22 +85,6 @@ vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
 vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
     SessionFileDetailsView: () => React.createElement('SessionFileDetailsView'),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: (key: string) => {
-        if (key === 'editorFocusModeEnabled') return false;
-        return null;
-    },
-    useLocalSettingMutable: () => [false, vi.fn()],
-});
-});
 
 describe('SessionDetailsPanel (commit resource)', () => {
     it('renders SessionCommitDetailsView for commit tabs that store sha in resource', async () => {

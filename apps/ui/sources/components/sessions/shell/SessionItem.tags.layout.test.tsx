@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,9 +18,50 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: vi.fn(),
+                alert: vi.fn(),
+            },
+        }).module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useHasUnreadMessages: () => false,
+                useProfile: () => ({
+                    id: 'u1',
+                    timestamp: 0,
+                    firstName: null,
+                    lastName: null,
+                    username: null,
+                    avatar: null,
+                    linkedProviders: [],
+                    connectedServices: [],
+                    connectedServicesV2: [],
+                }),
+                useSession: () => null,
+                useSessionListMeaningfulActivityAt: () => null,
+            },
+        });
+    },
 });
 
 vi.mock('@/constants/Typography', () => ({
@@ -27,17 +69,6 @@ vi.mock('@/constants/Typography', () => ({
         default: () => ({}),
     },
 }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'ios',
-                                    },
-                                }
-    );
-});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -95,34 +126,9 @@ vi.mock('@/sync/ops', () => ({
     sessionRename: vi.fn(async () => ({ success: true })),
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useHasUnreadMessages: () => false,
-    useProfile: () => ({ id: 'u1' }),
-    useSession: () => null,
-    useSessionListMeaningfulActivityAt: () => null,
-});
-});
-
 vi.mock('@/utils/time/formatShortRelativeTime', () => ({
     formatShortRelativeTime: () => '1m',
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: vi.fn(),
-            alert: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),

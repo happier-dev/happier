@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -156,38 +157,11 @@ vi.mock('react-native-reanimated', () => ({
     useAnimatedStyle: (fn: () => any) => fn(),
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                groupped: { background: '#f7f7f7', sectionTitle: '#333' },
-                textSecondary: '#666',
-                divider: '#ddd',
-                accent: { blue: '#07f' },
-                surface: '#fff',
-                modal: { border: '#ddd' },
-                shadow: { color: '#000' },
-            },
-        },
-    });
-});
-
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         default: () => ({}),
     },
 }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Platform: { OS: 'ios', select: (value: any) => value.ios ?? value.default },
-                                        TurboModuleRegistry: { get: () => ({}) },
-                                    }
-    );
-});
 
 vi.mock('@shopify/flash-list', async () => ({
     ...((await import('@/dev/testkit/mocks/flashList')) as typeof import('@/dev/testkit/mocks/flashList')).createCapturingFlashListMock({
@@ -207,10 +181,6 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
 }));
-
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-    pathname: '',
-}).module);
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: 'RecoveryKeyReminderBanner',
@@ -235,11 +205,6 @@ vi.mock('@/sync/domains/session/listing/sessionListOrderingStateV1', () => ({
 vi.mock('@/sync/domains/session/listing/deriveSessionListActivity', () => ({
     resolveSessionListSecondaryLineMode: ({ groupKind }: { groupKind?: string | null }) =>
         groupKind === 'date' ? 'path' : 'status',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
 }));
 
 vi.mock('@/utils/sessions/sessionUtils', () => ({
@@ -269,6 +234,71 @@ vi.mock('@/utils/platform/responsive', () => ({
     getDeviceType: () => 'phone',
 }));
 
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'ios', select: (value: any) => value.ios ?? value.default },
+            TurboModuleRegistry: { get: () => ({}) },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    groupped: { background: '#f7f7f7', sectionTitle: '#333' },
+                    textSecondary: '#666',
+                    divider: '#ddd',
+                    accent: { blue: '#07f' },
+                    surface: '#fff',
+                    modal: { border: '#ddd' },
+                    shadow: { color: '#000' },
+                },
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            pathname: '',
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'compactSessionView') return false;
+                    if (key === 'compactSessionViewMinimal') return false;
+                    if (key === 'sessionTagsEnabled') return true;
+                    return null;
+                },
+                useHasUnreadMessages: () => false,
+                useAllMachines: () => allMachines,
+                useSettingMutable: (key: string) => {
+                    if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
+                    if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
+                    if (key === 'workspaceLabelsV1') return [workspaceLabelsV1, setWorkspaceLabelsV1];
+                    if (key === 'collapsedGroupKeysV1') return [collapsedGroupKeysV1, setCollapsedGroupKeysV1];
+                    if (key === 'sessionListGroupOrderV1') return [{}, vi.fn()];
+                    return [null, vi.fn()];
+                },
+                storage: createStorageStoreMock(storageState),
+            },
+        });
+    },
+});
+
 vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (_fn: unknown) => [false, vi.fn()],
 }));
@@ -287,13 +317,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionMock(sessionId),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
@@ -339,32 +362,6 @@ let mockVisibleSessionListViewData: any[] = [
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     useVisibleSessionListViewData: () => mockVisibleSessionListViewData,
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'compactSessionView') return false;
-                if (key === 'compactSessionViewMinimal') return false;
-                if (key === 'sessionTagsEnabled') return true;
-                return null;
-            },
-            useHasUnreadMessages: () => false,
-            useAllMachines: () => allMachines,
-            useSettingMutable: (key: string) => {
-                if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
-                if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
-                if (key === 'workspaceLabelsV1') return [workspaceLabelsV1, setWorkspaceLabelsV1];
-                if (key === 'collapsedGroupKeysV1') return [collapsedGroupKeysV1, setCollapsedGroupKeysV1];
-                if (key === 'sessionListGroupOrderV1') return [{}, vi.fn()];
-                return [null, vi.fn()];
-            },
-            storage: createStorageStoreMock(storageState),
-        },
-    });
-});
 
 vi.mock('@/utils/system/requestReview', () => ({
     requestReview: vi.fn(),

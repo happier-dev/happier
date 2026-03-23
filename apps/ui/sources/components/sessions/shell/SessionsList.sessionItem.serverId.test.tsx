@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,6 +23,52 @@ const themeColors = vi.hoisted(() => ({
 }));
 
 vi.mock('react-native-reanimated', () => ({}));
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'web' },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: themeColors,
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useHasUnreadMessages: () => false,
+                useProfile: () => ({
+                    id: 'u1',
+                    timestamp: 0,
+                    firstName: null,
+                    lastName: null,
+                    username: null,
+                    avatar: null,
+                    linkedProviders: [],
+                    connectedServices: [],
+                    connectedServicesV2: [],
+                }),
+                useSession: () => null,
+                useSessionListMeaningfulActivityAt: () => null,
+            },
+        });
+    },
+});
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
@@ -33,25 +80,11 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
 }));
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: themeColors,
-    });
-});
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         default: () => ({}),
     },
 }));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                Platform: { OS: 'web' },
-                            }
-    );
-});
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
@@ -103,35 +136,9 @@ vi.mock('@/sync/ops', async (importOriginal) => {
         },
     });
 });
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useHasUnreadMessages: () => false,
-            useProfile: () => ({
-                id: 'u1',
-                timestamp: 0,
-                firstName: null,
-                lastName: null,
-                username: null,
-                avatar: null,
-                linkedProviders: [],
-                connectedServices: [],
-                connectedServicesV2: [],
-            }),
-            useSession: () => null,
-            useSessionListMeaningfulActivityAt: () => null,
-        },
-    });
-});
 vi.mock('@/utils/time/formatShortRelativeTime', () => ({
     formatShortRelativeTime: () => '1m',
 }));
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key: string) => key,
-}));
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
     PinSlashIcon: (props: Record<string, unknown>) => React.createElement('PinSlashIcon', props),

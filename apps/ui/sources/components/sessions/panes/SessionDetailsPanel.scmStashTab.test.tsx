@@ -2,28 +2,40 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            Platform: {
-                                                            OS: 'web',
-                                                        },
-                                                            View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
-                                                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                                            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-                                                        }
-    );
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock(
+            {
+                Platform: {
+                    OS: 'web',
+                },
+                View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
+                Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+            },
+        );
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: (key: string) => {
+                if (key === 'editorFocusModeEnabled') return false;
+                return null;
+            },
+            useLocalSettingMutable: () => [false, vi.fn()],
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -53,22 +65,6 @@ const SessionScmStashDetailsViewMock = vi.fn((props: any) => React.createElement
 vi.mock('@/components/sessions/files/views/SessionScmStashDetailsView', () => ({
     SessionScmStashDetailsView: (props: any) => SessionScmStashDetailsViewMock(props),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: (key: string) => {
-        if (key === 'editorFocusModeEnabled') return false;
-        return null;
-    },
-    useLocalSettingMutable: () => [false, vi.fn()],
-});
-});
 
 const scopeState = {
     details: {
@@ -103,4 +99,3 @@ describe('SessionDetailsPanel (scmStash)', () => {
         expect(SessionScmStashDetailsViewMock.mock.calls[0]?.[0]?.sessionId).toBe('s1');
     });
 });
-

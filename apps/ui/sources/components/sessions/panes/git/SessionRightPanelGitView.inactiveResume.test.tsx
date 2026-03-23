@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionResumeProvider } from '@/components/sessions/model/SessionResumeContext';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,28 +16,32 @@ let machineRpcTargetAvailable = false;
 let sessionPath: string | null = '/repo';
 let projectPath: string | null = '/repo';
 
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                                    View: (props: any) => React.createElement('View', props, props.children),
-                                                                    ActivityIndicator: 'ActivityIndicator',
-                                                                    Platform: {
-                                                                    OS: 'web',
-                                                                    select: (value: any) => value?.default ?? null,
-                                                                },
-                                                                    AppState: {
-                                                                    addEventListener: () => ({ remove: () => {} }),
-                                                                },
-                                                                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installSessionDetailsPanelCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: () => null,
+            useProjectForSession: () => (
+                projectPath
+                    ? { key: { machineId: 'm1', path: projectPath } }
+                    : null
+            ),
+            useProjectSessions: () => [],
+            useAllMachines: () => (
+                machineReachable
+                    ? [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
+                    : [{ id: 'm1', active: false, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
+            ),
+            useSession: () => ({ active: false, metadata: { machineId: 'm1', path: sessionPath } }),
+            useSessionProjectScmCommitSelectionPaths: () => [],
+            useSessionProjectScmCommitSelectionPatches: () => [],
+            useSessionProjectScmInFlightOperation: () => null,
+            useSessionProjectScmOperationLog: () => [],
+            useSessionProjectScmSnapshot: () => null,
+            useSessionProjectScmSnapshotError: () => ({ message: 'RPC method not available', at: 1 }),
+            useSessionProjectScmTouchedPaths: () => [],
+        });
+    },
 });
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
@@ -89,32 +94,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: () => null,
-    useProjectForSession: () => (
-            projectPath
-                ? { key: { machineId: 'm1', path: projectPath } }
-                : null
-        ),
-    useProjectSessions: () => [],
-    useAllMachines: () => (
-            machineReachable
-                ? [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
-                : [{ id: 'm1', active: false, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
-        ),
-    useSession: () => ({ active: false, metadata: { machineId: 'm1', path: sessionPath } }),
-    useSessionProjectScmCommitSelectionPaths: () => [],
-    useSessionProjectScmCommitSelectionPatches: () => [],
-    useSessionProjectScmInFlightOperation: () => null,
-    useSessionProjectScmOperationLog: () => [],
-    useSessionProjectScmSnapshot: () => null,
-    useSessionProjectScmSnapshotError: () => ({ message: 'RPC method not available', at: 1 }),
-    useSessionProjectScmTouchedPaths: () => [],
-});
-});
-
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
@@ -150,11 +129,6 @@ vi.mock('@/scm/scmStatusSync', () => ({
         invalidateFromUserAndAwait: vi.fn(),
     },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('SessionRightPanelGitView (inactive session resume)', () => {
     beforeEach(() => {

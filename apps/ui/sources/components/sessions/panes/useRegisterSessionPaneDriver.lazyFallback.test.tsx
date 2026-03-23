@@ -5,6 +5,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,27 +24,14 @@ vi.mock('@/components/appShell/panes/AppPaneProvider', () => {
     };
 });
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                        ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-                                                        View: (props: any) => React.createElement('View', props, props.children),
-                                                    }
-    );
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
+            View: (props: any) => React.createElement('View', props, props.children),
+        });
+    },
 });
 
 vi.mock('./SessionRightPanel', () => ({

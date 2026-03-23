@@ -1,53 +1,68 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { SessionDetailsPanel } from './SessionDetailsPanel';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            Platform: {
-                                                            OS: 'web',
-                                                            select: (_: any) => 1,
-                                                        },
-                                                            AppState: {
-                                                            currentState: 'active',
-                                                            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                                                        },
-                                                            ActivityIndicator: 'ActivityIndicator',
-                                                            View: 'View',
-                                                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                                            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-                                                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-                accent: { indigo: '#00f' },
-                shadow: { color: '#000' },
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (_: any) => 1,
             },
-        },
-    });
+            AppState: {
+                currentState: 'active',
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+            ActivityIndicator: 'ActivityIndicator',
+            View: 'View',
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#fff',
+                    surfaceHigh: '#f5f5f5',
+                    divider: '#eee',
+                    text: '#000',
+                    textSecondary: '#666',
+                    accent: { indigo: '#00f' },
+                    shadow: { color: '#000' },
+                },
+            },
+        });
+    },
+    icons: async () => ({
+        Octicons: 'Octicons',
+        Ionicons: 'Ionicons',
+    }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useLocalSetting: ((key: string) => {
+                    if (key === 'editorFocusModeEnabled') return false;
+                    return null;
+                }) as any,
+                useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+            },
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -68,25 +83,6 @@ vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
 vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
     SessionEmbeddedTerminalPane: () => React.createElement('SessionEmbeddedTerminalPane'),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useLocalSetting: ((key: string) => {
-                if (key === 'editorFocusModeEnabled') return false;
-                return null;
-            }) as any,
-            useLocalSettingMutable: (() => [false, vi.fn()]) as any,
-        },
-    });
-});
 
 const scopeState = {
     details: {
@@ -111,6 +107,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 
 describe('SessionDetailsPanel (active tab fallback)', () => {
     it('marks only the last tab active when activeTabKey is missing', async () => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
 

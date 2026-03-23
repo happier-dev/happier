@@ -9,6 +9,7 @@ import type { ResumeSessionResult } from '@/sync/ops/sessions';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -88,84 +89,188 @@ vi.mock('expo-linear-gradient', () => ({
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                View: 'View',
-                                Text: 'Text',
-                                Pressable: 'Pressable',
-                                ActivityIndicator: 'ActivityIndicator',
-                                Easing: {
-                                    bezier: vi.fn(() => ({})),
-                                    linear: {},
-                                },
-                                Animated: {
-                                    View: 'Animated.View',
-                                    Value: class {
-                                        private _value: number;
-
-                                        constructor(value: number) {
-                                            this._value = value;
-                                        }
-
-                                        interpolate() {
-                                            return this;
-                                        }
-                                    },
-                                    timing: () => ({
-                                        start: (callback?: any) => callback?.({ finished: true }),
-                                    }),
-                                },
-                                AccessibilityInfo: {
-                                    isReduceMotionEnabled: vi.fn(async () => false),
-                                    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                                },
-                                Dimensions: {
-                                    get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
-                                },
-                                useWindowDimensions: () => ({ width: 1200, height: 800 }),
-                                Platform: {
-                                    OS: 'ios',
-                                    select: (spec: Record<string, unknown>) =>
-                                        spec && Object.prototype.hasOwnProperty.call(spec, 'ios')
-                                            ? (spec as any).ios
-                                            : (spec as any).default,
-                                },
-                            }
-    );
-});
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: themeColors,
-    });
-});
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: () => {},
     useIsFocused: () => true,
 }));
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        pathname: '/',
-        router: {
-            push: vi.fn(),
-            back: vi.fn(),
-            replace: vi.fn(),
-            setParams: vi.fn(),
-        },
-    }).module;
-});
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: authCredentials }),
 }));
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key: string) => key,
-}));
+
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ActivityIndicator: 'ActivityIndicator',
+            Easing: {
+                bezier: vi.fn(() => ({})),
+                linear: {},
+            },
+            Animated: {
+                View: 'Animated.View',
+                Value: class {
+                    private _value: number;
+
+                    constructor(value: number) {
+                        this._value = value;
+                    }
+
+                    interpolate() {
+                        return this;
+                    }
+                },
+                timing: () => ({
+                    start: (callback?: any) => callback?.({ finished: true }),
+                }),
+            },
+            AccessibilityInfo: {
+                isReduceMotionEnabled: vi.fn(async () => false),
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+            Dimensions: {
+                get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 1200, height: 800 }),
+            Platform: {
+                OS: 'ios',
+                select: (spec: Record<string, unknown>) =>
+                    spec && Object.prototype.hasOwnProperty.call(spec, 'ios')
+                        ? (spec as any).ios
+                        : (spec as any).default,
+            },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: themeColors,
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            pathname: '/',
+            router: {
+                push: vi.fn(),
+                back: vi.fn(),
+                replace: vi.fn(),
+                setParams: vi.fn(),
+            },
+        }).module;
+    },
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+        translate: (key: string) => key,
+    }),
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        const modalMock = createModalModuleMock();
+        return {
+            Modal: {
+                ...modalMock.module.Modal,
+                alert: (...args: any[]) => modalAlertSpy(...args),
+                confirm: (title?: string, message?: string, options?: Record<string, unknown>) =>
+                    modalConfirmSpy(title, message, options),
+            },
+        };
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        const session: any = {
+            id: 's1',
+            seq: 0,
+            presence: Date.now() - 60_000,
+            active: false,
+            accessLevel: 'edit',
+            pendingVersion: 2,
+            metadata: {
+                machineId: 'm-stale',
+                flavor: 'codex',
+                version: '0.0.0',
+                path: '/tmp/target',
+                homeDir: '/tmp',
+                codexSessionId: 'codex-session-1',
+            },
+            agentState: {},
+        };
+
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                storage: {
+                    getState: () => ({
+                        sessions: { s1: session },
+                        machines: {
+                            'm-target': {
+                                id: 'm-target',
+                                active: true,
+                                activeAt: 10,
+                                metadata: { host: 'workstation.local' },
+                            },
+                        },
+                        getProjectForSession: (sessionId: string) =>
+                            sessionId === 's1'
+                                ? {
+                                      key: {
+                                          machineId: 'm-target',
+                                          path: '/tmp/target',
+                                      },
+                                  }
+                                : null,
+                        settings: {
+                            sessionMessageSendMode: 'direct',
+                            sessionBusySteerSendPolicy: 'steerImmediately',
+                            codexBackendMode: 'acp',
+                        },
+                        sessionListViewDataByServerId: {},
+                    }),
+                } as any,
+                useSession: () => session,
+                useIsDataReady: () => true,
+                useRealtimeStatus: () => 'connected',
+                useSessionMessages: () => ({ messages: [], isLoaded: true }),
+                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+                useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+                useSessionReviewCommentsDrafts: () => [],
+                useSessionUsage: () => null,
+                useLocalSetting: <K extends keyof LocalSettings>(key: K) => {
+                    const overrides: Partial<LocalSettings> = {
+                        acknowledgedCliVersions: {},
+                        uiMultiPanePanelsEnabled: false,
+                        detailsPaneTabsBehavior: 'preview',
+                        rightPaneWidthPx: 360,
+                        rightPaneWidthBasisPx: 1200,
+                        detailsPaneWidthPx: 520,
+                        detailsPaneWidthBasisPx: 1200,
+                    };
+                    return (overrides[key] ?? localSettingsDefaults[key]) as LocalSettings[K];
+                },
+                useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [
+                    (({
+                        acknowledgedCliVersions: {},
+                        uiMultiPanePanelsEnabled: false,
+                        detailsPaneTabsBehavior: 'preview',
+                        rightPaneWidthPx: 360,
+                        rightPaneWidthBasisPx: 1200,
+                        detailsPaneWidthPx: 520,
+                        detailsPaneWidthBasisPx: 1200,
+                    } as Partial<LocalSettings>)[key] ?? localSettingsDefaults[key]) as LocalSettings[K],
+                    vi.fn<(value: LocalSettings[K]) => void>(),
+                ],
+                useSetting: <K extends keyof Settings>(key: K) =>
+                    ((settingsState.current[key as string] as Settings[K] | undefined) ?? settingsDefaults[key]) as Settings[K],
+                useSettings: () => ({ ...settingsDefaults, ...settingsState.current, experiments: true, featureToggles: {}, codexBackendMode: 'acp' }),
+                useAutomations: () => [],
+                useMachine: () => null,
+            },
+        });
+    },
+});
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
     AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
@@ -322,98 +427,6 @@ vi.mock('@/modal', async () => {
         },
     };
 });
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    const session: any = {
-        id: 's1',
-        seq: 0,
-        presence: Date.now() - 60_000,
-        active: false,
-        accessLevel: 'edit',
-        pendingVersion: 2,
-        metadata: {
-            machineId: 'm-stale',
-            flavor: 'codex',
-            version: '0.0.0',
-            path: '/tmp/target',
-            homeDir: '/tmp',
-            codexSessionId: 'codex-session-1',
-        },
-        agentState: {},
-    };
-
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            storage: {
-                getState: () => ({
-                    sessions: { s1: session },
-                    machines: {
-                        'm-target': {
-                            id: 'm-target',
-                            active: true,
-                            activeAt: 10,
-                            metadata: { host: 'workstation.local' },
-                        },
-                    },
-                    getProjectForSession: (sessionId: string) =>
-                        sessionId === 's1'
-                            ? {
-                                  key: {
-                                      machineId: 'm-target',
-                                      path: '/tmp/target',
-                                  },
-                              }
-                            : null,
-                    settings: {
-                        sessionMessageSendMode: 'direct',
-                        sessionBusySteerSendPolicy: 'steerImmediately',
-                        codexBackendMode: 'acp',
-                    },
-                    sessionListViewDataByServerId: {},
-                }),
-            } as any,
-            useSession: () => session,
-            useIsDataReady: () => true,
-            useRealtimeStatus: () => 'connected',
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
-            useSessionReviewCommentsDrafts: () => [],
-            useSessionUsage: () => null,
-            useLocalSetting: <K extends keyof LocalSettings>(key: K) => {
-                const overrides: Partial<LocalSettings> = {
-                    acknowledgedCliVersions: {},
-                    uiMultiPanePanelsEnabled: false,
-                    detailsPaneTabsBehavior: 'preview',
-                    rightPaneWidthPx: 360,
-                    rightPaneWidthBasisPx: 1200,
-                    detailsPaneWidthPx: 520,
-                    detailsPaneWidthBasisPx: 1200,
-                };
-                return (overrides[key] ?? localSettingsDefaults[key]) as LocalSettings[K];
-            },
-            useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [
-                (({
-                    acknowledgedCliVersions: {},
-                    uiMultiPanePanelsEnabled: false,
-                    detailsPaneTabsBehavior: 'preview',
-                    rightPaneWidthPx: 360,
-                    rightPaneWidthBasisPx: 1200,
-                    detailsPaneWidthPx: 520,
-                    detailsPaneWidthBasisPx: 1200,
-                } as Partial<LocalSettings>)[key] ?? localSettingsDefaults[key]) as LocalSettings[K],
-                vi.fn<(value: LocalSettings[K]) => void>(),
-            ],
-            useSetting: <K extends keyof Settings>(key: K) =>
-                ((settingsState.current[key as string] as Settings[K] | undefined) ?? settingsDefaults[key]) as Settings[K],
-            useSettings: () => ({ ...settingsDefaults, ...settingsState.current, experiments: true, featureToggles: {}, codexBackendMode: 'acp' }),
-            useAutomations: () => [],
-            useMachine: () => null,
-        },
-    });
-});
-
 describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
     const AppPaneProviderWrapper = ({ children }: { children?: React.ReactNode }) => (
         <AppPaneProvider>{children ?? null}</AppPaneProvider>

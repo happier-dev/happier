@@ -84,7 +84,7 @@ describe('SessionPaneLazyLoader', () => {
         expect(screen.getTextContent()).toContain('common.error');
         expect(screen.getTextContent()).toContain('common.retry');
 
-        const retryButton = screen.findByType('Pressable');
+        const retryButton = screen.findByProps({ accessibilityRole: 'button' });
         await pressTestInstanceAsync(retryButton, 'session-pane-loader retry button');
 
         expect(load).toHaveBeenCalledTimes(2);

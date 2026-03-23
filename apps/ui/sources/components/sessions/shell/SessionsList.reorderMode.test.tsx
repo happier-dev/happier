@@ -2,6 +2,7 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,35 +20,60 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'web',
-                                    },
-                                    FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ...rest }: any) => {
-                                            return React.createElement(
-                                                'FlatList',
-                                                { ...rest },
-                                                ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
-                                                (data ?? []).map((item: any, index: number) => {
-                                                    const key = keyExtractor ? keyExtractor(item, index) : String(index);
-                                                    return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-                                                }),
-                                            );
-                                        },
-                                }
-    );
-});
+const routerPushSpy = vi.fn();
+const setPinnedSessionKeysV1 = vi.fn();
+const setSessionListGroupOrderV1 = vi.fn();
+const setSessionTagsV1 = vi.fn();
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: vi.fn(), replace: vi.fn(), back: vi.fn() },
-        pathname: '',
-    });
-    return routerMock.module;
+let pinnedSessionKeysV1: string[] = [];
+let sessionListGroupOrderV1: Record<string, string[]> = {};
+let sessionTagsV1: Record<string, string[]> = {};
+
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+            FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ...rest }: any) =>
+                React.createElement(
+                    'FlatList',
+                    { ...rest },
+                    ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
+                    (data ?? []).map((item: any, index: number) => {
+                        const key = keyExtractor ? keyExtractor(item, index) : String(index);
+                        return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+                    }),
+                ),
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { push: routerPushSpy, replace: vi.fn(), back: vi.fn() },
+            pathname: '',
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
+        useAllMachines: () => [],
+        useSetting: (key: string) => {
+            if (key === 'compactSessionView') return false;
+            if (key === 'compactSessionViewMinimal') return false;
+            if (key === 'sessionTagsEnabled') return true;
+            return null;
+        },
+        useSettingMutable: (key: string) => {
+            if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
+            if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
+            if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
+            return [null, vi.fn()];
+        },
+    }),
 });
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
@@ -67,34 +93,7 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     formatPathRelativeToHome: (path: string) => path,
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-let pinnedSessionKeysV1: string[] = [];
-const setPinnedSessionKeysV1 = vi.fn();
-let sessionListGroupOrderV1: Record<string, string[]> = {};
-const setSessionListGroupOrderV1 = vi.fn();
-let sessionTagsV1: Record<string, string[]> = {};
-const setSessionTagsV1 = vi.fn();
 const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((params: any) => ({ gesture: undefined, animatedStyle: params ? {} : {} })));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-    useAllMachines: () => [],
-    useSetting: (key: string) => {
-        if (key === 'compactSessionView') return false;
-        if (key === 'compactSessionViewMinimal') return false;
-        if (key === 'sessionTagsEnabled') return true;
-        return null;
-    },
-    useSettingMutable: (key: string) => {
-        if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
-        if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
-        if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
-        return [null, vi.fn()];
-    },
-}));
 
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
     useResolvedActiveServerSelection: () => ({

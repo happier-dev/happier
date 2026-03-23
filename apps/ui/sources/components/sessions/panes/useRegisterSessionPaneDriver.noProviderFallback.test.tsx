@@ -2,35 +2,26 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            Platform: {
-                                                            OS: 'web',
-                                                            select: (value: any) => value?.default ?? null,
-                                                        },
-                                                            View: (props: any) => React.createElement('View', props, props.children),
-                                                            ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-                                                        }
-    );
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.default ?? null,
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
 });
 
 vi.mock('./SessionRightPanel', () => ({

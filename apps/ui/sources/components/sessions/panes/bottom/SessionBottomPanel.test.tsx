@@ -3,20 +3,14 @@ import renderer from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { SessionScreenTestIdsProvider } from '../../shell/sessionScreenTestIds';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let bottomActiveTabIdMock: string | null = 'terminal';
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            View: (props: any) => React.createElement('View', props, props.children),
-                                                        }
-    );
-});
+installSessionDetailsPanelCommonModuleMocks();
 
 const terminalPaneSpy = vi.fn();
 vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({

@@ -4,20 +4,54 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { AppPaneProvider, useAppPaneContext } from '../../appShell/panes/AppPaneProvider';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            Platform: {
-                                                            OS: 'web',
-                                                            select: (value: any) => value?.web ?? value?.default ?? null,
-                                                        },
-                                                        }
-    );
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.web ?? value?.default ?? null,
+            },
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: (key: string) => {
+                if (key === 'detailsPaneTabsBehavior') return 'preview';
+                if (key === 'uiMultiPanePanelsEnabled') return true;
+                return undefined;
+            },
+            useSession: () => ({ active: true, metadata: { path: sessionPathMock, machineId: 'm1' } }),
+            useMachine: () => null,
+            useSessionProjectScmSnapshot: () => scmSnapshotMock,
+            useSessionProjectScmSnapshotError: () => null,
+            useSessionProjectScmTouchedPaths: () => [],
+            useSessionProjectScmOperationLog: () => [],
+            useSessionProjectScmInFlightOperation: () => null,
+            useSessionProjectScmCommitSelectionPaths: () => [],
+            useSessionProjectScmCommitSelectionPatches: () => [],
+            useSetting: (key: string) => {
+                if (key === 'scmCommitStrategy') return 'atomic';
+                if (key === 'scmRemoteConfirmPolicy') return 'always';
+                if (key === 'scmPushRejectPolicy') return 'reject';
+                return undefined;
+            },
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useProjectForSession: () => ({ id: 'p1' }),
+            useProjectSessions: () => [],
+            storage: { getState: () => ({ sessions: {}, settings: {}, sessionListViewDataByServerId: {} }) },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
 });
 
 const invalidateFromUserAndAwaitSpy = vi.fn();
@@ -45,10 +79,6 @@ function buildScmSnapshotMock(capabilities: any) {
         capabilities,
     };
 }
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -172,11 +202,6 @@ vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: () => {},
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
@@ -190,36 +215,6 @@ vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForRevea
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: (key: string) => {
-            if (key === 'detailsPaneTabsBehavior') return 'preview';
-            if (key === 'uiMultiPanePanelsEnabled') return true;
-            return undefined;
-        },
-    useSession: () => ({ active: true, metadata: { path: sessionPathMock, machineId: 'm1' } }),
-    useMachine: () => null,
-    useSessionProjectScmSnapshot: () => scmSnapshotMock,
-    useSessionProjectScmSnapshotError: () => null,
-    useSessionProjectScmTouchedPaths: () => [],
-    useSessionProjectScmOperationLog: () => [],
-    useSessionProjectScmInFlightOperation: () => null,
-    useSessionProjectScmCommitSelectionPaths: () => [],
-    useSessionProjectScmCommitSelectionPatches: () => [],
-    useSetting: (key: string) => {
-            if (key === 'scmCommitStrategy') return 'atomic';
-            if (key === 'scmRemoteConfirmPolicy') return 'always';
-            if (key === 'scmPushRejectPolicy') return 'reject';
-            return undefined;
-        },
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useProjectForSession: () => ({ id: 'p1' }),
-    useProjectSessions: () => [],
-    storage: { getState: () => ({ sessions: {}, settings: {}, sessionListViewDataByServerId: {} }) },
-});
-});
 
 describe('SessionRightPanel git sub-tabs', () => {
     beforeEach(() => {

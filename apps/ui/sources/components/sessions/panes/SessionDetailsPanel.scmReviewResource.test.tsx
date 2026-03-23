@@ -2,25 +2,34 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            Platform: {
-                                                            OS: 'web',
-                                                        },
-                                                        }
-    );
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: (key: string) => {
+                if (key === 'editorFocusModeEnabled') return false;
+                return null;
+            },
+            useLocalSettingMutable: () => [false, vi.fn()],
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -70,11 +79,6 @@ vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
 vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
     SessionFileDetailsView: () => React.createElement('SessionFileDetailsView'),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('SessionDetailsPanel (scm review resource)', () => {
     it('renders SessionScmReviewDetailsView for scmReview tabs', async () => {

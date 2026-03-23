@@ -2,6 +2,7 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -13,28 +14,47 @@ let scmSnapshotMock: any = null;
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                                    View: (props: any) => React.createElement('View', props, props.children),
-                                                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                                                    Text: (props: any) => React.createElement('Text', props, props.children),
-                                                                    ActivityIndicator: 'ActivityIndicator',
-                                                                    Platform: {
-                                                                    OS: 'web',
-                                                                    select: (value: any) => value?.default ?? null,
-                                                                },
-                                                                    AppState: {
-                                                                    addEventListener: () => ({ remove: () => {} }),
-                                                                },
-                                                                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: any) => React.createElement('View', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            Text: (props: any) => React.createElement('Text', props, props.children),
+            ActivityIndicator: 'ActivityIndicator',
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.default ?? null,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSetting: () => null,
+            useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
+            useProjectForSession: () => null,
+            useProjectSessions: () => [],
+            useMachine: () => ({ online: true }),
+            useSession: () => ({ active: true, metadata: { machineId: 'm1', path: '/repo' } }),
+            useSessionProjectScmCommitSelectionPaths: () => [],
+            useSessionProjectScmCommitSelectionPatches: () => [],
+            useSessionProjectScmInFlightOperation: () => null,
+            useSessionProjectScmOperationLog: () => [],
+            useSessionProjectScmSnapshot: () => scmSnapshotMock,
+            useSessionProjectScmSnapshotError: () => null,
+            useSessionProjectScmTouchedPaths: () => [],
+            useSessionProjectScmOperationLogEntryIds: () => [],
+            useSessionProjectScmTouchedPathsCount: () => 0,
+        });
+    },
 });
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
@@ -94,30 +114,6 @@ vi.mock('@/hooks/session/sourceControl/usePublishBranchAction', () => ({
     usePublishBranchAction: (...args: any[]) => usePublishBranchActionMock(...args),
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(
-        importOriginal,
-        {
-            useSetting: () => null,
-            useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
-            useProjectForSession: () => null,
-            useProjectSessions: () => [],
-            useMachine: () => ({ online: true }),
-            useSession: () => ({ active: true, metadata: { machineId: 'm1', path: '/repo' } }),
-            useSessionProjectScmCommitSelectionPaths: () => [],
-            useSessionProjectScmCommitSelectionPatches: () => [],
-            useSessionProjectScmInFlightOperation: () => null,
-            useSessionProjectScmOperationLog: () => [],
-            useSessionProjectScmSnapshot: () => scmSnapshotMock,
-            useSessionProjectScmSnapshotError: () => null,
-            useSessionProjectScmTouchedPaths: () => [],
-            useSessionProjectScmOperationLogEntryIds: () => [],
-            useSessionProjectScmTouchedPathsCount: () => 0,
-        },
-    );
-});
-
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
@@ -149,11 +145,6 @@ vi.mock('@/scm/scmStatusSync', () => ({
         invalidateFromUserAndAwait: vi.fn(),
     },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
     SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab'),

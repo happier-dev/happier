@@ -32,6 +32,9 @@ import {
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
 } from './sessionListRowHeights';
 
+const AVATAR_SIZE_DEFAULT = 48;
+const AVATAR_SIZE_COMPACT = 30;
+
 const stylesheet = StyleSheet.create((theme) => ({
     sessionItemContainer: {
         marginHorizontal: 16,
@@ -69,7 +72,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     sessionItemFirst: {
         borderTopLeftRadius: 12,
         borderTopRightRadius: 12,
-        borderTopLeftWidth: 2,
+        borderTopWidth: 2,
     },
     sessionItemLast: {
         borderBottomLeftRadius: 12,
@@ -97,12 +100,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     avatarContainer: {
         position: 'relative',
-        width: 48,
-        height: 48,
+        width: AVATAR_SIZE_DEFAULT,
+        height: AVATAR_SIZE_DEFAULT,
     },
     avatarContainerCompact: {
-        width: 30,
-        height: 30,
+        width: AVATAR_SIZE_COMPACT,
+        height: AVATAR_SIZE_COMPACT,
     },
     minimalIndicatorColumn: {
         width: 16,
@@ -322,7 +325,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         width: 12,
-        height: 16,
+        height: 12,
     },
     secondaryStatusDotContainerCompact: {
         width: 11,
@@ -339,7 +342,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     statusTextCompact: {
         fontSize: 11,
-        lineHeight: 14,
+        lineHeight: 11
     },
     statusTextMinimal: {
         fontSize: 10,
@@ -678,7 +681,7 @@ export const SessionItem = React.memo(
                     <View style={[styles.avatarContainer, compact ? styles.avatarContainerCompact : null]}>
                         <Avatar
                             id={avatarId}
-                            size={compact ? 35 : 48}
+                            size={compact ? AVATAR_SIZE_COMPACT : AVATAR_SIZE_DEFAULT}
                             monochrome={!sessionStatus.isConnected}
                             flavor={resolvedSession.metadata?.flavor}
                             hasUnreadMessages={hasUnreadMessages}

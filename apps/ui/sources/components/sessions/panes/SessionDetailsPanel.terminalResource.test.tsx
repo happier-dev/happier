@@ -2,23 +2,25 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+installSessionDetailsPanelCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useLocalSetting: ((key: string) => {
+                    if (key === 'editorFocusModeEnabled') return false;
+                    return null;
+                }) as any,
+                useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+            },
+        });
+    },
 });
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -28,25 +30,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useLocalSetting: ((key: string) => {
-                if (key === 'editorFocusModeEnabled') return false;
-                return null;
-            }) as any,
-            useLocalSettingMutable: (() => [false, vi.fn()]) as any,
-        },
-    });
-});
 
 const terminalViewSpy = vi.fn();
 vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({

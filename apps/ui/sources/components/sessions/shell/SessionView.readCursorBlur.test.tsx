@@ -3,6 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -32,20 +33,9 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
 }));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        useWindowDimensions: () => ({ width: 1200, height: 800 }),
-    });
-});
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: (effect: () => void | (() => void)) => {
@@ -189,59 +179,78 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: () => null,
 }));
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(),
-            prompt: vi.fn(),
-            show: vi.fn(),
-        },
-    }).module;
-});
 vi.mock('@/utils/timing/runAfterInteractionsWithFallback', () => ({
     runAfterInteractionsWithFallback: (callback: () => void) => {
         scheduledInteractionCallbacks.push(callback);
         return () => {};
     },
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => ({
-            sessions: { s1: sessionState.current },
-            settings: {},
-            sessionListViewDataByServerId: {},
-        }),
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            useWindowDimensions: () => ({ width: 1200, height: 800 }),
+        });
     },
-    useSession: () => sessionState.current,
-    useAutomations: () => [],
-    useIsDataReady: () => true,
-    useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-    useSessionPendingMessages: () => ({ messages: [] }),
-    useSessionReviewCommentsDrafts: () => [],
-    useSessionUsage: () => null,
-    useSetting: () => null,
-    useSettings: () => ({ experiments: true, featureToggles: {} }),
-    useLocalSetting: (key: string) => {
-        if (key === 'acknowledgedCliVersions') return {};
-        if (key === 'detailsPaneTabsBehavior') return 'preview';
-        if (key === 'rightPaneWidthPx') return 360;
-        if (key === 'rightPaneWidthBasisPx') return 1200;
-        if (key === 'detailsPaneWidthPx') return 520;
-        if (key === 'detailsPaneWidthBasisPx') return 1200;
-        if (key === 'sessionsRightPaneDefaultOpen') return false;
-        if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-        if (key === 'uiMultiPanePanelsEnabled') return true;
-        if (key === 'editorFocusModeEnabled') return false;
-        return null;
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: vi.fn(),
+                prompt: vi.fn(),
+                show: vi.fn(),
+            },
+        }).module;
     },
-});
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: vi.fn(), back: vi.fn(), setParams: vi.fn() },
+            pathname: '/',
+        });
+        return routerMock.module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => ({
+                    sessions: { s1: sessionState.current },
+                    settings: {},
+                    sessionListViewDataByServerId: {},
+                }),
+            },
+            useSession: () => sessionState.current,
+            useAutomations: () => [],
+            useIsDataReady: () => true,
+            useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionPendingMessages: () => ({ messages: [] }),
+            useSessionReviewCommentsDrafts: () => [],
+            useSessionUsage: () => null,
+            useSetting: () => null,
+            useSettings: () => ({ experiments: true, featureToggles: {} }),
+            useLocalSetting: (key: string) => {
+                if (key === 'acknowledgedCliVersions') return {};
+                if (key === 'detailsPaneTabsBehavior') return 'preview';
+                if (key === 'rightPaneWidthPx') return 360;
+                if (key === 'rightPaneWidthBasisPx') return 1200;
+                if (key === 'detailsPaneWidthPx') return 520;
+                if (key === 'detailsPaneWidthBasisPx') return 1200;
+                if (key === 'sessionsRightPaneDefaultOpen') return false;
+                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
+                if (key === 'uiMultiPanePanelsEnabled') return true;
+                if (key === 'editorFocusModeEnabled') return false;
+                return null;
+            },
+        });
+    },
 });
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplyLocalSettings: () => vi.fn(),

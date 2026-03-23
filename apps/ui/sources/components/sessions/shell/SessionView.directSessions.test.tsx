@@ -8,6 +8,7 @@ import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -79,7 +80,6 @@ const recipientStateState = vi.hoisted(() => ({
     setExecutionRunDelivery: vi.fn(),
   },
 }));
-const directSessionAdvanceTimersMs = 250;
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
@@ -89,18 +89,6 @@ vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
   Octicons: 'Octicons',
 }));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                            Text: 'Text',
-                            Pressable: 'Pressable',
-                            ActivityIndicator: 'ActivityIndicator',
-                            useWindowDimensions: () => ({ width: 1200, height: 800 }),
-                          }
-    );
-});
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
@@ -139,11 +127,80 @@ const themeColors = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('react-native-unistyles', async () => {
-  const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-  return createUnistylesMock({
-    theme: themeColors,
-  });
+installSessionShellCommonModuleMocks({
+  reactNative: async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+      View: 'View',
+      Text: 'Text',
+      Pressable: 'Pressable',
+      ActivityIndicator: 'ActivityIndicator',
+      useWindowDimensions: () => ({ width: 1200, height: 800 }),
+    });
+  },
+  unistyles: async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+      theme: themeColors,
+    });
+  },
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+  },
+  text: async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+      translate: (key: string) => key,
+    });
+  },
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMock.spies.alert.mockImplementation((...args) => modalAlertSpy(...args));
+    return modalMock.module;
+  },
+  storage: async (importOriginal) => {
+    const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+
+    const readLocalSetting = <K extends keyof LocalSettings>(key: K): LocalSettings[K] => {
+      if (key === 'acknowledgedCliVersions') return {} as LocalSettings[K];
+      if (key === 'uiMultiPanePanelsEnabled') return true as LocalSettings[K];
+      if (key === 'editorFocusModeEnabled') return false as LocalSettings[K];
+      if (key === 'detailsPaneTabsBehavior') return 'preview' as LocalSettings[K];
+      if (key === 'rightPaneWidthPx') return 360 as LocalSettings[K];
+      if (key === 'rightPaneWidthBasisPx') return 1200 as LocalSettings[K];
+      if (key === 'detailsPaneWidthPx') return 520 as LocalSettings[K];
+      if (key === 'detailsPaneWidthBasisPx') return 1200 as LocalSettings[K];
+      return localSettingsDefaults[key];
+    };
+
+    const readSetting = <K extends keyof Settings>(key: K): Settings[K] => {
+      const override = settingByKeyState.current[key as string];
+      return (override ?? settingsDefaults[key]) as Settings[K];
+    };
+
+    return createStorageModuleMock({
+      importOriginal,
+      overrides: {
+        storage: createStorageStoreMock(storageState as any),
+        useSession: () => storageState.sessions.s1,
+        useIsDataReady: () => true,
+        useRealtimeStatus: () => 'connected',
+        useSessionMessages: () => ({ messages: [], isLoaded: true }),
+        useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
+        useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+        useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
+        useSessionUsage: () => null,
+        useLocalSetting: readLocalSetting,
+        useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [readLocalSetting(key), vi.fn<(value: LocalSettings[K]) => void>()],
+        useSetting: readSetting,
+        useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {}, codexBackendMode: 'acp' }),
+        useAutomations: () => [],
+        useMachine: () => null,
+      },
+    });
+  },
 });
 
 vi.mock('@react-navigation/native', () => ({
@@ -151,14 +208,8 @@ vi.mock('@react-navigation/native', () => ({
   useIsFocused: () => true,
 }));
 
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
-
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
-}));
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-  translate: (key: string) => key,
 }));
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
@@ -299,12 +350,6 @@ vi.mock('@/components/sessions/agentInput', () => ({
 vi.mock('@/components/sessions/directSessions/takeover/showDirectSessionTakeoverDialog', () => ({
   showDirectSessionTakeoverDialog: showDirectSessionTakeoverDialogSpy,
 }));
-vi.mock('@/modal', async () => {
-  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-  const modalMock = createModalModuleMock();
-  modalMock.spies.alert.mockImplementation((...args) => modalAlertSpy(...args));
-  return modalMock.module;
-});
 vi.mock('@/voice/sessionBinding/sendVoiceSessionComposerText', () => ({
   sendVoiceSessionComposerText: (params: any) => sendVoiceSessionComposerTextSpy(params),
 }));
@@ -324,48 +369,6 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOrigin
   };
 });
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-  const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-
-  const readLocalSetting = <K extends keyof LocalSettings>(key: K): LocalSettings[K] => {
-    if (key === 'acknowledgedCliVersions') return {} as LocalSettings[K];
-    if (key === 'uiMultiPanePanelsEnabled') return true as LocalSettings[K];
-    if (key === 'editorFocusModeEnabled') return false as LocalSettings[K];
-    if (key === 'detailsPaneTabsBehavior') return 'preview' as LocalSettings[K];
-    if (key === 'rightPaneWidthPx') return 360 as LocalSettings[K];
-    if (key === 'rightPaneWidthBasisPx') return 1200 as LocalSettings[K];
-    if (key === 'detailsPaneWidthPx') return 520 as LocalSettings[K];
-    if (key === 'detailsPaneWidthBasisPx') return 1200 as LocalSettings[K];
-    return localSettingsDefaults[key];
-  };
-
-  const readSetting = <K extends keyof Settings>(key: K): Settings[K] => {
-    const override = settingByKeyState.current[key as string];
-    return (override ?? settingsDefaults[key]) as Settings[K];
-  };
-
-  return createStorageModuleMock({
-    importOriginal,
-    overrides: {
-      storage: createStorageStoreMock(storageState as any),
-      useSession: () => storageState.sessions.s1,
-      useIsDataReady: () => true,
-      useRealtimeStatus: () => 'connected',
-      useSessionMessages: () => ({ messages: [], isLoaded: true }),
-      useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
-      useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
-      useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
-      useSessionUsage: () => null,
-      useLocalSetting: readLocalSetting,
-      useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [readLocalSetting(key), vi.fn<(value: LocalSettings[K]) => void>()],
-      useSetting: readSetting,
-      useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {}, codexBackendMode: 'acp' }),
-      useAutomations: () => [],
-      useMachine: () => null,
-    },
-  });
-});
-
 describe('SessionView (direct sessions)', () => {
   async function renderSessionView() {
     const { SessionView } = await import('./SessionView');
@@ -383,7 +386,13 @@ describe('SessionView (direct sessions)', () => {
   }
 
   async function settleDirectSessionView() {
-    await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: directSessionAdvanceTimersMs });
+    await flushHookEffects({ cycles: 1, turns: 2 });
+  }
+
+  function sleep(ms: number) {
+    return new Promise<void>((resolve) => {
+      setTimeout(resolve, ms);
+    });
   }
 
   function findAgentInput(screen: Awaited<ReturnType<typeof renderSessionView>>) {
@@ -391,7 +400,6 @@ describe('SessionView (direct sessions)', () => {
   }
 
   beforeEach(() => {
-    vi.useFakeTimers();
     chatListPropsSpy.mockReset();
     chatHeaderPropsSpy.mockReset();
     voiceSurfacePropsSpy.mockReset();
@@ -484,9 +492,6 @@ describe('SessionView (direct sessions)', () => {
     }, { serverId: 'server-1' });
     expect(modalAlertSpy).not.toHaveBeenCalled();
 
-    await act(async () => {
-      await screen.unmount();
-    });
   });
 
   it('passes pending user action requests to AgentInput', async () => {
@@ -761,33 +766,38 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('passes storage and provider badges to the session header for direct sessions', async () => {
-    const screen = await renderSessionView();
+    await renderSessionViewAndSettle();
 
     expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
       badges: ['sessionsList.storageDirectTab', 'agentInput.agent.codex · happy-host'],
     }));
-
-    await settleDirectSessionView();
-    await act(async () => {
-      await screen.unmount();
-    });
   });
 
   it('polls direct session status and transcript refreshes using the active cadence while the session view is open', async () => {
-    const screen = await renderSessionView();
+    const previousActivePollMs = process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_TAIL_POLL_MS_ACTIVE;
+    process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_TAIL_POLL_MS_ACTIVE = '50';
 
-    const initialStatusCallCount = machineDirectSessionStatusGetSpy.mock.calls.length;
-    expect(initialStatusCallCount).toBeGreaterThanOrEqual(1);
-    expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
-    const initialRefreshCallCount = syncRefreshSessionMessagesSpy.mock.calls.length;
+    try {
+      await renderSessionView();
 
-    await settleDirectSessionView();
-    expect(machineDirectSessionStatusGetSpy.mock.calls.length).toBeGreaterThanOrEqual(initialStatusCallCount + 1);
-    expect(syncRefreshSessionMessagesSpy.mock.calls.length).toBeGreaterThanOrEqual(initialRefreshCallCount + 1);
+      const initialStatusCallCount = machineDirectSessionStatusGetSpy.mock.calls.length;
+      expect(initialStatusCallCount).toBeGreaterThanOrEqual(1);
+      expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
+      const initialRefreshCallCount = syncRefreshSessionMessagesSpy.mock.calls.length;
 
-    await act(async () => {
-      await screen.unmount();
-    });
+      await act(async () => {
+        await sleep(75);
+      });
+      await flushHookEffects({ cycles: 1, turns: 2 });
+      expect(machineDirectSessionStatusGetSpy.mock.calls.length).toBeGreaterThanOrEqual(initialStatusCallCount + 1);
+      expect(syncRefreshSessionMessagesSpy.mock.calls.length).toBeGreaterThanOrEqual(initialRefreshCallCount + 1);
+    } finally {
+      if (previousActivePollMs === undefined) {
+        delete process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_TAIL_POLL_MS_ACTIVE;
+      } else {
+        process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_TAIL_POLL_MS_ACTIVE = previousActivePollMs;
+      }
+    }
   });
 
   it('prompts for takeover on send and submits after taking over the direct session', async () => {
@@ -814,9 +824,6 @@ describe('SessionView (direct sessions)', () => {
     }, { serverId: 'server-1' });
     expect(syncSubmitMessageSpy).toHaveBeenCalledWith('s1', 'continue this session', undefined, undefined);
 
-    await act(async () => {
-      await screen.unmount();
-    });
   });
 
   it('keeps the composer text when direct takeover is cancelled from the send prompt', async () => {
@@ -839,9 +846,6 @@ describe('SessionView (direct sessions)', () => {
     agentInput = findAgentInput(screen);
     expect(agentInput.props.value).toBe('draft stays here');
 
-    await act(async () => {
-      await screen.unmount();
-    });
   });
 
   it('clears the composer immediately while a direct takeover send prompt is still pending', async () => {
@@ -863,9 +867,6 @@ describe('SessionView (direct sessions)', () => {
     expect(agentInput.props.value).toBe('');
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
-    await act(async () => {
-      await screen.unmount();
-    });
   });
 
   it('passes force-stop through when persisting takeover from the send prompt', async () => {
@@ -898,9 +899,6 @@ describe('SessionView (direct sessions)', () => {
     }, { serverId: 'server-1' });
     expect(syncSubmitMessageSpy).toHaveBeenCalledWith('s1', 'persist this', undefined, undefined);
 
-    await act(async () => {
-      await screen.unmount();
-    });
   });
 
   it('routes hidden voice conversation sends through the voice session binding helper', async () => {
@@ -935,9 +933,6 @@ describe('SessionView (direct sessions)', () => {
     );
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
-    await act(async () => {
-      await screen.unmount();
-    });
   });
 
   it('shows the adapter send error when a hidden voice conversation send fails', async () => {

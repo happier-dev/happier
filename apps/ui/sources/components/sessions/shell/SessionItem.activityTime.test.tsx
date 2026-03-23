@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,35 +17,52 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         default: () => ({}),
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                Platform: {
-                    OS: 'web',
-                },
-            }
-    );
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: (props: any) => React.createElement('Text', props, props.children),
+    TextInput: 'TextInput',
+}));
+
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                prompt: vi.fn(),
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useHasUnreadMessages: () => false,
+            useProfile: () => ({ id: 'u1' }),
+            useSession: () => null,
+            useSessionListMeaningfulActivityAt: () => 60_000,
+        });
+    },
 });
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    TextInput: 'TextInput',
 }));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
@@ -85,21 +103,6 @@ vi.mock('@/sync/ops', () => ({
     sessionRename: vi.fn(async () => ({ success: true })),
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            prompt: vi.fn(),
-        },
-    }).module;
-});
-
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
     PinSlashIcon: (props: Record<string, unknown>) => React.createElement('PinSlashIcon', props),
@@ -115,16 +118,6 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionAvatarId: () => 'avatar',
     useSessionStatus: () => mockSessionStatus,
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useHasUnreadMessages: () => false,
-        useProfile: () => ({ id: 'u1' }),
-        useSession: () => null,
-        useSessionListMeaningfulActivityAt: () => 60_000,
-    });
-});
 
 type MockSessionStatus = Readonly<{
     state: 'thinking' | 'waiting';

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -133,8 +133,7 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
         setFakeDocument(true);
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
         // Flush effects that may schedule post-commit work in React 18.
         await act(async () => {});
@@ -147,7 +146,7 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
         expect(stopPropagation).toHaveBeenCalled();
 
         await act(async () => {
-            tree!.unmount();
+            screen.tree.unmount();
         });
         expect(removeEventListenerSpy).toHaveBeenCalledWith('wheel', expect.any(Function));
         expect(removeEventListenerSpy).toHaveBeenCalledWith('touchmove', expect.any(Function));
@@ -157,10 +156,12 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
         setFakeDocument(true);
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        const root = (tree! as any).root.findByProps({ testID: 'session-details-panel-root' });
+        const root = screen.findByTestId('session-details-panel-root');
+        if (!root) {
+            throw new Error('expected session-details-panel-root to render');
+        }
         expect(typeof root.props.onWheel).toBe('function');
         expect(typeof root.props.onTouchMove).toBe('function');
 
@@ -170,7 +171,7 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
         expect(stopPropagation).toHaveBeenCalled();
 
         await act(async () => {
-            tree!.unmount();
+            screen.tree.unmount();
         });
     });
 
@@ -183,15 +184,14 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
         setFakeDocument(false);
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
         await act(async () => {});
 
         expect(addEventListenerSpy).toHaveBeenCalledWith('wheel', expect.any(Function));
         expect(addEventListenerSpy).toHaveBeenCalledWith('touchmove', expect.any(Function));
 
         await act(async () => {
-            tree!.unmount();
+            screen.tree.unmount();
         });
     });
 });

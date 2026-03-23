@@ -2,48 +2,55 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                        Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
-                                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-                shadow: { color: '#000', opacity: 0.2 },
-                accent: {
-                    indigo: '#5C6BC0',
-                    orange: '#FF9500',
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#fff',
+                    surfaceHigh: '#f5f5f5',
+                    divider: '#eee',
+                    text: '#000',
+                    textSecondary: '#666',
+                    shadow: { color: '#000', opacity: 0.2 },
+                    accent: {
+                        indigo: '#5C6BC0',
+                        orange: '#FF9500',
+                    },
                 },
             },
-        },
-    });
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock();
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useLocalSetting: ((key: string) => {
+                    if (key === 'editorFocusModeEnabled') return false;
+                    return null;
+                }) as any,
+                useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+            },
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
@@ -64,25 +71,6 @@ vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => (
 vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
     SessionEmbeddedTerminalPane: () => React.createElement('SessionEmbeddedTerminalPane'),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useLocalSetting: ((key: string) => {
-                if (key === 'editorFocusModeEnabled') return false;
-                return null;
-            }) as any,
-            useLocalSettingMutable: (() => [false, vi.fn()]) as any,
-        },
-    });
-});
 
 let mockAppPaneScope: any = null;
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({

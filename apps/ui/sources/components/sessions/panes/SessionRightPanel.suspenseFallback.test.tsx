@@ -2,25 +2,34 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+        return {
+            ...actual,
+            useSettings: () => ({}),
+        };
+    },
 });
 
 vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', () => ({

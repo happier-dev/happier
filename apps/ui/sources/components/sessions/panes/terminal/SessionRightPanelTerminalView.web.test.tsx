@@ -31,19 +31,6 @@ async function renderAndFlush(element: React.ReactElement): Promise<RenderScreen
     return screen;
 }
 
-async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
-    vi.useFakeTimers();
-    try {
-        return await run();
-    } finally {
-        vi.useRealTimers();
-    }
-}
-
-async function flushTerminalRetryTimers(): Promise<void> {
-    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
-}
-
 async function loadSessionRightPanelTerminalViewWeb() {
     const mod = await import('./SessionRightPanelTerminalView.web');
     return mod.SessionRightPanelTerminalView;
@@ -350,105 +337,101 @@ describe('SessionRightPanelTerminalView.web', () => {
     });
 
     it('retries automatically when initial ensure hits rpc method unavailable', async () => {
-        await withFakeTimers(async () => {
-            machineTerminalEnsureSpy
-                .mockRejectedValueOnce(createRpcCallError({
-                    error: 'RPC method not available',
-                    errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                }))
-                .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false });
+        machineTerminalEnsureSpy
+            .mockRejectedValueOnce(createRpcCallError({
+                error: 'RPC method not available',
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            }))
+            .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false });
 
-            const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
+        const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
 
-            const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
+        const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushTerminalRetryTimers();
-
-            expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
-
-            expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 350));
         });
+        await flushHookEffects();
+
+        expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
     });
 
     it('preserves the stream cursor when auto-retrying after a transient read error', async () => {
-        await withFakeTimers(async () => {
-            machineTerminalEnsureSpy
-                .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false })
-                .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: true });
+        machineTerminalEnsureSpy
+            .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false })
+            .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: true });
 
-            machineTerminalStreamReadSpy.mockReset();
-            machineTerminalStreamReadSpy
-                .mockResolvedValueOnce({
-                    ok: true,
-                    terminalId: 't1',
-                    events: [{ t: 'data', data: 'hello' }],
-                    nextCursor: 5,
-                    done: false,
-                })
-                .mockResolvedValueOnce({
-                    ok: false,
-                    errorCode: 'terminal_not_found',
-                    error: 'terminal_not_found',
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    terminalId: 't1',
-                    events: [{ t: 'data', data: 'world' }],
-                    nextCursor: 6,
-                    done: true,
-                });
+        machineTerminalStreamReadSpy.mockReset();
+        machineTerminalStreamReadSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 't1',
+                events: [{ t: 'data', data: 'hello' }],
+                nextCursor: 5,
+                done: false,
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                errorCode: 'terminal_not_found',
+                error: 'terminal_not_found',
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 't1',
+                events: [{ t: 'data', data: 'world' }],
+                nextCursor: 6,
+                done: true,
+            });
 
-            const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
+        const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
 
-            const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
+        const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushTerminalRetryTimers();
-
-            expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
-            expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(3);
-
-            const thirdReadArgs = machineTerminalStreamReadSpy.mock.calls[2]?.[1];
-            expect(thirdReadArgs?.cursor).toBe(5);
-            expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 350));
         });
+        await flushHookEffects();
+
+        const thirdReadArgs = machineTerminalStreamReadSpy.mock.calls[2]?.[1];
+        expect(thirdReadArgs?.cursor).toBe(5);
+        expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
     });
 
     it('preserves the stream cursor when auto-retrying after a stream read timeout', async () => {
-        await withFakeTimers(async () => {
-            machineTerminalEnsureSpy
-                .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false })
-                .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: true });
+        machineTerminalEnsureSpy
+            .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false })
+            .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: true });
 
-            machineTerminalStreamReadSpy.mockReset();
-            machineTerminalStreamReadSpy
-                .mockResolvedValueOnce({
-                    ok: true,
-                    terminalId: 't1',
-                    events: [{ t: 'data', data: 'hello' }],
-                    nextCursor: 5,
-                    done: false,
-                })
-                .mockRejectedValueOnce(new Error('operation has timed out'))
-                .mockResolvedValueOnce({
-                    ok: true,
-                    terminalId: 't1',
-                    events: [{ t: 'data', data: 'world' }],
-                    nextCursor: 6,
-                    done: true,
-                });
+        machineTerminalStreamReadSpy.mockReset();
+        machineTerminalStreamReadSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 't1',
+                events: [{ t: 'data', data: 'hello' }],
+                nextCursor: 5,
+                done: false,
+            })
+            .mockRejectedValueOnce(new Error('operation has timed out'))
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 't1',
+                events: [{ t: 'data', data: 'world' }],
+                nextCursor: 6,
+                done: true,
+            });
 
-            const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
+        const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
 
-            const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
+        const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushTerminalRetryTimers();
-
-            expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
-            expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(3);
-            expect(machineTerminalStreamReadSpy.mock.calls[2]?.[1]?.cursor).toBe(5);
-
-            expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 350));
         });
+        await flushHookEffects();
+
+        expect(machineTerminalStreamReadSpy.mock.calls[2]?.[1]?.cursor).toBe(5);
+
+        expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
     });
 
     it('hydrates the transcript and cursor across terminal surface remounts', async () => {

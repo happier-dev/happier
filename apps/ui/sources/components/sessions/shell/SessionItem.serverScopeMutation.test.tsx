@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,17 +16,6 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: (props: any) => React.createElement('Swipeable', props),
 }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'ios',
-                                            },
-                                        }
-    );
-});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -73,29 +63,38 @@ vi.mock('@/sync/ops', () => ({
     sessionArchiveWithServerScope: archiveSpy,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useHasUnreadMessages: () => false,
-    useProfile: () => ({ id: 'u1' }),
-    useSession: () => null,
-    useSessionListMeaningfulActivityAt: () => null,
-});
-});
-
 const modalAlertSpy = vi.fn();
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-        },
-    }).module;
-});
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useHasUnreadMessages: () => false,
+            useProfile: () => ({ id: 'u1' }),
+            useSession: () => null,
+            useSessionListMeaningfulActivityAt: () => null,
+        });
+    },
 });
 
 describe('SessionItem server-scoped mutations', () => {
@@ -145,7 +144,10 @@ describe('SessionItem server-scoped mutations', () => {
         const rightActions = swipeable.props.renderRightActions();
         const rightActionsScreen = await renderScreen(rightActions);
         await act(async () => {
-            await pressTestInstanceAsync(rightActionsScreen.findByType('Pressable'), 'session swipe action');
+            await pressTestInstanceAsync(
+                rightActionsScreen.find((node: any) => node.type === 'Pressable'),
+                'session swipe action',
+            );
         });
 
         expect(modalAlertSpy).toHaveBeenCalledTimes(1);
@@ -200,7 +202,10 @@ describe('SessionItem server-scoped mutations', () => {
         const rightActions = swipeable.props.renderRightActions();
         const rightActionsScreen = await renderScreen(rightActions);
         await act(async () => {
-            await pressTestInstanceAsync(rightActionsScreen.findByType('Pressable'), 'session swipe action');
+            await pressTestInstanceAsync(
+                rightActionsScreen.find((node: any) => node.type === 'Pressable'),
+                'session swipe action',
+            );
         });
 
         expect(modalAlertSpy).toHaveBeenCalledTimes(1);

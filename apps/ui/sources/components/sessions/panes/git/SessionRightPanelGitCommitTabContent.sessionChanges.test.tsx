@@ -1,10 +1,11 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const commitTabRenderSpy = vi.hoisted(() => vi.fn());
 
 const useChangedFilesDataSpy = vi.fn((_: unknown) => ({
     attributionReliability: 'high',
@@ -38,7 +39,10 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@/components/sessions/panes/git/SessionRightPanelGitCommitTab', () => ({
-    SessionRightPanelGitCommitTab: (props: any) => React.createElement('SessionRightPanelGitCommitTab', props),
+    SessionRightPanelGitCommitTab: (props: any) => {
+        commitTabRenderSpy(props);
+        return React.createElement('SessionRightPanelGitCommitTab', props);
+    },
 }));
 
 vi.mock('@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton', () => ({
@@ -76,21 +80,22 @@ vi.mock('./useSessionRightPanelGitCommitSelection', () => ({
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-        getState: () => ({
-            getSessionRepositoryTreeExpandedPaths: () => [],
-            setSessionRepositoryTreeExpandedPaths: vi.fn(),
-        }),
-    },
-    useSession: () => ({ metadata: {} }),
-    useProjectForSession: () => null,
-    useSessionMessages: () => ({ messages: [] }),
-});
+        storage: {
+            getState: () => ({
+                getSessionRepositoryTreeExpandedPaths: () => [],
+                setSessionRepositoryTreeExpandedPaths: vi.fn(),
+            }),
+        },
+        useSession: () => ({ metadata: {} }),
+        useProjectForSession: () => null,
+        useSessionMessages: () => ({ messages: [] }),
+    });
 });
 
 describe('SessionRightPanelGitCommitTabContent', () => {
     it('prefers latest-turn view when a canonical latest-turn change set is available', async () => {
         useChangedFilesDataSpy.mockClear();
+        commitTabRenderSpy.mockClear();
         useDerivedSessionChangeSetSpy.mockReturnValue({
             turnChangeSets: [],
             latestTurnChangeSet: null,
@@ -114,8 +119,7 @@ describe('SessionRightPanelGitCommitTabContent', () => {
 
         const { SessionRightPanelGitCommitTabContent } = await import('./SessionRightPanelGitCommitTabContent');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionRightPanelGitCommitTabContent
+        await renderScreen(<SessionRightPanelGitCommitTabContent
                     theme={{}}
                     sessionId="s1"
                     sessionPath="/tmp/repo"
@@ -148,14 +152,14 @@ describe('SessionRightPanelGitCommitTabContent', () => {
                     onOpenStashDetails={vi.fn()}
                     openFileInDetails={vi.fn()}
                     openFileInDetailsPinned={vi.fn()}
-                />)).tree;
+                />);
 
         expect(useChangedFilesDataSpy).toHaveBeenCalledWith(expect.objectContaining({
             latestTurnChangeSet: expect.objectContaining({ sessionId: 's1' }),
             sessionChangeSet: expect.objectContaining({ sessionId: 's1' }),
         }));
 
-        const commitTab = tree!.root.findByType('SessionRightPanelGitCommitTab' as any);
-        expect(commitTab.props.changedFilesViewMode).toBe('turn');
+        expect(commitTabRenderSpy).toHaveBeenCalled();
+        expect(commitTabRenderSpy.mock.calls.at(-1)?.[0].changedFilesViewMode).toBe('turn');
     });
 });

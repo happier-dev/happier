@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -34,83 +35,81 @@ const directSessionRuntimeState = vi.hoisted(() => ({
     status: null as null | { runnerActive?: boolean },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            Platform: {
-                                                            OS: 'web',
-                                                            select: (value: any) => value?.web ?? value?.default,
-                                                        },
-                                                            View: ({ children, ...props }: any) => React.createElement('View', props, children),
-                                                            ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
-                                                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                                                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-                shadow: { color: '#000' },
-                accent: {
-                    blue: '#007AFF',
-                    green: '#34C759',
-                    orange: '#FF9500',
-                    yellow: '#FFCC00',
-                    red: '#FF3B30',
-                    indigo: '#5856D6',
-                    purple: '#AF52DE',
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.web ?? value?.default,
+            },
+            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+            ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#fff',
+                    surfaceHigh: '#f5f5f5',
+                    divider: '#ddd',
+                    text: '#000',
+                    textSecondary: '#666',
+                    shadow: { color: '#000' },
+                    accent: {
+                        blue: '#007AFF',
+                        green: '#34C759',
+                        orange: '#FF9500',
+                        yellow: '#FFCC00',
+                        red: '#FF3B30',
+                        indigo: '#5856D6',
+                        purple: '#AF52DE',
+                    },
                 },
             },
-        },
-    });
+        });
+    },
+    icons: async () => ({
+        Ionicons: 'Ionicons',
+    }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, values?: Record<string, unknown>) => {
+                if (key === 'session.subagents.intent.review') return 'Review';
+                if (key === 'executionRuns.details.titles.executionRun') return 'Subagent';
+                if (key === 'executionRuns.details.titles.executionRunWithIntent' && values?.intent) {
+                    return `${values.intent} Subagent`;
+                }
+                if (key === 'session.subagents.panel.sectionCount' && typeof values?.count === 'number') {
+                    return `${values.count}`;
+                }
+                return key;
+            },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSession: () => sessionState.session,
+            useSettings: () => ({}),
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
     TextInput: (props: any) => React.createElement('TextInput', props),
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, values?: Record<string, unknown>) => {
-        if (key === 'session.subagents.intent.review') return 'Review';
-        if (key === 'executionRuns.details.titles.executionRun') return 'Subagent';
-        if (key === 'executionRuns.details.titles.executionRunWithIntent' && values?.intent) {
-            return `${values.intent} Subagent`;
-        }
-        if (key === 'session.subagents.panel.sectionCount' && typeof values?.count === 'number') {
-            return `${values.count}`;
-        }
-        return key;
-    } });
-});
-
 vi.mock('@/sync/sync', () => ({
     sync: {
         sendMessage: vi.fn(async () => undefined),
     },
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSession: () => sessionState.session,
-    useSettings: () => ({}),
-});
-});
 
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => sessionMachineReachabilityState,

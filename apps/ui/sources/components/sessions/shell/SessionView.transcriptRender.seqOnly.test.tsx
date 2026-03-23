@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -48,55 +49,101 @@ vi.mock('expo-linear-gradient', () => ({
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        View: 'View',
-                                        Text: 'Text',
-                                        Pressable: 'Pressable',
-                                        ActivityIndicator: 'ActivityIndicator',
-                                        Platform: {
-                                            OS: 'web',
-                                            select: (spec: Record<string, unknown>) =>
-                                                spec && Object.prototype.hasOwnProperty.call(spec, 'web')
-                                                    ? (spec as any).web
-                                                    : (spec as any).default,
-                                        },
-                                    }
-    );
-});
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: themeColors,
-    });
-});
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: () => {},
     useIsFocused: () => true,
 }));
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        pathname: '/',
-        router: {
-            push: vi.fn(),
-            back: vi.fn(),
-            replace: vi.fn(),
-            setParams: vi.fn(),
-        },
-    }).module;
-});
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: authCredentials }),
 }));
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key: string) => key,
-}));
+
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ActivityIndicator: 'ActivityIndicator',
+            Platform: {
+                OS: 'web',
+                select: (spec: Record<string, unknown>) =>
+                    spec && Object.prototype.hasOwnProperty.call(spec, 'web')
+                        ? (spec as any).web
+                        : (spec as any).default,
+            },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: themeColors,
+        });
+    },
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+        translate: (key: string) => key,
+    }),
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module,
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            pathname: '/',
+            router: {
+                push: vi.fn(),
+                back: vi.fn(),
+                replace: vi.fn(),
+                setParams: vi.fn(),
+            },
+        }).module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                storage: {
+                    getState: () => ({
+                        sessions: sessionState ? { s1: sessionState } : {},
+                        settings: {
+                            sessionMessageSendMode: 'direct',
+                            sessionBusySteerSendPolicy: 'steerImmediately',
+                        },
+                        sessionListViewDataByServerId: {},
+                    }),
+                } as any,
+                useSession: () => sessionState,
+                __setSessionForTest: (next: any) => {
+                    sessionState = next;
+                },
+                useIsDataReady: () => true,
+                useRealtimeStatus: () => realtimeStatusValue.current,
+                useSessionMessages: () => ({ messages: [], isLoaded: true }),
+                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+                useSessionPendingMessages: () => ({ messages: [] }),
+                useSessionReviewCommentsDrafts: () => [],
+                useSessionUsage: () => null,
+                useLocalSetting: (key: string) => {
+                    if (key === 'acknowledgedCliVersions') return {};
+                    if (key === 'uiMultiPanePanelsEnabled') return false;
+                    if (key === 'detailsPaneTabsBehavior') return 'preview';
+                    if (key === 'rightPaneWidthPx') return 360;
+                    if (key === 'rightPaneWidthBasisPx') return 1200;
+                    if (key === 'detailsPaneWidthPx') return 520;
+                    if (key === 'detailsPaneWidthBasisPx') return 1200;
+                    return {};
+                },
+                useLocalSettingMutable: () => [null, vi.fn()],
+                useSetting: () => null,
+                useSettings: () => ({ experiments: true, featureToggles: {} }),
+                useAutomations: () => [],
+                useMachine: () => null,
+            } as any,
+        });
+    },
+});
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
     AgentContentView: (props: any) =>
@@ -216,7 +263,6 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: () => null,
 }));
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('@/utils/system/versionUtils', () => ({
     isVersionSupported: () => true,
     MINIMUM_CLI_VERSION: '0.0.0',
@@ -257,50 +303,6 @@ vi.mock('@/track', () => ({
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'uuid',
 }));
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            storage: {
-                getState: () => ({
-                    sessions: sessionState ? { s1: sessionState } : {},
-                    settings: {
-                        sessionMessageSendMode: 'direct',
-                        sessionBusySteerSendPolicy: 'steerImmediately',
-                    },
-                    sessionListViewDataByServerId: {},
-                }),
-            } as any,
-            useSession: () => sessionState,
-            __setSessionForTest: (next: any) => {
-                sessionState = next;
-            },
-            useIsDataReady: () => true,
-            useRealtimeStatus: () => realtimeStatusValue.current,
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionPendingMessages: () => ({ messages: [] }),
-            useSessionReviewCommentsDrafts: () => [],
-            useSessionUsage: () => null,
-            useLocalSetting: (key: string) => {
-                if (key === 'acknowledgedCliVersions') return {};
-                if (key === 'uiMultiPanePanelsEnabled') return false;
-                if (key === 'detailsPaneTabsBehavior') return 'preview';
-                if (key === 'rightPaneWidthPx') return 360;
-                if (key === 'rightPaneWidthBasisPx') return 1200;
-                if (key === 'detailsPaneWidthPx') return 520;
-                if (key === 'detailsPaneWidthBasisPx') return 1200;
-                return {};
-            },
-            useLocalSettingMutable: () => [null, vi.fn()],
-            useSetting: () => null,
-            useSettings: () => ({ experiments: true, featureToggles: {} }),
-            useAutomations: () => [],
-            useMachine: () => null,
-        } as any,
-    });
-});
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: false }),
 }));

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { SessionsListWrapper } from './SessionsListWrapper';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,23 +19,23 @@ const storageKindState = vi.hoisted(() => ({
     setStorageKind: vi.fn(),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                View: 'View',
-                                ActivityIndicator: 'ActivityIndicator',
-                            }
-    );
-});
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            textSecondary: '#777',
-            groupped: { background: '#fff' },
-        },
-    });
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            ActivityIndicator: 'ActivityIndicator',
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                textSecondary: '#777',
+                groupped: { background: '#fff' },
+            },
+        });
+    },
 });
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     useVisibleSessionListViewData: (storageKind?: string) => {

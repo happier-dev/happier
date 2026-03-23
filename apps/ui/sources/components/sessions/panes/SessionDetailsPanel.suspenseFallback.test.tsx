@@ -2,28 +2,39 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            Platform: {
-                                                            OS: 'web',
-                                                        },
-                                                            View: (props: any) => React.createElement('View', props, props.children),
-                                                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                                            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-                                                        }
-    );
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+        });
+    },
+    icons: async () => ({
+        Ionicons: 'Ionicons',
+        Octicons: 'Octicons',
+    }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: () => false,
+            useLocalSettingMutable: () => [false, vi.fn()],
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -32,19 +43,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: () => false,
-    useLocalSettingMutable: () => [false, vi.fn()],
-});
-});
 
 vi.mock('@/components/ui/scroll/useWebScrollLockBypass', () => ({
     useWebScrollLockBypass: () => {},

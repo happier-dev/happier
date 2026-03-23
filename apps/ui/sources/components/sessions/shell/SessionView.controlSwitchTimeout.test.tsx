@@ -4,11 +4,12 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
-const controlSwitchTimeoutMs = 1_000;
+const controlSwitchTimeoutMs = 25;
 
 const sessionSwitchSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
@@ -31,18 +32,6 @@ vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
   Octicons: 'Octicons',
 }));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                            Text: 'Text',
-                            Pressable: 'Pressable',
-                            ActivityIndicator: 'ActivityIndicator',
-                            useWindowDimensions: () => ({ width: 1200, height: 800 }),
-                          }
-    );
-});
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
@@ -77,11 +66,64 @@ const themeColors = {
   },
 };
 
-vi.mock('react-native-unistyles', async () => {
-  const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-  return createUnistylesMock({
-    theme: themeColors,
-  });
+installSessionShellCommonModuleMocks({
+  reactNative: async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+      View: 'View',
+      Text: 'Text',
+      Pressable: 'Pressable',
+      ActivityIndicator: 'ActivityIndicator',
+      useWindowDimensions: () => ({ width: 1200, height: 800 }),
+    });
+  },
+  unistyles: async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+      theme: themeColors,
+    });
+  },
+  text: async () =>
+    (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+      translate: (key: string) => key,
+    }),
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMock.spies.alert.mockImplementation((...args) => modalAlertSpy(...args));
+    return modalMock.module;
+  },
+  storage: async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+      storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }) },
+      useSession: () => sessionState.session,
+      useIsDataReady: () => true,
+      useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
+      useSessionMessages: () => ({ messages: [], isLoaded: true }),
+      useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
+      useSessionPendingMessages: () => ({ messages: [] }),
+      useSessionReviewCommentsDrafts: () => [],
+      useSessionUsage: () => null,
+      useLocalSetting: (key: string) => {
+        if (key === 'acknowledgedCliVersions') return {};
+        if (key === 'uiMultiPanePanelsEnabled') return true;
+        if (key === 'editorFocusModeEnabled') return false;
+        if (key === 'detailsPaneTabsBehavior') return 'preview';
+        if (key === 'rightPaneWidthPx') return 360;
+        if (key === 'rightPaneWidthBasisPx') return 1200;
+        if (key === 'detailsPaneWidthPx') return 520;
+        if (key === 'detailsPaneWidthBasisPx') return 1200;
+        if (key === 'sessionsRightPaneDefaultOpen') return false;
+        return null;
+      },
+      useLocalSettingMutable: () => [null, vi.fn()],
+      useSetting: () => null,
+      useSettings: () => ({ experiments: true, featureToggles: {} }),
+      useAutomations: () => [],
+      useMachine: () => null,
+    });
+  },
 });
 
 vi.mock('@react-navigation/native', () => ({
@@ -89,17 +131,8 @@ vi.mock('@react-navigation/native', () => ({
   useIsFocused: () => true,
 }));
 
-vi.mock('expo-router', async () => {
-  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-  return createExpoRouterMock().module;
-});
-
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
-}));
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-  translate: (key: string) => key,
 }));
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
@@ -221,50 +254,12 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 vi.mock('@/components/sessions/agentInput', () => ({
   AgentInput: () => null,
 }));
-vi.mock('@/modal', async () => {
-  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-  const modalMock = createModalModuleMock();
-  modalMock.spies.alert.mockImplementation((...args) => modalAlertSpy(...args));
-  return modalMock.module;
-});
 
 vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
   };
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }) },
-    useSession: () => sessionState.session,
-    useIsDataReady: () => true,
-    useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
-    useSessionPendingMessages: () => ({ messages: [] }),
-    useSessionReviewCommentsDrafts: () => [],
-    useSessionUsage: () => null,
-    useLocalSetting: (key: string) => {
-      if (key === 'acknowledgedCliVersions') return {};
-      if (key === 'uiMultiPanePanelsEnabled') return true;
-      if (key === 'editorFocusModeEnabled') return false;
-      if (key === 'detailsPaneTabsBehavior') return 'preview';
-      if (key === 'rightPaneWidthPx') return 360;
-      if (key === 'rightPaneWidthBasisPx') return 1200;
-      if (key === 'detailsPaneWidthPx') return 520;
-      if (key === 'detailsPaneWidthBasisPx') return 1200;
-      if (key === 'sessionsRightPaneDefaultOpen') return false;
-      return null;
-    },
-    useLocalSettingMutable: () => [null, vi.fn()],
-    useSetting: () => null,
-    useSettings: () => ({ experiments: true, featureToggles: {} }),
-    useAutomations: () => [],
-    useMachine: () => null,
-});
 });
 
 describe('SessionView (control switch timeout)', () => {
@@ -302,8 +297,12 @@ describe('SessionView (control switch timeout)', () => {
     return chatListProps;
   }
 
-  async function flushControlSwitchTimeout() {
-    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: controlSwitchTimeoutMs });
+  async function waitForControlSwitchTimeout() {
+    await act(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, controlSwitchTimeoutMs + 25);
+      });
+    });
   }
 
   beforeEach(() => {
@@ -312,7 +311,6 @@ describe('SessionView (control switch timeout)', () => {
     sessionSwitchSpy.mockResolvedValue(true);
     modalAlertSpy.mockClear();
     chatListPropsSpy.mockClear();
-    vi.useFakeTimers();
     process.env.EXPO_PUBLIC_HAPPIER_CONTROL_SWITCH_UI_TIMEOUT_MS = String(controlSwitchTimeoutMs);
   });
 
@@ -325,7 +323,7 @@ describe('SessionView (control switch timeout)', () => {
 
   it('keeps local-control UI hidden and clears remote switching state after a timeout when controlledByUser never updates', async () => {
     sessionSwitchSpy.mockImplementationOnce(() => new Promise(() => {}));
-    const screen = await renderSessionView();
+    await renderSessionView();
     const chatList = getChatListProps();
     expect(chatList.controlSwitchTo).toBeNull();
     expect(typeof chatList.onRequestSwitchToRemote).toBe('function');
@@ -336,12 +334,11 @@ describe('SessionView (control switch timeout)', () => {
 
     expect(getChatListProps().controlSwitchTo).toBe('remote');
 
-    await flushControlSwitchTimeout();
+    await waitForControlSwitchTimeout();
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(getChatListProps().controlSwitchTo).toBeNull();
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.failedToSwitchControl');
-
-    await screen.unmount();
   });
 
   it('surfaces switch-to-local for attachable exclusive local-control sessions', async () => {
@@ -380,7 +377,8 @@ describe('SessionView (control switch timeout)', () => {
       chatList.onRequestSwitchToRemote();
     });
 
-    await flushControlSwitchTimeout();
+    await waitForControlSwitchTimeout();
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     const rejectPendingSwitch = rejectSwitch;
     if (rejectPendingSwitch === undefined) {

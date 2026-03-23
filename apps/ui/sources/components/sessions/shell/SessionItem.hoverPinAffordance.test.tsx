@@ -3,29 +3,58 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 type SessionItemProps = React.ComponentProps<(typeof import('./SessionItem'))['SessionItem']>;
 
 vi.mock('react-native-reanimated', () => ({}));
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'web' },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useHasUnreadMessages: () => false,
+                useProfile: () => ({
+                    id: 'u1',
+                    timestamp: 0,
+                    firstName: null,
+                    lastName: null,
+                    username: null,
+                    avatar: null,
+                    linkedProviders: [],
+                    connectedServices: [],
+                    connectedServicesV2: [],
+                }),
+                useSession: () => null,
+                useSessionListMeaningfulActivityAt: () => null,
+            },
+        });
+    },
+});
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: 'Swipeable',
-}));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                Platform: { OS: 'web' },
-            }
-    );
-});
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
 }));
 vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
@@ -64,32 +93,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
         },
     });
 });
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useHasUnreadMessages: () => false,
-            useProfile: () => ({
-                id: 'u1',
-                timestamp: 0,
-                firstName: null,
-                lastName: null,
-                username: null,
-                avatar: null,
-                linkedProviders: [],
-                connectedServices: [],
-                connectedServicesV2: [],
-            }),
-            useSession: () => null,
-            useSessionListMeaningfulActivityAt: () => null,
-        },
-    });
-});
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key: string) => key,
-}));
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
     PinSlashIcon: (props: Record<string, unknown>) => React.createElement('PinSlashIcon', props),

@@ -2,36 +2,31 @@ import * as React from 'react';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Platform: {
-                            OS: 'web',
-                        },
-                    }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+        return {
+            ...actual,
+            useSettings: () => ({}),
+        };
+    },
 });
 
 vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', () => ({

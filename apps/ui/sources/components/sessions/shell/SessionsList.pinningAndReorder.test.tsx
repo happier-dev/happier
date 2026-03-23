@@ -10,6 +10,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { createCapturingFlatListMock } from '@/dev/testkit/mocks/flashList';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,6 +54,72 @@ const sessionB = {
 
 const projectGroupKey = 'server:server_a:active:project:proj_a';
 
+installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'web', select: (value: any) => value.web ?? value.default },
+            TurboModuleRegistry: { get: () => ({}) },
+            FlatList: (props: any) => {
+                const element = flatListMock.module.FlatList(props);
+                capturedRootFlatListProps = flatListMock.state.props;
+                return element;
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            pathname: '',
+            router: {
+                push: routerPushSpy,
+                replace: vi.fn(),
+                back: vi.fn(),
+                setParams: vi.fn(),
+            },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module,
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'compactSessionView') return false;
+                    if (key === 'compactSessionViewMinimal') return false;
+                    if (key === 'sessionTagsEnabled') return true;
+                    return null;
+                },
+                useHasUnreadMessages: () => false,
+                useSession: () => null,
+                useProfile: () => ({
+                    id: 'profile-1',
+                    timestamp: 0,
+                    firstName: null,
+                    lastName: null,
+                    username: null,
+                    avatar: null,
+                    linkedProviders: [],
+                    connectedServices: [],
+                    connectedServicesV2: [],
+                }),
+                useAllMachines: () => mockMachinesState.current,
+                useSettingMutable: (key: string) => {
+                    if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
+                    if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
+                    if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
+                    return [null, vi.fn()];
+                },
+            },
+        });
+    },
+});
+
 vi.mock('react-native-reanimated', () => ({
     default: { View: (props: any) => React.createElement('Animated.View', props) },
     useSharedValue: (init: any) => ({ value: init }),
@@ -67,42 +134,12 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                Platform: { OS: 'web', select: (value: any) => value.web ?? value.default },
-                                TurboModuleRegistry: { get: () => ({}) },
-                                FlatList: (props: any) => {
-                                    const element = flatListMock.module.FlatList(props);
-                                    capturedRootFlatListProps = flatListMock.state.props;
-                                    return element;
-                                },
-                            }
-    );
-});
-
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-    pathname: '',
-    router: {
-        push: routerPushSpy,
-        replace: vi.fn(),
-        back: vi.fn(),
-        setParams: vi.fn(),
-    },
-}).module);
-
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: 'RecoveryKeyReminderBanner',
 }));
 
 vi.mock('@/components/ui/feedback/UpdateBanner', () => ({
     UpdateBanner: 'UpdateBanner',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
 }));
 
 vi.mock('@/utils/sessions/sessionUtils', () => ({
@@ -155,13 +192,6 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionMock(sessionId),
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
-
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
 }));
@@ -206,41 +236,6 @@ let mockVisibleSessionListViewData: any[] = [
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     useVisibleSessionListViewData: () => mockVisibleSessionListViewData,
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'compactSessionView') return false;
-                if (key === 'compactSessionViewMinimal') return false;
-                if (key === 'sessionTagsEnabled') return true;
-                return null;
-            },
-            useHasUnreadMessages: () => false,
-            useSession: () => null,
-            useProfile: () => ({
-                id: 'profile-1',
-                timestamp: 0,
-                firstName: null,
-                lastName: null,
-                username: null,
-                avatar: null,
-                linkedProviders: [],
-                connectedServices: [],
-                connectedServicesV2: [],
-            }),
-            useAllMachines: () => mockMachinesState.current,
-            useSettingMutable: (key: string) => {
-                if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
-                if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
-                if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
-                return [null, vi.fn()];
-            },
-        },
-    });
-});
 
 vi.mock('@/utils/system/requestReview', () => ({
     requestReview: vi.fn(),

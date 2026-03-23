@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -45,37 +46,38 @@ function createScopeState() {
 
 let scopeState = createScopeState();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Platform: {
-                            OS: 'web',
-                        },
-                        View: React.forwardRef((props: any, ref: any) => {
-                            lastScrollLockBypassEl = fakeDomNode;
-                            if (ref && typeof ref === 'object') {
-                                ref.current = fakeDomNode;
-                            }
-                            if (typeof ref === 'function') {
-                                ref(fakeDomNode);
-                            }
-                            return React.createElement('View', props, props.children);
-                        }),
-                        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                        ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-                    }
-    );
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+            View: React.forwardRef((props: any, ref: any) => {
+                lastScrollLockBypassEl = fakeDomNode;
+                if (ref && typeof ref === 'object') {
+                    ref.current = fakeDomNode;
+                }
+                if (typeof ref === 'function') {
+                    ref(fakeDomNode);
+                }
+                return React.createElement('View', props, props.children);
+            }),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: (key: string) => {
+                if (key === 'editorFocusModeEnabled') return false;
+                return null;
+            },
+            useLocalSettingMutable: () => [false, vi.fn()],
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
@@ -92,22 +94,6 @@ vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
 vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => ({
     SessionScmReviewDetailsView: () => React.createElement('SessionScmReviewDetailsView'),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: (key: string) => {
-            if (key === 'editorFocusModeEnabled') return false;
-            return null;
-        },
-    useLocalSettingMutable: () => [false, vi.fn()],
-});
-});
 
 const unpinDetailsTab = vi.fn();
 

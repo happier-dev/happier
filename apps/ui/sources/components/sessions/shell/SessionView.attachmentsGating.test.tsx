@@ -3,6 +3,13 @@ import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { renderScreen } from '@/dev/testkit';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,6 +25,121 @@ const sessionState = vi.hoisted(() => ({
   } as any,
 }));
 
+installSessionShellCommonModuleMocks({
+  reactNative: async () =>
+    createReactNativeWebMock({
+      View: 'View',
+      Text: 'Text',
+      Pressable: 'Pressable',
+      ActivityIndicator: 'ActivityIndicator',
+      Easing: {
+        bezier: vi.fn(() => ({})),
+      },
+      Animated: {
+        View: 'Animated.View',
+        Value: class {
+          private _v: number;
+
+          constructor(v: number) {
+            this._v = v;
+          }
+
+          // Minimal stub for Animated.Value used by MultiPaneHost.
+          interpolate() {
+            return this;
+          }
+        },
+        timing: () => ({
+          start: (cb?: any) => cb?.({ finished: true }),
+        }),
+      },
+      AccessibilityInfo: {
+        isReduceMotionEnabled: vi.fn(async () => false),
+        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+      },
+      Dimensions: {
+        get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
+      },
+      useWindowDimensions: () => ({ width: 1200, height: 800 }),
+      Platform: {
+        OS: 'ios',
+        select: (spec: Record<string, unknown>) =>
+          spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
+      },
+    }),
+  unistyles: async () =>
+    createUnistylesMock({
+      theme: {
+        dark: false,
+        colors: {
+          text: '#000',
+          textSecondary: '#666',
+          textLink: '#00f',
+          surface: '#fff',
+          surfaceHigh: '#f5f5f5',
+          surfaceSelected: '#eef4ff',
+          divider: '#ddd',
+          border: '#ddd',
+          indigo: '#5856D6',
+          radio: { active: '#007AFF' },
+          accent: {
+            blue: '#007AFF',
+            green: '#34C759',
+            orange: '#FF9500',
+            yellow: '#FFCC00',
+            red: '#FF3B30',
+            indigo: '#5856D6',
+            purple: '#AF52DE',
+          },
+          modal: { border: '#ddd' },
+          input: { background: '#f5f5f5' },
+          header: { tint: '#000' },
+          status: { error: '#f00' },
+          shadow: { color: '#000', opacity: 0.2 },
+          groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
+        },
+      },
+    }),
+  text: async () => createTextModuleMock({ translate: (key) => key }),
+  modal: async () =>
+    createModalModuleMock({
+      spies: {
+        alert: vi.fn(),
+        confirm: vi.fn(),
+        prompt: vi.fn(),
+      },
+    }).module,
+  router: async () =>
+    createExpoRouterMock({
+      router: { push: vi.fn(), back: vi.fn() },
+      pathname: '/',
+    }).module,
+  storage: async () =>
+    createStorageModuleStub({
+      storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }) },
+      useSession: () => sessionState.session,
+      useIsDataReady: () => true,
+      useRealtimeStatus: () => ({ status: 'connected' }),
+      useSessionMessages: () => ({ messages: [], isLoaded: true }),
+      useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+      useLocalSetting: (key: string) => {
+        if (key === 'uiMultiPanePanelsEnabled') return false;
+        if (key === 'editorFocusModeEnabled') return false;
+        if (key === 'acknowledgedCliVersions') return [];
+        return null;
+      },
+      useSessionPendingMessages: () => ({ messages: [] }),
+      useSessionReviewCommentsDrafts: () => [],
+      useSessionUsage: () => null,
+      useSetting: () => null,
+      useSettings: () => ({ experiments: true, featureToggles: {} }),
+      useAutomations: () => [],
+      useMachine: () => null,
+      useLocalSettingMutable: () => [false, vi.fn()],
+      useSettingMutable: () => [null, vi.fn()],
+    }),
+});
+
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
   LinearGradient: 'LinearGradient',
@@ -25,110 +147,18 @@ vi.mock('expo-linear-gradient', () => ({
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Text: 'Text',
-                                    Pressable: 'Pressable',
-                                    ActivityIndicator: 'ActivityIndicator',
-                                    Easing: {
-                                        bezier: vi.fn(() => ({})),
-                                    },
-                                    Animated: {
-                                        View: 'Animated.View',
-                                        Value: class {
-                                      private _v: number;
-                                      constructor(v: number) {
-                                        this._v = v;
-                                      }
-                                      // Minimal stub for Animated.Value used by MultiPaneHost.
-                                      interpolate() {
-                                        return this;
-                                      }
-                                    },
-                                        timing: () => ({
-                                      start: (cb?: any) => cb?.({ finished: true }),
-                                    }),
-                                    },
-                                    AccessibilityInfo: {
-                                        isReduceMotionEnabled: vi.fn(async () => false),
-                                        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                                    },
-                                    Dimensions: {
-                                        get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
-                                    },
-                                    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: (spec: Record<string, unknown>) =>
-                                      spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-                                    },
-                                }
-    );
-});
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-      dark: false,
-      colors: {
-        text: '#000',
-        textSecondary: '#666',
-        textLink: '#00f',
-        surface: '#fff',
-        surfaceHigh: '#f5f5f5',
-        surfaceSelected: '#eef4ff',
-        divider: '#ddd',
-        border: '#ddd',
-        indigo: '#5856D6',
-        radio: { active: '#007AFF' },
-        accent: {
-          blue: '#007AFF',
-          green: '#34C759',
-          orange: '#FF9500',
-          yellow: '#FFCC00',
-          red: '#FF3B30',
-          indigo: '#5856D6',
-          purple: '#AF52DE',
-        },
-        modal: { border: '#ddd' },
-        input: { background: '#f5f5f5' },
-        header: { tint: '#000' },
-        status: { error: '#f00' },
-        shadow: { color: '#000', opacity: 0.2 },
-        groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
-      },
-    },
-    });
-});
 
 vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
   useIsFocused: () => true,
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: vi.fn(), back: vi.fn() },
-        pathname: '/',
-    });
-    return routerMock.module;
-});
-
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: authCredentials }),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
   AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
@@ -228,44 +258,6 @@ vi.mock('@/components/sessions/agentInput', () => ({
   AgentInput: (props: any) => React.createElement('AgentInput', props),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(),
-            prompt: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }) },
-    useSession: () => sessionState.session,
-    useIsDataReady: () => true,
-    useRealtimeStatus: () => ({ status: 'connected' }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-    useLocalSetting: (key: string) => {
-          if (key === 'uiMultiPanePanelsEnabled') return false;
-          if (key === 'editorFocusModeEnabled') return false;
-          if (key === 'acknowledgedCliVersions') return [];
-          return null;
-      },
-    useSessionPendingMessages: () => ({ messages: [] }),
-    useSessionReviewCommentsDrafts: () => [],
-    useSessionUsage: () => null,
-    useSetting: () => null,
-    useSettings: () => ({ experiments: true, featureToggles: {} }),
-    useAutomations: () => [],
-    useMachine: () => null,
-    useLocalSettingMutable: () => [false, vi.fn()],
-    useSettingMutable: () => [null, vi.fn()],
-});
-});
-
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
   useAutomationsSupport: () => ({ enabled: false }),
 }));
@@ -279,7 +271,11 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    getAgentCore: () => ({ model: { defaultMode: 'default' }, resume: { vendorResumeIdField: null } }),
+    getAgentCore: () => ({
+      model: { defaultMode: 'default' },
+      resume: { vendorResumeIdField: null },
+      sessionModes: { kind: 'none' },
+    }),
     resolveAgentIdFromFlavor: () => 'codex',
     DEFAULT_AGENT_ID: 'codex',
   };

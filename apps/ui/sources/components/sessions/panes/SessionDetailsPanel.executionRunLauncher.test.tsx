@@ -1,24 +1,10 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -29,23 +15,24 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useLocalSetting: ((key: string) => {
-                if (key === 'editorFocusModeEnabled') return false;
-                return null;
-            }) as any,
-            useLocalSettingMutable: (() => [false, vi.fn()]) as any,
-        },
-    });
+installSessionDetailsPanelCommonModuleMocks({
+    icons: async () => ({
+        Octicons: 'Octicons',
+        Ionicons: 'Ionicons',
+    }),
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useLocalSetting: ((key: string) => {
+                    if (key === 'editorFocusModeEnabled') return false;
+                    return null;
+                }) as any,
+                useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+            },
+        });
+    },
 });
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
@@ -114,7 +101,7 @@ describe('SessionDetailsPanel (execution run launcher resource)', () => {
             presentation: 'panel',
             initialIntent: 'review',
         });
-        expect(screen.root.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 
     it('renders execution-run launcher tabs without an intermediate loading fallback', async () => {
@@ -123,7 +110,7 @@ describe('SessionDetailsPanel (execution run launcher resource)', () => {
         const SessionDetailsPanel = await getSessionDetailsPanel();
         const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        expect(screen.root.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
         expect(launcherViewSpy).toHaveBeenCalledTimes(1);
     });
 });
