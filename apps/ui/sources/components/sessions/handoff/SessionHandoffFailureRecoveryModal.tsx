@@ -78,10 +78,11 @@ export function SessionHandoffFailureRecoveryModal({ onClose, title, message, de
     }, [onClose, onResolve]);
 
     return (
-        <View style={styles.container}>
+        <View testID="session-handoff-recovery-modal" style={styles.container}>
             <View style={styles.header}>
                 <Text style={styles.title}>{title}</Text>
                 <Pressable
+                    testID="session-handoff-recovery-close"
                     onPress={() => handleResolve(null)}
                     hitSlop={10}
                     style={({ pressed }) => ({ padding: 2, opacity: pressed ? 0.7 : 1 })}
@@ -96,9 +97,17 @@ export function SessionHandoffFailureRecoveryModal({ onClose, title, message, de
                 {details ? <Text style={styles.details}>{details}</Text> : null}
             </View>
             <View style={styles.footer}>
-                <RoundButton title={t('sessionHandoff.recovery.keepStopped')} onPress={() => handleResolve('keep_stopped')} />
+                <RoundButton
+                    testID="session-handoff-recovery-keep-stopped"
+                    title={t('sessionHandoff.recovery.keepStopped')}
+                    onPress={() => handleResolve('keep_stopped')}
+                />
                 {canRestart ? (
-                    <RoundButton title={t('sessionHandoff.recovery.restartOnSource')} onPress={() => handleResolve('restart_on_source')} />
+                    <RoundButton
+                        testID="session-handoff-recovery-restart-on-source"
+                        title={t('sessionHandoff.recovery.restartOnSource')}
+                        onPress={() => handleResolve('restart_on_source')}
+                    />
                 ) : null}
             </View>
         </View>

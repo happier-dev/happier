@@ -8,6 +8,15 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Передача сессии',
             message: 'Подготавливаем целевую машину и переносим состояние сессии.',
+            timeline: {
+                scanSource: 'Сканирование источника',
+                plan: 'Планирование изменений',
+                transferBlobs: 'Передача файлов',
+                stageTarget: 'Подготовка цели',
+                apply: 'Применение изменений',
+                importSession: 'Импорт сессии',
+                finalize: 'Завершение',
+            },
         },
         failure: {
             title: 'Не удалось передать сессию',
@@ -30,6 +39,15 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Przekazywanie sesji',
             message: 'Przygotowujemy maszynę docelową i przenosimy stan sesji.',
+            timeline: {
+                scanSource: 'Skanowanie źródła',
+                plan: 'Planowanie zmian',
+                transferBlobs: 'Przesyłanie plików',
+                stageTarget: 'Przygotowywanie celu',
+                apply: 'Zastosowanie zmian',
+                importSession: 'Importowanie sesji',
+                finalize: 'Finalizowanie',
+            },
         },
         failure: {
             title: 'Przekazanie sesji nie powiodło się',
@@ -52,6 +70,15 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Transfiriendo sesion',
             message: 'Preparando la maquina de destino y moviendo el estado de la sesion.',
+            timeline: {
+                scanSource: 'Escaneando origen',
+                plan: 'Planificando cambios',
+                transferBlobs: 'Transfiriendo archivos',
+                stageTarget: 'Preparando destino',
+                apply: 'Aplicando cambios',
+                importSession: 'Importando sesión',
+                finalize: 'Finalizando',
+            },
         },
         failure: {
             title: 'No se pudo transferir la sesion',
@@ -74,6 +101,15 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Trasferimento della sessione',
             message: 'Preparazione della macchina di destinazione e spostamento dello stato della sessione.',
+            timeline: {
+                scanSource: 'Scansione sorgente',
+                plan: 'Pianificazione modifiche',
+                transferBlobs: 'Trasferimento file',
+                stageTarget: 'Preparazione destinazione',
+                apply: 'Applicazione modifiche',
+                importSession: 'Importazione sessione',
+                finalize: 'Finalizzazione',
+            },
         },
         failure: {
             title: 'Trasferimento della sessione non riuscito',
@@ -96,6 +132,15 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Transferindo sessao',
             message: 'Preparando a maquina de destino e movendo o estado da sessao.',
+            timeline: {
+                scanSource: 'Escaneando origem',
+                plan: 'Planejando mudanças',
+                transferBlobs: 'Transferindo arquivos',
+                stageTarget: 'Preparando destino',
+                apply: 'Aplicando mudanças',
+                importSession: 'Importando sessão',
+                finalize: 'Finalizando',
+            },
         },
         failure: {
             title: 'Falha ao transferir a sessao',
@@ -118,6 +163,15 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'Transferint la sessio',
             message: 'S esta preparant la maquina de destinacio i movent l estat de la sessio.',
+            timeline: {
+                scanSource: 'Escanejant origen',
+                plan: 'Planificant canvis',
+                transferBlobs: 'Transferint fitxers',
+                stageTarget: 'Preparant destinació',
+                apply: 'Aplicant canvis',
+                importSession: 'Important sessió',
+                finalize: 'Finalitzant',
+            },
         },
         failure: {
             title: 'No s ha pogut transferir la sessio',
@@ -140,6 +194,15 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: '正在移交会话',
             message: '正在准备目标机器并迁移会话状态。',
+            timeline: {
+                scanSource: '扫描源',
+                plan: '规划更改',
+                transferBlobs: '传输文件',
+                stageTarget: '准备目标',
+                apply: '应用更改',
+                importSession: '导入会话',
+                finalize: '完成',
+            },
         },
         failure: {
             title: '会话移交失败',
@@ -162,6 +225,15 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: '正在移交工作階段',
             message: '正在準備目標機器並移動工作階段狀態。',
+            timeline: {
+                scanSource: '掃描來源',
+                plan: '規劃變更',
+                transferBlobs: '傳輸檔案',
+                stageTarget: '準備目標',
+                apply: '套用變更',
+                importSession: '匯入工作階段',
+                finalize: '完成',
+            },
         },
         failure: {
             title: '工作階段移交失敗',
@@ -184,6 +256,15 @@ export const sessionHandoffTranslationExtensions = {
         progress: {
             title: 'セッションを引き継ぎ中',
             message: '対象のマシンを準備し、セッションの状態を移動しています。',
+            timeline: {
+                scanSource: 'ソースをスキャン',
+                plan: '変更を計画',
+                transferBlobs: 'ファイルを転送',
+                stageTarget: 'ターゲットを準備',
+                apply: '変更を適用',
+                importSession: 'セッションをインポート',
+                finalize: '完了',
+            },
         },
         failure: {
             title: 'セッションの引き継ぎに失敗しました',

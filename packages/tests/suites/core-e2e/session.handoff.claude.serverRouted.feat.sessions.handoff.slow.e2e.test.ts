@@ -25,6 +25,7 @@ type HandoffStartResult = Readonly<{
     handoffId: string;
     endpointCandidates: readonly Readonly<{ kind: string; url: string; expiresAt: number }>[];
     targetPath: string;
+    handoffMetadataV2?: unknown;
     providerBundle?: unknown;
 }>;
 
@@ -92,6 +93,17 @@ function requirePreparedResume(
         throw new Error(`Missing resume payload for ${context}`);
     }
     return result.resume;
+}
+
+function requireObject(value: unknown, context: string): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error(`Expected object for ${context}`);
+    }
+    return value as Record<string, unknown>;
+}
+
+function requireHandoffMetadataV2(result: HandoffStartResult, context: string): Record<string, unknown> {
+    return requireObject(result.handoffMetadataV2, `handoffMetadataV2 for ${context}`);
 }
 
 type SessionSnapshotRow = Readonly<{
@@ -463,7 +475,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                 negotiatedTransportStrategy: 'server_routed_stream',
                 workspaceTransfer: {
                     enabled: true,
-                    strategy: 'sync_changes',
+                    strategy: 'transfer_snapshot',
                     conflictPolicy: 'replace_existing',
                     includeIgnoredMode: 'exclude',
                     ignoredIncludeGlobs: [],
@@ -478,6 +490,15 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             endpointCandidates: [],
         }));
         expect(started.providerBundle).toBeUndefined();
+        const handoffMetadataV2 = requireHandoffMetadataV2(started, 'source server-routed handoff start');
+        expect(requireObject(handoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+            transferId: expect.any(String),
+            sizeBytes: expect.any(Number),
+            manifestHash: expect.any(String),
+        }));
+        expect(requireObject(handoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
+            transferId: expect.any(String),
+        }));
         await waitFor(async () => (await listDaemonSessions(sourceDaemon!)).includes(sessionId) === false, {
             timeoutMs: 30_000,
             intervalMs: 100,
@@ -496,9 +517,10 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                     negotiatedTransportStrategy: 'server_routed_stream',
                     sourceSessionStorageMode: 'direct',
                     targetPath: targetWorkspaceDir,
+                    handoffMetadataV2,
                     workspaceTransfer: {
                         enabled: true,
-                        strategy: 'sync_changes',
+                        strategy: 'transfer_snapshot',
                         conflictPolicy: 'replace_existing',
                         includeIgnoredMode: 'exclude',
                         ignoredIncludeGlobs: [],
@@ -628,6 +650,15 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             'target server-routed handoff-back start',
         ) as HandoffStartResult;
         expect(secondStarted.handoffId).not.toBe(started.handoffId);
+        const secondHandoffMetadataV2 = requireHandoffMetadataV2(secondStarted, 'target server-routed handoff-back start');
+        expect(requireObject(secondHandoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+            transferId: expect.any(String),
+            sizeBytes: expect.any(Number),
+            manifestHash: expect.any(String),
+        }));
+        expect(requireObject(secondHandoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
+            transferId: expect.any(String),
+        }));
 
         const secondPrepared = await waitForReadyHandoffPrepareResult({
             machineRpc: sourceMachineRpc,
@@ -641,6 +672,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                     negotiatedTransportStrategy: 'server_routed_stream',
                     sourceSessionStorageMode: 'direct',
                     targetPath: sourceWorkspaceDir,
+                    handoffMetadataV2: secondHandoffMetadataV2,
                     workspaceTransfer: {
                         enabled: true,
                         strategy: 'sync_changes',
@@ -918,6 +950,15 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             }),
             'source server-routed abort handoff start',
         ) as HandoffStartResult;
+        const abortHandoffMetadataV2 = requireHandoffMetadataV2(started, 'source server-routed abort handoff start');
+        expect(requireObject(abortHandoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+            transferId: expect.any(String),
+            sizeBytes: expect.any(Number),
+            manifestHash: expect.any(String),
+        }));
+        expect(requireObject(abortHandoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
+            transferId: expect.any(String),
+        }));
 
         const initialPrepare = unwrapDataKeyRpcResult(
             await targetMachineRpc.call(`${targetSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET}`, {
@@ -927,6 +968,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                 negotiatedTransportStrategy: 'server_routed_stream',
                 sourceSessionStorageMode: 'direct',
                 targetPath: targetWorkspaceDir,
+                handoffMetadataV2: abortHandoffMetadataV2,
                 workspaceTransfer: {
                     enabled: true,
                     strategy: 'sync_changes',
@@ -1135,6 +1177,12 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             }),
             'source server-routed handoff start for late cutover proof',
         ) as HandoffStartResult;
+        const lateCutoverMetadataV2 = requireHandoffMetadataV2(started, 'source server-routed handoff start for late cutover proof');
+        expect(requireObject(lateCutoverMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+            transferId: expect.any(String),
+            sizeBytes: expect.any(Number),
+            manifestHash: expect.any(String),
+        }));
 
         const latePrompt = 'after-cutover-start-server-routed-proof';
         await postPlainUiTextMessage({
@@ -1172,6 +1220,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                     negotiatedTransportStrategy: 'server_routed_stream',
                     sourceSessionStorageMode: 'persisted',
                     targetPath: started.targetPath,
+                    handoffMetadataV2: lateCutoverMetadataV2,
                 }),
                 'target server-routed handoff prepare for late cutover proof',
             ) as HandoffPrepareResult,

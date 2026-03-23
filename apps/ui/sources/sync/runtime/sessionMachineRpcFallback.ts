@@ -1,7 +1,8 @@
-import { getCachedReadyServerFeatures, getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
+import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -96,26 +97,30 @@ function shouldGuardMachineRpcDirectWithTransferPolicy(machineMethod: string): b
 }
 
 async function resolveTransferPolicyAllowsMachineRpcDirect(sessionId: string): Promise<boolean> {
-    const serverId = resolvePreferredServerIdForSessionId(sessionId);
-    const cachedFeatures = getCachedReadyServerFeatures({ serverId });
-    const serverFeatures = cachedFeatures ?? await getReadyServerFeatures({
-        timeoutMs: 500,
-        serverId,
-    });
+    try {
+        const serverId = resolvePreferredServerIdForSessionId(sessionId);
+        const serverFeatures = await getReadyServerFeatures({
+            timeoutMs: 500,
+            serverId,
+        });
 
-    // Fail closed for guarded methods: if we cannot evaluate policy, we must not attempt
-    // `machine_rpc_direct` and risk bypassing server transfer restrictions.
-    if (!serverFeatures) return false;
+        // Fail closed for guarded methods: if we cannot evaluate policy, we must not attempt
+        // `machine_rpc_direct` and risk bypassing server transfer restrictions.
+        if (!serverFeatures) return false;
 
-    const availability = resolveAppSessionTransferAvailability({
-        machineTargetAvailable: true,
-        sessionRpcAvailable: canUseSessionRpc(sessionId),
-        serverFeatures,
-        // Only enforce "transfer disabled" gating here; size checks are owned by the bulk transfer pipeline.
-        sessionRpcTransferSizeBytes: null,
-    });
+        const availability = resolveAppSessionTransferAvailability({
+            machineTargetAvailable: true,
+            sessionRpcAvailable: canUseSessionRpc(sessionId),
+            serverFeatures,
+            // Only enforce "transfer disabled" gating here; size checks are owned by the bulk transfer pipeline.
+            sessionRpcTransferSizeBytes: null,
+        });
 
-    return availability.kind === 'selected' && availability.route === 'machine_rpc_direct';
+        return availability.kind === 'selected' && availability.route === 'machine_rpc_direct';
+    } catch {
+        // If server feature evaluation fails, do not attempt `machine_rpc_direct`.
+        return false;
+    }
 }
 
 function readSessionMachineRpcErrorMessage(error: unknown): string {
@@ -154,6 +159,24 @@ async function callDefaultSessionRoute<TResponse extends Readonly<{ success: boo
     route: SessionMachineRpcSessionRoute,
     callParams: SessionMachineRpcCallParams<TRequest>,
 ): Promise<TResponse> {
+    if (shouldGuardMachineRpcDirectWithTransferPolicy(callParams.machineMethod)) {
+        const machineTarget = readMachineTargetForSession(sessionId);
+        if (!machineTarget) {
+            throw new Error('Machine target not available for session');
+        }
+        const machineRequest = callParams.toMachineRequest
+            ? callParams.toMachineRequest({ request: callParams.request, machineTarget })
+            : callParams.request;
+        const response = await machineRpcWithServerScope<TResponse, TRequest>({
+            machineId: machineTarget.machineId,
+            serverId: route.serverId,
+            method: callParams.machineMethod,
+            payload: machineRequest,
+            preferScoped: true,
+        });
+        return assertRpcResponseWithSuccess<TResponse>(response);
+    }
+
     const response = await sessionRpcWithServerScope<TResponse, TRequest>({
         sessionId,
         serverId: route.serverId,

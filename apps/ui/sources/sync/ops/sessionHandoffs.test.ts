@@ -131,12 +131,8 @@ describe('sessionHandoffs ops', () => {
             handoffId: 'handoff_1',
             status: { handoffId: 'handoff_1', status: 'pending', phase: 'preparing', recoveryActions: [] },
             endpointCandidates: [],
+            handoffMetadataV2: {},
             targetPath: '/repo',
-            providerBundle: {
-                providerId: 'claude',
-                remoteSessionId: 'claude_session_1',
-                transcriptBase64: 'e30K',
-            },
         });
 
         const { startSessionHandoff } = await import('./sessionHandoffs');
@@ -158,6 +154,7 @@ describe('sessionHandoffs ops', () => {
             handoffId: 'handoff_1',
             status: { handoffId: 'handoff_1', status: 'pending', phase: 'preparing', recoveryActions: [] },
             endpointCandidates: [],
+            handoffMetadataV2: {},
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine_source',
@@ -386,11 +383,6 @@ describe('sessionHandoffs ops', () => {
             status: { handoffId: 'handoff_1', status: 'pending', phase: 'preparing', recoveryActions: [] },
             endpointCandidates: [],
             targetPath: '/repo',
-            providerBundle: {
-                providerId: 'claude',
-                remoteSessionId: 'claude_session_1',
-                transcriptBase64: 'e30K',
-            },
         });
         readMachineTargetForSessionMock.mockReturnValueOnce({ machineId: 'reachable_machine', basePath: '/repo' });
 
@@ -471,11 +463,6 @@ describe('sessionHandoffs ops', () => {
                 },
                 endpointCandidates: [],
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_retry_source_start',
-                    transcriptBase64: 'e30K',
-                },
             });
 
         let nowMs = 0;
@@ -541,11 +528,6 @@ describe('sessionHandoffs ops', () => {
                 },
                 endpointCandidates: [],
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_retry_source_start_timeout',
-                    transcriptBase64: 'e30K',
-                },
             });
 
         let nowMs = 0;
@@ -624,32 +606,8 @@ describe('sessionHandoffs ops', () => {
                 handoffId: 'handoff_1',
                 status: { handoffId: 'handoff_1', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
+                handoffMetadataV2: {},
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_1',
-                    transcriptBase64: 'e30K',
-                },
-                workspaceArtifacts: {
-                    manifest: {
-                        entries: [
-                            {
-                                relativePath: 'README.md',
-                                kind: 'file',
-                                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                                sizeBytes: 6,
-                                executable: false,
-                            },
-                        ],
-                        fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-                    },
-                    blobs: [
-                        {
-                            digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                            contentBase64: 'aGVsbG8K',
-                        },
-                    ],
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_1',
@@ -767,9 +725,10 @@ describe('sessionHandoffs ops', () => {
                 handoffId: 'handoff_1',
                 negotiatedTransportStrategy: 'direct_peer',
                 allowServerRoutedFallback: true,
-                endpointCandidates: [],
+                handoffMetadataV2: {},
             }),
         }));
+        expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]?.payload).not.toHaveProperty('endpointCandidates');
         expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]?.payload).not.toHaveProperty('workspaceBundle');
         expect(machineStopSessionMock).not.toHaveBeenCalled();
         expect(resumeSessionMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -895,11 +854,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_prepare_failure_after_stop', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_prepare_failure_after_stop',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 ok: false,
@@ -1005,11 +959,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_scoped_refresh', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_scoped_refresh',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_scoped_refresh',
@@ -1160,11 +1109,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_server_routed_cutover', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo-target',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_server_routed_cutover',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_server_routed_cutover',
@@ -1295,11 +1239,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_server_routed_rebind', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo-target',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_server_routed_rebind',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_server_routed_rebind',
@@ -1438,11 +1377,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_server_routed_post_refresh_rebind', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo-target',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_server_routed_post_refresh_rebind',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_server_routed_post_refresh_rebind',
@@ -1541,6 +1475,316 @@ describe('sessionHandoffs ops', () => {
         expect(currentPath).toBe('/repo-target');
     });
 
+    it('reapplies the target session binding after post-commit force refresh rewrites the session to the source machine', async () => {
+        let currentMachineId = 'machine_source';
+        let currentPath = '/repo';
+        readMachineTargetForSessionMock.mockImplementation(() => ({
+            machineId: currentMachineId,
+            basePath: currentPath,
+        }));
+        storageGetStateMock.mockImplementation(() => ({
+            sessions: {
+                sess_server_routed_post_commit_force_refresh_rebind: {
+                    id: 'sess_server_routed_post_commit_force_refresh_rebind',
+                    active: true,
+                    metadata: {
+                        machineId: currentMachineId,
+                        path: currentPath,
+                        flavor: 'claude',
+                        claudeSessionId: 'claude_session_server_routed_post_commit_force_refresh_rebind',
+                    },
+                },
+            },
+            applySessions: (sessions: Array<{ metadata?: { machineId?: string; path?: string } }>) => {
+                storageApplySessionsMock(sessions);
+                const rebound = sessions[0]?.metadata;
+                if (typeof rebound?.machineId === 'string') {
+                    currentMachineId = rebound.machineId;
+                }
+                if (typeof rebound?.path === 'string') {
+                    currentPath = rebound.path;
+                }
+            },
+        }));
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_server_routed_post_commit_force_refresh_rebind',
+                status: {
+                    handoffId: 'handoff_server_routed_post_commit_force_refresh_rebind',
+                    status: 'pending',
+                    phase: 'preparing',
+                    recoveryActions: [],
+                },
+                endpointCandidates: [],
+                targetPath: '/repo-target',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_server_routed_post_commit_force_refresh_rebind',
+                status: {
+                    handoffId: 'handoff_server_routed_post_commit_force_refresh_rebind',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'server_routed_stream',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'claude_session_server_routed_post_commit_force_refresh_rebind',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: '/repo-target',
+                    agent: 'claude',
+                    resume: 'claude_session_server_routed_post_commit_force_refresh_rebind',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_server_routed_post_commit_force_refresh_rebind',
+                status: {
+                    handoffId: 'handoff_server_routed_post_commit_force_refresh_rebind',
+                    status: 'completed',
+                    phase: 'finalizing',
+                    recoveryActions: [],
+                },
+            });
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+            status: 'ready',
+            features: {
+                features: {
+                    sessions: {
+                        enabled: true,
+                        handoff: {
+                            enabled: true,
+                            serverRoutedTransfer: { enabled: true },
+                        },
+                    },
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            serverRouted: { enabled: true },
+                            directPeer: { enabled: false },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        });
+        resumeSessionMock.mockResolvedValueOnce({
+            type: 'success',
+            sessionId: 'sess_server_routed_post_commit_force_refresh_rebind',
+        });
+        patchSessionMetadataWithRetryMock.mockResolvedValueOnce(undefined);
+        patchSessionMetadataWithRetryMock.mockResolvedValueOnce(undefined);
+        waitForSessionHandoffTargetSessionActiveMock.mockResolvedValueOnce({ ok: true });
+        let ensureCallCount = 0;
+        ensureSessionVisibleForMessageRouteMock.mockImplementation(async () => {
+            ensureCallCount += 1;
+            if (ensureCallCount === 2) {
+                storageGetStateMock().applySessions([{
+                    id: 'sess_server_routed_post_commit_force_refresh_rebind',
+                    active: true,
+                    metadata: {
+                        machineId: 'machine_source',
+                        path: '/repo',
+                        flavor: 'claude',
+                        claudeSessionId: 'claude_session_server_routed_post_commit_force_refresh_rebind',
+                    },
+                }]);
+            }
+        });
+
+        const { completeSessionHandoff } = await import('./sessionHandoffs');
+        const result = await completeSessionHandoff({
+            sessionId: 'sess_server_routed_post_commit_force_refresh_rebind',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            serverId: 'server_b',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+            sourceMetadata: {
+                flavor: 'claude',
+                path: '/repo',
+                host: 'source-host',
+                machineId: 'machine_source',
+                claudeSessionId: 'claude_session_server_routed_post_commit_force_refresh_rebind',
+            },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            handoffId: 'handoff_server_routed_post_commit_force_refresh_rebind',
+            status: {
+                handoffId: 'handoff_server_routed_post_commit_force_refresh_rebind',
+                status: 'completed',
+                phase: 'finalizing',
+                recoveryActions: [],
+            },
+        });
+        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenNthCalledWith(
+            1,
+            'sess_server_routed_post_commit_force_refresh_rebind',
+            { forceRefresh: true },
+        );
+        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenNthCalledWith(
+            2,
+            'sess_server_routed_post_commit_force_refresh_rebind',
+            { forceRefresh: true },
+        );
+        expect(currentMachineId).toBe('machine_target');
+        expect(currentPath).toBe('/repo-target');
+    });
+
+    it('re-stabilizes the target session binding when a late source overwrite lands after the final force refresh', async () => {
+        let currentMachineId = 'machine_source';
+        let currentPath = '/repo';
+        readMachineTargetForSessionMock.mockImplementation(() => ({
+            machineId: currentMachineId,
+            basePath: currentPath,
+        }));
+        storageGetStateMock.mockImplementation(() => ({
+            sessions: {
+                sess_server_routed_post_commit_late_refresh_overwrite: {
+                    id: 'sess_server_routed_post_commit_late_refresh_overwrite',
+                    active: true,
+                    metadata: {
+                        machineId: currentMachineId,
+                        path: currentPath,
+                        flavor: 'claude',
+                        claudeSessionId: 'claude_session_server_routed_post_commit_late_refresh_overwrite',
+                    },
+                },
+            },
+            applySessions: (sessions: Array<{ metadata?: { machineId?: string; path?: string } }>) => {
+                storageApplySessionsMock(sessions);
+                const rebound = sessions[0]?.metadata;
+                if (typeof rebound?.machineId === 'string') {
+                    currentMachineId = rebound.machineId;
+                }
+                if (typeof rebound?.path === 'string') {
+                    currentPath = rebound.path;
+                }
+            },
+        }));
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_server_routed_post_commit_late_refresh_overwrite',
+                status: {
+                    handoffId: 'handoff_server_routed_post_commit_late_refresh_overwrite',
+                    status: 'pending',
+                    phase: 'preparing',
+                    recoveryActions: [],
+                },
+                endpointCandidates: [],
+                targetPath: '/repo-target',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_server_routed_post_commit_late_refresh_overwrite',
+                status: {
+                    handoffId: 'handoff_server_routed_post_commit_late_refresh_overwrite',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'server_routed_stream',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'claude_session_server_routed_post_commit_late_refresh_overwrite',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: '/repo-target',
+                    agent: 'claude',
+                    resume: 'claude_session_server_routed_post_commit_late_refresh_overwrite',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_server_routed_post_commit_late_refresh_overwrite',
+                status: {
+                    handoffId: 'handoff_server_routed_post_commit_late_refresh_overwrite',
+                    status: 'completed',
+                    phase: 'finalizing',
+                    recoveryActions: [],
+                },
+            });
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+            status: 'ready',
+            features: {
+                features: {
+                    sessions: {
+                        enabled: true,
+                        handoff: {
+                            enabled: true,
+                            serverRoutedTransfer: { enabled: true },
+                        },
+                    },
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            serverRouted: { enabled: true },
+                            directPeer: { enabled: false },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        });
+        resumeSessionMock.mockResolvedValueOnce({
+            type: 'success',
+            sessionId: 'sess_server_routed_post_commit_late_refresh_overwrite',
+        });
+        patchSessionMetadataWithRetryMock.mockResolvedValueOnce(undefined);
+        patchSessionMetadataWithRetryMock.mockResolvedValueOnce(undefined);
+        waitForSessionHandoffTargetSessionActiveMock.mockResolvedValueOnce({ ok: true });
+        let ensureCallCount = 0;
+        ensureSessionVisibleForMessageRouteMock.mockImplementation(async () => {
+            ensureCallCount += 1;
+            if (ensureCallCount === 2) {
+                setTimeout(() => {
+                    storageGetStateMock().applySessions([{
+                        id: 'sess_server_routed_post_commit_late_refresh_overwrite',
+                        active: true,
+                        metadata: {
+                            machineId: 'machine_source',
+                            path: '/repo',
+                            flavor: 'claude',
+                            claudeSessionId: 'claude_session_server_routed_post_commit_late_refresh_overwrite',
+                        },
+                    }]);
+                }, 5);
+            }
+        });
+
+        const { completeSessionHandoff } = await import('./sessionHandoffs');
+        const result = await completeSessionHandoff({
+            sessionId: 'sess_server_routed_post_commit_late_refresh_overwrite',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            serverId: 'server_b',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+            sourceMetadata: {
+                flavor: 'claude',
+                path: '/repo',
+                host: 'source-host',
+                machineId: 'machine_source',
+                claudeSessionId: 'claude_session_server_routed_post_commit_late_refresh_overwrite',
+            },
+        });
+
+        expect(result.ok).toBe(true);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(currentMachineId).toBe('machine_target');
+        expect(currentPath).toBe('/repo-target');
+    });
+
     it('reapplies the target session binding when a late local source overwrite lands after commit completes', async () => {
         let currentMachineId = 'machine_source';
         let currentPath = '/repo';
@@ -1578,11 +1822,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_server_routed_post_commit_rebind', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo-target',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_server_routed_post_commit_rebind',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_server_routed_post_commit_rebind',
@@ -1729,11 +1968,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_server_routed_post_commit_remote_rebind', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo-target',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_server_routed_post_commit_remote_rebind',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_server_routed_post_commit_remote_rebind',
@@ -1912,11 +2146,6 @@ describe('sessionHandoffs ops', () => {
                 },
                 endpointCandidates: [],
                 targetPath: '/repo-target',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_server_routed_post_commit_presence_refresh',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_server_routed_post_commit_presence_refresh',
@@ -2076,11 +2305,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_server_routed_cutover_throw', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo-target',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_server_routed_cutover_throw',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_server_routed_cutover_throw',
@@ -2203,18 +2427,13 @@ describe('sessionHandoffs ops', () => {
         expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
     });
 
-    it('prefers canonical codexBackendMode over legacy experimentalCodexAcp when forwarding target resume payloads', async () => {
+    it('forwards codexBackendMode from the target resume payload when present', async () => {
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({
                 handoffId: 'handoff_codex',
                 status: { handoffId: 'handoff_codex', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'codex',
-                    remoteSessionId: 'codex_session_1',
-                    files: [],
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_codex',
@@ -2237,7 +2456,6 @@ describe('sessionHandoffs ops', () => {
                     transcriptStorage: 'persisted',
                     approvedNewDirectoryCreation: true,
                     codexBackendMode: 'acp',
-                    experimentalCodexAcp: true,
                 },
             })
             .mockResolvedValueOnce({
@@ -2298,109 +2516,15 @@ describe('sessionHandoffs ops', () => {
             transcriptStorage: 'persisted',
             codexBackendMode: 'acp',
         }));
-        expect(resumeSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('experimentalCodexAcp');
     });
 
-    it('normalizes legacy experimentalCodexAcp onto canonical codexBackendMode when forwarding target resume payloads', async () => {
-        machineRpcWithServerScopeMock
-            .mockResolvedValueOnce({
-                handoffId: 'handoff_codex_legacy',
-                status: { handoffId: 'handoff_codex_legacy', status: 'pending', phase: 'preparing', recoveryActions: [] },
-                endpointCandidates: [],
-                targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'codex',
-                    remoteSessionId: 'codex_session_legacy',
-                    files: [],
-                },
-            })
-            .mockResolvedValueOnce({
-                handoffId: 'handoff_codex_legacy',
-                status: {
-                    handoffId: 'handoff_codex_legacy',
-                    status: 'ready_for_cutover',
-                    phase: 'staging_target',
-                    transportStrategy: 'server_routed_stream',
-                    recoveryActions: [],
-                },
-                remoteSessionId: 'codex_session_legacy',
-                directSource: {
-                    kind: 'codexHome',
-                    home: 'user',
-                },
-                resume: {
-                    directory: '/repo',
-                    agent: 'codex',
-                    resume: 'codex_session_legacy',
-                    transcriptStorage: 'persisted',
-                    approvedNewDirectoryCreation: true,
-                    experimentalCodexAcp: true,
-                },
-            })
-            .mockResolvedValueOnce({
-                handoffId: 'handoff_codex_legacy',
-                status: { handoffId: 'handoff_codex_legacy', status: 'completed', phase: 'finalizing', recoveryActions: [] },
-            });
-        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
-            status: 'ready',
-            features: {
-                features: {
-                    sessions: {
-                        enabled: true,
-                        handoff: {
-                            enabled: true,
-                            serverRoutedTransfer: { enabled: true },
-                        },
-                    },
-                    machines: {
-                        enabled: true,
-                        transfer: {
-                            enabled: true,
-                            directPeer: { enabled: true },
-                        },
-                    },
-                },
-                capabilities: {},
-            },
-        });
-        resumeSessionMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_codex_legacy' });
-        patchSessionMetadataWithRetryMock.mockResolvedValueOnce(undefined);
-
-        const { completeSessionHandoff } = await import('./sessionHandoffs');
-        await completeSessionHandoff({
-            sessionId: 'sess_codex_legacy',
-            sourceMachineId: 'machine_source',
-            targetMachineId: 'machine_target',
-            sessionStorageMode: 'persisted',
-            preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
-            sourceMetadata: {
-                flavor: 'codex',
-                path: '/repo',
-                host: 'source-host',
-                machineId: 'machine_source',
-                codexSessionId: 'codex_session_legacy',
-            },
-        } as any);
-
-        expect(resumeSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 'sess_codex_legacy',
-            codexBackendMode: 'acp',
-        }));
-        expect(resumeSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('experimentalCodexAcp');
-    });
-
-    it('prefers target agentRuntimeDescriptorV1 over legacy experimentalCodexAcp during handoff resume forwarding', async () => {
+    it('prefers target agentRuntimeDescriptorV1 over the resume payload during handoff resume forwarding', async () => {
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({
                 handoffId: 'handoff_codex_runtime_descriptor',
                 status: { handoffId: 'handoff_codex_runtime_descriptor', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'codex',
-                    remoteSessionId: 'codex_session_runtime_descriptor',
-                    files: [],
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_codex_runtime_descriptor',
@@ -2430,7 +2554,6 @@ describe('sessionHandoffs ops', () => {
                     resume: 'codex_session_runtime_descriptor',
                     transcriptStorage: 'persisted',
                     approvedNewDirectoryCreation: true,
-                    experimentalCodexAcp: true,
                 },
             })
             .mockResolvedValueOnce({
@@ -2490,7 +2613,6 @@ describe('sessionHandoffs ops', () => {
                 },
             },
         }));
-        expect(resumeSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('experimentalCodexAcp');
     });
 
     it('retries target prepare when the target daemon rpc is transiently unavailable', async () => {
@@ -2532,7 +2654,7 @@ describe('sessionHandoffs ops', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             allowServerRoutedFallback: true,
-            endpointCandidates: [],
+            handoffMetadataV2: {},
         }, {
             timeoutMs: 10,
             intervalMs: 1,
@@ -2582,6 +2704,10 @@ describe('sessionHandoffs ops', () => {
         }));
         const firstPrepareCall = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as any;
         const secondPrepareCall = machineRpcWithServerScopeMock.mock.calls[1]?.[0] as any;
+        expect(firstPrepareCall.payload).toMatchObject({ handoffMetadataV2: {} });
+        expect(firstPrepareCall.payload).not.toHaveProperty('endpointCandidates');
+        expect(secondPrepareCall.payload).toMatchObject({ handoffMetadataV2: {} });
+        expect(secondPrepareCall.payload).not.toHaveProperty('endpointCandidates');
         expect(firstPrepareCall.timeoutMs).toBe(10);
         expect(secondPrepareCall.timeoutMs).toBe(9);
     });
@@ -2649,7 +2775,7 @@ describe('sessionHandoffs ops', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             allowServerRoutedFallback: true,
-            endpointCandidates: [],
+            handoffMetadataV2: {},
         }, {
             timeoutMs: 10,
             intervalMs: 1,
@@ -2782,7 +2908,7 @@ describe('sessionHandoffs ops', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             allowServerRoutedFallback: true,
-            endpointCandidates: [],
+            handoffMetadataV2: {},
         }, {
             timeoutMs: 10,
             pollTimeoutMs: 30,
@@ -2830,6 +2956,111 @@ describe('sessionHandoffs ops', () => {
         }));
     });
 
+    it('does not time out while target prepare progress is still changing (idle timeout semantics)', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            handoffId: 'handoff_retry_prepare_progress_idle_timeout',
+            status: {
+                handoffId: 'handoff_retry_prepare_progress_idle_timeout',
+                jobId: 'job_prepare_progress_idle_timeout',
+                status: 'pending',
+                phase: 'staging_target',
+                transportStrategy: 'direct_peer',
+                recoveryActions: [],
+                progress: {
+                    updatedAtMs: 1,
+                    checkpoint: 'stage_target',
+                    planned: {},
+                    transferred: {},
+                    current: { phaseDetail: 'tick_1' },
+                    resumable: false,
+                },
+            },
+        });
+
+        // Simulate a long-running prepare where status keeps updating but the final ready payload
+        // arrives after the original poll timeout budget.
+        for (let i = 2; i <= 8; i += 1) {
+            machineRpcWithServerScopeMock.mockResolvedValueOnce({
+                ok: false,
+                errorCode: 'not_found',
+            });
+            machineRpcWithServerScopeMock.mockResolvedValueOnce({
+                handoffId: 'handoff_retry_prepare_progress_idle_timeout',
+                status: {
+                    handoffId: 'handoff_retry_prepare_progress_idle_timeout',
+                    jobId: 'job_prepare_progress_idle_timeout',
+                    status: 'pending',
+                    phase: 'staging_target',
+                    transportStrategy: 'direct_peer',
+                    recoveryActions: [],
+                    progress: {
+                        updatedAtMs: i,
+                        checkpoint: 'stage_target',
+                        planned: {},
+                        transferred: {},
+                        current: { phaseDetail: `tick_${i}` },
+                        resumable: false,
+                    },
+                },
+            });
+        }
+
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            handoffId: 'handoff_retry_prepare_progress_idle_timeout',
+            status: {
+                handoffId: 'handoff_retry_prepare_progress_idle_timeout',
+                jobId: 'job_prepare_progress_idle_timeout',
+                status: 'ready_for_cutover',
+                phase: 'staging_target',
+                transportStrategy: 'direct_peer',
+                recoveryActions: [],
+            },
+            remoteSessionId: 'claude_session_retry_prepare_progress_idle_timeout',
+            directSource: {
+                kind: 'claudeConfig',
+                configDir: null,
+                projectId: null,
+            },
+            resume: {
+                directory: '/repo',
+                agent: 'claude',
+                resume: 'claude_session_retry_prepare_progress_idle_timeout',
+                transcriptStorage: 'persisted',
+                approvedNewDirectoryCreation: true,
+            },
+        });
+
+        let nowMs = 0;
+        const { prepareTargetSessionHandoffWithRetry } = await import('./sessionHandoffs');
+        const result = await prepareTargetSessionHandoffWithRetry({
+            handoffId: 'handoff_retry_prepare_progress_idle_timeout',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            targetPath: '/repo',
+            negotiatedTransportStrategy: 'direct_peer',
+            sourceSessionStorageMode: 'persisted',
+            allowServerRoutedFallback: true,
+            handoffMetadataV2: {},
+        }, {
+            timeoutMs: 10,
+            pollTimeoutMs: 30,
+            intervalMs: 6,
+            now: () => nowMs,
+            sleep: async (delayMs) => {
+                nowMs += delayMs;
+            },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            response: expect.objectContaining({
+                handoffId: 'handoff_retry_prepare_progress_idle_timeout',
+                remoteSessionId: 'claude_session_retry_prepare_progress_idle_timeout',
+            }),
+        });
+        expect(nowMs).toBeGreaterThan(30);
+    });
+
     it('retries target prepare when the target machine rpc attempt times out within the retry budget', async () => {
         machineRpcWithServerScopeMock
             .mockRejectedValueOnce(
@@ -2871,7 +3102,7 @@ describe('sessionHandoffs ops', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             allowServerRoutedFallback: true,
-            endpointCandidates: [],
+            handoffMetadataV2: {},
         }, {
             timeoutMs: 10,
             intervalMs: 1,
@@ -2928,7 +3159,7 @@ describe('sessionHandoffs ops', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             allowServerRoutedFallback: true,
-            endpointCandidates: [],
+            handoffMetadataV2: {},
         }, {
             timeoutMs: 10,
             intervalMs: 20,
@@ -2985,7 +3216,7 @@ describe('sessionHandoffs ops', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             allowServerRoutedFallback: true,
-            endpointCandidates: [],
+            handoffMetadataV2: {},
         }, {
             timeoutMs: 10,
             intervalMs: 1,
@@ -3061,7 +3292,7 @@ describe('sessionHandoffs ops', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             allowServerRoutedFallback: true,
-            endpointCandidates: [],
+            handoffMetadataV2: {},
         }, {
             timeoutMs: 10,
             intervalMs: 1,
@@ -3101,6 +3332,20 @@ describe('sessionHandoffs ops', () => {
     });
 
     it('keeps canonical workspace artifacts across direct-peer prepare retries', async () => {
+        const handoffMetadataV2 = {
+            providerBundleTransferPublication: {
+                transferId: 'transfer_provider_bundle_retry_prepare_artifacts',
+                sizeBytes: 3,
+                manifestHash: 'sha256:provider_bundle_retry_prepare_artifacts',
+                endpointCandidates: [
+                    {
+                        kind: 'http',
+                        url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_retry_prepare_artifacts?token=test-token',
+                        expiresAt: Date.now() + 30_000,
+                    },
+                ],
+            },
+        } as const;
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({
                 handoffId: 'handoff_retry_prepare_artifacts',
@@ -3112,32 +3357,8 @@ describe('sessionHandoffs ops', () => {
                         expiresAt: Date.now() + 30_000,
                     },
                 ],
+                handoffMetadataV2,
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_retry_prepare_artifacts',
-                    transcriptBase64: 'e30K',
-                },
-                workspaceArtifacts: {
-                    manifest: {
-                        entries: [
-                            {
-                                relativePath: 'README.md',
-                                kind: 'file',
-                                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                                sizeBytes: 6,
-                                executable: false,
-                            },
-                        ],
-                        fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-                    },
-                    blobs: [
-                        {
-                            digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-                            contentBase64: 'aGVsbG8K',
-                        },
-                    ],
-                },
             })
             .mockRejectedValueOnce(
                 Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }),
@@ -3236,12 +3457,17 @@ describe('sessionHandoffs ops', () => {
         expect(firstPrepareCall.payload).toMatchObject({
             handoffId: 'handoff_retry_prepare_artifacts',
             negotiatedTransportStrategy: 'direct_peer',
-            endpointCandidates: [
-                expect.objectContaining({
-                    kind: 'http',
-                }),
-            ],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    endpointCandidates: [
+                        expect.objectContaining({
+                            kind: 'http',
+                        }),
+                    ],
+                },
+            },
         });
+        expect(firstPrepareCall.payload).not.toHaveProperty('endpointCandidates');
         expect(secondPrepareCall.payload).toEqual(firstPrepareCall.payload);
     });
 
@@ -3259,7 +3485,7 @@ describe('sessionHandoffs ops', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             allowServerRoutedFallback: true,
-            endpointCandidates: [],
+            handoffMetadataV2: {},
         }, {
             timeoutMs: 0,
             intervalMs: 0,
@@ -3279,11 +3505,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_2', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_2',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_2',
@@ -3393,11 +3614,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_2b', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_2b',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_2b',
@@ -3506,11 +3722,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_3', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo-target',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_3',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_3',
@@ -3740,11 +3951,6 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_4', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 targetPath: '/repo',
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_4',
-                    transcriptBase64: 'e30K',
-                },
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_4',
@@ -3834,17 +4040,27 @@ describe('sessionHandoffs ops', () => {
     });
 
     it('forwards direct-peer transport choices without speculative seam flags', async () => {
+        const endpointCandidates = [
+            {
+                kind: 'http',
+                url: 'http://127.0.0.1:46001/machine-transfers/direct/handoff_rns?token=test-token',
+                expiresAt: 60_000,
+            },
+        ] as const;
+        const handoffMetadataV2 = {
+            providerBundleTransferPublication: {
+                transferId: 'transfer_provider_bundle_rns',
+                sizeBytes: 3,
+                manifestHash: 'sha256:provider_bundle_rns',
+                endpointCandidates,
+            },
+        } as const;
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({
                 handoffId: 'handoff_rns',
                 status: { handoffId: 'handoff_rns', status: 'pending', phase: 'preparing', recoveryActions: [] },
-                endpointCandidates: [
-                    {
-                        kind: 'http',
-                        url: 'http://127.0.0.1:46001/machine-transfers/direct/handoff_rns?token=test-token',
-                        expiresAt: 60_000,
-                    },
-                ],
+                endpointCandidates,
+                handoffMetadataV2,
                 targetPath: '/repo',
             })
             .mockResolvedValueOnce({
@@ -3939,15 +4155,14 @@ describe('sessionHandoffs ops', () => {
             payload: expect.objectContaining({
                 negotiatedTransportStrategy: 'direct_peer',
                 allowServerRoutedFallback: true,
-                endpointCandidates: [
-                    {
-                        kind: 'http',
-                        url: 'http://127.0.0.1:46001/machine-transfers/direct/handoff_rns?token=test-token',
-                        expiresAt: 60_000,
-                    },
-                ],
+                handoffMetadataV2: expect.objectContaining({
+                    providerBundleTransferPublication: expect.objectContaining({
+                        endpointCandidates,
+                    }),
+                }),
             }),
         }));
+        expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]?.payload).not.toHaveProperty('endpointCandidates');
     });
 
     it('uses server-routed target prepare after a cached direct-peer unavailability for the same source machine and endpoint set', async () => {
@@ -4099,11 +4314,6 @@ describe('sessionHandoffs ops', () => {
             status: { handoffId: 'handoff_5', status: 'pending', phase: 'preparing', recoveryActions: [] },
             endpointCandidates: [],
             targetPath: '/repo',
-            providerBundle: {
-                providerId: 'claude',
-                remoteSessionId: 'claude_session_5',
-                transcriptBase64: 'e30K',
-            },
         });
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({
             status: 'ready',
@@ -4146,8 +4356,8 @@ describe('sessionHandoffs ops', () => {
 
         expect(result).toEqual({
             ok: false,
-            errorCode: 'server_routed_transfer_disabled',
-            errorMessage: 'Direct peer transfer is required because server-routed transfer is disabled',
+            errorCode: 'transfer_disabled',
+            errorMessage: 'Machine transfer is disabled on the selected server',
         });
         expect(getServerFeaturesSnapshotMock).toHaveBeenCalledWith({ force: true });
         expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();

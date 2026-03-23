@@ -12,7 +12,15 @@ export function canHandoffConversation(params: Readonly<{ sessionId?: string | n
     const reachableMachineId = typeof params.sessionId === 'string' && params.sessionId.trim().length > 0
         ? (readMachineTargetForSession(params.sessionId)?.machineId ?? '')
         : '';
-    const machineId = reachableMachineId || (typeof metadata.machineId === 'string' ? metadata.machineId.trim() : '');
+    const topLevelMachineId = typeof metadata.machineId === 'string' ? metadata.machineId.trim() : '';
+    const directSessionMachineId = (() => {
+        const directSessionV1 = (metadata as { directSessionV1?: unknown }).directSessionV1;
+        if (!directSessionV1 || typeof directSessionV1 !== 'object' || Array.isArray(directSessionV1)) return '';
+        const machineId = (directSessionV1 as { machineId?: unknown }).machineId;
+        return typeof machineId === 'string' ? machineId.trim() : '';
+    })();
+
+    const machineId = reachableMachineId || topLevelMachineId || directSessionMachineId;
     if (!machineId) return false;
 
     const agentId = resolveAgentIdFromFlavor(metadata.flavor);

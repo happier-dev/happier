@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { DirectSessionsSourceSchema } from '../../directSessions/daemonRpcV1.js';
 import { AgentRuntimeDescriptorV1Schema } from '../../sessionMetadata/agentRuntimeDescriptorV1.js';
-import { WorkspaceManifestSchema } from '../../workspaces/manifestSchema.js';
 
 import {
   SessionHandoffCodexAffinitySchema,
@@ -30,84 +29,33 @@ export const SessionHandoffWorkspaceTransferSchema = z
   .strict();
 export type SessionHandoffWorkspaceTransfer = z.infer<typeof SessionHandoffWorkspaceTransferSchema>;
 
-export const SessionHandoffTransferredWorkspaceArtifactsSchema = z
+const SessionHandoffProviderBundleTransferPublicationSchema = z
   .object({
-    manifest: WorkspaceManifestSchema,
-    blobs: z.array(z.object({
-      digest: z.string().min(1),
-      contentBase64: z.string(),
-    }).strict()).optional(),
-    sourceControllerMetadata: z.record(z.string(), z.unknown()).optional(),
+    transferId: z.string().min(1),
+    sizeBytes: z.number().int().min(0),
+    manifestHash: z.string().min(1),
+    endpointCandidates: z.array(TransferEndpointCandidateSchema).optional(),
   })
   .strict();
-export type SessionHandoffTransferredWorkspaceArtifacts = z.infer<
-  typeof SessionHandoffTransferredWorkspaceArtifactsSchema
->;
 
-const SESSION_HANDOFF_CODEX_BACKEND_MODES = ['mcp', 'acp', 'appServer'] as const;
+const SessionHandoffWorkspaceReplicationManifestTransferPublicationSchema = z
+  .object({
+    transferId: z.string().min(1),
+    endpointCandidates: z.array(TransferEndpointCandidateSchema).optional(),
+  })
+  .strict();
 
-function normalizeLegacyCodexResumeTransport(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return value;
-  }
+export const SessionHandoffMetadataV2Schema = z
+  .object({
+    providerBundleTransferPublication: SessionHandoffProviderBundleTransferPublicationSchema.optional(),
+    workspaceReplicationSourceRootPath: z.string().min(1).optional(),
+    workspaceReplicationManifestTransferPublication: SessionHandoffWorkspaceReplicationManifestTransferPublicationSchema.optional(),
+    workspaceReplicationSourceControllerMetadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+export type SessionHandoffMetadataV2 = z.infer<typeof SessionHandoffMetadataV2Schema>;
 
-  const candidate = value as Record<string, unknown>;
-  const codexBackendMode = candidate.codexBackendMode;
-  const hasCanonicalCodexBackendMode =
-    typeof codexBackendMode === 'string'
-    && (SESSION_HANDOFF_CODEX_BACKEND_MODES as readonly string[]).includes(codexBackendMode);
-  if (!hasCanonicalCodexBackendMode && candidate.experimentalCodexAcp !== true) {
-    return value;
-  }
-
-  const { experimentalCodexAcp: _legacyExperimentalCodexAcp, ...rest } = candidate;
-  return hasCanonicalCodexBackendMode
-    ? rest
-    : {
-        ...rest,
-        codexBackendMode: 'acp',
-      };
-}
-
-function normalizeLegacyCodexProviderBundle(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return value;
-  }
-
-  const candidate = value as Record<string, unknown>;
-  if (candidate.providerId !== 'codex') {
-    return value;
-  }
-
-  const codexBackendMode = candidate.codexBackendMode;
-  const normalizedBackendMode =
-    typeof codexBackendMode === 'string'
-    && (SESSION_HANDOFF_CODEX_BACKEND_MODES as readonly string[]).includes(codexBackendMode)
-      ? codexBackendMode
-      : null;
-  if (!normalizedBackendMode) {
-    return value;
-  }
-
-  const { codexBackendMode: _legacyCodexBackendMode, affinity, ...rest } = candidate;
-  if (affinity && typeof affinity === 'object' && !Array.isArray(affinity)) {
-    return {
-      ...rest,
-      affinity,
-    };
-  }
-
-  return {
-    ...rest,
-    affinity: {
-      backendMode: normalizedBackendMode,
-    },
-  };
-}
-
-const SessionHandoffResumePlanSchema = z.preprocess(
-  normalizeLegacyCodexResumeTransport,
-  z
+const SessionHandoffResumePlanSchema = z
   .object({
     directory: z.string().min(1),
     agent: z.enum(['claude', 'codex', 'opencode']),
@@ -117,8 +65,7 @@ const SessionHandoffResumePlanSchema = z.preprocess(
     approvedNewDirectoryCreation: z.literal(true),
     codexBackendMode: SessionHandoffCodexBackendModeSchema.optional(),
   })
-  .strict(),
-);
+  .strict();
 export type SessionHandoffResumePlan = z.infer<typeof SessionHandoffResumePlanSchema>;
 
 const ClaudeSessionHandoffBundleSchema = z
@@ -185,44 +132,15 @@ type OpenCodeSessionHandoffBundle = Readonly<{
   }>;
 }>;
 
-export const SessionHandoffProviderBundleSchema = z.preprocess(
-  normalizeLegacyCodexProviderBundle,
-  z.discriminatedUnion('providerId', [
-    ClaudeSessionHandoffBundleSchema,
-    CodexSessionHandoffBundleSchema,
-    OpenCodeSessionHandoffBundleSchema,
-  ]),
-);
+export const SessionHandoffProviderBundleSchema = z.discriminatedUnion('providerId', [
+  ClaudeSessionHandoffBundleSchema,
+  CodexSessionHandoffBundleSchema,
+  OpenCodeSessionHandoffBundleSchema,
+]);
 export type SessionHandoffProviderBundle =
   | ClaudeSessionHandoffBundle
   | CodexSessionHandoffBundle
   | OpenCodeSessionHandoffBundle;
-
-function stripLegacyTransferredPayloadFields(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return value;
-  }
-
-  const candidate = value as Record<string, unknown>;
-  const {
-    transferredPayload: _legacyTransferredPayload,
-    providerBundle: _legacyProviderBundle,
-    workspaceArtifacts: _legacyWorkspaceArtifacts,
-    ...rest
-  } = candidate;
-  return rest;
-}
-
-export const SessionHandoffTransferredPayloadSchema = z
-  .object({
-    providerBundle: SessionHandoffProviderBundleSchema,
-    workspaceArtifacts: SessionHandoffTransferredWorkspaceArtifactsSchema.optional(),
-  })
-  .strict();
-export type SessionHandoffTransferredPayload = Readonly<{
-  providerBundle: SessionHandoffProviderBundle;
-  workspaceArtifacts?: SessionHandoffTransferredWorkspaceArtifacts;
-}>;
 
 export const SessionHandoffStartRequestSchema = z
   .object({
@@ -248,6 +166,7 @@ export const SessionHandoffPrepareTargetRequestSchema = z
     targetSessionStorageMode: SessionHandoffStorageModeSchema.optional(),
     targetPath: z.string().min(1),
     endpointCandidates: z.array(TransferEndpointCandidateSchema).default([]),
+    handoffMetadataV2: SessionHandoffMetadataV2Schema.optional(),
     workspaceTransfer: SessionHandoffWorkspaceTransferSchema.optional(),
   })
   .strict();
@@ -276,17 +195,14 @@ export const SessionHandoffAbortRequestSchema = z
 export type SessionHandoffAbortRequest = z.infer<typeof SessionHandoffAbortRequestSchema>;
 
 export const SessionHandoffStartResponseSchema = z
-  .preprocess(
-    stripLegacyTransferredPayloadFields,
-    z
-      .object({
-        handoffId: z.string().min(1),
-        status: SessionHandoffStatusSchema,
-        endpointCandidates: z.array(TransferEndpointCandidateSchema).default([]),
-        targetPath: z.string().min(1),
-      })
-      .strict(),
-  );
+  .object({
+    handoffId: z.string().min(1),
+    status: SessionHandoffStatusSchema,
+    endpointCandidates: z.array(TransferEndpointCandidateSchema).default([]),
+    targetPath: z.string().min(1),
+    handoffMetadataV2: SessionHandoffMetadataV2Schema.optional(),
+  })
+  .strict();
 export type SessionHandoffStartResponse = z.infer<typeof SessionHandoffStartResponseSchema>;
 
 export const SessionHandoffPrepareTargetResponseSchema = z

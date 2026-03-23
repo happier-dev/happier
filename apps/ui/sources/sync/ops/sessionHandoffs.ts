@@ -82,6 +82,7 @@ export type StartSessionHandoffResult =
         handoffId: string;
         status: SessionHandoffStartResponse['status'];
         endpointCandidates: SessionHandoffStartResponse['endpointCandidates'];
+        handoffMetadataV2?: NonNullable<SessionHandoffStartResponse['handoffMetadataV2']>;
     }>
     | HandoffErrorResult;
 
@@ -400,7 +401,7 @@ async function prepareTargetSessionHandoff(params: Readonly<{
     sourceSessionStorageMode: SessionHandoffStorageMode;
     targetSessionStorageMode?: SessionHandoffStorageMode;
     workspaceTransfer?: SessionHandoffWorkspaceTransfer;
-    endpointCandidates?: SessionHandoffStartResponse['endpointCandidates'];
+    handoffMetadataV2?: SessionHandoffStartResponse['handoffMetadataV2'];
     allowServerRoutedFallback?: boolean;
     serverId?: string | null;
 }>): Promise<
@@ -427,7 +428,7 @@ async function prepareTargetSessionHandoffWithMachineRpcTimeout(
                 sourceSessionStorageMode: params.sourceSessionStorageMode,
                 ...(params.targetSessionStorageMode ? { targetSessionStorageMode: params.targetSessionStorageMode } : {}),
                 targetPath: params.targetPath,
-                ...(params.endpointCandidates ? { endpointCandidates: params.endpointCandidates } : {}),
+                ...(params.handoffMetadataV2 ? { handoffMetadataV2: params.handoffMetadataV2 } : {}),
                 ...(params.workspaceTransfer ? { workspaceTransfer: params.workspaceTransfer } : {}),
             },
             serverId: normalizeId(params.serverId) || null,
@@ -494,10 +495,37 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
     | Readonly<{ ok: true; response: SessionHandoffPrepareTargetResponse }>
     | Readonly<{ ok: false; errorCode: string; errorMessage: string; status?: SessionHandoffStatus }>
 > {
-    const startedAtMs = params.now();
+    // Treat pollTimeoutMs as an idle timeout (time since last observed progress/status change),
+    // not as an absolute wall-clock cap. Large replications can legitimately exceed 5m.
+    let lastProgressAtMs = params.now();
+    let lastStatusKey = '';
     const serverId = normalizeId(params.serverId) || null;
 
-    while ((params.now() - startedAtMs) <= params.timeoutMs) {
+    const buildStatusKey = (status: SessionHandoffStatus): string => {
+        const progress = status.progress;
+        const planned = progress?.planned ?? null;
+        const transferred = progress?.transferred ?? null;
+        const current = progress?.current ?? null;
+        return [
+            status.status,
+            status.phase,
+            progress?.checkpoint ?? '',
+            progress?.updatedAtMs ?? '',
+            planned ? JSON.stringify(planned) : '',
+            transferred ? JSON.stringify(transferred) : '',
+            current ? JSON.stringify(current) : '',
+        ].join('|');
+    };
+
+    const noteProgress = (status: SessionHandoffStatus) => {
+        const nextKey = buildStatusKey(status);
+        if (nextKey !== lastStatusKey) {
+            lastStatusKey = nextKey;
+            lastProgressAtMs = params.now();
+        }
+    };
+
+    while ((params.now() - lastProgressAtMs) <= params.timeoutMs) {
         try {
             const rawResult = await machineRpcWithServerScope<unknown, unknown>({
                 machineId: params.targetMachineId,
@@ -561,6 +589,7 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
                 return unsupportedError('Unsupported target handoff status response from daemon');
             }
             params.onStatus?.(parsedStatus.data);
+            noteProgress(parsedStatus.data);
             if (
                 parsedStatus.data.status === 'aborted'
                 || parsedStatus.data.status === 'awaiting_recovery'
@@ -583,11 +612,12 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
             }
         }
 
-        const elapsedMs = params.now() - startedAtMs;
-        if (elapsedMs >= params.timeoutMs) {
+        const elapsedIdleMs = params.now() - lastProgressAtMs;
+        const remainingMs = params.timeoutMs - elapsedIdleMs;
+        if (remainingMs <= 0) {
             break;
         }
-        await params.sleep(Math.min(params.intervalMs, Math.max(params.timeoutMs - elapsedMs, 0)));
+        await params.sleep(Math.min(params.intervalMs, remainingMs));
     }
 
     return {
@@ -728,6 +758,7 @@ export async function startSessionHandoff(options: StartSessionHandoffOptions): 
         handoffId: started.response.handoffId,
         status: started.response.status,
         endpointCandidates: started.response.endpointCandidates,
+        ...(started.response.handoffMetadataV2 ? { handoffMetadataV2: started.response.handoffMetadataV2 } : {}),
     };
 }
 
@@ -808,11 +839,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         sourceMachineId: started.sourceMachineId,
         targetMachineId: options.targetMachineId,
         targetPath: started.response.targetPath,
-        ...(prepareTransportStrategy === 'direct_peer'
-            ? {
-                endpointCandidates: started.response.endpointCandidates,
-            }
-            : {}),
+        ...(started.response.handoffMetadataV2 ? { handoffMetadataV2: started.response.handoffMetadataV2 } : {}),
         negotiatedTransportStrategy: prepareTransportStrategy,
         sourceSessionStorageMode: options.sessionStorageMode,
         ...(options.targetSessionStorageMode ? { targetSessionStorageMode: options.targetSessionStorageMode } : {}),
@@ -966,6 +993,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
 
     await publishTargetMetadata();
     await sync.ensureSessionVisibleForMessageRoute(options.sessionId, { forceRefresh: true });
+    reapplyOptimisticBinding();
 
     const committed = await commitSessionHandoff({
         sourceMachineId: started.sourceMachineId,
@@ -989,6 +1017,19 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     }
     await publishTargetMetadata();
     await sync.ensureSessionVisibleForMessageRoute(options.sessionId, { forceRefresh: true });
+    reapplyOptimisticBinding();
+    const finalStabilizedBinding = await stabilizeSessionHandoffTargetBinding({
+        readSession: () => readSessionHandoffSessionActivity(options.sessionId),
+        readTargetMachineId: () => readMachineTargetForSession(options.sessionId)?.machineId ?? null,
+        reapplyOptimisticBinding,
+        targetMachineId: options.targetMachineId,
+        timeoutMs: readSessionHandoffPostCommitBindingStabilizationTimeoutMs(),
+        pollIntervalMs: readSessionHandoffPostCommitBindingStabilizationIntervalMs(),
+        requiredStablePolls: readSessionHandoffPostCommitBindingStablePolls(),
+    });
+    if (!finalStabilizedBinding.ok) {
+        reapplyOptimisticBinding();
+    }
 
     return {
         ok: true,

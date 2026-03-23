@@ -22,16 +22,14 @@ export {
   type SessionHandoffPrepareTargetResultGetResponse,
   type SessionHandoffPrepareTargetResponse,
   type SessionHandoffProviderBundle,
+  type SessionHandoffMetadataV2,
   type SessionHandoffResumePlan,
   type SessionHandoffStartRequest,
   type SessionHandoffStartResponse,
   type SessionHandoffStatusGetRequest,
-  type SessionHandoffTransferredPayload,
-  type SessionHandoffTransferredWorkspaceArtifacts,
   type SessionHandoffWorkspaceTransfer,
   SessionHandoffProviderBundleSchema,
-  SessionHandoffTransferredPayloadSchema,
-  SessionHandoffTransferredWorkspaceArtifactsSchema,
+  SessionHandoffMetadataV2Schema,
   SessionHandoffWorkspaceTransferSchema,
 } from './handoffSchemas.js';
 export {

@@ -16,6 +16,24 @@ type Props = CustomModalInjectedProps & Readonly<{
     status?: SessionHandoffStatus;
 }>;
 
+const CHECKPOINT_TIMELINE = [
+    'scan_source',
+    'plan',
+    'transfer_blobs',
+    'stage_target',
+    'apply',
+    'import_session',
+    'finalize',
+] as const;
+
+type SessionHandoffProgressCheckpoint = typeof CHECKPOINT_TIMELINE[number];
+
+const MINIMAL_CHECKPOINT_TIMELINE = [
+    'stage_target',
+    'import_session',
+    'finalize',
+] as const satisfies readonly SessionHandoffProgressCheckpoint[];
+
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         backgroundColor: theme.colors.surface,
@@ -62,6 +80,40 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     progressSection: {
         gap: 10,
+    },
+    timeline: {
+        gap: 8,
+    },
+    timelineRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    timelineDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surface,
+    },
+    timelineDotDone: {
+        borderColor: theme.colors.accent.blue,
+        backgroundColor: theme.colors.accent.blue,
+    },
+    timelineDotCurrent: {
+        borderColor: theme.colors.accent.blue,
+        backgroundColor: theme.colors.surface,
+    },
+    timelineLabel: {
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        ...Typography.default(),
+        flex: 1,
+    },
+    timelineLabelCurrent: {
+        color: theme.colors.text,
+        ...Typography.default('semiBold'),
     },
     summaryRow: {
         flexDirection: 'row',
@@ -136,20 +188,79 @@ function computeProgressFraction(status: SessionHandoffStatus | undefined): numb
 }
 
 function buildSummaryChips(status: SessionHandoffStatus | undefined): readonly string[] {
-    const summary = status?.workspacePreflightSummary;
+    const summary = status?.workspacePreflightSummary ?? null;
     if (!summary) {
         return [];
     }
 
+    const addedCount = summary.addedPathsCount;
+    const changedCount = summary.changedPathsCount;
+    const removedCount = summary.removedPathsCount;
+    const totalBytes = typeof summary.totalBytes === 'number' ? summary.totalBytes : null;
+
+    if (addedCount === null && changedCount === null && removedCount === null && (!totalBytes || totalBytes <= 0)) {
+        return [];
+    }
+
     const chips = [
-        `+${summary.addedPathsCount}`,
-        `~${summary.changedPathsCount}`,
-        `-${summary.removedPathsCount}`,
+        ...(typeof addedCount === 'number' ? [`+${addedCount}`] : []),
+        ...(typeof changedCount === 'number' ? [`~${changedCount}`] : []),
+        ...(typeof removedCount === 'number' ? [`-${removedCount}`] : []),
     ];
-    if (typeof summary.totalBytes === 'number' && summary.totalBytes > 0) {
-        chips.push(formatByteSize(summary.totalBytes));
+    if (typeof totalBytes === 'number' && totalBytes > 0) {
+        chips.push(formatByteSize(totalBytes));
     }
     return chips;
+}
+
+function isKnownCheckpoint(value: unknown): value is SessionHandoffProgressCheckpoint {
+    return typeof value === 'string' && (CHECKPOINT_TIMELINE as readonly string[]).includes(value);
+}
+
+function shouldUseFullCheckpointTimeline(status: SessionHandoffStatus | undefined, checkpoint: SessionHandoffProgressCheckpoint | null): boolean {
+    const progress = status?.progress ?? null;
+
+    // If the daemon is already emitting a granular checkpoint, trust that workspace transfer is in play.
+    if (checkpoint && checkpoint !== 'stage_target' && checkpoint !== 'import_session' && checkpoint !== 'finalize') {
+        return true;
+    }
+
+    // When workspace replication is enabled, the daemon includes a preflight summary.
+    if (status?.workspacePreflightSummary) {
+        return true;
+    }
+
+    // Some daemon paths don't emit the summary but still include concrete plan/transfer counters.
+    const plannedBytes = typeof progress?.planned?.totalBytes === 'number' ? progress.planned.totalBytes : 0;
+    const plannedFiles = typeof progress?.planned?.totalFiles === 'number' ? progress.planned.totalFiles : 0;
+    const transferredBytes = typeof progress?.transferred?.bytes === 'number' ? progress.transferred.bytes : 0;
+    const transferredFiles = typeof progress?.transferred?.files === 'number' ? progress.transferred.files : 0;
+    const transferredBlobs = typeof progress?.transferred?.blobs === 'number' ? progress.transferred.blobs : 0;
+
+    return plannedBytes > 0 || plannedFiles > 0 || transferredBytes > 0 || transferredFiles > 0 || transferredBlobs > 0;
+}
+
+function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): string {
+    switch (checkpoint) {
+        case 'scan_source':
+            return t('sessionHandoff.progress.timeline.scanSource');
+        case 'plan':
+            return t('sessionHandoff.progress.timeline.plan');
+        case 'transfer_blobs':
+            return t('sessionHandoff.progress.timeline.transferBlobs');
+        case 'stage_target':
+            return t('sessionHandoff.progress.timeline.stageTarget');
+        case 'apply':
+            return t('sessionHandoff.progress.timeline.apply');
+        case 'import_session':
+            return t('sessionHandoff.progress.timeline.importSession');
+        case 'finalize':
+            return t('sessionHandoff.progress.timeline.finalize');
+        default: {
+            const exhaustive: never = checkpoint;
+            return exhaustive;
+        }
+    }
 }
 
 export function SessionHandoffProgressModal({ onClose, title, message, status }: Props) {
@@ -158,12 +269,28 @@ export function SessionHandoffProgressModal({ onClose, title, message, status }:
     const progressFraction = computeProgressFraction(status);
     const summaryChips = buildSummaryChips(status);
     const progressLabel = progressFraction === null ? null : `${Math.round(progressFraction * 100)}%`;
-    const currentPath = status?.progress?.current?.relativePath ?? null;
+    const checkpointFromProgress = isKnownCheckpoint(status?.progress?.checkpoint) ? status?.progress?.checkpoint : null;
+    const timeline: readonly SessionHandoffProgressCheckpoint[] = shouldUseFullCheckpointTimeline(status, checkpointFromProgress)
+        ? CHECKPOINT_TIMELINE
+        : MINIMAL_CHECKPOINT_TIMELINE;
+    const currentCheckpoint = status?.status === 'completed' ? 'finalize' : checkpointFromProgress;
+    const currentCheckpointIndex = currentCheckpoint ? timeline.indexOf(currentCheckpoint) : -1;
+    const isFailureState = status?.status === 'failed' || status?.status === 'aborted' || status?.status === 'awaiting_recovery';
+    const isCompleted = status?.status === 'completed';
+    const currentDetailLabel =
+        status?.progress?.current?.relativePath
+        ?? (isFailureState ? status?.progress?.current?.phaseDetail : undefined)
+        ?? (currentCheckpoint ? translateCheckpoint(currentCheckpoint) : null);
+    const resolvedTitle =
+        title ?? (isFailureState ? t('sessionHandoff.failure.title') : t('sessionHandoff.progress.title'));
+    const resolvedMessage =
+        message ?? (isFailureState ? t('sessionHandoff.failure.message') : t('sessionHandoff.progress.message'));
+    const showSpinner = !isFailureState && !isCompleted;
 
     return (
         <View testID="session-handoff-progress-modal" style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.title}>{title ?? t('sessionHandoff.progress.title')}</Text>
+                <Text style={styles.title}>{resolvedTitle}</Text>
                 <Pressable
                     onPress={onClose}
                     hitSlop={10}
@@ -176,11 +303,48 @@ export function SessionHandoffProgressModal({ onClose, title, message, status }:
             </View>
             <View style={styles.body}>
                 <View style={styles.messageRow}>
-                    <ActivityIndicator size="small" color={theme.colors.accent.blue} />
-                    <Text style={styles.message}>{message ?? t('sessionHandoff.progress.message')}</Text>
+                    {showSpinner ? (
+                        <ActivityIndicator size="small" color={theme.colors.accent.blue} />
+                    ) : (
+                        <Octicons
+                            name={isFailureState ? 'alert' : 'check'}
+                            size={18}
+                            color={isFailureState ? theme.colors.textDestructive : theme.colors.accent.blue}
+                        />
+                    )}
+                    <Text style={styles.message}>{resolvedMessage}</Text>
                 </View>
                 {status ? (
                     <View style={styles.progressSection}>
+                        {currentCheckpoint && currentCheckpointIndex >= 0 ? (
+                            <View testID="session-handoff-progress-timeline" style={styles.timeline}>
+                                {timeline.map((checkpoint, index) => {
+                                    const isDone =
+                                        status.status === 'completed'
+                                        || (currentCheckpointIndex >= 0 && index < currentCheckpointIndex);
+                                    const isCurrent = currentCheckpointIndex >= 0 && index === currentCheckpointIndex;
+                                    return (
+                                        <View
+                                            key={checkpoint}
+                                            testID={`session-handoff-progress-checkpoint-${checkpoint}`}
+                                            accessibilityState={{ selected: isCurrent }}
+                                            style={styles.timelineRow}
+                                        >
+                                            <View
+                                                style={[
+                                                    styles.timelineDot,
+                                                    isDone ? styles.timelineDotDone : null,
+                                                    isCurrent ? styles.timelineDotCurrent : null,
+                                                ]}
+                                            />
+                                            <Text style={[styles.timelineLabel, isCurrent ? styles.timelineLabelCurrent : null]}>
+                                                {translateCheckpoint(checkpoint)}
+                                            </Text>
+                                        </View>
+                                    );
+                                })}
+                            </View>
+                        ) : null}
                         {summaryChips.length > 0 ? (
                             <View testID="session-handoff-progress-summary" style={styles.summaryRow}>
                                 {summaryChips.map((chip) => (
@@ -195,10 +359,14 @@ export function SessionHandoffProgressModal({ onClose, title, message, status }:
                                 <View style={[styles.progressFill, { width: `${Math.max(progressFraction * 100, 4)}%` }]} />
                             </View>
                         ) : null}
-                        {progressLabel || currentPath ? (
+                        {progressLabel || currentDetailLabel ? (
                             <View style={styles.progressMetaRow}>
                                 <Text testID="session-handoff-progress-percent" style={styles.progressMetaText}>{progressLabel ?? ''}</Text>
-                                {currentPath ? <Text testID="session-handoff-progress-path" style={styles.currentPath}>{currentPath}</Text> : null}
+                                {currentDetailLabel ? (
+                                    <Text testID="session-handoff-progress-path" style={styles.currentPath}>
+                                        {currentDetailLabel}
+                                    </Text>
+                                ) : null}
                             </View>
                         ) : null}
                     </View>

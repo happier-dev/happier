@@ -10,6 +10,7 @@ const settingsState: Record<string, any> = {};
 let machineListByServerIdState: Record<string, any> = {};
 let allMachinesState: any[] = [];
 let sessionsState: any[] = [];
+let sessionsByIdState: Record<string, any> = {};
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -32,12 +33,19 @@ vi.mock('@happier-dev/protocol', () => ({
         sourceHomeDir?: string;
         fallbackSourceHomeDir?: string;
     }) => {
-        const sourcePath = String(params?.sourcePath ?? '').trim();
-        if (sourcePath === '~' || sourcePath === '~/') {
+        const rawSourcePath = String(params?.sourcePath ?? '').trim();
+        if (!rawSourcePath) {
+            return { allowed: false, reasonCode: 'missing_source_path' };
+        }
+        if (rawSourcePath === '~' || rawSourcePath === '~/') {
             return { allowed: false, reasonCode: 'path_is_home_directory' };
         }
+        const isAbsolute = rawSourcePath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(rawSourcePath) || /^(\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/].*)?$/.test(rawSourcePath);
+        if (!isAbsolute) {
+            return { allowed: false, reasonCode: 'path_is_not_absolute' };
+        }
         const sourceHomeDir = String(params?.sourceHomeDir ?? '').trim() || String(params?.fallbackSourceHomeDir ?? '').trim();
-        const samePath = sourcePath === sourceHomeDir;
+        const samePath = rawSourcePath === sourceHomeDir;
         return samePath
             ? { allowed: false, reasonCode: 'path_is_home_directory' }
             : { allowed: true, reasonCode: null };
@@ -125,6 +133,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
     useMachineListByServerId: () => machineListByServerIdState,
     useMachineRecordValues: () => allMachinesState,
     useSessions: () => sessionsState,
+    useSession: (id: string) => sessionsByIdState[id] ?? null,
     useSettingMutable: (key: string) => [
         settingsState[key],
         (next: any) => {
@@ -152,13 +161,27 @@ describe('SessionHandoffPickerModal', () => {
         allMachinesState = [
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ];
+        sessionsByIdState = {
+            sess_1: {
+                id: 'sess_1',
+                metadata: {
+                    flavor: 'claude',
+                    machineId: 'machine_source',
+                    path: '~/projects/happier',
+                    homeDir: '/Users/tester',
+                    directSessionV1: { source: 'claudeConfig' },
+                },
+            },
+        };
         sessionsState = [
             {
                 id: 'sess_1',
                 metadata: {
                     flavor: 'claude',
                     machineId: 'machine_source',
-                    path: '/Users/tester/projects/happier',
+                    // Session list view may format the path relative to home; the picker must use the canonical
+                    // session record path for safety decisions (not the display string).
+                    path: '~',
                     homeDir: '/Users/tester',
                     directSessionV1: { source: 'claudeConfig' },
                 },
@@ -217,6 +240,18 @@ describe('SessionHandoffPickerModal', () => {
     });
 
     it('forces workspace transfer off for sessions rooted at the machine home directory', async () => {
+        sessionsByIdState = {
+            sess_1: {
+                id: 'sess_1',
+                metadata: {
+                    flavor: 'claude',
+                    machineId: 'machine_source',
+                    path: '/Users/tester',
+                    homeDir: '/Users/tester',
+                    directSessionV1: { source: 'claudeConfig' },
+                },
+            },
+        };
         sessionsState = [
             {
                 id: 'sess_1',
@@ -264,6 +299,16 @@ describe('SessionHandoffPickerModal', () => {
     });
 
     it('forces workspace transfer off when session metadata is missing homeDir but the source machine home directory matches the path', async () => {
+        sessionsByIdState = {
+            sess_1: {
+                id: 'sess_1',
+                metadata: {
+                    flavor: 'claude',
+                    machineId: 'machine_source',
+                    path: '/Users/tester',
+                },
+            },
+        };
         sessionsState = [
             {
                 id: 'sess_1',
@@ -304,6 +349,16 @@ describe('SessionHandoffPickerModal', () => {
     });
 
     it('falls back to current session machineId when sourceMachineId prop is missing', async () => {
+        sessionsByIdState = {
+            sess_1: {
+                id: 'sess_1',
+                metadata: {
+                    flavor: 'claude',
+                    machineId: 'machine_source',
+                    path: '/Users/tester',
+                },
+            },
+        };
         sessionsState = [
             {
                 id: 'sess_1',
@@ -348,6 +403,16 @@ describe('SessionHandoffPickerModal', () => {
     });
 
     it('forces workspace transfer off for home-directory shorthand paths', async () => {
+        sessionsByIdState = {
+            sess_1: {
+                id: 'sess_1',
+                metadata: {
+                    flavor: 'claude',
+                    machineId: 'machine_source',
+                    path: '~',
+                },
+            },
+        };
         sessionsState = [
             {
                 id: 'sess_1',

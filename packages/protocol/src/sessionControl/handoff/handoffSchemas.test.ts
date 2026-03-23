@@ -18,10 +18,14 @@ describe('session handoff schemas', () => {
     expect(typeof mod.SessionHandoffProgressCheckpointSchema).toBe('object');
     expect(typeof mod.SessionHandoffProgressWarningCodeSchema).toBe('object');
     expect(typeof mod.SessionHandoffProviderBundleSchema).toBe('object');
-    expect(typeof mod.SessionHandoffTransferredWorkspaceArtifactsSchema).toBe('object');
+    expect(typeof mod.SessionHandoffMetadataV2Schema).toBe('object');
     expect(typeof mod.TransferEndpointCandidateSchema).toBe('object');
     expect(typeof mod.TransferStreamEnvelopeSchema).toBe('object');
     expect(typeof mod.SessionHandoffWorkspaceTransferSchema).toBe('object');
+
+    // Legacy inline transferred-bundles payloads/artifacts are not part of the steady-state V2 protocol surface.
+    expect(mod).not.toHaveProperty('SessionHandoffTransferredPayloadSchema');
+    expect(mod).not.toHaveProperty('SessionHandoffTransferredWorkspaceArtifactsSchema');
   });
 
   it('validates start, status, and transfer payloads', async () => {
@@ -91,6 +95,45 @@ describe('session handoff schemas', () => {
       }).success,
     ).toBe(true);
 
+    const handoffMetadataV2 = {
+      providerBundleTransferPublication: {
+        transferId: 'session-handoff:handoff_1:provider-bundle-file',
+        sizeBytes: 12,
+        manifestHash: 'sha256:manifest-hash',
+        endpointCandidates: [
+          {
+            kind: 'http',
+            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_1?token=test-token',
+            authorizationToken: 'test-token',
+            expiresAt: 1,
+          },
+        ],
+      },
+      workspaceReplicationSourceRootPath: '/repo',
+      workspaceReplicationManifestTransferPublication: {
+        transferId: 'transfer_manifest_1',
+      },
+      workspaceReplicationSourceControllerMetadata: {
+        provider: 'git',
+      },
+    };
+    expect(mod.SessionHandoffMetadataV2Schema.safeParse(handoffMetadataV2).success).toBe(true);
+
+    expect(
+      mod.SessionHandoffStartResponseSchema.safeParse({
+        handoffId: 'handoff_1',
+        status: {
+          handoffId: 'handoff_1',
+          status: 'pending',
+          phase: 'preparing',
+          recoveryActions: [],
+        },
+        endpointCandidates: [],
+        targetPath: '/repo',
+        handoffMetadataV2,
+      }).success,
+    ).toBe(true);
+
     expect(
       mod.SessionHandoffPrepareTargetRequestSchema.safeParse({
         handoffId: 'handoff_1',
@@ -107,6 +150,7 @@ describe('session handoff schemas', () => {
             expiresAt: 1,
           },
         ],
+        handoffMetadataV2,
       }).success,
     ).toBe(true);
 
@@ -145,35 +189,6 @@ describe('session handoff schemas', () => {
         providerId: 'claude',
         remoteSessionId: 'claude_session_1',
         transcriptBase64: 'e30K',
-      }).success,
-    ).toBe(true);
-
-    expect(
-      mod.SessionHandoffTransferredWorkspaceArtifactsSchema.safeParse({
-        manifest: {
-          entries: [],
-        },
-        blobs: [
-          {
-            digest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-            contentBase64: 'aGVsbG8K',
-          },
-        ],
-      }).success,
-    ).toBe(true);
-    expect(
-      mod.SessionHandoffTransferredWorkspaceArtifactsSchema.safeParse({
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-        },
       }).success,
     ).toBe(true);
 
@@ -241,6 +256,89 @@ describe('session handoff schemas', () => {
             entries: [],
           },
         },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects legacy inline start-response transfer fields', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    expect(
+      mod.SessionHandoffStartResponseSchema.safeParse({
+        handoffId: 'handoff_legacy',
+        status: {
+          handoffId: 'handoff_legacy',
+          status: 'pending',
+          phase: 'preparing',
+          recoveryActions: [],
+        },
+        endpointCandidates: [],
+        targetPath: '/repo',
+        transferredPayload: {
+          providerBundle: {
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_inline',
+            transcriptBase64: 'e30K',
+          },
+        },
+        providerBundle: {
+          providerId: 'claude',
+          remoteSessionId: 'claude_session_inline',
+          transcriptBase64: 'e30K',
+        },
+        workspaceArtifacts: {
+          manifest: {
+            entries: [],
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects legacy experimentalCodexAcp in resume payloads (no undeployed compatibility)', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    expect(
+      mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse({
+        handoffId: 'handoff_codex_legacy_resume',
+        status: {
+          handoffId: 'handoff_codex_legacy_resume',
+          status: 'ready_for_cutover',
+          phase: 'staging_target',
+          recoveryActions: [],
+        },
+        remoteSessionId: 'codex_session_legacy_resume',
+        directSource: {
+          kind: 'codexHome',
+          home: 'user',
+        },
+        resume: {
+          directory: '/repo',
+          agent: 'codex',
+          resume: 'codex_session_legacy_resume',
+          transcriptStorage: 'persisted',
+          approvedNewDirectoryCreation: true,
+          experimentalCodexAcp: true,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects legacy codexBackendMode provider-bundle fields (no undeployed compatibility)', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    expect(
+      mod.SessionHandoffProviderBundleSchema.safeParse({
+        providerId: 'codex',
+        remoteSessionId: 'codex_session_legacy_bundle',
+        files: [],
+        codexBackendMode: 'acp',
       }).success,
     ).toBe(false);
   });

@@ -24,7 +24,7 @@ import {
     SESSION_HANDOFF_INCLUDE_IGNORED_MODE_OPTIONS,
     SESSION_HANDOFF_WORKSPACE_TRANSFER_STRATEGY_OPTIONS,
 } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
-import { useMachineListByServerId, useMachineRecordValues, useSessions, useSettingMutable } from '@/sync/domains/state/storage';
+import { useMachineListByServerId, useMachineRecordValues, useSession, useSessions, useSettingMutable } from '@/sync/domains/state/storage';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
@@ -116,11 +116,30 @@ function mergeMachinesById(machineGroups: readonly (readonly any[] | null | unde
     return Array.from(merged.values());
 }
 
+function expandHomeRelativePath(rawPath: unknown, homeDir: unknown): string {
+    const path = String(rawPath ?? '').trim();
+    if (!path) return '';
+    if (!path.startsWith('~')) return path;
+
+    const home = String(homeDir ?? '').trim();
+    if (!home) return path;
+    const normalizedHome = home.endsWith('/') ? home.slice(0, -1) : home;
+
+    if (path === '~' || path === '~/') {
+        return normalizedHome;
+    }
+    if (path.startsWith('~/')) {
+        return `${normalizedHome}${path.slice(1)}`;
+    }
+    return path;
+}
+
 export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourceMachineId, serverId }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const actionSpec = getActionSpec('session.handoff');
     const sessions = useSessions() ?? [];
+    const sessionRecord = useSession(sessionId);
     const machineListByServerId = useMachineListByServerId();
     const activeServerMachines = useMachineRecordValues() ?? [];
     const [favoriteMachinesRaw, setFavoriteMachinesRaw] = useSettingMutable('favoriteMachines');
@@ -141,10 +160,10 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
             activeServerMachines,
         ]);
     }, [activeServerMachines, machineListByServerId, serverId]);
-    const currentSession = React.useMemo(
-        () => sessions.find((session: any) => normalizeId(session?.id) === normalizeId(sessionId)) ?? null,
-        [sessionId, sessions],
-    );
+    const currentSession = React.useMemo(() => {
+        if (sessionRecord) return sessionRecord;
+        return sessions.find((session: any) => normalizeId(session?.id) === normalizeId(sessionId)) ?? null;
+    }, [sessionId, sessionRecord, sessions]);
     const resolvedSourceMachineId = React.useMemo(
         () => normalizeId(sourceMachineId) || normalizeId((currentSession as any)?.metadata?.machineId),
         [currentSession, sourceMachineId],
@@ -155,11 +174,19 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
     }, [allServerMachines, resolvedSourceMachineId]);
     const isDirectSession = Boolean((currentSession as any)?.metadata?.directSessionV1);
     const workspaceTransferPathSafety = React.useMemo(
-        () => evaluateSessionHandoffWorkspaceTransferSourcePathSafety({
-            sourcePath: (currentSession as any)?.metadata?.path,
-            sourceHomeDir: (currentSession as any)?.metadata?.homeDir,
-            fallbackSourceHomeDir: (sourceMachine as any)?.metadata?.homeDir,
-        }),
+        () => {
+            const sourceHomeDir = (currentSession as any)?.metadata?.homeDir;
+            const fallbackSourceHomeDir = (sourceMachine as any)?.metadata?.homeDir;
+            const sourcePath = expandHomeRelativePath(
+                (currentSession as any)?.metadata?.path,
+                sourceHomeDir ?? fallbackSourceHomeDir,
+            );
+            return evaluateSessionHandoffWorkspaceTransferSourcePathSafety({
+                sourcePath,
+                sourceHomeDir,
+                fallbackSourceHomeDir,
+            });
+        },
         [currentSession, sourceMachine],
     );
 
@@ -275,6 +302,7 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                         footer={t('settingsSession.handoff.workspaceTransfer.groupFooter')}
                     >
                         <Item
+                            testID="session-handoff-workspace-transfer-enabled"
                             title={t('settingsSession.handoff.workspaceTransfer.title')}
                             subtitle={
                                 workspaceTransferEnabled

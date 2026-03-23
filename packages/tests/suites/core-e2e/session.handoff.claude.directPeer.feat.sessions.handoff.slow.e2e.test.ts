@@ -25,6 +25,7 @@ type HandoffStartResult = Readonly<{
   handoffId: string;
   endpointCandidates: readonly Readonly<{ kind: string; url: string; expiresAt: number }>[];
   targetPath: string;
+  handoffMetadataV2?: unknown;
   providerBundle?: unknown;
 }>;
 
@@ -54,6 +55,7 @@ type HandoffStatusResult = Readonly<{
     phase: string;
     jobId?: string;
     transportStrategy?: 'direct_peer' | 'server_routed_stream';
+    lastErrorMessage?: string;
   }>;
 }>;
 
@@ -190,7 +192,10 @@ async function waitForReadyHandoffPrepareResult(params: Readonly<{
       `${params.context} status get`,
     ) as HandoffStatusResult;
     if (status.status.status === 'awaiting_recovery' || status.status.status === 'failed' || status.status.status === 'aborted') {
-      throw new Error(`${params.context} entered terminal status ${status.status.status}`);
+      const lastError = typeof status.status.lastErrorMessage === 'string' && status.status.lastErrorMessage.trim().length > 0
+        ? `; lastErrorMessage: ${status.status.lastErrorMessage}`
+        : '';
+      throw new Error(`${params.context} entered terminal status ${status.status.status}${lastError}`);
     }
 
     const polled = polledErrorCode ? null : polledRaw as HandoffPrepareResult;
@@ -229,6 +234,17 @@ function sessionChildEnv(params: Readonly<{
     HAPPIER_E2E_FAKE_CLAUDE_LOG: params.fakeClaudeLogPath,
     ...(params.extraEnvironmentVariables ?? {}),
   };
+}
+
+function requireObject(value: unknown, context: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Expected object for ${context}`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireHandoffMetadataV2(result: HandoffStartResult, context: string): Record<string, unknown> {
+  return requireObject(result.handoffMetadataV2, `handoffMetadataV2 for ${context}`);
 }
 
 describe('core e2e: session handoff via direct peer', () => {
@@ -415,7 +431,7 @@ describe('core e2e: session handoff via direct peer', () => {
         negotiatedTransportStrategy: 'direct_peer',
         workspaceTransfer: {
           enabled: true,
-          strategy: 'sync_changes',
+          strategy: 'transfer_snapshot',
           conflictPolicy: 'replace_existing',
           includeIgnoredMode: 'exclude',
           ignoredIncludeGlobs: [],
@@ -430,8 +446,15 @@ describe('core e2e: session handoff via direct peer', () => {
       endpointCandidates: expect.any(Array),
     }));
     expect(started.providerBundle).toBeUndefined();
-    expect(started.endpointCandidates.length).toBeGreaterThan(0);
-    expect(started.endpointCandidates[0]?.url).toContain('127.0.0.1');
+    const handoffMetadataV2 = requireHandoffMetadataV2(started, 'source handoff start');
+    expect(requireObject(handoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+      transferId: expect.any(String),
+      sizeBytes: expect.any(Number),
+      manifestHash: expect.any(String),
+    }));
+    expect(requireObject(handoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
+      transferId: expect.any(String),
+    }));
     await waitFor(async () => (await listDaemonSessions(sourceDaemon!)).includes(sessionId) === false, {
       timeoutMs: 30_000,
       intervalMs: 100,
@@ -452,9 +475,10 @@ describe('core e2e: session handoff via direct peer', () => {
           sourceSessionStorageMode: 'direct',
           targetPath: started.targetPath,
           endpointCandidates: started.endpointCandidates,
+          handoffMetadataV2,
           workspaceTransfer: {
             enabled: true,
-            strategy: 'sync_changes',
+            strategy: 'transfer_snapshot',
             conflictPolicy: 'replace_existing',
             includeIgnoredMode: 'exclude',
             ignoredIncludeGlobs: [],
@@ -562,7 +586,15 @@ describe('core e2e: session handoff via direct peer', () => {
       'target handoff-back start',
     ) as HandoffStartResult;
     expect(secondStarted.handoffId).not.toBe(started.handoffId);
-    expect(secondStarted.endpointCandidates.length).toBeGreaterThan(0);
+    const secondHandoffMetadataV2 = requireHandoffMetadataV2(secondStarted, 'target handoff-back start');
+    expect(requireObject(secondHandoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+      transferId: expect.any(String),
+      sizeBytes: expect.any(Number),
+      manifestHash: expect.any(String),
+    }));
+    expect(requireObject(secondHandoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
+      transferId: expect.any(String),
+    }));
 
     const secondPrepared = await waitForReadyHandoffPrepareResult({
       machineRpc: sourceMachineRpc,
@@ -578,6 +610,7 @@ describe('core e2e: session handoff via direct peer', () => {
           sourceSessionStorageMode: 'direct',
           targetPath: secondStarted.targetPath,
           endpointCandidates: secondStarted.endpointCandidates,
+          handoffMetadataV2: secondHandoffMetadataV2,
           workspaceTransfer: {
             enabled: true,
             strategy: 'sync_changes',
@@ -797,6 +830,12 @@ describe('core e2e: session handoff via direct peer', () => {
       }),
       'source handoff start for late cutover proof',
     ) as HandoffStartResult;
+    const lateCutoverMetadataV2 = requireHandoffMetadataV2(started, 'source handoff start for late cutover proof');
+    expect(requireObject(lateCutoverMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+      transferId: expect.any(String),
+      sizeBytes: expect.any(Number),
+      manifestHash: expect.any(String),
+    }));
 
     await waitFor(async () => (await listDaemonSessions(sourceDaemon!)).includes(sessionId) === false, {
       timeoutMs: 30_000,
@@ -836,6 +875,7 @@ describe('core e2e: session handoff via direct peer', () => {
           sourceSessionStorageMode: 'persisted',
           targetPath: started.targetPath,
           endpointCandidates: started.endpointCandidates,
+          handoffMetadataV2: lateCutoverMetadataV2,
         }),
         'target handoff prepare for late cutover proof',
       ) as HandoffPrepareResult,

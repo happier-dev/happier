@@ -25,11 +25,22 @@ function createServerFeatures(partial?: Partial<FeaturesResponse>): FeaturesResp
 }
 
 describe('resolveAppSessionTransferRoute', () => {
-    it('selects machine rpc when a direct machine target is available', () => {
+    it('does not select machine_rpc_direct when the server feature snapshot is unavailable', () => {
         expect(resolveAppSessionTransferRoute({
             machineTargetAvailable: true,
             sessionRpcAvailable: true,
             serverFeatures: null,
+        })).toEqual({
+            kind: 'selected',
+            route: 'server_routed_stream',
+        });
+    });
+
+    it('selects machine rpc when a direct machine target is available and transfer is explicitly enabled', () => {
+        expect(resolveAppSessionTransferRoute({
+            machineTargetAvailable: true,
+            sessionRpcAvailable: true,
+            serverFeatures: createServerFeatures(),
         })).toEqual({
             kind: 'selected',
             route: 'machine_rpc_direct',

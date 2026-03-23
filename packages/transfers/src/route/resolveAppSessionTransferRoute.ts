@@ -54,10 +54,15 @@ export function resolveAppSessionTransferRoute(
     }
 
     if (input.machineTargetAvailable) {
-        return {
-            kind: 'selected',
-            route: 'machine_rpc_direct',
-        };
+        // Direct machine RPC must not be selected without a server feature snapshot; otherwise
+        // callers can accidentally bypass the shared policy choke point when the snapshot is
+        // missing/unavailable.
+        if (input.serverFeatures && transferEnabled === true) {
+            return {
+                kind: 'selected',
+                route: 'machine_rpc_direct',
+            };
+        }
     }
 
     if (!input.sessionRpcAvailable) {

@@ -4,6 +4,7 @@ import type { FeaturesResponse } from '@happier-dev/protocol';
 
 const {
     machineRPC,
+    machineRpcWithServerScopeMock,
     sessionRpcWithServerScopeMock,
     getReadyServerFeaturesMock,
     resolvePreferredServerIdForSessionIdMock,
@@ -12,6 +13,7 @@ const {
     shouldFallbackToSessionRpcMock,
 } = vi.hoisted(() => ({
     machineRPC: vi.fn(),
+    machineRpcWithServerScopeMock: vi.fn(),
     sessionRpcWithServerScopeMock: vi.fn(),
     getReadyServerFeaturesMock: vi.fn<(params: unknown) => Promise<FeaturesResponse | null>>(),
     resolvePreferredServerIdForSessionIdMock: vi.fn<(sessionId: string) => string | undefined>(),
@@ -28,6 +30,10 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
     sessionRpcWithServerScope: (params: unknown) => sessionRpcWithServerScopeMock(params),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeMock(params),
 }));
 
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
@@ -75,6 +81,7 @@ function createServerFeatures(partial?: Readonly<{
 
 afterEach(() => {
     machineRPC.mockReset();
+    machineRpcWithServerScopeMock.mockReset();
     sessionRpcWithServerScopeMock.mockReset();
     getReadyServerFeaturesMock.mockReset();
     resolvePreferredServerIdForSessionIdMock.mockReset();
@@ -105,7 +112,7 @@ describe('sessionMachineRpcFallback', () => {
         }));
 
         machineRPC.mockResolvedValue({ success: true, value: 'direct' });
-        sessionRpcWithServerScopeMock.mockResolvedValue({ success: true, value: 'relayed' });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, value: 'relayed' });
 
         const caller = createSessionMachineRpcFallbackCaller({
             sessionId: 'session-1',
@@ -126,12 +133,193 @@ describe('sessionMachineRpcFallback', () => {
         })).resolves.toEqual({ success: true, value: 'relayed' });
 
         expect(machineRPC).not.toHaveBeenCalled();
-        expect(sessionRpcWithServerScopeMock).toHaveBeenCalledWith({
-            sessionId: 'session-1',
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'machine-1',
             serverId: 'server-owned',
             method: RPC_METHODS.LIST_DIRECTORY,
             payload: { path: 'hello.txt' },
+            preferScoped: true,
         });
+        expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it('fails closed (no machine_rpc_direct) for all sessionFileSystem methods when server features are unavailable', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(null);
+
+        machineRPC.mockResolvedValue({ success: true, value: 'direct' });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, value: 'relayed' });
+
+        const caller = createSessionMachineRpcFallbackCaller({
+            sessionId: 'session-1',
+            resolveFallbackRoute: async () => ({
+                kind: 'selected',
+                route: {
+                    kind: 'server_routed_stream',
+                    serverId: 'server-owned',
+                },
+            }),
+            reuseResolvedRoute: false,
+        });
+
+        const methods = [
+            RPC_METHODS.CREATE_DIRECTORY,
+            RPC_METHODS.LIST_DIRECTORY,
+            RPC_METHODS.GET_DIRECTORY_TREE,
+            RPC_METHODS.STAT_FILE,
+            RPC_METHODS.RENAME_PATH,
+            RPC_METHODS.DELETE_PATH,
+            RPC_METHODS.WRITE_FILE,
+        ] as const;
+
+        for (const method of methods) {
+            await expect(caller.call({
+                request: { path: 'hello.txt', content: 'Zm9v', from: 'a', to: 'b' },
+                machineMethod: method,
+                sessionMethod: method,
+            })).resolves.toEqual({ success: true, value: 'relayed' });
+        }
+
+        // If any of these methods were not policy-guarded, the caller would attempt
+        // `apiSocket.machineRPC` even though server feature policy cannot be evaluated.
+        expect(machineRPC).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(methods.length);
+        expect(getReadyServerFeaturesMock).toHaveBeenCalledTimes(methods.length);
+        expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(1, { timeoutMs: 500, serverId: 'server-owned' });
+    });
+
+    it('fails closed (no machine_rpc_direct) for guarded methods when server features are not available yet', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(null);
+
+        machineRPC.mockResolvedValue({ success: true, value: 'direct' });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, value: 'relayed' });
+
+        const caller = createSessionMachineRpcFallbackCaller({
+            sessionId: 'session-1',
+            resolveFallbackRoute: async () => ({
+                kind: 'selected',
+                route: {
+                    kind: 'server_routed_stream',
+                    serverId: 'server-owned',
+                },
+            }),
+            reuseResolvedRoute: false,
+        });
+
+        await expect(caller.call({
+            request: { path: 'hello.txt', content: 'Zm9v' },
+            machineMethod: RPC_METHODS.WRITE_FILE,
+            sessionMethod: RPC_METHODS.WRITE_FILE,
+        })).resolves.toEqual({ success: true, value: 'relayed' });
+
+        expect(machineRPC).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            serverId: 'server-owned',
+            method: RPC_METHODS.WRITE_FILE,
+            payload: { path: 'hello.txt', content: 'Zm9v' },
+            preferScoped: true,
+        });
+        expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it('fails closed (no machine_rpc_direct) for guarded methods when server features evaluation throws', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockRejectedValueOnce(new Error('features not ready'));
+
+        machineRPC.mockResolvedValue({ success: true, value: 'direct' });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, value: 'relayed' });
+
+        const caller = createSessionMachineRpcFallbackCaller({
+            sessionId: 'session-1',
+            resolveFallbackRoute: async () => ({
+                kind: 'selected',
+                route: {
+                    kind: 'server_routed_stream',
+                    serverId: 'server-owned',
+                },
+            }),
+            reuseResolvedRoute: false,
+        });
+
+        await expect(caller.call({
+            request: { path: 'hello.txt', content: 'Zm9v' },
+            machineMethod: RPC_METHODS.WRITE_FILE,
+            sessionMethod: RPC_METHODS.WRITE_FILE,
+        })).resolves.toEqual({ success: true, value: 'relayed' });
+
+        expect(machineRPC).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            serverId: 'server-owned',
+            method: RPC_METHODS.WRITE_FILE,
+            payload: { path: 'hello.txt', content: 'Zm9v' },
+            preferScoped: true,
+        });
+        expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it('re-checks shared transfer policy even when a direct route is cached (reuseResolvedRoute)', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+
+        const transferEnabled = createServerFeatures();
+        const transferDisabled = createServerFeatures({
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: false,
+                        serverRouted: {
+                            enabled: true,
+                        },
+                    },
+                },
+            },
+        });
+        // 1) First call allows direct route.
+        // 2) Second call checks the cached direct route (disabled) and then checks again before a new direct attempt (disabled).
+        getReadyServerFeaturesMock
+            .mockResolvedValueOnce(transferEnabled)
+            .mockResolvedValueOnce(transferDisabled)
+            .mockResolvedValueOnce(transferDisabled);
+
+        machineRPC.mockResolvedValue({ success: true, value: 'direct' });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, value: 'relayed' });
+
+        const caller = createSessionMachineRpcFallbackCaller({
+            sessionId: 'session-1',
+            resolveFallbackRoute: async () => ({
+                kind: 'selected',
+                route: {
+                    kind: 'server_routed_stream',
+                    serverId: 'server-owned',
+                },
+            }),
+            reuseResolvedRoute: true,
+        });
+
+        await expect(caller.call({
+            request: { path: 'hello.txt' },
+            machineMethod: RPC_METHODS.LIST_DIRECTORY,
+            sessionMethod: RPC_METHODS.LIST_DIRECTORY,
+        })).resolves.toEqual({ success: true, value: 'direct' });
+
+        await expect(caller.call({
+            request: { path: 'hello.txt' },
+            machineMethod: RPC_METHODS.LIST_DIRECTORY,
+            sessionMethod: RPC_METHODS.LIST_DIRECTORY,
+        })).resolves.toEqual({ success: true, value: 'relayed' });
+
+        expect(machineRPC).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        expect(getReadyServerFeaturesMock).toHaveBeenCalledTimes(3);
+
+        // Policy evaluation must happen before the direct attempt on the first call.
+        expect(getReadyServerFeaturesMock.mock.invocationCallOrder[0]).toBeLessThan(machineRPC.mock.invocationCallOrder[0]);
     });
 });
-
