@@ -80,7 +80,10 @@ describe('createAttachmentActionChip', () => {
         (Platform as any).OS = 'web';
 
         try {
-            const onPickFile = vi.fn();
+            const callOrder: string[] = [];
+            const onPickFile = vi.fn(() => {
+                callOrder.push('pickFile');
+            });
             const onPickImage = vi.fn();
             const chip = createAttachmentActionChip({
                 onPickFile,
@@ -88,6 +91,25 @@ describe('createAttachmentActionChip', () => {
             } as any);
 
             expect(chip.collapsedContentPopover).toBeFalsy();
+            expect(typeof chip.collapsedAction).toBe('function');
+
+            const dismiss = vi.fn(() => {
+                callOrder.push('dismiss');
+            });
+            const blurInput = vi.fn(() => {
+                callOrder.push('blur');
+            });
+            const collapsed = chip.collapsedAction?.({
+                tint: '#000',
+                dismiss,
+                blurInput,
+            });
+            if (!collapsed || Array.isArray(collapsed) || typeof collapsed.onPress !== 'function') {
+                throw new Error('Expected web attach chip to expose a single collapsedAction with onPress');
+            }
+
+            collapsed.onPress();
+            expect(callOrder).toEqual(['blur', 'pickFile', 'dismiss']);
 
             const screen = await renderScreen(
                 <React.Fragment>

@@ -1199,12 +1199,24 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const hasSettingsAcpConfigSection = Boolean(acpConfigOptionControls || acpConfigSectionHeaderAccessory);
     const hasSettingsModelSection = Boolean(props.onModelModeChange);
 
+    const shouldShowModelOptionDescriptions = React.useMemo(() => {
+        return modelOptions.some((option) => {
+            if (option.value === 'default') return false;
+            return typeof option.description === 'string' && option.description.trim().length > 0;
+        });
+    }, [modelOptions]);
+
     const renderResolvedEngineDetail = React.useCallback((surfaceVariant: 'carded' | 'plain' = 'carded') => (
         <AgentInputEngineDetail
             modelOptions={modelOptions.map((option) => ({
                 value: option.value,
                 label: option.label,
-                description: option.description,
+                description:
+                    option.value === 'default'
+                    && shouldShowModelOptionDescriptions
+                    && (typeof option.description !== 'string' || option.description.trim().length === 0)
+                        ? t('agentInput.model.configureInCli')
+                        : option.description,
                 ...(option.modelOptions ? { modelOptions: option.modelOptions } : {}),
             }))}
             selectedModelId={effectiveModelPolicy.effectiveModelId}
@@ -1267,6 +1279,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         effectiveModelPolicy.effectiveModelId,
         effectiveModelPolicy.notes,
         modelOptions,
+        shouldShowModelOptionDescriptions,
         preflightAcpSessionModeEffective.id,
         preflightAcpSessionModeOptions,
         props.modelOptionsOverrideProbe,

@@ -1,6 +1,8 @@
 import * as React from 'react';
 
+import { Platform } from 'react-native';
 import { Popover } from '@/components/ui/popover';
+import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 
 export type AgentInputSelectionPopoverProps = Readonly<{
     open: boolean;
@@ -35,10 +37,46 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
                 anchorAlign: 'start',
             }}
             onRequestClose={props.onRequestClose}
-            backdrop={{ style: { backgroundColor: 'transparent' }, blockOutsidePointerEvents: true }}
+            backdrop={{ style: { backgroundColor: 'transparent' } }}
             containerStyle={{ paddingHorizontal: 0 }}
         >
-            {props.children}
+            {({ maxHeight }) => (
+                <AgentInputNestedPortalScope>
+                    {props.children({ maxHeight })}
+                </AgentInputNestedPortalScope>
+            )}
         </Popover>
+    );
+}
+
+function AgentInputNestedPortalScope(props: { children: React.ReactNode }) {
+    const [target, setTarget] = React.useState<HTMLElement | null>(null);
+    const setTargetRef = React.useCallback((node: HTMLElement | null) => {
+        setTarget((prev) => (prev === node ? prev : node));
+    }, []);
+
+    if (Platform.OS !== 'web') {
+        return props.children;
+    }
+
+    return (
+        <ModalPortalTargetProvider target={target}>
+            <>
+                {props.children}
+                <div
+                    data-happy-agent-input-popover-portal-target=""
+                    ref={setTargetRef}
+                    style={{
+                        position: 'absolute',
+                        top: '0px',
+                        left: '0px',
+                        width: '0px',
+                        height: '0px',
+                        overflow: 'visible',
+                        pointerEvents: 'auto',
+                    }}
+                />
+            </>
+        </ModalPortalTargetProvider>
     );
 }

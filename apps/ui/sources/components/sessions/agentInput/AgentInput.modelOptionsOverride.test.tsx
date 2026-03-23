@@ -331,6 +331,36 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect((lastModelPickerOverlayProps.options ?? []).map((o: any) => o.value)).toEqual(['default', 'override-model']);
     });
 
+    it('adds a description to the CLI settings option when other models include descriptions', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        lastModelPickerOverlayProps = null;
+
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: 'hello',
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'codex',
+            permissionMode: 'default',
+            onPermissionModeChange: () => {},
+            modelMode: 'default',
+            onModelModeChange: () => {},
+            modelOptionsOverride: [
+                { value: 'default', label: 'Use CLI settings', description: '' },
+                { value: 'override-model', label: 'Override Model', description: 'A described model' },
+            ],
+        }));
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
+
+        const defaultOption = (lastModelPickerOverlayProps?.options ?? []).find((o: any) => o.value === 'default');
+        expect(defaultOption).toBeTruthy();
+        expect(typeof defaultOption.description).toBe('string');
+        expect(String(defaultOption.description).trim().length).toBeGreaterThan(0);
+    });
+
     it('passes probe state through to ModelPickerOverlay when provided', async () => {
         const { AgentInput } = await import('./AgentInput');
 

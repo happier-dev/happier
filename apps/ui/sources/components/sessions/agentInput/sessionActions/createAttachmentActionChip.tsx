@@ -54,13 +54,14 @@ export function createAttachmentActionChip(params: Readonly<{
                 scrollEnabled: false,
             },
         } : {
-            collapsedAction: ({ tint, dismiss }) => ({
+            collapsedAction: ({ tint, dismiss, blurInput }) => ({
                 id: 'attachments',
                 label: t('common.attach'),
                 icon: normalizeNodeForView(<Ionicons name="attach-outline" size={16} color={tint} />),
                 onPress: () => {
-                    dismiss();
+                    blurInput();
                     params.onPickFile();
+                    dismiss();
                 },
             }),
         }),

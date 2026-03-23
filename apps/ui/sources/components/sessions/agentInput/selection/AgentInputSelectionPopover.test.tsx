@@ -3,6 +3,16 @@ import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'web',
+            select: (value: any) => value.web ?? value.default ?? null,
+        },
+    });
+});
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -66,9 +76,12 @@ describe('AgentInputSelectionPopover', () => {
         });
         expect(capturedPopoverProps.current?.closeOnAnchorPress).toBe(false);
         expect(capturedPopoverProps.current?.containerStyle).toEqual({ paddingHorizontal: 0 });
-        expect(capturedPopoverProps.current?.backdrop).toEqual({ style: { backgroundColor: 'transparent' }, blockOutsidePointerEvents: true });
+        expect(capturedPopoverProps.current?.backdrop).toEqual({ style: { backgroundColor: 'transparent' } });
         expect(renderContent).toHaveBeenCalledWith({ maxHeight: 312 });
         expect(tree).toBeTruthy();
         expect(tree!.root.findByProps({ testID: 'content:312' })).toBeTruthy();
+
+        const divs = tree!.root.findAllByType('div');
+        expect(divs.some((node) => node.props['data-happy-agent-input-popover-portal-target'] === '')).toBe(true);
     });
 });
