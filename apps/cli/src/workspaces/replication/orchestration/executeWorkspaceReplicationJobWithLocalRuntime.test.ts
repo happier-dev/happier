@@ -202,7 +202,7 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
 
             const sourceCas = createWorkspaceReplicationCasStore({ activeServerDir: sourceActiveServerDir });
             const fileEntries: WorkspaceReplicationSourceOffer['manifest']['entries'] = [];
-            const blobIndex: WorkspaceReplicationSourceOffer['blobIndex'] = [];
+            const blobIndex: Array<WorkspaceReplicationSourceOffer['blobIndex'][number]> = [];
             let totalBytes = 0;
 
             // Force >1 blob pack with the default max-blobs=256 by creating 257 distinct blobs.

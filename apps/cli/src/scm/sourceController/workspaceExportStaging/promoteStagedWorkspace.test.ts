@@ -30,7 +30,7 @@ async function writeBlobFile(params: Readonly<{
 
 async function createPromotableFixture(stagingWorkspaceDirectory: string): Promise<Readonly<{
     manifest: WorkspaceManifest;
-    blobContentsByDigest: ReadonlyMap<string, Uint8Array>;
+    blobBytesByDigest: ReadonlyMap<string, Uint8Array>;
 }>> {
     const srcDirectory = join(stagingWorkspaceDirectory, 'src');
     const readmePath = join(stagingWorkspaceDirectory, 'README.md');
@@ -74,7 +74,7 @@ async function createPromotableFixture(stagingWorkspaceDirectory: string): Promi
                 },
             ],
         },
-        blobContentsByDigest: new Map([
+        blobBytesByDigest: new Map([
             [readmeDigest, readmeContent],
             [scriptDigest, scriptContent],
         ]),
@@ -96,7 +96,7 @@ describe('promoteStagedWorkspace', () => {
         const fixture = await createPromotableFixture(stagingRoot.workspaceDirectory);
 
         await Promise.all(
-            [...fixture.blobContentsByDigest.entries()].map(async ([digest, content]) => await writeBlobFile({
+            [...fixture.blobBytesByDigest.entries()].map(async ([digest, content]) => await writeBlobFile({
                 blobsDirectory: stagingRoot.blobsDirectory,
                 digest,
                 content,
@@ -127,7 +127,7 @@ describe('promoteStagedWorkspace', () => {
         const fixture = await createPromotableFixture(stagingRoot.workspaceDirectory);
 
         await Promise.all(
-            [...fixture.blobContentsByDigest.entries()].map(async ([digest, content]) => await writeBlobFile({
+            [...fixture.blobBytesByDigest.entries()].map(async ([digest, content]) => await writeBlobFile({
                 blobsDirectory: stagingRoot.blobsDirectory,
                 digest,
                 content,
@@ -175,7 +175,7 @@ describe('promoteStagedWorkspace', () => {
         const fixture = await createPromotableFixture(stagingRoot.workspaceDirectory);
 
         await Promise.all(
-            [...fixture.blobContentsByDigest.entries()].map(async ([digest, content]) => await writeBlobFile({
+            [...fixture.blobBytesByDigest.entries()].map(async ([digest, content]) => await writeBlobFile({
                 blobsDirectory: stagingRoot.blobsDirectory,
                 digest,
                 content,

@@ -97,7 +97,7 @@ function resolveWorkspaceBlobSourcePaths(params: Readonly<{
     digests: readonly string[];
 }>): ReadonlyMap<string, string> {
     if (!params.blobProvider) {
-        throw new Error('Workspace staging requires a file-backed blobProvider (blobContentsByDigest is not supported)');
+        throw new Error('Workspace staging requires a file-backed blobProvider');
     }
 
     const blobSourcePaths = new Map<string, string>();
