@@ -1,46 +1,61 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, renderScreen } from '@/dev/testkit';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const sessionFixtures: Record<string, any> = {
-    'session-1': {
+function createApprovalArtifact(): DecryptedArtifact {
+    return {
+        id: 'artifact-1',
+        title: 'Approval',
+        headerVersion: 1,
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        isDecrypted: true,
+        header: {
+            title: 'Approve answering the user',
+            actionId: 'session.user_action.answer',
+            sessionId: 'session-1',
+        },
+    };
+}
+
+const sessionFixtures: Record<string, Session> = {
+    'session-1': createSessionFixture({
         id: 'session-1',
         metadata: {
             name: 'Repo session',
             path: '/Users/leeroy/stale-repo',
+            host: 'tester.local',
             homeDir: '/Users/leeroy',
             machineId: 'machine-stale',
         },
-    },
+    }),
 };
 
-const machineFixtures: Record<string, any> = {
-    'machine-target': {
+const machineFixtures: Record<string, Machine> = {
+    'machine-target': createMachineFixture({
         id: 'machine-target',
-        metadata: { displayName: 'Rebound workstation', host: 'workstation.local' },
-    },
+        metadata: {
+            displayName: 'Rebound workstation',
+            host: 'workstation.local',
+            platform: 'darwin',
+            happyCliVersion: '0.0.0-test',
+            happyHomeDir: '/Users/leeroy/.happy-dev',
+            homeDir: '/Users/leeroy',
+        },
+    }),
 };
 
 const storageState = {
     sessions: {
-        'session-1': {
-            active: false,
-            metadata: {
-                machineId: 'machine-stale',
-                path: '/Users/leeroy/stale-repo',
-                homeDir: '/Users/leeroy',
-            },
-        },
+        'session-1': sessionFixtures['session-1'],
     },
     machines: {
-        'machine-target': {
-            id: 'machine-target',
-            active: true,
-            activeAt: 10,
-            metadata: { host: 'workstation.local' },
-        },
+        'machine-target': machineFixtures['machine-target'],
     },
     getProjectForSession: (sessionId: string) =>
         sessionId === 'session-1'
@@ -110,15 +125,7 @@ describe('ApprovalInboxCard', () => {
         const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
         const screen = await renderScreen(
             <ApprovalInboxCard
-                artifact={{
-                    id: 'artifact-1',
-                    title: 'Approval',
-                    header: {
-                        title: 'Approve answering the user',
-                        actionId: 'session.user_action.answer',
-                        sessionId: 'session-1',
-                    },
-                } as any}
+                artifact={createApprovalArtifact()}
                 onPress={() => {}}
             />,
         );

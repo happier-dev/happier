@@ -11,16 +11,14 @@ const openMachinePathBrowserModalMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: 'View',
-            Pressable: 'Pressable',
-            Platform: {
-                OS: 'web',
-                select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
-            },
-        }
-    );
+    return createReactNativeWebMock({
+        View: 'View',
+        Pressable: 'Pressable',
+        Platform: {
+            OS: 'web',
+            select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
+        },
+    });
 });
 
 vi.mock('react-native-unistyles', async () => {

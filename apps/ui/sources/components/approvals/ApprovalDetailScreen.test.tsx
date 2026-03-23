@@ -1,8 +1,12 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
-
+import type { Machine, Session } from '@/sync/domains/state/storageTypes';
+import {
+    createMachineFixture,
+    createSessionFixture,
+    renderScreen,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,103 +16,136 @@ const executeSpy = vi.fn(async () => ({ ok: true as const, result: {} }));
 const createDefaultActionExecutorSpy = vi.fn();
 const fetchArtifactWithBodySpy = vi.fn(async () => null);
 const resolveServerIdForSessionIdFromLocalCacheSpy = vi.fn((_: string) => 'server-cache');
-let currentArtifact: any = {
-    id: 'artifact-1',
-    header: {
-        kind: 'approval_request.v1',
-        title: 'Approve answering the user',
-        approvalStatus: 'open',
-        actionId: 'session.user_action.answer',
+const defaultApprovalArtifactBody = {
+    v: 1,
+    status: 'open',
+    createdAtMs: 1,
+    updatedAtMs: 1,
+    createdBy: {
+        surface: 'session_agent',
+        agentId: 'codex',
         sessionId: 'session-1',
     },
-    body: JSON.stringify({
-        v: 1,
-        status: 'open',
-        createdAtMs: 1,
-        updatedAtMs: 1,
-        createdBy: {
-            surface: 'session_agent',
-            agentId: 'codex',
-            sessionId: 'session-1',
-        },
-        actionId: 'session.user_action.answer',
-        actionArgs: {
-            sessionId: 'session-1',
-            requestId: 'ask-1',
-            answers: [{ question: 'Continue?', answer: 'Yes' }],
-        },
-        summary: 'Approve answering the user',
-        preview: {
-            kind: 'user_action',
-            summary: 'Agent wants to answer the pending question',
-        },
-    }),
-};
-
-const sessionFixtures: Record<string, any> = {
-    'session-1': {
-        id: 'session-1',
-        metadata: {
-            name: 'Repo session',
-            path: '/Users/leeroy/repo',
-            homeDir: '/Users/leeroy',
-            machineId: 'machine-stale',
-        },
+    actionId: 'session.user_action.answer',
+    actionArgs: {
+        sessionId: 'session-1',
+        requestId: 'ask-1',
+        answers: [{ question: 'Continue?', answer: 'Yes' }],
+    },
+    summary: 'Approve answering the user',
+    preview: {
+        kind: 'user_action',
+        summary: 'Agent wants to answer the pending question',
     },
 };
 
-const machineFixtures: Record<string, any> = {
-    'machine-target': {
-        id: 'machine-target',
-        metadata: { displayName: 'Rebound workstation', host: 'workstation.local' },
-    },
-};
+function createApprovalArtifact(serverId?: string) {
+    return {
+        id: 'artifact-1',
+        header: {
+            kind: 'approval_request.v1',
+            title: 'Approve answering the user',
+            approvalStatus: 'open',
+            actionId: 'session.user_action.answer',
+            sessionId: 'session-1',
+        },
+        body: JSON.stringify({
+            ...defaultApprovalArtifactBody,
+            ...(serverId ? { serverId } : {}),
+        }),
+    };
+}
 
-const storageState = {
-    sessions: {
-        'session-1': {
-            active: false,
+function createSessionFixtures() {
+    return {
+        'session-1': createSessionFixture({
+            id: 'session-1',
             metadata: {
-                machineId: 'machine-stale',
+                name: 'Repo session',
+                host: 'tester.local',
                 path: '/Users/leeroy/repo',
                 homeDir: '/Users/leeroy',
+                machineId: 'machine-stale',
             },
-        },
-    },
-    machines: {
-        'machine-target': {
+        }),
+    } satisfies Record<string, Session>;
+}
+
+function createMachineFixtures() {
+    return {
+        'machine-target': createMachineFixture({
             id: 'machine-target',
-            active: true,
-            activeAt: 10,
-            metadata: { host: 'workstation.local' },
-        },
-    },
-    getProjectForSession: (sessionId: string) =>
-        sessionId === 'session-1'
-            ? {
-                key: {
-                    machineId: 'machine-target',
+            metadata: {
+                displayName: 'Rebound workstation',
+                host: 'workstation.local',
+                platform: 'darwin',
+                happyCliVersion: '0.0.0-test',
+                happyHomeDir: '/Users/tester/.happy-dev',
+                homeDir: '/Users/tester',
+            },
+        }),
+    } satisfies Record<string, Machine>;
+}
+
+function createStorageState() {
+    return {
+        sessions: {
+            'session-1': createSessionFixture({
+                id: 'session-1',
+                active: false,
+                metadata: {
+                    host: 'tester.local',
+                    machineId: 'machine-stale',
                     path: '/Users/leeroy/repo',
+                    homeDir: '/Users/leeroy',
+                } as Session['metadata'],
+            }),
+        },
+        machines: {
+            'machine-target': createMachineFixture({
+                id: 'machine-target',
+                active: true,
+                activeAt: 10,
+                metadata: {
+                    displayName: 'Rebound workstation',
+                    host: 'workstation.local',
+                    platform: 'darwin',
+                    happyCliVersion: '0.0.0-test',
+                    happyHomeDir: '/Users/tester/.happy-dev',
+                    homeDir: '/Users/tester',
                 },
-            }
-            : null,
-    updateArtifact: vi.fn(),
-};
+            }),
+        },
+        getProjectForSession: (sessionId: string) =>
+            sessionId === 'session-1'
+                ? {
+                    key: {
+                        machineId: 'machine-target',
+                        path: '/Users/leeroy/repo',
+                    },
+                }
+                : null,
+        updateArtifact: vi.fn(),
+    };
+}
 
-vi.mock('react-native', async () => {
+let currentArtifact: any = createApprovalArtifact();
+let sessionFixtures: Record<string, Session> = createSessionFixtures();
+let machineFixtures: Record<string, Machine> = createMachineFixtures();
+let storageState = createStorageState();
+
+async function createReactNativeWebMockForApprovalDetailScreen() {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: 'View',
-            Text: 'Text',
-            ScrollView: 'ScrollView',
-            ActivityIndicator: 'ActivityIndicator',
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-        }
-    );
-});
+    return createReactNativeWebMock({
+        View: 'View',
+        Text: 'Text',
+        ScrollView: 'ScrollView',
+        ActivityIndicator: 'ActivityIndicator',
+        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+    });
+}
 
-vi.mock('react-native-unistyles', async () => {
+async function createUnistylesMockForApprovalDetailScreen() {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock({
         theme: {
@@ -126,20 +163,50 @@ vi.mock('react-native-unistyles', async () => {
             },
         },
     });
-});
+}
 
-vi.mock('expo-router', async () => {
+async function createExpoRouterMockForApprovalDetailScreen() {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const expoRouterMock = createExpoRouterMock({
         router: { back: backSpy, push: pushSpy },
     });
     return expoRouterMock.module;
-});
+}
 
-vi.mock('@/text', async () => {
+async function createTextModuleMockForApprovalDetailScreen() {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
-});
+}
+
+async function createModalModuleMockForApprovalDetailScreen() {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: vi.fn(async () => true),
+            alert: vi.fn(),
+        },
+    }).module;
+}
+
+async function createStorageModuleStubForApprovalDetailScreen() {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useArtifact: () => currentArtifact,
+        useSession: (sessionId: string) => sessionFixtures[sessionId] ?? null,
+        useMachine: (machineId: string) => machineFixtures[machineId] ?? null,
+        storage: {
+            getState: () => storageState,
+        },
+    });
+}
+
+vi.mock('react-native', async () => createReactNativeWebMockForApprovalDetailScreen());
+
+vi.mock('react-native-unistyles', async () => createUnistylesMockForApprovalDetailScreen());
+
+vi.mock('expo-router', async () => createExpoRouterMockForApprovalDetailScreen());
+
+vi.mock('@/text', async () => createTextModuleMockForApprovalDetailScreen());
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -158,15 +225,7 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
         React.createElement('RoundButton', { title, testID, onPress, disabled }),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: vi.fn(async () => true),
-            alert: vi.fn(),
-        },
-    }).module;
-});
+vi.mock('@/modal', async () => createModalModuleMockForApprovalDetailScreen());
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -190,17 +249,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useArtifact: () => currentArtifact,
-    useSession: (sessionId: string) => sessionFixtures[sessionId] ?? null,
-    useMachine: (machineId: string) => machineFixtures[machineId] ?? null,
-    storage: {
-        getState: () => storageState,
-    },
-});
-});
+vi.mock('@/sync/domains/state/storage', async () => createStorageModuleStubForApprovalDetailScreen());
 
 describe('ApprovalDetailScreen', () => {
     beforeEach(() => {
@@ -211,66 +260,10 @@ describe('ApprovalDetailScreen', () => {
         fetchArtifactWithBodySpy.mockClear();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue('server-cache');
-        sessionFixtures['session-1'] = {
-            id: 'session-1',
-            metadata: {
-                name: 'Repo session',
-                path: '/Users/leeroy/repo',
-                homeDir: '/Users/leeroy',
-                machineId: 'machine-stale',
-            },
-        };
-        machineFixtures['machine-target'] = {
-            id: 'machine-target',
-            metadata: { displayName: 'Rebound workstation', host: 'workstation.local' },
-        };
-        storageState.sessions['session-1'] = {
-            active: false,
-            metadata: {
-                machineId: 'machine-stale',
-                path: '/Users/leeroy/repo',
-                homeDir: '/Users/leeroy',
-            },
-        };
-        storageState.machines['machine-target'] = {
-            id: 'machine-target',
-            active: true,
-            activeAt: 10,
-            metadata: { host: 'workstation.local' },
-        };
-        storageState.updateArtifact = vi.fn();
-        currentArtifact = {
-            id: 'artifact-1',
-            header: {
-                kind: 'approval_request.v1',
-                title: 'Approve answering the user',
-                approvalStatus: 'open',
-                actionId: 'session.user_action.answer',
-                sessionId: 'session-1',
-            },
-            body: JSON.stringify({
-                v: 1,
-                status: 'open',
-                createdAtMs: 1,
-                updatedAtMs: 1,
-                createdBy: {
-                    surface: 'session_agent',
-                    agentId: 'codex',
-                    sessionId: 'session-1',
-                },
-                actionId: 'session.user_action.answer',
-                actionArgs: {
-                    sessionId: 'session-1',
-                    requestId: 'ask-1',
-                    answers: [{ question: 'Continue?', answer: 'Yes' }],
-                },
-                summary: 'Approve answering the user',
-                preview: {
-                    kind: 'user_action',
-                    summary: 'Agent wants to answer the pending question',
-                },
-            }),
-        };
+        sessionFixtures = createSessionFixtures();
+        machineFixtures = createMachineFixtures();
+        storageState = createStorageState();
+        currentArtifact = createApprovalArtifact();
     });
 
     it('renders requester, session context, and structured action details', async () => {
@@ -326,13 +319,7 @@ describe('ApprovalDetailScreen', () => {
     });
 
     it('creates the action executor with the session-to-server resolver and routes approval decisions with a server hint', async () => {
-        currentArtifact = {
-            ...currentArtifact,
-            body: JSON.stringify({
-                ...JSON.parse(currentArtifact.body),
-                serverId: 'server-approval',
-            }),
-        };
+        currentArtifact = createApprovalArtifact('server-approval');
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
         const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
