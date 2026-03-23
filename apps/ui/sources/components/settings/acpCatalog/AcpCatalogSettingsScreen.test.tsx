@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { installAcpCatalogSettingsCommonModuleMocks } from './acpCatalogSettingsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,23 +21,45 @@ const shared = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Dimensions: { get: () => ({ width: 1440, height: 900 }) },
+installAcpCatalogSettingsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Dimensions: { get: () => ({ width: 1440, height: 900 }) },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({ confirmResult: true }).module;
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            pathname: '/(app)/settings/acp-catalog',
+            segments: ['(app)', 'settings', 'acp-catalog'],
+            router: {
+                push: shared.routerPushSpy,
+                replace: shared.routerReplaceSpy,
+                back: shared.routerBackSpy,
+                setParams: shared.routerSetParamsSpy,
+            },
+        }).module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: (key: string) => {
+                    if (key === 'acpCatalogSettingsV1') {
+                        return [shared.settingsState.value, shared.setAcpSettingsSpy];
                     }
-    );
-});
-
-vi.mock('@expo/vector-icons', async () => {
-    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
-    return createExpoVectorIconsMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+                    if (key === 'secrets') return [[], vi.fn()];
+                    return [null, vi.fn()];
+                },
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -59,46 +82,6 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.subtitle ?? null, props.rightElement ?? null),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ confirmResult: true }).module;
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        pathname: '/(app)/settings/acp-catalog',
-        segments: ['(app)', 'settings', 'acp-catalog'],
-        router: {
-            push: shared.routerPushSpy,
-            replace: shared.routerReplaceSpy,
-            back: shared.routerBackSpy,
-            setParams: shared.routerSetParamsSpy,
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSettingMutable: (key: string) => {
-                if (key === 'acpCatalogSettingsV1') {
-                    return [shared.settingsState.value, shared.setAcpSettingsSpy];
-                }
-                if (key === 'secrets') return [[], vi.fn()];
-                return [null, vi.fn()];
-            },
-        },
-    });
-});
 
 describe('AcpCatalogSettingsScreen', () => {
     beforeEach(async () => {

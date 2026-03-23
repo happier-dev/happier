@@ -1,22 +1,15 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { Profile } from '@/sync/domains/profiles/profile';
 import { renderScreen } from '@/dev/testkit';
+import { installBugReportHooksCommonModuleMocks } from './bugReportHooksTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-// Minimal RN mocks for hook tests.
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Text: 'Text',
-                                }
-    );
-});
+installBugReportHooksCommonModuleMocks();
 
 describe('useBugReportReporterGithubUsername', () => {
     it('does not crash when profile is null', async () => {

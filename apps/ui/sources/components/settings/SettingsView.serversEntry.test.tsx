@@ -21,18 +21,49 @@ const shared = vi.hoisted(() => ({
     canRequestReviewSpy: vi.fn(async () => true),
 }));
 
+const settingsViewWebDimensions = { width: 1600, height: 900, scale: 2, fontScale: 1 };
+
+function createPassthroughNode(name: string) {
+    return ({ children }: any) => React.createElement(name, null, children);
+}
+
+function createPropPassthroughNode(name: string) {
+    return (props: any) => React.createElement(name, props);
+}
+
+function createSettingsViewStorageOverrides() {
+    return {
+        useEntitlement: () => false,
+        // Boundary mock: this suite only reads a boolean local setting toggle.
+        useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+        useSetting: (key: string) => {
+            if (key === 'serverSelectionGroups') return [];
+            if (key === 'serverSelectionActiveTargetKind') return null;
+            if (key === 'serverSelectionActiveTargetId') return null;
+            if (key === 'experiments') return false;
+            if (key === 'featureToggles') return {};
+            if (key === 'useProfiles') return false;
+            if (key === 'sessionUseTmux') return false;
+            return null;
+        },
+        useAllMachines: () => [],
+        useMachineListByServerId: () => ({}),
+        useMachineListStatusByServerId: () => ({}),
+        // Boundary mock: SettingsView only consumes these profile fields in this suite.
+        useProfile: (() => ({ id: 'prof_1', firstName: '', connectedServices: [] })) as any,
+    };
+}
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        ActivityIndicator: 'ActivityIndicator',
-                        Dimensions: {
-                            get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
-                        },
-                        useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
-                        Linking: { canOpenURL: shared.linkingCanOpenURLSpy, openURL: shared.linkingOpenURLSpy },
-                    }
-    );
+    return createReactNativeWebMock({
+        ActivityIndicator: 'ActivityIndicator',
+        Dimensions: {
+            get: () => settingsViewWebDimensions,
+        },
+        useWindowDimensions: () => settingsViewWebDimensions,
+        Linking: { canOpenURL: shared.linkingCanOpenURLSpy, openURL: shared.linkingOpenURLSpy },
+    });
 });
 
 vi.mock('expo-image', () => ({
@@ -84,15 +115,15 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
+    ItemList: createPassthroughNode('ItemList'),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
+    ItemGroup: createPassthroughNode('ItemGroup'),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
+    Item: createPropPassthroughNode('Item'),
 }));
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
@@ -107,26 +138,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleMock({
         importOriginal,
-        overrides: {
-            useEntitlement: () => false,
-            // Boundary mock: this suite only reads a boolean local setting toggle.
-            useLocalSettingMutable: (() => [false, vi.fn()]) as any,
-            useSetting: (key: string) => {
-                if (key === 'serverSelectionGroups') return [];
-                if (key === 'serverSelectionActiveTargetKind') return null;
-                if (key === 'serverSelectionActiveTargetId') return null;
-                if (key === 'experiments') return false;
-                if (key === 'featureToggles') return {};
-                if (key === 'useProfiles') return false;
-                if (key === 'sessionUseTmux') return false;
-                return null;
-            },
-            useAllMachines: () => [],
-            useMachineListByServerId: () => ({}),
-            useMachineListStatusByServerId: () => ({}),
-            // Boundary mock: SettingsView only consumes these profile fields in this suite.
-            useProfile: (() => ({ id: 'prof_1', firstName: '', connectedServices: [] })) as any,
-        },
+        overrides: createSettingsViewStorageOverrides(),
     });
 });
 

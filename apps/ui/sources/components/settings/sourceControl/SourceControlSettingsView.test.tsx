@@ -20,7 +20,6 @@ const {
     setScmCommitMessageGeneratorEnabled,
     setScmCommitMessageGeneratorBackendId,
     setScmCommitMessageGeneratorInstructions,
-    modalPrompt,
 } = vi.hoisted(() => ({
     setScmCommitStrategy: vi.fn(),
     setScmGitRepoPreferredBackend: vi.fn(),
@@ -34,10 +33,11 @@ const {
     setScmCommitMessageGeneratorEnabled: vi.fn(),
     setScmCommitMessageGeneratorBackendId: vi.fn(),
     setScmCommitMessageGeneratorInstructions: vi.fn(),
-    modalPrompt: vi.fn(),
 }));
 
-let filesDiffPresentationStyleValue: any = 'split';
+type FilesDiffPresentationStyleValue = 'split' | 'unified' | undefined;
+
+let filesDiffPresentationStyleValue: FilesDiffPresentationStyleValue = 'split';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -74,9 +74,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    modalMock.module.Modal.prompt = modalPrompt;
-    return modalMock.module;
+    return createModalModuleMock().module;
 });
 
 vi.mock('@/components/ui/lists/ItemList', () => ({

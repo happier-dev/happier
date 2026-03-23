@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -91,27 +90,40 @@ describe('SavedServersSection retention', () => {
 
         const { SavedServersSection } = await import('./SavedServersSection');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SavedServersSection, {
-                    servers: [
-                        { id: 'server-a', name: 'Active', serverUrl: 'https://active.example', source: 'manual', createdAt: 1, updatedAt: 1, lastUsedAt: 1 },
-                        { id: 'server-b', name: 'Archive', serverUrl: 'https://archive.example', source: 'manual', createdAt: 1, updatedAt: 1, lastUsedAt: 1 },
-                    ],
-                    activeServerId: 'server-a',
-                    authStatusByServerId: {
-                        'server-a': 'signedIn',
-                        'server-b': 'signedOut',
-                    },
-                    onSwitch: vi.fn(),
-                    onRename: vi.fn(),
-                    onRemove: vi.fn(),
-                }))).tree;
+        const screen = await renderScreen(React.createElement(SavedServersSection, {
+            servers: [
+                {
+                    id: 'server-a',
+                    name: 'Active',
+                    serverUrl: 'https://active.example',
+                    source: 'manual',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    lastUsedAt: 1,
+                },
+                {
+                    id: 'server-b',
+                    name: 'Archive',
+                    serverUrl: 'https://archive.example',
+                    source: 'manual',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    lastUsedAt: 1,
+                },
+            ],
+            activeServerId: 'server-a',
+            authStatusByServerId: {
+                'server-a': 'signedIn',
+                'server-b': 'signedOut',
+            },
+            onSwitch: vi.fn(),
+            onRename: vi.fn(),
+            onRemove: vi.fn(),
+        }));
 
-        const items = tree.root.findAllByType('Item' as any);
-        const activeItem = items.find((item) => item.props.title === 'Active');
-        const inactiveItem = items.find((item) => item.props.title === 'Archive');
-
-        expect(activeItem?.props.subtitle).not.toContain('Deletes inactive sessions after 30 days.');
-        expect(inactiveItem?.props.subtitle).toContain('Deletes inactive sessions after 30 days.');
+        expect(screen.findByTestId('saved-server-row-server-a')?.props.subtitle)
+            .not.toContain('Deletes inactive sessions after 30 days.');
+        expect(screen.findByTestId('saved-server-row-server-b')?.props.subtitle)
+            .toContain('Deletes inactive sessions after 30 days.');
     });
 });

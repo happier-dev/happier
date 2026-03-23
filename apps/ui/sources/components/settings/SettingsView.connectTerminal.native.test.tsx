@@ -10,22 +10,20 @@ const connectTerminalSpy = vi.fn();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                            Pressable: 'Pressable',
-                            Dimensions: {
-                                get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-                            },
-                            useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-                            Platform: {
-                                OS: 'ios',
-                                select: (options: any) => (options && 'default' in options ? options.default : undefined),
-                            },
-                            Text: 'Text',
-                            ActivityIndicator: 'ActivityIndicator',
-                        }
-    );
+    return createReactNativeWebMock({
+        View: 'View',
+        Pressable: 'Pressable',
+        Dimensions: {
+            get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+        },
+        useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+        Platform: {
+            OS: 'ios',
+            select: (options: any) => (options && 'default' in options ? options.default : undefined),
+        },
+        Text: 'Text',
+        ActivityIndicator: 'ActivityIndicator',
+    });
 });
 
 vi.mock('expo-image', () => ({
@@ -84,17 +82,17 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: null }),
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useEntitlement: () => false,
-    useLocalSettingMutable: () => [false, vi.fn()],
-    useSetting: () => null,
-    useAllMachines: () => [],
-    useMachineListByServerId: () => ({}),
-    useMachineListStatusByServerId: () => ({}),
-    useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
-});
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        useEntitlement: () => false,
+        useLocalSettingMutable: () => [false, vi.fn()],
+        useSetting: () => null,
+        useAllMachines: () => [],
+        useMachineListByServerId: () => ({}),
+        useMachineListStatusByServerId: () => ({}),
+        useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
+    });
 });
 
 vi.mock('@/sync/sync', () => ({
@@ -141,11 +139,15 @@ vi.mock('@/sync/api/account/apiVendorTokens', () => ({
     disconnectVendorToken: vi.fn(async () => {}),
 }));
 
-vi.mock('@/sync/domains/profiles/profile', () => ({
-    getDisplayName: () => 'Test User',
-    getAvatarUrl: () => null,
-    getBio: () => '',
-}));
+vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profile')>();
+    return {
+        ...actual,
+        getDisplayName: () => 'Test User',
+        getAvatarUrl: () => null,
+        getBio: () => '',
+    };
+});
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
@@ -195,7 +197,7 @@ describe('SettingsView (native connect terminal)', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
+        tree = (await renderScreen(<SettingsView />)).tree;
 
         const items = tree.findAllByType('Item' as any);
         const scanItem = items.find((item: any) => item?.props?.title === 'settings.scanQrCodeToAuthenticate');

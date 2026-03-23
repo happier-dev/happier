@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { installSessionSettingsCommonModuleMocks } from './sessionSettingsViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,31 +12,40 @@ const setPermissionPromptSurface = vi.fn();
 const setDefaultPersistenceMode = vi.fn();
 const setDefaultPersistenceModeByTargetKey = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+installSessionSettingsCommonModuleMocks({
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    textSecondary: '#666',
+                    success: '#0f0',
+                },
+            },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: (name: string) => {
+                    if (name === 'sessionDefaultPermissionModeByTargetKey') return [{}, setDefaultPermissionByAgent];
+                    if (name === 'sessionPermissionModeApplyTiming') return ['immediate', setPermissionModeApplyTiming];
+                    if (name === 'permissionPromptSurface') return ['composer', setPermissionPromptSurface];
+                    if (name === 'newSessionDefaultPersistenceModeV1') return ['persisted', setDefaultPersistenceMode];
+                    if (name === 'newSessionDefaultPersistenceModeByTargetKeyV1') return [{}, setDefaultPersistenceModeByTargetKey];
+                    return [null, vi.fn()];
+                },
+                useSettings: () => ({ schemaVersion: 1, opencodeBackendMode: 'server' } as any),
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                textSecondary: '#666',
-                success: '#0f0',
-            },
-        },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'sessions.direct',
@@ -68,24 +78,6 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
     getPermissionModeOptionsForAgentType: () => [],
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSettingMutable: (name: string) => {
-                if (name === 'sessionDefaultPermissionModeByTargetKey') return [{}, setDefaultPermissionByAgent];
-                if (name === 'sessionPermissionModeApplyTiming') return ['immediate', setPermissionModeApplyTiming];
-                if (name === 'permissionPromptSurface') return ['composer', setPermissionPromptSurface];
-                if (name === 'newSessionDefaultPersistenceModeV1') return ['persisted', setDefaultPersistenceMode];
-                if (name === 'newSessionDefaultPersistenceModeByTargetKeyV1') return [{}, setDefaultPersistenceModeByTargetKey];
-                return [null, vi.fn()];
-            },
-            useSettings: () => ({ schemaVersion: 1, opencodeBackendMode: 'server' } as any),
-        },
-    });
-});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),

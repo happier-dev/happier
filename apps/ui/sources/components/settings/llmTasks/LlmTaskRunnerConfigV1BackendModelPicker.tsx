@@ -111,10 +111,10 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
       iconColor: theme.colors.textSecondary,
       probe: {
         phase: preflightModels.probe.phase,
-        onRefresh: preflightModels.probe.refresh,
+        onRefresh: preflightModels.probe.onRefresh,
       },
     });
-  }, [preflightModels.modelOptions, preflightModels.probe.phase, preflightModels.probe.refresh, theme.colors.textSecondary]);
+  }, [preflightModels.modelOptions, preflightModels.probe.onRefresh, preflightModels.probe.phase, theme.colors.textSecondary]);
 
   const modelMenuItems = React.useMemo(() => {
     return [
@@ -220,7 +220,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
             return;
           }
           if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
-            preflightModels.probe.refresh();
+            preflightModels.probe.onRefresh();
             setOpenMenu(null);
             return;
           }

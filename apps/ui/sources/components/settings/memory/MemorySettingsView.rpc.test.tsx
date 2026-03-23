@@ -84,16 +84,18 @@ function findDropdownMenu(
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        AppState: {
-            addEventListener: () => ({ remove: () => {} }),
-        },
-        Platform: {
-            OS: 'web',
-            select: (opt: any) => opt?.default,
-        },
-    });
+    return createReactNativeWebMock(
+        {
+                View: 'View',
+                AppState: {
+                    addEventListener: () => ({ remove: () => {} }),
+                },
+                Platform: {
+                    OS: 'web',
+                    select: (opt: any) => opt?.default,
+                },
+            }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -146,8 +148,8 @@ vi.mock('@/modal', async () => {
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useAllMachines: () => machinesState,
-    });
+    useAllMachines: () => machinesState,
+});
 });
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({

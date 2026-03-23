@@ -16,12 +16,12 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                            View: 'View',
-                            Platform: {
-                                OS: 'web',
-                                select: (options: any) => (options && 'default' in options ? options.default : undefined),
-                            },
-                        }
+                                    View: 'View',
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: any) => (options && 'default' in options ? options.default : undefined),
+                                    },
+                                }
     );
 });
 

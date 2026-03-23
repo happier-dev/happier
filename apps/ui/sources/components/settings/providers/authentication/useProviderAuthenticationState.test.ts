@@ -1,28 +1,11 @@
-import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
+import { renderHook } from '@/dev/testkit';
 import { useProviderAuthenticationState } from './useProviderAuthenticationState';
 import type { CLIAvailability } from '@/hooks/auth/useCLIDetection';
 import type { ProviderLocalAuthPlugin } from '@/agents/providers/shared/providerLocalAuthPlugin';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-function renderHookState(run: () => unknown) {
-    let latest: unknown = null;
-    function Test() {
-        latest = run();
-        return React.createElement('View');
-    }
-
-    act(() => {
-        renderer.create(React.createElement(Test));
-    });
-
-    return latest as any;
-}
-
 describe('useProviderAuthenticationState', () => {
-    it('passes resolvedCommand to buildLoginLaunch when available', () => {
+    it('passes resolvedCommand to buildLoginLaunch when available', async () => {
         const buildLoginLaunchMock = ({ resolvedPath, resolvedCommand }: { resolvedPath?: string | null; resolvedCommand?: string | null }) => ({
             initialCommand: resolvedCommand ?? (resolvedPath ? `${resolvedPath} login` : 'codex login'),
         });
@@ -53,7 +36,7 @@ describe('useProviderAuthenticationState', () => {
             metadata: { homeDir: '/home/user' },
         };
 
-        const result = renderHookState(() =>
+        const hook = await renderHook(() =>
             useProviderAuthenticationState({
                 providerId: 'codex' as any,
                 cliAvailability,
@@ -62,10 +45,10 @@ describe('useProviderAuthenticationState', () => {
             })
         );
 
-        expect(result.loginLaunch?.initialCommand).toBe(`'/opt/codex/bin/codex'`);
+        expect(hook.getCurrent().loginLaunch?.initialCommand).toBe(`'/opt/codex/bin/codex'`);
     });
 
-    it('passes null resolvedPath when CLI is not available', () => {
+    it('passes null resolvedPath when CLI is not available', async () => {
         const buildLoginLaunchMock = ({ resolvedPath }: { resolvedPath?: string | null }) => ({
             initialCommand: resolvedPath ? `${resolvedPath} login` : 'codex login',
         });
@@ -96,7 +79,7 @@ describe('useProviderAuthenticationState', () => {
             metadata: { homeDir: '/home/user' },
         };
 
-        const result = renderHookState(() =>
+        const hook = await renderHook(() =>
             useProviderAuthenticationState({
                 providerId: 'codex' as any,
                 cliAvailability,
@@ -105,10 +88,10 @@ describe('useProviderAuthenticationState', () => {
             })
         );
 
-        expect(result.loginLaunch?.initialCommand).toBe('codex login');
+        expect(hook.getCurrent().loginLaunch?.initialCommand).toBe('codex login');
     });
 
-    it('allows launching the login terminal when the machine home directory is unavailable', () => {
+    it('allows launching the login terminal when the machine home directory is unavailable', async () => {
         const authPlugin: ProviderLocalAuthPlugin = {
             providerId: 'codex',
             support: 'login_terminal',
@@ -135,7 +118,7 @@ describe('useProviderAuthenticationState', () => {
             metadata: {},
         };
 
-        const result = renderHookState(() =>
+        const hook = await renderHook(() =>
             useProviderAuthenticationState({
                 providerId: 'codex' as any,
                 cliAvailability,
@@ -144,7 +127,7 @@ describe('useProviderAuthenticationState', () => {
             })
         );
 
-        expect(result.canLaunchLogin).toBe(true);
-        expect(result.machineHomeDir).toBe(null);
+        expect(hook.getCurrent().canLaunchLogin).toBe(true);
+        expect(hook.getCurrent().machineHomeDir).toBe(null);
     });
 });

@@ -30,23 +30,48 @@ const requestRestartMock = vi.fn();
 const retryConnectMock = vi.fn();
 const dismissDetectedUrlMock = vi.fn();
 
+type EmbeddedTerminalPaneMockProps = Readonly<Record<string, unknown>>;
+type ProviderAuthenticationTerminalPaneProps = Readonly<{
+    providerId: 'claude';
+    machineId: 'machine-1';
+    machineHomeDir: '/Users/tester';
+    loginLaunch: Readonly<{
+        initialCommand: 'claude';
+        initialInput: '/login\r';
+    }>;
+    onRequestClose: () => void;
+}>;
+
+const createTerminalSessionMock = () => ({
+    status: mockTerminalStatus,
+    error: null,
+    detectedUrl: null,
+    clearTerminal: clearTerminalMock,
+    requestRestart: requestRestartMock,
+    retryConnect: retryConnectMock,
+    dismissDetectedUrl: dismissDetectedUrlMock,
+    onInput: onInputMock,
+    onResize: vi.fn(),
+    onReady: vi.fn(),
+});
+
+const createTestProps = (): ProviderAuthenticationTerminalPaneProps => ({
+    providerId: 'claude',
+    machineId: 'machine-1',
+    machineHomeDir: '/Users/tester',
+    loginLaunch: {
+        initialCommand: 'claude',
+        initialInput: '/login\r',
+    },
+    onRequestClose: vi.fn(),
+});
+
 vi.mock('@/components/terminal/embedded/EmbeddedTerminalPane', () => ({
-    EmbeddedTerminalPane: (props: any) => React.createElement('EmbeddedTerminalPane', props),
+    EmbeddedTerminalPane: (props: EmbeddedTerminalPaneMockProps) => React.createElement('EmbeddedTerminalPane', props),
 }));
 
 vi.mock('@/hooks/machine/useMachineTerminalSession', () => ({
-    useMachineTerminalSession: () => ({
-        status: mockTerminalStatus,
-        error: null,
-        detectedUrl: null,
-        clearTerminal: clearTerminalMock,
-        requestRestart: requestRestartMock,
-        retryConnect: retryConnectMock,
-        dismissDetectedUrl: dismissDetectedUrlMock,
-        onInput: onInputMock,
-        onResize: vi.fn(),
-        onReady: vi.fn(),
-    }),
+    useMachineTerminalSession: () => createTerminalSessionMock(),
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
@@ -72,43 +97,19 @@ describe('ProviderAuthenticationTerminalPane', () => {
     });
 
     it('re-sends provider initial input after a reconnect cycle', () => {
-        let ProviderAuthenticationTerminalPane: typeof import('./ProviderAuthenticationTerminalPane')['ProviderAuthenticationTerminalPane'];
         return providerAuthenticationTerminalPaneModulePromise.then((module) => {
-            ProviderAuthenticationTerminalPane = module.ProviderAuthenticationTerminalPane;
-
-        let tree: renderer.ReactTestRenderer;
+            const { ProviderAuthenticationTerminalPane } = module;
+            let tree: renderer.ReactTestRenderer;
 
             act(() => {
-                tree = renderer.create(
-                    React.createElement(ProviderAuthenticationTerminalPane, {
-                        providerId: 'claude',
-                        machineId: 'machine-1',
-                        machineHomeDir: '/Users/tester',
-                        loginLaunch: {
-                            initialCommand: 'claude',
-                            initialInput: '/login\r',
-                        },
-                        onRequestClose: vi.fn(),
-                    }),
-                );
+                tree = renderer.create(React.createElement(ProviderAuthenticationTerminalPane, createTestProps()));
             });
 
             expect(onInputMock).not.toHaveBeenCalled();
 
             act(() => {
                 mockTerminalStatus = 'connected';
-                tree!.update(
-                    React.createElement(ProviderAuthenticationTerminalPane, {
-                        providerId: 'claude',
-                        machineId: 'machine-1',
-                        machineHomeDir: '/Users/tester',
-                        loginLaunch: {
-                            initialCommand: 'claude',
-                            initialInput: '/login\r',
-                        },
-                        onRequestClose: vi.fn(),
-                    }),
-                );
+                tree!.update(React.createElement(ProviderAuthenticationTerminalPane, createTestProps()));
             });
 
             expect(onInputMock).toHaveBeenCalledTimes(1);
@@ -116,34 +117,12 @@ describe('ProviderAuthenticationTerminalPane', () => {
 
             act(() => {
                 mockTerminalStatus = 'connecting';
-                tree!.update(
-                    React.createElement(ProviderAuthenticationTerminalPane, {
-                        providerId: 'claude',
-                        machineId: 'machine-1',
-                        machineHomeDir: '/Users/tester',
-                        loginLaunch: {
-                            initialCommand: 'claude',
-                            initialInput: '/login\r',
-                        },
-                        onRequestClose: vi.fn(),
-                    }),
-                );
+                tree!.update(React.createElement(ProviderAuthenticationTerminalPane, createTestProps()));
             });
 
             act(() => {
                 mockTerminalStatus = 'connected';
-                tree!.update(
-                    React.createElement(ProviderAuthenticationTerminalPane, {
-                        providerId: 'claude',
-                        machineId: 'machine-1',
-                        machineHomeDir: '/Users/tester',
-                        loginLaunch: {
-                            initialCommand: 'claude',
-                            initialInput: '/login\r',
-                        },
-                        onRequestClose: vi.fn(),
-                    }),
-                );
+                tree!.update(React.createElement(ProviderAuthenticationTerminalPane, createTestProps()));
             });
 
             expect(onInputMock).toHaveBeenCalledTimes(2);

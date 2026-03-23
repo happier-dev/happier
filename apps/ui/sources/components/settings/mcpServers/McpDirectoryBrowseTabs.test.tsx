@@ -2,80 +2,46 @@ import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
-
+import {
+    installMcpServersCommonModuleMocks,
+    mcpServersModuleState,
+    resetMcpServersCommonModuleMockState,
+} from './mcpServersTestHelpers';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const openMachinePathBrowserModalMock = vi.hoisted(() => vi.fn<(params: unknown) => Promise<string | null>>(async () => '/repo/from-browser'));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: 'View',
-                                            Pressable: 'Pressable',
-                                            Platform: {
-                                                OS: 'web',
-                                                select: <T,>(values: { default?: T; web?: T; ios?: T; android?: T }) => values.web ?? values.default ?? values.ios ?? values.android,
-                                            },
-                                        }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
-}));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-      colors: {
-        textSecondary: '#666',
-        input: { background: '#fff', text: '#111', placeholder: '#888' },
-        divider: '#ddd',
-        accent: { blue: '#00f', indigo: '#60f', green: '#0f0' },
-      },
+installMcpServersCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'web',
+                select: <T,>(values: { default?: T; web?: T; ios?: T; android?: T }) =>
+                    values.web ?? values.default ?? values.ios ?? values.android,
+            },
+        });
     },
-    });
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    textSecondary: '#666',
+                    input: { background: '#fff', text: '#111', placeholder: '#888' },
+                    divider: '#ddd',
+                    accent: { blue: '#00f', indigo: '#60f', green: '#0f0' },
+                },
+            },
+        });
+    },
 });
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-  TextInput: (props: any) => React.createElement('TextInput', props),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-  Item: (props: any) => React.createElement('Item', props, props.rightElement ?? null),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-  ItemGroup: ({ children }: React.PropsWithChildren) => React.createElement('ItemGroup', null, children),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-  DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
-  openMachinePathBrowserModal: (params: unknown) => openMachinePathBrowserModalMock(params),
-}));
-
-vi.mock('@/components/ui/pathBrowser/PathInputBrowseButton', () => ({
-  PathInputBrowseButton: (props: any) => React.createElement('PathInputBrowseButton', {
-    testID: props.testID ?? 'path-browser-trigger',
-    onPress: props.onPress,
-    disabled: props.disabled,
-  }),
-}));
 
 describe('MCP directory browse tabs', () => {
   beforeEach(() => {
-    openMachinePathBrowserModalMock.mockClear();
+    resetMcpServersCommonModuleMockState();
+    mcpServersModuleState.openMachinePathBrowserModalSpy.mockResolvedValue('/repo/from-browser');
   });
 
   it('opens the shared path browser from the detected directory input', async () => {
@@ -104,7 +70,7 @@ describe('MCP directory browse tabs', () => {
       await pressTestInstanceAsync(browseButton);
     });
 
-    expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith({
+    expect(mcpServersModuleState.openMachinePathBrowserModalSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
       serverId: 'server-1',
       initialPath: '/repo',
@@ -143,7 +109,7 @@ describe('MCP directory browse tabs', () => {
       await pressTestInstanceAsync(browseButton);
     });
 
-    expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith({
+    expect(mcpServersModuleState.openMachinePathBrowserModalSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
       serverId: 'server-1',
       initialPath: '/repo',

@@ -103,10 +103,9 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
 
         const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(ServerSettingsScreen))).tree;
+        const screen = await renderScreen(React.createElement(ServerSettingsScreen));
 
-        expect(tree.root.findAllByType('ServerGroupsSection' as any)).toHaveLength(0);
+        expect(screen.findAllByType('ServerGroupsSection' as any)).toHaveLength(0);
     });
 
     it('shows concurrent multi-server settings when there is at least one server group', async () => {
@@ -116,9 +115,8 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
 
         const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(ServerSettingsScreen))).tree;
+        const screen = await renderScreen(React.createElement(ServerSettingsScreen));
 
-        expect(tree.root.findAllByType('ServerGroupsSection' as any)).toHaveLength(1);
+        expect(screen.findAllByType('ServerGroupsSection' as any)).toHaveLength(1);
     });
 });

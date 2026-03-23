@@ -2,19 +2,12 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installServerSettingsHooksCommonModuleMocks } from './serverSettingsHooksTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const replaceMock = vi.fn();
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { replace: replaceMock },
-        params: {},
-    });
-    return routerMock.module;
-});
 
 const refreshFromActiveServerMock = vi.fn(async () => {});
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -22,19 +15,35 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 const modalConfirmMock = vi.fn(async (..._args: unknown[]) => true);
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: (...args: unknown[]) => modalConfirmMock(...args),
-        },
-    }).module;
-});
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installServerSettingsHooksCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { replace: replaceMock },
+            params: {},
+        });
+        return routerMock.module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: (...args: unknown[]) => modalConfirmMock(...args),
+            },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSettingMutable: () => [[], vi.fn()],
+        });
+    },
 });
 
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
@@ -69,13 +78,6 @@ vi.mock('@/sync/domains/server/selection/serverSelectionMutations', () => ({
     normalizeStoredServerSelectionGroups: (raw: unknown) => (Array.isArray(raw) ? raw : []),
     filterServerSelectionGroupsToAvailableServers: (profiles: any) => profiles,
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSettingMutable: () => [[], vi.fn()],
-});
-});
 
 vi.mock('@/components/settings/server/hooks/useServerAuthStatusByServerId', () => ({
     useServerAuthStatusByServerId: () => ({}),

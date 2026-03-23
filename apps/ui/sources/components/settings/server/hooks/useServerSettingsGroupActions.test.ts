@@ -3,34 +3,33 @@ import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { renderScreen } from '@/dev/testkit';
+import { installServerSettingsHooksCommonModuleMocks } from './serverSettingsHooksTestHelpers';
 
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'web',
-                                    },
-                                }
-    );
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => true),
-            prompt: vi.fn(async () => null),
-            show: vi.fn(),
-        },
-    }).module;
+installServerSettingsHooksCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: vi.fn(async () => true),
+                prompt: vi.fn(async () => null),
+                show: vi.fn(),
+            },
+        }).module;
+    },
 });
 
 vi.mock('@/auth/storage/tokenStorage', () => ({

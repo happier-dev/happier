@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { act, ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -218,36 +217,25 @@ afterEach(() => {
 });
 
 describe('SettingsView (runs entry)', () => {
-    it('includes a Runs entry that routes to /runs when execution runs are enabled', async () => {
+    async function renderSettingsViewUnderTest() {
         const { SettingsView } = await import('./SettingsView');
+        return renderSettingsView(React.createElement(SettingsView));
+    }
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
+    it('includes a Runs entry that routes to /runs when execution runs are enabled', async () => {
+        const screen = await renderSettingsViewUnderTest();
+        expect(screen.findRowByTitle('runs.title')).toBeTruthy();
 
-        const items = tree.findAllByType('Item' as any);
-        const runsItem = items.find((item: any) => item?.props?.title === 'runs.title');
-        expect(runsItem).toBeTruthy();
-
-        await act(async () => {
-            await pressTestInstanceAsync(runsItem!);
-        });
+        await screen.pressRowByTitle('runs.title');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/runs');
     });
 
     it('includes a Transcript entry that routes to /settings/session/transcript', async () => {
-        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsViewUnderTest();
+        expect(screen.findRowByTitle('settings.transcript')).toBeTruthy();
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
-
-        const items = tree.findAllByType('Item' as any);
-        const transcriptItem = items.find((item: any) => item?.props?.title === 'settings.transcript');
-        expect(transcriptItem).toBeTruthy();
-
-        await act(async () => {
-            await pressTestInstanceAsync(transcriptItem!);
-        });
+        await screen.pressRowByTitle('settings.transcript');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/transcript');
     });
@@ -257,70 +245,39 @@ describe('SettingsView (runs entry)', () => {
         automationsSupportState.discoverable = true;
         automationsSupportState.blockedBy = 'local_policy';
 
-        const { SettingsView } = await import('./SettingsView');
-
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
-
-        const items = tree.findAllByType('Item' as any);
-        const automationsItem = items.find((item: any) => item?.props?.title === 'settings.automations');
+        const screen = await renderSettingsViewUnderTest();
+        const automationsItem = screen.findRowByTitle('settings.automations');
         expect(automationsItem).toBeTruthy();
         expect(automationsItem?.props?.subtitle).toBe('settingsFeatures.expAutomationsSubtitle');
 
-        await act(async () => {
-            await pressTestInstanceAsync(automationsItem!);
-        });
+        await screen.pressRowByTitle('settings.automations');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
     });
 
     it('includes a Permissions entry that routes to /settings/session/permissions', async () => {
-        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsViewUnderTest();
+        expect(screen.findRowByTitle('settings.permissions')).toBeTruthy();
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
-
-        const items = tree.findAllByType('Item' as any);
-        const permissionsItem = items.find((item: any) => item?.props?.title === 'settings.permissions');
-        expect(permissionsItem).toBeTruthy();
-
-        await act(async () => {
-            await pressTestInstanceAsync(permissionsItem!);
-        });
+        await screen.pressRowByTitle('settings.permissions');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/permissions');
     });
 
     it('includes a Subagents entry that routes to /settings/sub-agent', async () => {
-        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsViewUnderTest();
+        expect(screen.findRowByTitle('subAgentGuidance.settings.groupTitle')).toBeTruthy();
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
-
-        const items = tree.findAllByType('Item' as any);
-        const subAgentItem = items.find((item: any) => item?.props?.title === 'subAgentGuidance.settings.groupTitle');
-        expect(subAgentItem).toBeTruthy();
-
-        await act(async () => {
-            await pressTestInstanceAsync(subAgentItem!);
-        });
+        await screen.pressRowByTitle('subAgentGuidance.settings.groupTitle');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/sub-agent');
     });
 
     it('includes an Actions entry that routes to /settings/actions', async () => {
-        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsViewUnderTest();
+        expect(screen.findRowByTitle('common.actions')).toBeTruthy();
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
-
-        const items = tree.findAllByType('Item' as any);
-        const actionsItem = items.find((item: any) => item?.props?.title === 'common.actions');
-        expect(actionsItem).toBeTruthy();
-
-        await act(async () => {
-            await pressTestInstanceAsync(actionsItem!);
-        });
+        await screen.pressRowByTitle('common.actions');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/actions');
     });
@@ -331,14 +288,8 @@ describe('SettingsView (runs entry)', () => {
         vi.resetModules();
 
         try {
-            const { SettingsView } = await import('./SettingsView');
-
-            let tree!: ReactTestRenderer;
-            tree = (await renderScreen(React.createElement(SettingsView))).tree;
-
-            const items = tree.findAllByType('Item' as any);
-            const whatsNewItem = items.find((item: any) => item?.props?.title === 'settings.whatsNew');
-            expect(whatsNewItem).toBeFalsy();
+            const screen = await renderSettingsViewUnderTest();
+            expect(screen.findRowByTitle('settings.whatsNew')).toBeNull();
         } finally {
             if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
             else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
@@ -347,36 +298,20 @@ describe('SettingsView (runs entry)', () => {
 
     it('hides feature-gated entries when disabled by feature policy', async () => {
         mockFeatureEnabled = (featureId) => featureId === 'execution.runs';
-        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsViewUnderTest();
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
-
-        const items = tree.findAllByType('Item' as any);
-        const voiceItem = items.find((item: any) => item?.props?.title === 'settings.voiceAssistant');
-        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.filesSourceControl');
-        const memorySearchItem = items.find((item: any) => item?.props?.title === 'settings.memorySearch');
-
-        expect(voiceItem).toBeFalsy();
-        expect(sourceControlItem).toBeFalsy();
-        expect(memorySearchItem).toBeFalsy();
+        expect(screen.findRowByTitle('settings.voiceAssistant')).toBeNull();
+        expect(screen.findRowByTitle('settings.filesSourceControl')).toBeNull();
+        expect(screen.findRowByTitle('settings.memorySearch')).toBeNull();
     });
 
     it('shows feature-gated entries when voice, source control, and memory search are enabled', async () => {
         mockFeatureEnabled = (featureId) =>
             ['execution.runs', 'voice', 'scm.writeOperations', 'memory.search'].includes(featureId);
-        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsViewUnderTest();
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
-
-        const items = tree.findAllByType('Item' as any);
-        const voiceItem = items.find((item: any) => item?.props?.title === 'settings.voiceAssistant');
-        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.filesSourceControl');
-        const memorySearchItem = items.find((item: any) => item?.props?.title === 'settings.memorySearch');
-
-        expect(voiceItem).toBeTruthy();
-        expect(sourceControlItem).toBeTruthy();
-        expect(memorySearchItem).toBeTruthy();
+        expect(screen.findRowByTitle('settings.voiceAssistant')).toBeTruthy();
+        expect(screen.findRowByTitle('settings.filesSourceControl')).toBeTruthy();
+        expect(screen.findRowByTitle('settings.memorySearch')).toBeTruthy();
     });
 });

@@ -2,23 +2,22 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import {
+    installSessionSettingsCommonModuleMocks,
+} from './sessionSettingsViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const settingsState: Record<string, any> = {};
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
+installSessionSettingsCommonModuleMocks({
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
         theme: {
             colors: {
                 accent: {
@@ -31,7 +30,22 @@ vi.mock('react-native-unistyles', async () => {
                 success: '#0f0',
             },
         },
-    });
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: (key: string) => [
+                    settingsState[key],
+                    (next: any) => {
+                        settingsState[key] = next;
+                    },
+                ],
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -58,26 +72,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: (props: any) => React.createElement('TextInput', props),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSettingMutable: (key: string) => [
-                settingsState[key],
-                (next: any) => {
-                    settingsState[key] = next;
-                },
-            ],
-        },
-    });
-});
 
 describe('SessionHandoffSettingsView', () => {
     beforeEach(() => {

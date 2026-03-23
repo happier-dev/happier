@@ -8,21 +8,16 @@ import { renderScreen } from '@/dev/testkit';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                            Text: 'Text',
-                            Pressable: 'Pressable',
-                            ActivityIndicator: 'ActivityIndicator',
-                            Platform: {
-                                OS: 'web',
-                                select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
-                            },
-                            AppState: {
-                                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                            },
-                        }
-    );
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'web',
+            select: <T,>(values: { default?: T; web?: T; ios?: T; android?: T }) =>
+                values?.default ?? values?.web ?? values?.ios ?? values?.android,
+        },
+        AppState: {
+            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+        },
+    });
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -137,27 +132,27 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    useSetting: (key: string) =>
-        key === 'acpCatalogSettingsV1'
-            ? {
-                  v: 2,
-                  backends: [
-                      {
-                          id: 'custom-backend',
-                          name: 'custom-backend',
-                        title: 'Custom Backend',
-                        command: 'custom-backend',
-                        args: [],
-                        env: {},
-                        transportProfile: { kind: 'stdio' },
-                        capabilities: {},
-                          createdAt: 1,
-                          updatedAt: 1,
-                      },
-                  ],
-              }
-            : [],
-});
+        useSetting: (key: string) =>
+            key === 'acpCatalogSettingsV1'
+                ? {
+                      v: 2,
+                      backends: [
+                          {
+                              id: 'custom-backend',
+                              name: 'custom-backend',
+                              title: 'Custom Backend',
+                              command: 'custom-backend',
+                              args: [],
+                              env: {},
+                              transportProfile: { kind: 'stdio' },
+                              capabilities: {},
+                              createdAt: 1,
+                              updatedAt: 1,
+                          },
+                      ],
+                  }
+                : [],
+    });
 });
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -188,10 +183,17 @@ describe('LlmTaskRunnerConfigV1BackendModelPicker', () => {
         preflightModelArgs.length = 0;
         const { LlmTaskRunnerConfigV1BackendModelPicker } = await import('./LlmTaskRunnerConfigV1BackendModelPicker');
 
-        await renderScreen(<LlmTaskRunnerConfigV1BackendModelPicker
-                    value={{ v: 1, backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-backend' }, modelId: 'default', permissionMode: 'no_tools' } as any}
-                    onChange={() => {}}
-                />);
+        await renderScreen(
+            <LlmTaskRunnerConfigV1BackendModelPicker
+                value={{
+                    v: 1,
+                    backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-backend' },
+                    modelId: 'default',
+                    permissionMode: 'no_tools',
+                } as any}
+                onChange={() => {}}
+            />,
+        );
 
         expect(preflightModelArgs[0]?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'custom-backend' });
     });
@@ -200,10 +202,19 @@ describe('LlmTaskRunnerConfigV1BackendModelPicker', () => {
         const { LlmTaskRunnerConfigV1BackendModelPicker } = await import('./LlmTaskRunnerConfigV1BackendModelPicker');
 
         let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<LlmTaskRunnerConfigV1BackendModelPicker
-                    value={{ v: 1, backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, modelId: 'default', permissionMode: 'no_tools' } as any}
+        tree = (
+            await renderScreen(
+                <LlmTaskRunnerConfigV1BackendModelPicker
+                    value={{
+                        v: 1,
+                        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                        modelId: 'default',
+                        permissionMode: 'no_tools',
+                    } as any}
                     onChange={() => {}}
-                />)).tree;
+                />,
+            )
+        ).tree;
 
         const json = tree!.toJSON();
         const badNodes: Array<{ parent: string | null; value: string }> = [];

@@ -3,17 +3,21 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+    installMcpServersCommonModuleMocks,
+    mcpServersModuleState,
+    resetMcpServersCommonModuleMockState,
+} from './mcpServersTestHelpers';
 import { createPartialStorageModuleMock } from '@/dev/testkit/createPartialStorageModuleMock';
 import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerBackSpy = vi.fn();
-const routerReplaceSpy = vi.fn();
 const setMcpSettingsSpy = vi.fn();
 const modalAlertSpy = vi.fn();
-let localSearchParamsValue: { serverId?: string } = { serverId: 'server-1' };
+const routerBackSpy = vi.fn();
+const routerReplaceSpy = vi.fn();
 let liveMcpSettings: {
     v: 1;
     strictMode: boolean;
@@ -70,7 +74,6 @@ function resetLiveSettings() {
     };
     liveSecrets = [];
     liveMachines = [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }];
-    localSearchParamsValue = { serverId: 'server-1' };
     liveSettingListeners.clear();
     setMcpSettingsSpy.mockReset();
     modalAlertSpy.mockReset();
@@ -81,64 +84,78 @@ function updateLiveSecrets(next: SavedSecret[]) {
     notifyLiveSettingListeners();
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Dimensions: {
-            get: () => ({ width: 1440, height: 900 }),
-        },
-    });
-});
+const mcpServersCommonModuleMockOptions = {
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            confirmResult: true,
+            spies: {
+                alert: modalAlertSpy,
+            },
+        }).module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Dimensions: {
+                get: () => ({ width: 1440, height: 900 }),
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: {
+                back: routerBackSpy,
+                replace: routerReplaceSpy,
+            },
+            navigation: { canGoBack: () => false },
+        });
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
+        return {
+            ...routerMock.module,
+            useLocalSearchParams: () => mcpServersModuleState.routerSearchParams,
+            useGlobalSearchParams: () => mcpServersModuleState.routerSearchParams,
+        };
+    },
+    routerSearchParams: { serverId: 'server-1' },
+    storage: async (importOriginal: <T = unknown>() => Promise<T>) => {
+        const actual = (await importOriginal()) as typeof import('@/sync/domains/state/storage');
+        return {
+            ...actual,
+            useAllMachines: () => liveMachines,
+            useSettingMutable: (key: string) => {
+                const ReactModule = require('react') as typeof React;
+                const [, forceUpdate] = ReactModule.useReducer((value: number) => value + 1, 0);
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
+                ReactModule.useEffect(() => {
+                    const listener = () => forceUpdate();
+                    liveSettingListeners.add(listener);
+                    return () => {
+                        liveSettingListeners.delete(listener);
+                    };
+                }, []);
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
+                if (key === 'mcpServersSettingsV1') {
+                    return [liveMcpSettings, (next: typeof liveMcpSettings) => {
+                        setMcpSettingsSpy(next);
+                        liveMcpSettings = next;
+                        liveSettingListeners.forEach((listener) => listener());
+                    }];
+                }
+                if (key === 'secrets') {
+                    return [liveSecrets, (next: SavedSecret[]) => {
+                        liveSecrets = next;
+                        liveSettingListeners.forEach((listener) => listener());
+                    }];
+                }
+                return [null, vi.fn()];
+            },
+        };
+    },
+};
 
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: (props: any) => React.createElement('RoundButton', props),
-}));
-
-vi.mock('@/components/ui/navigation/SegmentedTabBar', () => ({
-    SegmentedTabBar: (props: any) => React.createElement('SegmentedTabBar', props),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', {
-        ...props,
-        title: props.itemTrigger?.title ?? props.title,
-        subtitle: props.itemTrigger?.subtitle ?? props.subtitle,
-    }),
-}));
-
-vi.mock('@/components/ui/pathBrowser/PathInputBrowseButton', () => ({
-    PathInputBrowseButton: (props: any) => React.createElement('PathInputBrowseButton', props),
-}));
-
-vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
-    openMachinePathBrowserModal: vi.fn(async () => null),
-}));
+installMcpServersCommonModuleMocks(mcpServersCommonModuleMockOptions);
 
 vi.mock('@/components/ui/forms/InlineAddExpander', () => ({
     InlineAddExpander: (props: any) =>
@@ -173,80 +190,18 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        confirmResult: true,
-        spies: {
-            alert: modalAlertSpy,
-        },
-    }).module;
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: {
-            back: routerBackSpy,
-            replace: routerReplaceSpy,
-        },
-        navigation: { canGoBack: () => false },
-    });
-
-    return {
-        ...routerMock.module,
-        useLocalSearchParams: () => localSearchParamsValue,
-        useGlobalSearchParams: () => localSearchParamsValue,
-    };
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    createPartialStorageModuleMock(importOriginal, {
-        useAllMachines: () => liveMachines,
-        useSettingMutable: (key: string) => {
-            const ReactModule = require('react') as typeof React;
-            const [, forceUpdate] = ReactModule.useReducer((value: number) => value + 1, 0);
-
-            ReactModule.useEffect(() => {
-                const listener = () => forceUpdate();
-                liveSettingListeners.add(listener);
-                return () => {
-                    liveSettingListeners.delete(listener);
-                };
-            }, []);
-
-            if (key === 'mcpServersSettingsV1') {
-                return [liveMcpSettings, (next: typeof liveMcpSettings) => {
-                    setMcpSettingsSpy(next);
-                    liveMcpSettings = next;
-                    notifyLiveSettingListeners();
-                }];
-            }
-            if (key === 'secrets') {
-                return [liveSecrets, (next: SavedSecret[]) => {
-                    liveSecrets = next;
-                    notifyLiveSettingListeners();
-                }];
-            }
-            return [null, vi.fn()];
-        },
-    }),
-);
-
 async function renderEditorScreen() {
     const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
     return renderScreen(React.createElement(McpServerEditorScreen));
 }
 
 beforeEach(() => {
+    resetMcpServersCommonModuleMockState();
     resetLiveSettings();
     routerBackSpy.mockReset();
     routerReplaceSpy.mockReset();
+    installMcpServersCommonModuleMocks(mcpServersCommonModuleMockOptions);
+    mcpServersModuleState.routerSearchParams = { serverId: 'server-1' };
 });
 
 describe('McpServerEditorScreen', () => {
@@ -269,7 +224,7 @@ describe('McpServerEditorScreen', () => {
     });
 
     it('preserves a new server draft when unrelated secrets settings change', async () => {
-        localSearchParamsValue = {};
+        mcpServersModuleState.routerSearchParams = {};
         liveMcpSettings = {
             v: 1,
             strictMode: false,
@@ -310,7 +265,7 @@ describe('McpServerEditorScreen', () => {
     });
 
     it('shows configure/import-json/quick-install add-flow tabs for new servers', async () => {
-        localSearchParamsValue = {};
+        mcpServersModuleState.routerSearchParams = {};
         liveMcpSettings = {
             v: 1,
             strictMode: false,
@@ -334,7 +289,7 @@ describe('McpServerEditorScreen', () => {
     });
 
     it('disables JSON import when a saved-secret mapping is missing a value', async () => {
-        localSearchParamsValue = {};
+        mcpServersModuleState.routerSearchParams = {};
         liveMcpSettings = {
             v: 1,
             strictMode: false,
@@ -375,7 +330,7 @@ describe('McpServerEditorScreen', () => {
     });
 
     it('allows selecting multiple quick-install presets while preserving required-auth validation', async () => {
-        localSearchParamsValue = {};
+        mcpServersModuleState.routerSearchParams = {};
         liveMcpSettings = {
             v: 1,
             strictMode: false,
@@ -404,7 +359,7 @@ describe('McpServerEditorScreen', () => {
     });
 
     it('opens add binding as a draft expander instead of creating a binding immediately', async () => {
-        localSearchParamsValue = {};
+        mcpServersModuleState.routerSearchParams = {};
         liveMcpSettings = {
             v: 1,
             strictMode: false,
@@ -431,7 +386,7 @@ describe('McpServerEditorScreen', () => {
     });
 
     it('keeps a draft binding on all machines when no machine-scoped target can be selected', async () => {
-        localSearchParamsValue = {};
+        mcpServersModuleState.routerSearchParams = {};
         liveMachines = [];
         liveMcpSettings = {
             v: 1,
@@ -458,7 +413,7 @@ describe('McpServerEditorScreen', () => {
     });
 
     it('updates the binding target scope from the draft editor', async () => {
-        localSearchParamsValue = {};
+        mcpServersModuleState.routerSearchParams = {};
         liveMcpSettings = {
             v: 1,
             strictMode: false,
@@ -479,7 +434,7 @@ describe('McpServerEditorScreen', () => {
     });
 
     it('shows a validation alert when no machine is selected for the add binding draft', async () => {
-        localSearchParamsValue = {};
+        mcpServersModuleState.routerSearchParams = {};
         liveMachines = [];
         liveMcpSettings = {
             v: 1,

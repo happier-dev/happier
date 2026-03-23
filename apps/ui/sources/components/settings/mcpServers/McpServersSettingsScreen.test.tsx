@@ -7,6 +7,11 @@ import { createMachineFixture, flushHookEffects } from '@/dev/testkit';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 
 import { listDetectedMcpProviderIds, listMcpPreviewAgentIds } from './mcpServerScreenHelpers';
+import {
+    installMcpServersCommonModuleMocks,
+    mcpServersModuleState,
+    resetMcpServersCommonModuleMockState,
+} from './mcpServersTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -25,7 +30,6 @@ function createEmptyPreviewResponse() {
 const {
     machineMcpServersDetectSpy,
     machineMcpServersPreviewSpy,
-    routerBackSpy,
     routerPushSpy,
     routerReplaceSpy,
     routerSetParamsSpy,
@@ -33,7 +37,6 @@ const {
 } = vi.hoisted(() => ({
     machineMcpServersDetectSpy: vi.fn(async () => createEmptyDetectedServersResponse()),
     machineMcpServersPreviewSpy: vi.fn(async () => createEmptyPreviewResponse()),
-    routerBackSpy: vi.fn(),
     routerPushSpy: vi.fn(),
     routerReplaceSpy: vi.fn(),
     routerSetParamsSpy: vi.fn(),
@@ -55,44 +58,6 @@ async function selectHeaderTab(
     await flushHookEffects();
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Dimensions: { get: () => ({ width: 1440, height: 900 }) },
-    });
-});
-
-vi.mock('@expo/vector-icons', async () => {
-    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
-    return createExpoVectorIconsMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.subtitle ?? null, props.subtitleAccessory ?? null, props.rightElement ?? null),
-}));
-
-vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
-}));
-
 vi.mock('@/components/settings/mcpServers/McpServerRowSummary', () => ({
     McpServerRowSummary: (props: any) => React.createElement('McpServerRowSummary', props),
 }));
@@ -101,55 +66,9 @@ vi.mock('@/components/settings/mcpServers/McpServerBadgePills', () => ({
     McpServerBadgePills: (props: any) => React.createElement('McpServerBadgePills', props),
 }));
 
-vi.mock('@/components/ui/navigation/SegmentedTabBar', () => ({
-    SegmentedTabBar: (props: any) => React.createElement('SegmentedTabBar', props),
-}));
-
 vi.mock('@/components/settings/mcpServers/McpSegmentedHeader', () => ({
     McpSegmentedHeader: (props: any) => React.createElement('McpSegmentedHeader', props),
 }));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props),
-}));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ confirmResult: true }).module;
-});
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/ui/pathBrowser/PathInputBrowseButton', () => ({
-    PathInputBrowseButton: (props: any) => React.createElement('PathInputBrowseButton', props),
-}));
-
-vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
-    openMachinePathBrowserModal: vi.fn(async () => null),
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        pathname: '/(app)/settings/mcp-servers',
-        segments: ['(app)', 'settings', 'mcp-servers'],
-        router: {
-            push: routerPushSpy,
-            replace: routerReplaceSpy,
-            back: routerBackSpy,
-            setParams: routerSetParamsSpy,
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (action: any) => [false, action],
@@ -168,45 +87,75 @@ vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'uuid',
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useAllMachines: () => [createMachineFixture({
-                id: 'machine-1',
-                metadata: {
-                    displayName: 'Machine 1',
-                    host: 'machine-1.local',
-                    platform: 'darwin',
-                    happyCliVersion: '0.0.0-test',
-                    happyHomeDir: '/Users/tester/.happy-dev',
-                    homeDir: '/Users/tester',
+function installMcpServersScreenMocks() {
+    installMcpServersCommonModuleMocks({
+        reactNative: async () => {
+            const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeWebMock({
+                Dimensions: { get: () => ({ width: 1440, height: 900 }) },
+            });
+        },
+        storage: async (importOriginal) => {
+            const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+            return createStorageModuleMock({
+                importOriginal,
+                overrides: {
+                    useAllMachines: () => [createMachineFixture({
+                        id: 'machine-1',
+                        metadata: {
+                            displayName: 'Machine 1',
+                            host: 'machine-1.local',
+                            platform: 'darwin',
+                            happyCliVersion: '0.0.0-test',
+                            happyHomeDir: '/Users/tester/.happy-dev',
+                            homeDir: '/Users/tester',
+                        },
+                    })],
+                    useMachineListByServerId: () => ({}),
+                    useMachineListStatusByServerId: () => ({}),
+                    useSetting: (key: string) => {
+                        if (key === 'serverSelectionGroups') return [];
+                        return null;
+                    },
+                    useSettingMutable: (key: string) => {
+                        if (key === 'mcpServersSettingsV1') {
+                            return [settingsState.value, setMcpSettingsSpy];
+                        }
+                        if (key === 'secrets') return [[], vi.fn()];
+                        if (key === 'favoriteDirectories') return [[], vi.fn()];
+                        return [null, vi.fn()];
+                    },
                 },
-            })],
-            useMachineListByServerId: () => ({}),
-            useMachineListStatusByServerId: () => ({}),
-            useSetting: (key: string) => {
-                if (key === 'serverSelectionGroups') return [];
-                return null;
-            },
-            useSettingMutable: (key: string) => {
-                if (key === 'mcpServersSettingsV1') {
-                    return [settingsState.value, setMcpSettingsSpy];
-                }
-                if (key === 'secrets') return [[], vi.fn()];
-                if (key === 'favoriteDirectories') return [[], vi.fn()];
-                return [null, vi.fn()];
-            },
+            });
+        },
+        router: async () => {
+            const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+            return createExpoRouterMock({
+                pathname: '/(app)/settings/mcp-servers',
+                segments: ['(app)', 'settings', 'mcp-servers'],
+                router: {
+                    push: routerPushSpy,
+                    replace: routerReplaceSpy,
+                    back: mcpServersModuleState.routerBackSpy,
+                    setParams: routerSetParamsSpy,
+                },
+            }).module;
+        },
+        modal: async () => {
+            const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+            return createModalModuleMock({ confirmResult: true }).module;
         },
     });
-});
+}
+
+installMcpServersScreenMocks();
 
 describe('McpServersSettingsScreen', () => {
     beforeEach(async () => {
+        resetMcpServersCommonModuleMockState();
+        installMcpServersScreenMocks();
         machineMcpServersDetectSpy.mockReset();
         machineMcpServersPreviewSpy.mockReset();
-        routerBackSpy.mockReset();
         routerPushSpy.mockReset();
         routerReplaceSpy.mockReset();
         routerSetParamsSpy.mockReset();

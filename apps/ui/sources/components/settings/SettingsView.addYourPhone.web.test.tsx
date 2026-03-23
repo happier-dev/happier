@@ -1,7 +1,6 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstance, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -230,22 +229,24 @@ describe('SettingsView (web)', () => {
         vi.unstubAllGlobals();
     });
 
+    function findAddYourPhoneItems(screen: Awaited<ReturnType<typeof renderScreen>>) {
+        return screen.findAllByType('Item').filter(
+            (node: any) => node?.props?.title === 'settings.addYourPhone' && typeof node?.props?.onPress === 'function',
+        );
+    }
+
     it('renders an “Add your phone” shortcut that routes to /settings/add-phone', async () => {
         windowDimensions = { width: 1600, height: 900 };
         vi.resetModules();
         routerPushSpy.mockClear();
         const { SettingsView } = await import('./SettingsView');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        tree = (await renderScreen(<SettingsView />)).tree;
-        if (!tree) throw new Error('Expected renderer');
+        const screen = await renderScreen(<SettingsView />);
 
-        const items = tree.findAll(
-            (n) => n?.props?.title === 'settings.addYourPhone' && typeof n?.props?.onPress === 'function',
-        );
+        const items = findAddYourPhoneItems(screen);
         expect(items.length).toBeGreaterThan(0);
 
-        items[0]!.props.onPress();
+        pressTestInstance(items[0], 'settings.addYourPhone');
         expect(routerPushSpy).toHaveBeenCalledTimes(1);
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/add-phone');
     });
@@ -258,13 +259,9 @@ describe('SettingsView (web)', () => {
 
         const { SettingsView } = await import('./SettingsView');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        tree = (await renderScreen(<SettingsView />)).tree;
-        if (!tree) throw new Error('Expected renderer');
+        const screen = await renderScreen(<SettingsView />);
 
-        const items = tree.findAll(
-            (n) => n?.props?.title === 'settings.addYourPhone' && typeof n?.props?.onPress === 'function',
-        );
+        const items = findAddYourPhoneItems(screen);
         expect(items).toHaveLength(0);
     });
 
@@ -277,13 +274,9 @@ describe('SettingsView (web)', () => {
 
         const { SettingsView } = await import('./SettingsView');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        tree = (await renderScreen(<SettingsView />)).tree;
-        if (!tree) throw new Error('Expected renderer');
+        const screen = await renderScreen(<SettingsView />);
 
-        const items = tree.findAll(
-            (n) => n?.props?.title === 'settings.addYourPhone' && typeof n?.props?.onPress === 'function',
-        );
+        const items = findAddYourPhoneItems(screen);
         expect(items.length).toBeGreaterThan(0);
     });
 });

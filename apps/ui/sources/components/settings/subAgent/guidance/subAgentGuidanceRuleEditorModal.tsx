@@ -357,13 +357,13 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                                     iconColor: theme.colors.textSecondary,
                                     probe: {
                                         phase: preflightModels.probe.phase,
-                                        onRefresh: preflightModels.probe.refresh,
+                                        onRefresh: preflightModels.probe.onRefresh,
                                     },
                                 }),
                           ]}
                           onSelect={(id) => {
                             if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
-                                preflightModels.probe.refresh();
+                                preflightModels.probe.onRefresh();
                                 return;
                             }
                             const next = String(id ?? '').trim();

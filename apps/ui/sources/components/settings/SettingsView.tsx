@@ -26,7 +26,8 @@ import { getDisplayName, getAvatarUrl, getBio } from '@/sync/domains/profiles/pr
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { t } from '@/text';
 import { canRequestReview, requestReview } from '@/utils/system/requestReview';
-import { DEFAULT_AGENT_ID, getAgentCore, getAgentIconSource, getAgentIconTintColor, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -298,12 +299,7 @@ export const SettingsView = React.memo(function SettingsView() {
                                 : t('settings.connectAccount')
                             }
                             icon={
-                                <Image
-                                    source={getAgentIconSource(anthropicAgentId)}
-                                    style={{ width: 29, height: 29 }}
-                                    tintColor={getAgentIconTintColor(anthropicAgentId, theme)}
-                                    contentFit="contain"
-                                />
+                                <AgentIcon agentId={anthropicAgentId} size={29} />
                             }
                             onPress={isAnthropicConnected ? handleDisconnectAnthropic : connectAnthropic}
                             loading={connectingAnthropic || disconnectingAnthropic}

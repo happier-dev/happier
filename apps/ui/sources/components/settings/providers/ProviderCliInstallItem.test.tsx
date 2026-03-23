@@ -2,7 +2,6 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 
-
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const invokeWithAlertsMock = vi.fn();
@@ -11,11 +10,9 @@ const modalConfirmMock = vi.fn();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        ActivityIndicator: 'ActivityIndicator',
-                    }
-    );
+    return createReactNativeWebMock({
+        ActivityIndicator: 'ActivityIndicator',
+    });
 });
 
 vi.mock('react-native-unistyles', async () => {

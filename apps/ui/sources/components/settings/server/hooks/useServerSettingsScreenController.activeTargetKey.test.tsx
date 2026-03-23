@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installServerSettingsHooksCommonModuleMocks } from './serverSettingsHooksTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -21,32 +22,41 @@ const useSettingMutableMock = ((key: string) => [
     },
 ]) as typeof import('@/sync/domains/state/storage')['useSettingMutable'];
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { replace: vi.fn() },
-        params: {},
-    });
-    return routerMock.module;
-});
+const routerReplaceMock = vi.fn();
+const modalAlertMock = vi.fn();
+const modalConfirmMock = vi.fn(async () => false);
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ refreshFromActiveServer: vi.fn(async () => {}) }),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => false),
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installServerSettingsHooksCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { replace: routerReplaceMock },
+            params: {},
+        }).module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertMock,
+                confirm: modalConfirmMock,
+            },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSettingMutable: useSettingMutableMock,
+        });
+    },
 });
 
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
@@ -70,13 +80,6 @@ vi.mock('@/sync/domains/server/selection/serverSelectionMutations', () => ({
     normalizeStoredServerSelectionGroups: (raw: unknown) => (Array.isArray(raw) ? raw : []),
     filterServerSelectionGroupsToAvailableServers: (profiles: any) => profiles,
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSettingMutable: useSettingMutableMock,
-});
-});
 
 vi.mock('@/components/settings/server/hooks/useServerAuthStatusByServerId', () => ({
     useServerAuthStatusByServerId: () => ({}),

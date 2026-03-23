@@ -76,10 +76,41 @@ function requireRowByTitle(screen: NotificationsSettingsScreen, title: string) {
     return row!;
 }
 
-vi.mock('react-native', async () => {
+async function createReactNativeWebMockForNotificationsSettingsView() {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
-});
+}
+
+async function createTextModuleMockForNotificationsSettingsView() {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+}
+
+async function createModalModuleMockForNotificationsSettingsView() {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: modalPromptMock,
+            confirm: modalConfirmMock,
+            alert: modalAlertMock,
+        },
+    }).module;
+}
+
+async function createStorageModuleStubForNotificationsSettingsView() {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useSettings: () => settingsState,
+        useLocalSettings: () => localSettingsState,
+    });
+}
+
+function createPassthroughComponentMock(tag: string) {
+    return (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement(tag, props, props.children);
+}
+
+vi.mock('react-native', async () => createReactNativeWebMockForNotificationsSettingsView());
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -99,29 +130,11 @@ vi.mock('react-native-unistyles', async () => {
     });
 });
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
+vi.mock('@/text', async () => createTextModuleMockForNotificationsSettingsView());
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: modalPromptMock,
-            confirm: modalConfirmMock,
-            alert: modalAlertMock,
-        },
-    }).module;
-});
+vi.mock('@/modal', async () => createModalModuleMockForNotificationsSettingsView());
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSettings: () => settingsState,
-    useLocalSettings: () => localSettingsState,
-});
-});
+vi.mock('@/sync/domains/state/storage', async () => createStorageModuleStubForNotificationsSettingsView());
 
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,
@@ -129,25 +142,23 @@ vi.mock('@/sync/store/settingsWriters', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ItemList', props, props.children),
+    ItemList: createPassthroughComponentMock('ItemList'),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ItemGroup', props, props.children),
+    ItemGroup: createPassthroughComponentMock('ItemGroup'),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: Record<string, unknown>) => React.createElement('Item', props),
+    Item: createPassthroughComponentMock('Item'),
 }));
 
 vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: (props: Record<string, unknown>) => React.createElement('ItemRowActions', props),
+    ItemRowActions: createPassthroughComponentMock('ItemRowActions'),
 }));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: Record<string, unknown>) => React.createElement('Switch', props),
+    Switch: createPassthroughComponentMock('Switch'),
 }));
 
 describe('NotificationsSettingsView', () => {

@@ -38,12 +38,15 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId !== 'voice',
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSettingMutable: () => [{ v: 1, actions: {} }, vi.fn()] as const,
-    useSetting: () => ({ privacy: { shareDeviceInventory: true } }),
-});
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSettingMutable: () => [{ v: 1, actions: {} }, vi.fn()] as const,
+            useSetting: () => ({ privacy: { shareDeviceInventory: true } }),
+        },
+    });
 });
 
 vi.mock('@/components/ui/forms/SearchHeader', () => ({

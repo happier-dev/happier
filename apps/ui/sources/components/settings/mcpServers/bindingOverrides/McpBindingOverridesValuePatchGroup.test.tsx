@@ -1,9 +1,8 @@
 import * as React from 'react';
-import { ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { McpValueRefV1 } from '@happier-dev/protocol';
-import { renderScreen } from '@/dev/testkit';
+import { renderSettingsView } from '@/dev/testkit';
 
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,16 +43,15 @@ describe('McpBindingOverridesValuePatchGroup', () => {
         const { McpBindingOverridesValuePatchGroup } = await import('./McpBindingOverridesValuePatchGroup');
         const invalidValueRef = { t: 'savedSecret' } as unknown as McpValueRefV1;
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(McpBindingOverridesValuePatchGroup, {
+        const screen = await renderSettingsView(React.createElement(McpBindingOverridesValuePatchGroup, {
                     kind: 'env',
                     patch: { BROKEN: invalidValueRef },
                     setPatch: vi.fn(),
                     openValueRefModal: vi.fn(),
                     onPressDeleteKey: vi.fn(),
-                }))).tree;
+                }));
 
-        const brokenRow = tree.root.findAll((node) => node.props?.title === 'BROKEN')[0];
+        const brokenRow = screen.findRowByTitle('BROKEN');
         expect(brokenRow?.props.subtitle).toBe('settings.mcpServersValidationFailed');
     });
 });

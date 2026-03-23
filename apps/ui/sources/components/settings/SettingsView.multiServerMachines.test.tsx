@@ -43,19 +43,19 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                            View: 'View',
-                            Pressable: 'Pressable',
-                            Text: 'Text',
-                            ActivityIndicator: 'ActivityIndicator',
-                            Platform: {
-                                OS: 'web',
-                                select: (options: any) => (options && 'default' in options ? options.default : undefined),
-                            },
-                            Linking: {
-                                canOpenURL: async () => false,
-                                openURL: async () => {},
-                            },
-                        }
+                                    View: 'View',
+                                    Pressable: 'Pressable',
+                                    Text: 'Text',
+                                    ActivityIndicator: 'ActivityIndicator',
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: any) => (options && 'default' in options ? options.default : undefined),
+                                    },
+                                    Linking: {
+                                        canOpenURL: async () => false,
+                                        openURL: async () => {},
+                                    },
+                                }
     );
 });
 
