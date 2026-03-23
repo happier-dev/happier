@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installProfilesCommonModuleMocks } from './profilesTestHelpers';
 
 
 const actEnvironment = globalThis as typeof globalThis & {
@@ -10,21 +11,24 @@ const actEnvironment = globalThis as typeof globalThis & {
 
 actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        useWindowDimensions: () => ({ width: 1024, height: 768 }),
-    });
+installProfilesCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            useWindowDimensions: () => ({ width: 1024, height: 768 }),
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: createUseSettingMock(),
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => <>{'.'}</>,
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -91,11 +95,6 @@ vi.mock('@/components/profiles/profileDisplay', () => ({
     getProfileDisplayName: () => 'Profile',
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
@@ -103,13 +102,6 @@ vi.mock('@/constants/Typography', () => ({
 vi.mock('@/sync/domains/profiles/profileSecrets', () => ({
     hasRequiredSecret: () => false,
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSetting: createUseSettingMock(),
-    });
-});
 
 vi.mock('@/agents/catalog/enabled', () => ({
     getEnabledAgentIds: () => ['codex'],

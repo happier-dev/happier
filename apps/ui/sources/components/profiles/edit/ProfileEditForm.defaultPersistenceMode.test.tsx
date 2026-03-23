@@ -3,87 +3,44 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit';
+import { installProfileEditFormModuleMocks } from './profileEditFormTestHelpers';
 import { ProfileEditForm } from './ProfileEditForm';
 import type { ProfileEditFormProps } from './ProfileEditForm';
-import { renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sessionTypeSelectorSpy = vi.hoisted(() => vi.fn(() => null));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: vi.fn() },
-        params: {},
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: vi.fn(),
-            alert: vi.fn(),
-        },
-    }).module;
+installProfileEditFormModuleMocks({
+    storageModule: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'newSessionDefaultPersistenceModeV1') return 'persisted';
+                if (key === 'newSessionDefaultPersistenceModeByTargetKeyV1') return {};
+                return {};
+            },
+            useAllMachines: () => [],
+            useMachine: () => null,
+            useSettings: () => ({ opencodeBackendMode: 'server' }),
+            useSettingMutable: (key: string) => {
+                if (key === 'favoriteMachines') return [[], vi.fn()] as const;
+                if (key === 'secrets') return [[], vi.fn()] as const;
+                if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
+                return [[], vi.fn()] as const;
+            },
+        });
+    },
 });
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'sessions.direct',
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'newSessionDefaultPersistenceModeV1') return 'persisted';
-        if (key === 'newSessionDefaultPersistenceModeByTargetKeyV1') return {};
-        return {};
-    },
-    useAllMachines: () => [],
-    useMachine: () => null,
-    useSettings: () => ({ opencodeBackendMode: 'server' }),
-    useSettingMutable: (key: string) => {
-        if (key === 'favoriteMachines') return [[], vi.fn()] as const;
-        if (key === 'secrets') return [[], vi.fn()] as const;
-        if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
-        return [[], vi.fn()] as const;
-    },
-});
-});
-
-vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
-    MachineSelector: () => null,
-}));
-
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
     useCLIDetection: () => ({ status: 'unknown' }),
-}));
-
-vi.mock('@/components/profiles/environmentVariables/EnvironmentVariablesList', () => ({
-    EnvironmentVariablesList: () => null,
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
@@ -107,54 +64,8 @@ vi.mock('@/agents/catalog/catalog', () => ({
     }),
 }));
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: () => null,
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-}));
-
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: () => null,
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: () => null,
-}));
-
-vi.mock('@/utils/sessions/machineUtils', () => ({
-    isMachineOnline: () => true,
-}));
-
-vi.mock('@/sync/domains/profiles/profileUtils', () => ({
-    getBuiltInProfileDocumentation: () => null,
-}));
-
-vi.mock('@/sync/domains/permissions/permissionTypes', () => ({
-    normalizeProfileDefaultPermissionMode: <T,>(value: T) => value,
-}));
-
-vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
-    getPermissionModeLabelForAgentType: () => '',
-    getPermissionModeOptionsForAgentType: () => [],
-    normalizePermissionModeForAgentType: <T,>(value: T) => value,
-}));
-
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 900 },
-}));
-
-vi.mock('@/utils/profiles/envVarTemplate', () => ({
-    parseEnvVarTemplate: () => ({ variables: [] }),
-}));
-
-vi.mock('@/components/secrets/requirements', () => ({
-    SecretRequirementModal: () => null,
 }));
 
 function buildProfile(overrides: Record<string, unknown> = {}): AIBackendProfile {

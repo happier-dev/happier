@@ -1,8 +1,9 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 
 const actEnvironment = globalThis as typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -66,38 +67,17 @@ describe('ProfileRequirementsBadge', () => {
     it('does not emit raw text nodes under View when icons render as text on web', async () => {
         const { ProfileRequirementsBadge } = await import('./ProfileRequirementsBadge');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ProfileRequirementsBadge
-                    profile={profile}
-                    machineId={null}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <ProfileRequirementsBadge
+                profile={profile}
+                machineId={null}
+            />,
+        );
 
-        const badNodes: Array<{ parent: string | null; value: string }> = [];
-        const walk = (node: any, parentType: string | null) => {
-            if (node == null) return;
-            if (typeof node === 'string' || typeof node === 'number') {
-                const value = String(node);
-                if (parentType !== 'Text' && value.trim().length > 0) badNodes.push({ parent: parentType, value });
-                return;
-            }
-            if (Array.isArray(node)) {
-                for (const item of node) walk(item, parentType);
-                return;
-            }
-            const nextParent = typeof node.type === 'string' ? node.type : parentType;
-            const children = Array.isArray(node.children) ? node.children : [];
-            for (const child of children) walk(child, nextParent);
-        };
-
-        walk(tree.toJSON(), null);
-        expect(badNodes).toEqual([]);
+        expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
 
         act(() => {
-            tree.unmount();
+            screen.tree.unmount();
         });
     });
 });

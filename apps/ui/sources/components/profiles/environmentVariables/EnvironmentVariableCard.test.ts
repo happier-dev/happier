@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import React from 'react';
 import { renderScreen } from '@/dev/testkit';
+import { installProfilesCommonModuleMocks } from '../profilesTestHelpers';
 import { EnvironmentVariableCard } from './EnvironmentVariableCard';
 
 (
@@ -10,29 +11,19 @@ import { EnvironmentVariableCard } from './EnvironmentVariableCard';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                Pressable: 'Pressable',
-                TextInput: 'TextInput',
-            }
-    );
+installProfilesCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Pressable: 'Pressable',
+            TextInput: 'TextInput',
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: Record<string, unknown>) => React.createElement('Switch', props),

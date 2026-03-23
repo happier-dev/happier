@@ -2,11 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ProfileCompatibilitySummary } from '@/sync/domains/profiles/profileCompatibility';
 import { getProfileBackendSubtitle, getProfileSubtitle, type ProfileListStrings } from '@/components/profiles/profileListModel';
 import type { AgentId } from '@/agents/catalog/catalog';
+import { installProfilesCommonModuleMocks } from './profilesTestHelpers';
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
+installProfilesCommonModuleMocks();
 
 describe('profileListModel', () => {
     const strings: ProfileListStrings = {

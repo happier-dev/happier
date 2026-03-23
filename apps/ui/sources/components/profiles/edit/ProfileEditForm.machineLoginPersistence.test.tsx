@@ -3,49 +3,39 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
-import { ProfileEditForm } from './ProfileEditForm';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installProfileEditFormModuleMocks,
+    resetProfileEditFormTestState,
+} from './profileEditFormTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+resetProfileEditFormTestState();
+installProfileEditFormModuleMocks({
+    storageModule: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: () => ({}),
+            useAllMachines: () => [],
+            useMachine: () => null,
+            useSettings: () => settingsState,
+            useSettingMutable: () => [{}, vi.fn()] as const,
+        });
+    },
 });
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: vi.fn() },
-        params: {},
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
+vi.doMock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+    return createUnistylesMock({
+        rt: { themeName: 'light' },
+    });
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
+vi.doMock('@/hooks/auth/useCLIDetection', () => ({
+    useCLIDetection: () => ({ status: 'unknown', login: { codex: false, customAcp: false } }),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: vi.fn(),
-            alert: vi.fn(),
-        },
-    }).module;
-});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
@@ -68,21 +58,6 @@ const settingsState = {
         ],
     },
 };
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: () => ({}),
-    useAllMachines: () => [],
-    useMachine: () => null,
-    useSettings: () => settingsState,
-    useSettingMutable: () => [{}, vi.fn()] as const,
-});
-});
-
-vi.mock('@/hooks/auth/useCLIDetection', () => ({
-    useCLIDetection: () => ({ status: 'unknown', login: { codex: false, customAcp: false } }),
-}));
 
 vi.mock('@/components/profiles/environmentVariables/EnvironmentVariablesList', () => ({
     EnvironmentVariablesList: () => null,
@@ -124,7 +99,7 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ title, onPress }: any) => React.createElement('Item', { title, onPress }),
+    Item: ({ title, onPress }: { title?: string; onPress?: () => void }) => React.createElement('Item', { title, onPress }),
 }));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
@@ -186,6 +161,7 @@ function buildProfile(): AIBackendProfile {
 
 describe('ProfileEditForm machine-login persistence', () => {
     it('clears machine-login persistence when multiple compatible targets share a machine-login key', async () => {
+        const { ProfileEditForm } = await import('./ProfileEditForm');
         const saveRef = { current: null as null | (() => boolean) };
         const onSave = vi.fn((_: AIBackendProfile) => true);
         const legacyCustomAcpTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' });

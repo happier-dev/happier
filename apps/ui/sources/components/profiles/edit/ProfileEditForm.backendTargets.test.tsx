@@ -4,57 +4,20 @@ import { act } from 'react-test-renderer';
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
-import { ProfileEditForm } from './ProfileEditForm';
+import {
+    installProfileEditFormModuleMocks,
+    resetProfileEditFormTestState,
+} from './profileEditFormTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+resetProfileEditFormTestState();
 
 const capture = vi.hoisted(() => ({
     customBackendPress: null as null | (() => void),
     reset() {
         this.customBackendPress = null;
     },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: vi.fn() },
-        params: {},
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: vi.fn(),
-            alert: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'sessions.direct',
 }));
 
 const settingsState = {
@@ -76,37 +39,39 @@ const settingsState = {
     },
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'newSessionDefaultPersistenceModeV1') return 'persisted';
-        if (key === 'newSessionDefaultPersistenceModeByTargetKeyV1') return {};
-        if (key === 'sessionDefaultPermissionModeByTargetKey') return {};
-        return (settingsState as any)[key] ?? {};
+installProfileEditFormModuleMocks({
+    storageModule: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'newSessionDefaultPersistenceModeV1') return 'persisted';
+                if (key === 'newSessionDefaultPersistenceModeByTargetKeyV1') return {};
+                if (key === 'sessionDefaultPermissionModeByTargetKey') return {};
+                return (settingsState as any)[key] ?? {};
+            },
+            useAllMachines: () => [],
+            useMachine: () => null,
+            useSettings: () => settingsState,
+            useSettingMutable: (key: string) => {
+                if (key === 'favoriteMachines') return [[], vi.fn()] as const;
+                if (key === 'secrets') return [[], vi.fn()] as const;
+                if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
+                return [[], vi.fn()] as const;
+            },
+        });
     },
-    useAllMachines: () => [],
-    useMachine: () => null,
-    useSettings: () => settingsState,
-    useSettingMutable: (key: string) => {
-        if (key === 'favoriteMachines') return [[], vi.fn()] as const;
-        if (key === 'secrets') return [[], vi.fn()] as const;
-        if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
-        return [[], vi.fn()] as const;
-    },
-});
 });
 
-vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
-    MachineSelector: () => null,
+async function loadProfileEditForm() {
+    return await import('./ProfileEditForm');
+}
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => featureId === 'sessions.direct',
 }));
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
     useCLIDetection: () => ({ status: 'unknown', login: { codex: false, customAcp: false } }),
-}));
-
-vi.mock('@/components/profiles/environmentVariables/EnvironmentVariablesList', () => ({
-    EnvironmentVariablesList: () => null,
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
@@ -131,18 +96,6 @@ vi.mock('@/agents/catalog/catalog', () => ({
     }),
 }));
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: () => null,
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-}));
-
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: ({ title, onPress }: any) => {
         if (title === 'Custom Backend' && typeof onPress === 'function') {
@@ -150,40 +103,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
         }
         return React.createElement('Item', { title, onPress });
     },
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: () => null,
-}));
-
-vi.mock('@/utils/sessions/machineUtils', () => ({
-    isMachineOnline: () => true,
-}));
-
-vi.mock('@/sync/domains/profiles/profileUtils', () => ({
-    getBuiltInProfileDocumentation: () => null,
-}));
-
-vi.mock('@/sync/domains/permissions/permissionTypes', () => ({
-    normalizeProfileDefaultPermissionMode: <T,>(value: T) => value,
-}));
-
-vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
-    getPermissionModeLabelForAgentType: () => '',
-    getPermissionModeOptionsForAgentType: () => [],
-    normalizePermissionModeForAgentType: <T,>(value: T) => value,
-}));
-
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 900 },
-}));
-
-vi.mock('@/utils/profiles/envVarTemplate', () => ({
-    parseEnvVarTemplate: () => ({ variables: [] }),
-}));
-
-vi.mock('@/components/secrets/requirements', () => ({
-    SecretRequirementModal: () => null,
 }));
 
 function buildProfile(): AIBackendProfile {
@@ -212,6 +131,7 @@ describe('ProfileEditForm backend targets', () => {
         capture.reset();
         const saveRef = { current: null as null | (() => boolean) };
         const onSave = vi.fn((_: AIBackendProfile) => true);
+        const { ProfileEditForm } = await loadProfileEditForm();
 
         await renderScreen(React.createElement(ProfileEditForm, {
             profile: buildProfile(),
@@ -239,6 +159,7 @@ describe('ProfileEditForm backend targets', () => {
     it('persists canonical machine-login target when exactly one backend target is compatible', async () => {
         const saveRef = { current: null as null | (() => boolean) };
         const onSave = vi.fn((_: AIBackendProfile) => true);
+        const { ProfileEditForm } = await loadProfileEditForm();
 
         await renderScreen(React.createElement(ProfileEditForm, {
             profile: AIBackendProfileSchema.parse({
@@ -269,6 +190,7 @@ describe('ProfileEditForm backend targets', () => {
         const onSave = vi.fn((_: AIBackendProfile) => true);
         const legacyCustomAcpTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' });
         const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' });
+        const { ProfileEditForm } = await loadProfileEditForm();
 
         await renderScreen(React.createElement(ProfileEditForm, {
             profile: AIBackendProfileSchema.parse({
@@ -298,5 +220,4 @@ describe('ProfileEditForm backend targets', () => {
         }));
         expect(savedProfile?.compatibilityByTargetKey?.[legacyCustomAcpTargetKey]).toBeUndefined();
     });
-
 });

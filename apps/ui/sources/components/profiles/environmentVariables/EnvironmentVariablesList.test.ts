@@ -6,6 +6,7 @@ import type { EnvPreviewSecretsPolicy, PreviewEnvValue } from '@/sync/ops';
 import { renderScreen } from '@/dev/testkit';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
+import { installProfilesCommonModuleMocks } from '../profilesTestHelpers';
 import { EnvironmentVariablesList } from './EnvironmentVariablesList';
 
 (
@@ -14,22 +15,14 @@ import { EnvironmentVariablesList } from './EnvironmentVariablesList';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Pressable: 'Pressable',
-        TextInput: 'TextInput',
-    });
+installProfilesCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Pressable: 'Pressable',
+            TextInput: 'TextInput',
+        });
+    },
 });
 
 type EnvironmentVariablesHookResult = {
@@ -66,11 +59,6 @@ vi.mock('@/hooks/server/useEnvironmentVariables', () => ({
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown>) => React.createElement('Item', props),
