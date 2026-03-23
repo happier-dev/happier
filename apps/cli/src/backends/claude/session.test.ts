@@ -148,6 +148,22 @@ describe('Session', () => {
     }
   });
 
+  it('exposes spawnPermissionMode that is independent of lastPermissionMode', () => {
+    const client = createSessionClientStub();
+    const session = createSession(client);
+
+    try {
+      expect(session.spawnPermissionMode).toBe('default');
+
+      session.spawnPermissionMode = 'yolo';
+      session.setLastPermissionMode('default', 200);
+      expect(session.lastPermissionMode).toBe('default');
+      expect(session.spawnPermissionMode).toBe('yolo');
+    } finally {
+      session.cleanup();
+    }
+  });
+
   it('does not bump permissionModeUpdatedAt when permission mode does not change', () => {
     const metadataUpdates: Metadata[] = [];
     const client = createSessionClientStub({

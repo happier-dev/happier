@@ -52,6 +52,13 @@ export class Session {
     private happierMcpBridgePromise: Promise<NonNullable<Session['happierMcpBridge']>> | null = null;
 
     /**
+     * Permission mode from the initial session spawn (CLI --dangerously-skip-permissions or mobile picker).
+     * Set once at session creation, never overwritten by per-message or metadata updates.
+     * Used as a floor when constructing local spawn args so the launch intent is never lost.
+     */
+    spawnPermissionMode: PermissionMode = 'default';
+
+    /**
      * Last known permission mode for this session, derived from message metadata / permission responses.
      * Used to carry permission settings across remote ↔ local mode switches.
      */
