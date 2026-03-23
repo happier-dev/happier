@@ -360,8 +360,25 @@ function SessionInfoContent({ session }: { session: Session }) {
         await handleCopyCommand(updateCommand);
     }, [handleCopyCommand]);
 
+    const directSessionMachineId = React.useMemo((): string | null => {
+        const directSessionV1 = session.metadata?.directSessionV1 as unknown;
+        if (!directSessionV1 || typeof directSessionV1 !== 'object') return null;
+        const record = directSessionV1 as Record<string, unknown>;
+        const raw = typeof record.machineId === 'string' ? record.machineId.trim() : '';
+        return raw.length > 0 ? raw : null;
+    }, [session.metadata]);
+
     return (
         <>
+            {/* QA/e2e anchor: expose the raw session machineId without relying on reachability heuristics. */}
+            <View
+                testID="session-info-machine-id"
+                style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
+            >
+                <Text>
+                    {String(session.metadata?.machineId ?? directSessionMachineId ?? '').trim()}
+                </Text>
+            </View>
             <ItemList>
                 {/* Session Header */}
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>

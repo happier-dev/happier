@@ -196,6 +196,7 @@ export default function MachineDetailScreen() {
     const { state: detectedCapabilities, refresh: refreshDetectedCapabilities } = useMachineCapabilitiesCache({
         machineId: machineId ?? null,
         serverId: activeServerId,
+        cacheKeySalt: machine?.daemonStateVersion ?? 0,
         enabled: Boolean(machineId && isOnline && !isServerSwitching),
         request: CAPABILITIES_REQUEST_MACHINE_DETAILS,
     });
@@ -408,7 +409,7 @@ export default function MachineDetailScreen() {
         setIsRefreshing(true);
         try {
             await sync.refreshMachines();
-            refreshDetectedCapabilities();
+            refreshDetectedCapabilities({ bypassCache: true });
             if (machineId && isOnline && !isServerSwitching) {
                 setExecutionRunsState((prev) => ({ status: 'loading', runs: prev.runs }));
                 const res = await machineExecutionRunsList(machineId, { serverId: activeServerId });
@@ -451,7 +452,7 @@ export default function MachineDetailScreen() {
         // Refreshing machines first makes this much more reliable and avoids misclassifying
         // transient failures as “not supported / update CLI”.
         await sync.refreshMachines();
-        refreshDetectedCapabilities();
+        refreshDetectedCapabilities({ bypassCache: true });
     }, [machineId, refreshDetectedCapabilities]);
 
     const capabilitiesSnapshot = useMemo(() => {

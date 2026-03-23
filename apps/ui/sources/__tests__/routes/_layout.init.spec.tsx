@@ -572,9 +572,6 @@ describe('app/_layout init resilience', () => {
     });
 
     it('does not install FontFaceObserver timeout suppression listeners on non-automation web startup', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2020-01-01T00:00:00.000Z'));
-
         const addEventListenerSpy = vi.fn();
         Object.defineProperty(globalThis, 'window', {
             value: { addEventListener: addEventListenerSpy },

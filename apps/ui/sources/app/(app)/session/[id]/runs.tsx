@@ -42,11 +42,15 @@ export default function SessionRunsScreen() {
   const { theme } = useUnistyles();
   const params = useLocalSearchParams();
   const sessionId = normalizeSessionId((params as any)?.id);
+  const headerTitle = t('runs.title');
+  const screenOptions = React.useMemo(() => {
+    return { headerShown: true, headerTitle };
+  }, [headerTitle]);
   const hydrateReady = useHydrateSessionForRoute(sessionId ?? '', 'SessionRunsScreen.hydrate');
   if (!hydrateReady) {
     return (
       <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
-        <Stack.Screen options={{ headerShown: true, headerTitle: t('runs.title') }} />
+        <Stack.Screen options={screenOptions} />
         <ConstrainedScreenContent
           style={{
             flex: 1,
