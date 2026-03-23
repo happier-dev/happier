@@ -1,6 +1,5 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -40,8 +39,8 @@ function getTextContent(node: any): string {
     return Array.isArray(value) ? value.join('') : String(value ?? '');
 }
 
-function getNodeByTestID(tree: renderer.ReactTestRenderer, testID: string) {
-    return tree.root.findByProps({ testID });
+function getNodeByTestID(screen: { findByTestId: (testID: string) => any }, testID: string) {
+    return screen.findByTestId(testID);
 }
 
 describe('WebAlertModal', () => {
@@ -51,8 +50,7 @@ describe('WebAlertModal', () => {
         const onClose = vi.fn();
         const onConfirm = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<WebAlertModal
+        const screen = await renderScreen(<WebAlertModal
                     config={{
                         id: 'test-confirm',
                         type: 'confirm',
@@ -63,11 +61,11 @@ describe('WebAlertModal', () => {
                     }}
                     onClose={onClose}
                     onConfirm={onConfirm}
-                />)).tree;
+                />);
 
         const pressables = [
-            getNodeByTestID(tree!, 'web-modal-cancel'),
-            getNodeByTestID(tree!, 'web-modal-confirm'),
+            getNodeByTestID(screen, 'web-modal-cancel'),
+            getNodeByTestID(screen, 'web-modal-confirm'),
         ];
 
         for (const pressable of pressables) {

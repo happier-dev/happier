@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -56,8 +56,8 @@ function getTextContent(node: any): string {
     return Array.isArray(value) ? value.join('') : String(value ?? '');
 }
 
-function getNodeByTestID(tree: renderer.ReactTestRenderer, testID: string) {
-    return tree.root.findByProps({ testID });
+function getNodeByTestID(screen: { findByTestId: (testID: string) => any }, testID: string) {
+    return screen.findByTestId(testID);
 }
 
 describe('WebPromptModal', () => {
@@ -68,8 +68,7 @@ describe('WebPromptModal', () => {
         const onClose = vi.fn();
         const onConfirm = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<WebPromptModal
+        const screen = await renderScreen(<WebPromptModal
                     config={{
                         id: 'test-prompt',
                         type: 'prompt',
@@ -83,10 +82,10 @@ describe('WebPromptModal', () => {
                     }}
                     onClose={onClose}
                     onConfirm={onConfirm}
-                />)).tree;
+                />);
 
         for (const testID of ['web-prompt-cancel', 'web-prompt-confirm']) {
-            const pressable = getNodeByTestID(tree!, testID);
+            const pressable = getNodeByTestID(screen, testID);
             const text = getTextContent(pressable);
 
             expect(pressable.props.accessibilityRole).toBe('button');
@@ -101,8 +100,7 @@ describe('WebPromptModal', () => {
         const onClose = vi.fn();
         const onConfirm = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<WebPromptModal
+        const screen = await renderScreen(<WebPromptModal
                     config={{
                         id: 'test-prompt',
                         type: 'prompt',
@@ -115,14 +113,14 @@ describe('WebPromptModal', () => {
                     }}
                     onClose={onClose}
                     onConfirm={onConfirm}
-                />)).tree;
+                />);
 
-        const input = getNodeByTestID(tree!, 'web-prompt-input');
+        const input = getNodeByTestID(screen, 'web-prompt-input');
         act(() => {
             input.props.onChangeText('/srv/workspace');
         });
 
-        const confirmButton = getNodeByTestID(tree!, 'web-prompt-confirm');
+        const confirmButton = getNodeByTestID(screen, 'web-prompt-confirm');
         expect(baseModalSpy).toHaveBeenCalled();
         const [baseModalProps] = baseModalSpy.mock.calls.at(-1)!;
 

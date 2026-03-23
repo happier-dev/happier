@@ -4,61 +4,38 @@ import renderer, { act } from 'react-test-renderer';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { renderScreen } from '@/dev/testkit';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const reactActEnvironment = globalThis as typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
+
+reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+
+function createRadixHostComponent(tagName: string) {
+    return (props: Record<string, unknown>) => {
+        const { children, ...rest } = props as Record<string, unknown> & { children?: React.ReactNode };
+        return React.createElement(tagName, rest, children);
+    };
+}
 
 vi.mock('@/utils/web/radixCjs', () => {
-    const React = require('react');
     return {
         requireRadixDialog: () => ({
-            Root: (props: any) => React.createElement('DialogRoot', props, props.children),
-            Portal: (props: any) => React.createElement('DialogPortal', props, props.children),
-            Overlay: (props: any) => React.createElement('DialogOverlay', props, props.children),
-            Content: (props: any) => React.createElement('DialogContent', props, props.children),
-            Title: (props: any) => React.createElement('DialogTitle', props, props.children),
+            Root: createRadixHostComponent('DialogRoot'),
+            Portal: createRadixHostComponent('DialogPortal'),
+            Overlay: createRadixHostComponent('DialogOverlay'),
+            Content: createRadixHostComponent('DialogContent'),
+            Title: createRadixHostComponent('DialogTitle'),
         }),
         requireRadixDismissableLayer: () => ({
-            Branch: (props: any) => React.createElement('DismissableLayerBranch', props, props.children),
-            DismissableLayerBranch: (props: any) => React.createElement('DismissableLayerBranch', props, props.children),
+            Branch: createRadixHostComponent('DismissableLayerBranch'),
+            DismissableLayerBranch: createRadixHostComponent('DismissableLayerBranch'),
         }),
     };
 });
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    class MockAnimatedValue {
-        value: number;
-
-        constructor(value: number) {
-            this.value = value;
-        }
-
-        interpolate(config: Record<string, unknown>) {
-            return config;
-        }
-
-        setValue(nextValue: number) {
-            this.value = nextValue;
-        }
-    }
-
-    return createReactNativeWebMock(
-        {
-            View: (props: any) => React.createElement('View', props, props.children),
-            TouchableWithoutFeedback: (props: any) => React.createElement('TouchableWithoutFeedback', props, props.children),
-            KeyboardAvoidingView: (props: any) => React.createElement('KeyboardAvoidingView', props, props.children),
-            Modal: (props: any) => React.createElement('RNModal', props, props.children),
-            Animated: {
-                Value: MockAnimatedValue,
-                timing: () => ({ start: (cb?: () => void) => cb?.() }),
-                spring: () => ({ start: (cb?: () => void) => cb?.() }),
-                View: (props: any) => React.createElement('AnimatedView', props, props.children),
-            },
-            Platform: {
-                OS: 'web',
-                select: (options: any) => options.web ?? options.default,
-            },
-        }
-    );
+    return createReactNativeWebMock();
 });
 
 vi.mock('react-native-unistyles', async () => {
