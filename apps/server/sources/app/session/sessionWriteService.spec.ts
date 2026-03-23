@@ -650,7 +650,10 @@ describe("sessionWriteService", () => {
             });
 
             expect(currentTx.session.updateMany).toHaveBeenCalledWith({
-                where: { id: "s1", lastViewedSessionSeq: { lt: 8 } },
+                where: {
+                    id: "s1",
+                    OR: [{ lastViewedSessionSeq: { lt: 8 } }, { lastViewedSessionSeq: null }],
+                },
                 data: { lastViewedSessionSeq: 8 },
             });
             expect(res).toEqual({
@@ -658,6 +661,44 @@ describe("sessionWriteService", () => {
                 lastViewedSessionSeq: 8,
                 participantCursors: [{ accountId: "u1", cursor: 200 }],
                 badgeAttentionChanged: true,
+            });
+        });
+
+        it("persists when the existing cursor is null", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    seq: 8,
+                    lastViewedSessionSeq: null,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const res = await updateSessionReadCursor({
+                actorUserId: "u1",
+                sessionId: "s1",
+                lastViewedSessionSeq: 4,
+            });
+
+            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: "s1",
+                    OR: [{ lastViewedSessionSeq: { lt: 4 } }, { lastViewedSessionSeq: null }],
+                },
+                data: { lastViewedSessionSeq: 4 },
+            });
+            expect(res).toEqual({
+                ok: true,
+                lastViewedSessionSeq: 4,
+                participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: false,
             });
         });
 

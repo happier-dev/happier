@@ -608,7 +608,10 @@ export async function updateSessionReadCursor(params: {
             }
 
             const { count } = await tx.session.updateMany({
-                where: { id: sessionId, lastViewedSessionSeq: { lt: nextCursor } },
+                where: {
+                    id: sessionId,
+                    OR: [{ lastViewedSessionSeq: { lt: nextCursor } }, { lastViewedSessionSeq: null }],
+                },
                 data: { lastViewedSessionSeq: nextCursor },
             });
 

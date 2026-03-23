@@ -348,7 +348,7 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         await handler({ sid: "s1", lastViewedSessionSeq: 9 }, callback);
 
         expect(sessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: { id: "s1", lastViewedSessionSeq: { lt: 7 } },
+            where: { id: "s1", OR: [{ lastViewedSessionSeq: { lt: 7 } }, { lastViewedSessionSeq: null }] },
             data: { lastViewedSessionSeq: 7 },
         }));
         expect(buildUpdateSessionUpdate).toHaveBeenNthCalledWith(1, "s1", 201, "upd-g", undefined, undefined, {
