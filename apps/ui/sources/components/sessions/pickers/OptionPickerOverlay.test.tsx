@@ -115,8 +115,27 @@ describe('OptionPickerOverlay', () => {
         expect(screen.getTextContent()).toContain('No models available');
     });
 
-    it('captures and submits a trimmed inline custom model when enabled', async () => {
+    it('renders a loading hint when the probe is loading and only the default option is available', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[{ value: 'default', label: 'Default' }]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue={false}
+                    probe={{ phase: 'loading', onRefresh: () => {} }}
+                    onSelect={() => {}}
+                />);
+
+        expect(screen.getTextContent()).toContain('modelPickerOverlay.loadingModelsA11y');
+    });
+
+    it('updates the custom value immediately (no Save button) when entering a custom model', async () => {
         const onSubmitCustomValue = vi.fn();
+        const onSelect = vi.fn();
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
 
         const screen = await renderScreen(<OptionPickerOverlay
@@ -131,7 +150,7 @@ describe('OptionPickerOverlay', () => {
                     canEnterCustomValue
                     customLabel="Custom model"
                     onSubmitCustomValue={onSubmitCustomValue}
-                    onSelect={() => {}}
+                    onSelect={onSelect}
                 />);
 
         expect(screen.findByTestId('model-picker-overlay-custom')).toBeTruthy();
@@ -140,10 +159,10 @@ describe('OptionPickerOverlay', () => {
         await act(async () => {
             screen.changeTextByTestId('model-picker-overlay-custom-input', '  custom-model  ');
         });
-        expect(screen.findByTestId('model-picker-overlay-custom-save')).toBeTruthy();
-        await screen.pressByTestIdAsync('model-picker-overlay-custom-save');
 
+        expect(screen.findByTestId('model-picker-overlay-custom-save')).toBeNull();
         expect(onSubmitCustomValue).toHaveBeenCalledWith('custom-model');
+        expect(onSelect).not.toHaveBeenCalled();
     });
 
     it('shows a loading indicator when models are being probed', async () => {
@@ -185,6 +204,65 @@ describe('OptionPickerOverlay', () => {
         await screen.pressByTestIdAsync('model-picker-overlay-refresh');
 
         expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the refresh affordance above the effective summary block so it stays clickable on web', async () => {
+        const onRefresh = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Use CLI settings"
+                    notes={[]}
+                    options={[
+                        { value: 'default', label: 'Use CLI settings', description: '' },
+                    ]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue={false}
+                    onSelect={() => {}}
+                    probe={{ phase: 'idle', onRefresh }}
+                />);
+
+        const refresh = screen.findByTestId('model-picker-overlay-refresh');
+        expect(refresh).toBeTruthy();
+        expect(typeof refresh?.props.style).toBe('function');
+
+        const resolved = refresh?.props.style({ pressed: false }) as unknown;
+        const resolvedArray = Array.isArray(resolved) ? resolved : [resolved];
+        const base = resolvedArray[0] as any;
+        expect(base).toMatchObject({
+            position: 'absolute',
+            zIndex: expect.any(Number),
+        });
+
+        // The refresh button is absolutely positioned, so the header row must reserve vertical space
+        // to prevent the summary block from overlapping and intercepting pointer events on web.
+        let cursor: any = refresh;
+        let titleRow: any = null;
+        for (let i = 0; i < 8 && cursor?.parent; i += 1) {
+            cursor = cursor.parent;
+            const style = cursor?.props?.style;
+            if (!style) continue;
+            const styleObject = Array.isArray(style)
+                ? Object.assign({}, ...style.filter(Boolean))
+                : style;
+            if (
+                styleObject
+                && styleObject.flexDirection === 'row'
+                && styleObject.justifyContent === 'space-between'
+                && styleObject.alignItems === 'flex-start'
+            ) {
+                titleRow = cursor;
+                break;
+            }
+        }
+
+        expect(titleRow).toBeTruthy();
+        const titleRowStyle = Array.isArray(titleRow.props.style)
+            ? Object.assign({}, ...titleRow.props.style.filter(Boolean))
+            : titleRow.props.style;
+        expect(titleRowStyle).toMatchObject({ minHeight: 28 });
     });
 
     it('renders selected model controls inside the selected model card and routes option changes', async () => {
@@ -316,18 +394,14 @@ describe('OptionPickerOverlay', () => {
                     emptyText="empty"
                     canEnterCustomValue={false}
                     onSelect={onSelect}
-                    testIDBase="agent-input-session-mode-overlay"
                     summary={<Text testID="agent-input-session-mode-summary">Build mode summary</Text>}
                     headerAccessory={<View testID="agent-input-session-mode-refresh" />}
                     optionTestIDPrefix="agent-input-session-mode-option"
                 />);
 
-        expect(screen.findByTestId('agent-input-session-mode-overlay')).toBeTruthy();
         expect(screen.findByTestId('agent-input-session-mode-summary')).toBeTruthy();
         expect(screen.findByTestId('agent-input-session-mode-refresh')).toBeTruthy();
         expect(screen.findByTestId('agent-input-session-mode-option:review')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-session-mode-overlay-option-selected-indicator:build')).toBeTruthy();
-        expect(screen.findByTestId('model-picker-overlay-option-selected-indicator:build')).toBeNull();
 
         await screen.pressByTestIdAsync('agent-input-session-mode-option:review');
 

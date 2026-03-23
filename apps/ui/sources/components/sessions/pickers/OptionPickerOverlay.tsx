@@ -74,6 +74,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
         : '';
     const [customValue, setCustomValue] = React.useState(selectedCustomValue);
     const [customEditorVisible, setCustomEditorVisible] = React.useState(selectedCustomValue.length > 0);
+    const lastCommittedCustomValueRef = React.useRef<string>(selectedCustomValue.trim());
     const probeHintText = React.useMemo(() => {
         if (!probe || probe.phase === 'idle') return null;
         if (props.options.length > 1 || props.canEnterCustomValue) return null;
@@ -90,6 +91,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
         if (selectedCustomValue.length > 0) {
             setCustomValue(selectedCustomValue);
             setCustomEditorVisible(true);
+            lastCommittedCustomValueRef.current = selectedCustomValue.trim();
             return;
         }
         if (optionValues.has(selectedValue)) {
@@ -187,13 +189,22 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
         props.onSelect(nextValue);
     }, [props]);
 
-    const handleSubmitCustomValue = React.useCallback(() => {
-        const normalized = customValue.trim();
-        if (!normalized) {
+    const commitCustomValue = React.useCallback((raw: string) => {
+        const normalized = raw.trim();
+        if (!normalized) return;
+        if (lastCommittedCustomValueRef.current === normalized) return;
+        lastCommittedCustomValueRef.current = normalized;
+        if (props.onSubmitCustomValue) {
+            void props.onSubmitCustomValue(normalized);
             return;
         }
-        void props.onSubmitCustomValue?.(normalized);
-    }, [customValue, props]);
+        props.onSelect(normalized);
+    }, [props]);
+
+    const handleCustomValueChange = React.useCallback((next: string) => {
+        setCustomValue(next);
+        commitCustomValue(next);
+    }, [commitCustomValue]);
 
     const selectedTileValue = customEditorVisible ? null : props.selectedValue;
     return (
@@ -303,7 +314,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                                     ]}
                                                 >
                                                     <View style={styles.optionCardHeader}>
-                                                        <Text style={styles.optionCardTitle}>
+                                                        <Text style={[styles.optionCardTitle, isSelected ? styles.optionCardTitleSelected : null]}>
                                                             {option.label}
                                                         </Text>
                                                         <View
@@ -335,7 +346,8 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                     {props.canEnterCustomValue ? (
                         <View style={[
                             styles.customEntryRow,
-                            customEditorVisible ? styles.customEntryRowSelected : null,
+                            styles.optionCard,
+                            customEditorVisible ? styles.optionCardSelected : null,
                         ]}>
                             <Pressable
                                 testID="model-picker-overlay-custom"
@@ -346,13 +358,13 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                     }
                                 }}
                             >
-                                <View style={styles.customEntryHeader}>
+                                <View style={styles.optionCardHeader}>
                                     <View style={styles.customEntryTextBlock}>
-                                        <Text style={styles.customEntryTitle}>
+                                        <Text style={[styles.optionCardTitle, customEditorVisible ? styles.optionCardTitleSelected : null]}>
                                             {props.customLabel ?? t('modelPickerOverlay.customTitle')}
                                         </Text>
                                         {props.customDescription ? (
-                                            <Text style={styles.customEntryDescription}>
+                                            <Text style={styles.optionCardDescription}>
                                                 {props.customDescription}
                                             </Text>
                                         ) : null}
@@ -362,9 +374,9 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                     >
                                         {customEditorVisible ? (
                                             <Ionicons
-                                                name="checkmark-circle"
-                                                size={18}
-                                                color={theme.colors.button.primary.background}
+                                                name="checkmark-outline"
+                                                size={14}
+                                                style={styles.optionCardIndicatorIcon}
                                             />
                                         ) : null}
                                     </View>
@@ -375,24 +387,14 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                     <TextInput
                                         testID="model-picker-overlay-custom-input"
                                         value={customValue}
-                                        onChangeText={setCustomValue}
+                                        onChangeText={handleCustomValueChange}
                                         placeholder={t('agentInput.model.customPlaceholder')}
                                         placeholderTextColor={theme.colors.input?.placeholder ?? theme.colors.textSecondary}
                                         autoCorrect={false}
                                         autoCapitalize="none"
-                                        onSubmitEditing={handleSubmitCustomValue}
+                                        onSubmitEditing={() => commitCustomValue(customValue)}
                                         style={[styles.searchInput, styles.customEditorInput] as any}
                                     />
-                                    <Pressable
-                                        testID="model-picker-overlay-custom-save"
-                                        onPress={handleSubmitCustomValue}
-                                        style={({ pressed }) => [
-                                            styles.customSaveButton,
-                                            pressed ? styles.customSaveButtonPressed : null,
-                                        ]}
-                                    >
-                                        <Text style={styles.customSaveButtonText}>{t('common.save')}</Text>
-                                    </Pressable>
                                 </View>
                             ) : null}
                         </View>
@@ -412,6 +414,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     header: {
         gap: 0,
+        paddingLeft: 7,
     },
     titleRow: {
         flexDirection: 'row',
@@ -419,6 +422,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'space-between',
         paddingHorizontal: 0,
         paddingBottom: 0,
+        // The refresh button is absolutely positioned; reserve its vertical space so
+        // the effective summary block can't overlap and steal clicks on web.
+        minHeight: 28,
     },
     headerAccessory: {
         flexShrink: 0,
@@ -429,6 +435,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         textTransform: 'uppercase',
         letterSpacing: 0.5,
+        position: 'relative',
     },
     effectiveBlock: {
         paddingTop: 0,
@@ -449,6 +456,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: theme.colors.divider,
         backgroundColor: 'transparent',
         flexShrink: 0,
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        // Keep the refresh affordance above the effective summary block on web.
+        zIndex: 10,
+        elevation: 10,
     },
     refreshIconButtonPressed: {
         backgroundColor: theme.colors.surfacePressed,
@@ -457,9 +470,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         opacity: 0.6,
     },
     noteText: {
-        fontSize: 10,
-        lineHeight: 13,
-        color: theme.colors.textSecondary,
+        fontSize: 11,
+        color: theme.colors.textTertiary,
     },
     searchContainer: {
         paddingHorizontal: 0,
@@ -468,25 +480,20 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     cardsGrid: {
         flexDirection: 'row',
-        gap: 6,
+        gap: 4,
     },
     cardsColumn: {
         flex: 1,
-        gap: 6,
+        gap: 4,
     },
     optionCard: {
         borderRadius: 12,
-        paddingHorizontal: 9,
-        paddingVertical: 8,
+        paddingHorizontal: 7,
+        paddingVertical: 7,
         backgroundColor: theme.colors.surface,
     },
     optionCardSelected: {
         backgroundColor: theme.colors.surfaceSelected,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.06,
-        shadowRadius: 1,
-        elevation: 1,
     },
     optionCardPressed: {
         opacity: 0.86,
@@ -502,6 +509,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         color: theme.colors.text,
     },
+    optionCardTitleSelected: {
+        fontWeight: '600',
+        color: theme.colors.text,
+    },
     optionCardIndicator: {
         alignItems: 'flex-end',
         justifyContent: 'flex-start',
@@ -511,7 +522,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         height: 12,
     },
     optionCardDescription: {
-        fontSize: 10,
+        fontSize: 11,
         color: theme.colors.textTertiary,
     },
     inlineSelectedControls: {
@@ -564,14 +575,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     customEntryRow: {
         marginTop: 4,
-        marginHorizontal: 0,
-        borderRadius: 12,
-        paddingHorizontal: 10,
-        paddingVertical: 9,
-        backgroundColor: theme.colors.surface,
-    },
-    customEntryRowSelected: {
-        backgroundColor: theme.colors.surfacePressed,
+        marginHorizontal: 0
     },
     customEntryHeader: {
         flexDirection: 'row',
@@ -588,7 +592,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     customEntryTextBlock: {
         flex: 1,
-        gap: 2,
     },
     customEntryTitle: {
         fontSize: 12,
@@ -603,21 +606,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     rowPressed: {
         opacity: 0.85,
-    },
-    customSaveButton: {
-        alignSelf: 'flex-start',
-        borderRadius: 10,
-        paddingHorizontal: 12,
-        paddingVertical: 7,
-        backgroundColor: theme.colors.button.primary.background,
-    },
-    customSaveButtonPressed: {
-        opacity: 0.85,
-    },
-    customSaveButtonText: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: theme.colors.button.primary.tint,
     },
     emptyText: {
         fontSize: 11,
