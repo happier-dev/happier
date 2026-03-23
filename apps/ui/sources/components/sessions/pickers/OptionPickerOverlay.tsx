@@ -429,6 +429,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'space-between',
         paddingHorizontal: 0,
         paddingBottom: 0,
+        marginRight: 28,
     },
     headerAccessory: {
         flexShrink: 0,
