@@ -8,6 +8,7 @@ import {
     createNavigationMock,
     createRouterMock,
     enableReactActEnvironment,
+    installPickerCommonModuleMocks,
     PICKER_NAV_STATE,
     type PickerStackOptionsInput,
 } from './testHarness';
@@ -20,35 +21,67 @@ const navigationApi = createNavigationMock();
 const routerApi = createRouterMock();
 let searchParams = { selectedId: '', machineId: 'm1' };
 
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'ios' },
-    });
-});
-
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+installPickerCommonModuleMocks({
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            Platform: { OS: 'ios' },
+        }),
+    modal: async () =>
+        (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                show: vi.fn(),
+            },
+        }).module,
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: () => false,
+                useSettingMutable: () => [[], vi.fn()],
+            },
+        }),
+    unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
+    expoRouter: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const baseModule = createExpoRouterMock({
+            navigation: navigationApi,
+            params: searchParams,
+            router: {
+                push: routerApi.push,
+                back: routerApi.back,
+                replace: routerApi.replace,
+                setParams: routerApi.setParams,
+            },
+        }).module;
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            show: vi.fn(),
-        },
-    }).module;
+        return {
+            ...baseModule,
+            Stack: {
+                Screen: ({ options }: { options: PickerStackOptionsInput }) => {
+                    React.useEffect(() => {
+                        setOptionsSpy(typeof options === 'function' ? options() : options);
+                        listeners.forEach((notify) => notify());
+                    }, [options]);
+                    return null;
+                },
+            },
+            useNavigation: () => {
+                const [, force] = React.useReducer((value) => value + 1, 0);
+                React.useLayoutEffect(() => {
+                    listeners.add(force);
+                    return () => {
+                        listeners.delete(force);
+                    };
+                }, [force]);
+                return navigationApi;
+            },
+            useLocalSearchParams: () => searchParams,
+        };
+    },
 });
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => (key === 'useProfiles' ? false : false),
-            useSettingMutable: () => [[], vi.fn()],
-        },
-    }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
@@ -94,47 +127,6 @@ vi.mock('@/utils/sessions/tempDataStore', () => ({
     storeTempData: () => 'temp',
     getTempData: () => null,
 }));
-
-vi.mock('react-native-unistyles', async () =>
-    (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const baseModule = createExpoRouterMock({
-        navigation: navigationApi,
-        params: searchParams,
-        router: {
-            push: routerApi.push,
-            back: routerApi.back,
-            replace: routerApi.replace,
-            setParams: routerApi.setParams,
-        },
-    }).module;
-
-    return {
-        ...baseModule,
-        Stack: {
-            Screen: ({ options }: { options: PickerStackOptionsInput }) => {
-                React.useEffect(() => {
-                    setOptionsSpy(typeof options === 'function' ? options() : options);
-                    listeners.forEach((notify) => notify());
-                }, [options]);
-                return null;
-            },
-        },
-        useNavigation: () => {
-            const [, force] = React.useReducer((value) => value + 1, 0);
-            React.useLayoutEffect(() => {
-                listeners.add(force);
-                return () => {
-                    listeners.delete(force);
-                };
-            }, [force]);
-            return navigationApi;
-        },
-        useLocalSearchParams: () => searchParams,
-    };
-});
 
 describe('ProfilePickerScreen (Stack.Screen options stability)', () => {
     afterEach(() => {

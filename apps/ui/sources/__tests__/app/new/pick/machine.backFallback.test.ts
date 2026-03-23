@@ -9,7 +9,7 @@ import {
     createRouterMock,
     createStackOptionsCapture,
     enableReactActEnvironment,
-    PICKER_THEME_COLORS,
+    installPickerCommonModuleMocks,
 } from './testHarness';
 
 enableReactActEnvironment();
@@ -18,15 +18,37 @@ const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
 const stackOptionsCapture = createStackOptionsCapture();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Platform: {
-                                            OS: 'web',
-                                        },
-                                    }
-    );
+installPickerCommonModuleMocks({
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+        }),
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+    unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
+    expoRouter: async () =>
+        (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+            navigation: navigationMock,
+            params: { selectedId: 'm1' },
+            router: {
+                push: routerMock.push,
+                back: routerMock.back,
+                replace: routerMock.replace,
+                setParams: routerMock.setParams,
+            },
+            stackOptionsCapture,
+        }).module,
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useAllMachines: () => [],
+                useSessions: () => [],
+                useSetting: () => false,
+                useSettingMutable: () => [[], vi.fn()],
+            },
+        }),
 });
 
 vi.mock('@expo/vector-icons', async () => {
@@ -34,49 +56,11 @@ vi.mock('@expo/vector-icons', async () => {
     return createExpoVectorIconsMock();
 });
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        navigation: navigationMock,
-        params: { selectedId: 'm1' },
-        router: {
-            push: routerMock.push,
-            back: routerMock.back,
-            replace: routerMock.replace,
-            setParams: routerMock.setParams,
-        },
-        stackOptionsCapture,
-    }).module;
-});
-
 vi.mock('@react-navigation/native', () => ({
     CommonActions: {
         setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
     },
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useAllMachines: () => [],
-            useSessions: () => [],
-            useSetting: () => false,
-            useSettingMutable: () => [[], vi.fn()],
-        },
-    });
-});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),

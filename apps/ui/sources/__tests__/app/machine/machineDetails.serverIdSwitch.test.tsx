@@ -2,6 +2,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -15,47 +16,15 @@ const { refreshMachinesThrottledSpy, switchSpy } = vi.hoisted(() => ({
     switchSpy: vi.fn(async () => true),
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    TurboModuleRegistry: { getEnforcing: () => ({}) },
-                                    View: 'View',
-                                    Text: 'Text',
-                                    ScrollView: 'ScrollView',
-                                    ActivityIndicator: 'ActivityIndicator',
-                                    RefreshControl: 'RefreshControl',
-                                    Pressable: 'Pressable',
-                                    TextInput: 'TextInput',
-                                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
-        params: { id: 'machine-1', serverId: 'server-b' },
-    });
-    return routerMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installMachineDetailsCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+            params: { id: 'machine-1', serverId: 'server-b' },
+        });
+        return routerMock.module;
+    },
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({ Item: () => null }));
@@ -75,29 +44,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 vi.mock('@/components/machines/InstallableDepInstaller', () => ({ InstallableDepInstaller: () => null }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(),
-            prompt: vi.fn(),
-            show: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSessions: () => [],
-    useMachine: () => null,
-    useSetting: () => false,
-    useSettingMutable: () => [null, vi.fn()],
-    useSettings: () => ({}),
-});
-});
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => () => {} }));
 vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({

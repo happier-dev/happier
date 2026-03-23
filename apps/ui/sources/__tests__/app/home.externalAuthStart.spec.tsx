@@ -2,18 +2,15 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
+import { createExpoRouterMock, createModalModuleMock, renderScreen, type RenderScreenResult } from '@/dev/testkit';
 
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: vi.fn(), replace: vi.fn() },
-    });
-    return expoRouterMock.module;
+const expoRouterMock = createExpoRouterMock({
+    router: { push: vi.fn(), replace: vi.fn() },
 });
+vi.mock('expo-router', () => expoRouterMock.module);
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
@@ -80,15 +77,13 @@ vi.mock('@/components/navigation/shell/MainView', () => ({
     MainView: () => null,
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => true),
-        },
-    }).module;
+const modalMock = createModalModuleMock({
+    spies: {
+        alert: vi.fn(),
+        confirm: vi.fn(async () => true),
+    },
 });
+vi.mock('@/modal', () => modalMock.module);
 
 const fireAndForgetPromises = vi.hoisted(() => [] as Promise<any>[]);
 vi.mock('@/utils/system/fireAndForget', () => ({
@@ -126,6 +121,29 @@ function findActionButton(screen: RenderScreenResult, testID: string) {
     return button;
 }
 
+function mockGithubAuthFeatures(action: 'provision' | 'login', mode: 'keyed' | 'keyless') {
+    getServerFeaturesSnapshotMock.mockResolvedValue({
+        status: 'ready',
+        features: {
+            capabilities: {
+                oauth: {
+                    providers: {
+                        github: { configured: true },
+                    },
+                },
+                auth: {
+                    methods: [
+                        {
+                            id: 'github',
+                            actions: [{ id: action, enabled: true, mode }],
+                        },
+                    ],
+                },
+            },
+        },
+    });
+}
+
 afterEach(() => {
     vi.clearAllMocks();
 });
@@ -138,27 +156,7 @@ describe('Home external auth start', () => {
             getExternalAuthUrl: vi.fn(async () => 'https://oauth.example.test/auth'),
         };
         getAuthProviderMock.mockReturnValue(provider);
-
-        getServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: {
-                capabilities: {
-                    oauth: {
-                        providers: {
-                            github: { configured: true },
-                        },
-                    },
-                    auth: {
-                        methods: [
-                            {
-                                id: 'github',
-                                actions: [{ id: 'provision', enabled: true, mode: 'keyed' }],
-                            },
-                        ],
-                    },
-                },
-            },
-        });
+        mockGithubAuthFeatures('provision', 'keyed');
 
         const screen = await renderScreen(<Home />);
         await act(async () => {
@@ -195,27 +193,7 @@ describe('Home external auth start', () => {
             getExternalAuthUrl: vi.fn(async () => 'https://oauth.example.test/auth'),
         };
         getAuthProviderMock.mockReturnValue(provider);
-
-        getServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: {
-                capabilities: {
-                    oauth: {
-                        providers: {
-                            github: { configured: true },
-                        },
-                    },
-                    auth: {
-                        methods: [
-                            {
-                                id: 'github',
-                                actions: [{ id: 'login', enabled: true, mode: 'keyless' }],
-                            },
-                        ],
-                    },
-                },
-            },
-        });
+        mockGithubAuthFeatures('login', 'keyless');
 
         const screen = await renderScreen(<Home />);
         await act(async () => {

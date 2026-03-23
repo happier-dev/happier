@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createUseSettingMock, flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
+import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
 
 const fixedNow = 1_700_000_000_000;
 
@@ -27,40 +28,38 @@ const {
     stopSessionSpy: vi.fn<(..._args: any[]) => Promise<any>>(async (..._args: any[]) => ({ ok: true })),
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        TurboModuleRegistry: { getEnforcing: () => ({}) },
-        View: 'View',
-        Text: 'Text',
-        ScrollView: 'ScrollView',
-        ActivityIndicator: 'ActivityIndicator',
-        RefreshControl: 'RefreshControl',
-        Pressable: 'Pressable',
-        TextInput: 'TextInput',
-    });
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { back: vi.fn(), push: routerPushSpy, replace: vi.fn() },
-        params: { id: 'machine-1' },
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installMachineDetailsCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { back: vi.fn(), push: routerPushSpy, replace: vi.fn() },
+            params: { id: 'machine-1' },
+        }).module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: modalSpies,
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSessions: () => [],
+            useMachine: () => ({
+                id: 'machine-1',
+                activeAt: fixedNow,
+                metadata: { platform: 'darwin', windowsRemoteSessionConsole: 'visible' },
+                metadataVersion: 1,
+                daemonStateVersion: 1,
+            }),
+            useSetting: createUseSettingMock({
+                fallback: () => false,
+            }),
+            useSettingMutable: () => [null, vi.fn()],
+            useSettings: () => ({}),
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -112,13 +111,6 @@ vi.mock('@/components/sessions/runs/ExecutionRunRow', () => ({
         ),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: modalSpies,
-    }).module;
-});
-
 vi.mock('@/sync/ops', () => ({
     machineSpawnNewSession: vi.fn(async () => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
     machineStopDaemon: vi.fn(async () => ({ message: 'noop' })),
@@ -130,25 +122,6 @@ vi.mock('@/sync/ops', () => ({
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStop: (...args: any[]) => stopRunSpy(...args),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSessions: () => [],
-        useMachine: () => ({
-            id: 'machine-1',
-            activeAt: fixedNow,
-            metadata: { platform: 'darwin', windowsRemoteSessionConsole: 'visible' },
-            metadataVersion: 1,
-            daemonStateVersion: 1,
-        }),
-        useSetting: createUseSettingMock({
-            fallback: () => false,
-        }),
-        useSettingMutable: () => [null, vi.fn()],
-        useSettings: () => ({}),
-    });
-});
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => () => { } }));
 vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({

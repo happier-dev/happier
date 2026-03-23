@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
 
 const testGlobal = globalThis as typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -27,45 +28,55 @@ const {
     routerMock: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        TurboModuleRegistry: { getEnforcing: () => ({}) },
-        View: 'View',
-        Text: 'Text',
-        ScrollView: 'ScrollView',
-        ActivityIndicator: 'ActivityIndicator',
-        RefreshControl: 'RefreshControl',
-        Pressable: 'Pressable',
-        TextInput: 'TextInput',
-    });
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { ...routerMock, back: routerBackSpy },
-        params: { id: 'machine-1' },
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installMachineDetailsCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { ...routerMock, back: routerBackSpy },
+            params: { id: 'machine-1' },
+        }).module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: confirmSpy,
+                prompt: vi.fn(),
+                show: vi.fn(),
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSessions: () => [],
+            useMachine: () => ({
+                id: 'machine-1',
+                active: true,
+                activeAt: Date.now(),
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                seq: 0,
+                metadata: { displayName: 'My Machine', host: 'host', platform: 'darwin' },
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+                revokedAt: null,
+            }),
+            useSetting: () => false,
+            useSettingMutable: () => [null, vi.fn()],
+            useSettings: () => ({}),
+            storage: {
+                getState: () => ({
+                    settings: {},
+                    sessions: {},
+                    machines: {},
+                    getProjectForSession: () => null,
+                }),
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -95,18 +106,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/components/machines/InstallableDepInstaller', () => ({ InstallableDepInstaller: () => null }));
 vi.mock('@/components/sessions/runs/ExecutionRunRow', () => ({ ExecutionRunRow: () => null }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: confirmSpy,
-            prompt: vi.fn(),
-            show: vi.fn(),
-        },
-    }).module;
-});
-
 vi.mock('@/sync/ops', () => ({
     machineSpawnNewSession: vi.fn(async () => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
     machineStopDaemon: vi.fn(async () => ({ message: 'noop' })),
@@ -119,29 +118,6 @@ vi.mock('@/sync/ops', () => ({
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStop: vi.fn(async () => ({ ok: true })),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSessions: () => [],
-        useMachine: () => ({
-            id: 'machine-1',
-            active: true,
-            activeAt: Date.now(),
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            seq: 0,
-            metadata: { displayName: 'My Machine', host: 'host', platform: 'darwin' },
-            metadataVersion: 1,
-            daemonState: null,
-            daemonStateVersion: 0,
-            revokedAt: null,
-        }),
-        useSetting: () => false,
-        useSettingMutable: () => [null, vi.fn()],
-        useSettings: () => ({}),
-    });
-});
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => () => {} }));
 vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({

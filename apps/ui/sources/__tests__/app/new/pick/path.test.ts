@@ -13,7 +13,7 @@ import {
     createNavigationMock,
     createRouterMock,
     enableReactActEnvironment,
-    PICKER_THEME_COLORS,
+    installPickerCommonModuleMocks,
     type PickerNavigationState,
 } from './testHarness';
 
@@ -54,42 +54,55 @@ const pickerMachine = createMachineFixture({
     id: 'm1',
     metadata: pickerMachineMetadata,
 });
+installPickerCommonModuleMocks({
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (options: { web?: unknown; ios?: unknown; default?: unknown }) =>
+                    options.web ?? options.ios ?? options.default,
+            },
+            TurboModuleRegistry: {
+                getEnforcing: () => ({}),
+            },
+        }),
+    expoRouter: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const module = createExpoRouterMock({
+            navigation: navigationMock,
+            router: {
+                push: routerMock.push,
+                back: routerMock.back,
+                replace: routerMock.replace,
+                setParams: routerMock.setParams,
+            },
+        }).module;
 
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Platform: {
-                                            OS: 'web',
-                                            select: (options: { web?: unknown; ios?: unknown; default?: unknown }) =>
-                                                options.web ?? options.ios ?? options.default,
-                                        },
-                                        TurboModuleRegistry: {
-                                            getEnforcing: () => ({}),
-                                        },
-                                    }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const module = createExpoRouterMock({
-        navigation: navigationMock,
-        router: {
-            push: routerMock.push,
-            back: routerMock.back,
-            replace: routerMock.replace,
-            setParams: routerMock.setParams,
-        },
-    }).module;
-
-    return {
-        ...module,
-        useNavigation: () => navigationMock,
-        useLocalSearchParams: () => localSearchParams,
-    };
+        return {
+            ...module,
+            useNavigation: () => navigationMock,
+            useLocalSearchParams: () => localSearchParams,
+        };
+    },
+    unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useAllMachines: () => [pickerMachine],
+                useSessions: () => [],
+                useSetting: (key: string) => {
+                    if (key === 'recentMachinePaths') return [];
+                    if (key === 'usePathPickerSearch') return false;
+                    return null;
+                },
+                useSettingMutable: (key: string) => {
+                    if (key === 'favoriteDirectories') return [undefined, vi.fn()];
+                    return [null, vi.fn()];
+                },
+            },
+        }),
 });
 
 vi.mock('@react-navigation/native', () => ({
@@ -97,11 +110,6 @@ vi.mock('@react-navigation/native', () => ({
         setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
     },
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
@@ -123,24 +131,6 @@ vi.mock('@/components/sessions/new/components/PathSelector', () => ({
         return null;
     },
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useAllMachines: () => [pickerMachine],
-            useSessions: () => [],
-            useSetting: (key: string) => {
-                if (key === 'recentMachinePaths') return [];
-                if (key === 'usePathPickerSearch') return false;
-                return null;
-            },
-            useSettingMutable: (key: string) => {
-                if (key === 'favoriteDirectories') return [undefined, vi.fn()];
-                return [null, vi.fn()];
-            },
-        },
-    }));
 
 describe('PathPickerScreen', () => {
     afterEach(() => {

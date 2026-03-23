@@ -27,6 +27,27 @@ type CapturedProfilesListProps = {
     onEditProfile?: (profile: ProfileRow) => void;
 };
 
+const profileEditPath = '/new/pick/profile-edit' as const;
+const testProfileCompatibility: ProfileCompatibility = {
+    claude: true,
+    codex: true,
+    gemini: true,
+};
+const testProfileRow: ProfileRow = {
+    id: 'p1',
+    name: 'Test profile',
+    isBuiltIn: false,
+    compatibility: testProfileCompatibility,
+};
+
+function createPassthroughHostComponent(name: string) {
+    return ({ children, ...props }: NativeChildrenProps) => React.createElement(name, props, children);
+}
+
+function createLeafHostComponent(name: string) {
+    return () => React.createElement(name);
+}
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -66,22 +87,20 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSetting: () => false,
-        useSettingMutable: () => [[], vi.fn()],
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: () => false,
+            useSettingMutable: () => [[], vi.fn()],
+        },
     });
 });
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            show: vi.fn(),
-        },
-    }).module;
+    return createModalModuleMock().module;
 });
 
 vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
@@ -89,7 +108,7 @@ vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
 }));
 
 vi.mock('@/components/profiles/edit', () => ({
-    ProfileEditForm: () => React.createElement('ProfileEditForm'),
+    ProfileEditForm: createLeafHostComponent('ProfileEditForm'),
 }));
 
 let capturedProfilesListProps: CapturedProfilesListProps | null = null;
@@ -113,20 +132,20 @@ vi.mock('@/sync/domains/profiles/profileMutations', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: (props: NativeChildrenProps) => React.createElement('ItemList', props, props.children),
+    ItemList: createPassthroughHostComponent('ItemList'),
 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: NativeChildrenProps) => React.createElement('ItemGroup', props, props.children),
+    ItemGroup: createPassthroughHostComponent('ItemGroup'),
 }));
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: NativeChildrenProps) => React.createElement('Item', props, props.children),
+    Item: createPassthroughHostComponent('Item'),
 }));
 vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: NativeChildrenProps) => React.createElement('Switch', props, props.children),
+    Switch: createPassthroughHostComponent('Switch'),
 }));
 
 vi.mock('@/components/secrets/requirements', () => ({
-    SecretRequirementModal: () => React.createElement('SecretRequirementModal'),
+    SecretRequirementModal: createLeafHostComponent('SecretRequirementModal'),
 }));
 
 vi.mock('@/utils/secrets/secretSatisfaction', () => ({
@@ -155,7 +174,7 @@ describe('ProfileManager (native)', () => {
 
         expect(routerMock.push).toHaveBeenCalledTimes(1);
         expect(routerMock.push).toHaveBeenCalledWith({
-            pathname: '/new/pick/profile-edit',
+            pathname: profileEditPath,
             params: {},
         });
     });
@@ -166,18 +185,13 @@ describe('ProfileManager (native)', () => {
 
         expect(typeof capturedProfilesListProps?.onEditProfile).toBe('function');
         await act(async () => {
-            capturedProfilesListProps?.onEditProfile?.({
-                id: 'p1',
-                name: 'Test profile',
-                isBuiltIn: false,
-                compatibility: { claude: true, codex: true, gemini: true },
-            });
+            capturedProfilesListProps?.onEditProfile?.(testProfileRow);
         });
 
         expect(routerMock.push).toHaveBeenCalledTimes(1);
         expect(routerMock.push).toHaveBeenCalledWith({
-            pathname: '/new/pick/profile-edit',
-            params: { profileId: 'p1' },
+            pathname: profileEditPath,
+            params: { profileId: testProfileRow.id },
         });
     });
 
@@ -187,18 +201,13 @@ describe('ProfileManager (native)', () => {
 
         expect(typeof capturedProfilesListProps?.onDuplicateProfile).toBe('function');
         await act(async () => {
-            capturedProfilesListProps?.onDuplicateProfile?.({
-                id: 'p1',
-                name: 'Test profile',
-                isBuiltIn: false,
-                compatibility: { claude: true, codex: true, gemini: true },
-            });
+            capturedProfilesListProps?.onDuplicateProfile?.(testProfileRow);
         });
 
         expect(routerMock.push).toHaveBeenCalledTimes(1);
         expect(routerMock.push).toHaveBeenCalledWith({
-            pathname: '/new/pick/profile-edit',
-            params: { cloneFromProfileId: 'p1' },
+            pathname: profileEditPath,
+            params: { cloneFromProfileId: testProfileRow.id },
         });
     });
 });

@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -14,52 +15,55 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 const { requests } = vi.hoisted(() => ({
     requests: [] as Array<Record<string, unknown>>,
 }));
-vi.mock('react-native-reanimated', () => ({}));
+const modalSpies = vi.hoisted(() => ({
+    alert: vi.fn(),
+    confirm: vi.fn(),
+    prompt: vi.fn(),
+    show: vi.fn(),
+}));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                                                                TurboModuleRegistry: { getEnforcing: () => ({}) },
-                                                                                                View: 'View',
-                                                                                                Text: 'Text',
-                                                                                                ScrollView: 'ScrollView',
-                                                                                                ActivityIndicator: 'ActivityIndicator',
-                                                                                                RefreshControl: 'RefreshControl',
-                                                                                                Pressable: 'Pressable',
-                                                                                                TextInput: 'TextInput',
-                                                                                            }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => {
-    return {
-        Ionicons: 'Ionicons',
-        Octicons: 'Octicons',
-    };
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
-        params: { id: 'machine-1' },
-    });
-    return routerMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/constants/Typography', () => {
-    return { Typography: { default: () => ({}) } };
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installMachineDetailsCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+            params: { id: 'machine-1' },
+        }).module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({ spies: modalSpies }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: { getState: () => ({ applyFriends: vi.fn() }) },
+            useSessions: () => [],
+            useAllMachines: () => [],
+            useMachine: () => null,
+            useSettings: () => {
+                React.useMemo(() => 0, []);
+                return {
+                    experiments: true,
+                    codexBackendMode: 'acp',
+                };
+            },
+            useSetting: (name: string) => {
+                React.useMemo(() => 0, [name]);
+                if (name === 'experiments') return true;
+                return false;
+            },
+            useSettingMutable: (name: string) => {
+                React.useMemo(() => 0, [name]);
+                return [null, vi.fn()];
+            },
+            useLocalSetting: (name: string) => {
+                React.useMemo(() => 0, [name]);
+                if (name === 'uiFontScale') return 1;
+                return null;
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -98,49 +102,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(),
-            prompt: vi.fn(),
-            show: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: { getState: () => ({ applyFriends: vi.fn() }) },
-    useSessions: () => [],
-    useAllMachines: () => [],
-    useMachine: () => null,
-    useSettings: () => {
-            React.useMemo(() => 0, []);
-            return {
-                experiments: true,
-                codexBackendMode: 'acp',
-            };
-        },
-    useSetting: (name: string) => {
-            React.useMemo(() => 0, [name]);
-            if (name === 'experiments') return true;
-            return false;
-        },
-    useSettingMutable: (name: string) => {
-            React.useMemo(() => 0, [name]);
-            return [null, vi.fn()];
-        },
-    useLocalSetting: (name: string) => {
-            React.useMemo(() => 0, [name]);
-            if (name === 'uiFontScale') return 1;
-            return null;
-        },
-});
-});
 
 vi.mock('@/hooks/session/useNavigateToSession', () => {
     return { useNavigateToSession: () => () => {} };

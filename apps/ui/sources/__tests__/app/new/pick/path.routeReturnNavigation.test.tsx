@@ -13,6 +13,7 @@ import {
     createNavigationMock,
     createRouterMock,
     enableReactActEnvironment,
+    installPickerCommonModuleMocks,
     PICKER_THEME_COLORS,
     type PickerNavigationState,
 } from './testHarness';
@@ -52,53 +53,63 @@ function emitLocalSearchParamsChange() {
         listener();
     }
 }
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Platform: { OS: 'web' },
-                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () =>
-    (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
-        theme: {
-            colors: {
-                ...PICKER_THEME_COLORS,
-                input: { background: '#fff', placeholder: '#aaa', text: '#000' },
-            },
-        },
-    }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const module = createExpoRouterMock({
-        navigation: navigationMock,
-        router: {
-            push: routerMock.push,
-            back: routerMock.back,
-            replace: routerMock.replace,
-            setParams: routerMock.setParams,
-        },
-    }).module;
-
-    return {
-        ...module,
-        useNavigation: () => navigationMock,
-        useLocalSearchParams: () =>
-            React.useSyncExternalStore(
-                (listener) => {
-                    paramListeners.add(listener);
-                    return () => {
-                        paramListeners.delete(listener);
-                    };
+installPickerCommonModuleMocks({
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            Platform: { OS: 'web' },
+        }),
+    unistyles: async () =>
+        (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
+            theme: {
+                colors: {
+                    ...PICKER_THEME_COLORS,
+                    input: { background: '#fff', placeholder: '#aaa', text: '#000' },
                 },
-                () => localSearchParams,
-                () => localSearchParams,
-            ),
-    };
+            },
+        }),
+    expoRouter: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const module = createExpoRouterMock({
+            navigation: navigationMock,
+            router: {
+                push: routerMock.push,
+                back: routerMock.back,
+                replace: routerMock.replace,
+                setParams: routerMock.setParams,
+            },
+        }).module;
+
+        return {
+            ...module,
+            useNavigation: () => navigationMock,
+            useLocalSearchParams: () =>
+                React.useSyncExternalStore(
+                    (listener) => {
+                        paramListeners.add(listener);
+                        return () => {
+                            paramListeners.delete(listener);
+                        };
+                    },
+                    () => localSearchParams,
+                    () => localSearchParams,
+                ),
+        };
+    },
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useAllMachines: () => [pickerMachine],
+                useSessions: () => [],
+                useSetting: (key: string) => {
+                    if (key === 'recentMachinePaths') return [];
+                    if (key === 'usePathPickerSearch') return false;
+                    return null;
+                },
+                useSettingMutable: () => [[], vi.fn()],
+            },
+        }),
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
 });
 
 vi.mock('@react-navigation/native', () => ({
@@ -108,23 +119,6 @@ vi.mock('@react-navigation/native', () => ({
 }));
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useAllMachines: () => [pickerMachine],
-            useSessions: () => [],
-            useSetting: (key: string) => {
-                if (key === 'recentMachinePaths') return [];
-                if (key === 'usePathPickerSearch') return false;
-                return null;
-            },
-            useSettingMutable: () => [[], vi.fn()],
-        },
-    }));
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),

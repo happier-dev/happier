@@ -7,6 +7,7 @@ import {
     createNavigationMock,
     createRouterMock,
     enableReactActEnvironment,
+    installPickerCommonModuleMocks,
     PICKER_NAV_STATE,
     PICKER_THEME_COLORS,
     type PickerStackOptionsInput,
@@ -19,68 +20,61 @@ const navigationApi = createNavigationMock();
 const routerApi = createRouterMock();
 let localSearchParams = { selectedId: '' };
 
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Platform: { OS: 'ios' },
-                                        Pressable: 'Pressable',
-                                    }
-    );
-});
-
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSettingMutable: <K extends keyof Settings>(name: K): [Settings[K], (value: Settings[K]) => void] => {
-                if (name !== 'secrets') {
-                    throw new Error(`Unexpected setting key in secret picker test: ${String(name)}`);
-                }
-                return React.useState<Settings['secrets']>([]) as [Settings[K], (value: Settings[K]) => void];
+installPickerCommonModuleMocks({
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            Platform: { OS: 'ios' },
+            Pressable: 'Pressable',
+        }),
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: <K extends keyof Settings>(name: K): [Settings[K], (value: Settings[K]) => void] => {
+                    if (name !== 'secrets') {
+                        throw new Error(`Unexpected setting key in secret picker test: ${String(name)}`);
+                    }
+                    return React.useState<Settings['secrets']>([]) as [Settings[K], (value: Settings[K]) => void];
+                },
             },
-        },
-    }));
+        }),
+    unistyles: async () =>
+        (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
+            theme: { colors: { header: PICKER_THEME_COLORS.header } },
+        }),
+    expoRouter: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const baseModule = createExpoRouterMock({
+            navigation: navigationApi,
+            router: {
+                push: routerApi.push,
+                back: routerApi.back,
+                replace: routerApi.replace,
+                setParams: routerApi.setParams,
+            },
+        }).module;
+
+        return {
+            ...baseModule,
+            Stack: {
+                Screen: ({ options }: { options: PickerStackOptionsInput }) => {
+                    React.useEffect(() => {
+                        setOptionsSpy(options);
+                    }, [options]);
+                    return null;
+                },
+            },
+            useNavigation: () => navigationApi,
+            useLocalSearchParams: () => localSearchParams,
+        };
+    },
+});
 
 vi.mock('@/components/secrets/SecretsList', () => ({
     SecretsList: () => null,
 }));
-
-vi.mock('react-native-unistyles', async () =>
-    (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
-        theme: { colors: { header: PICKER_THEME_COLORS.header } },
-    }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const baseModule = createExpoRouterMock({
-        navigation: navigationApi,
-        router: {
-            push: routerApi.push,
-            back: routerApi.back,
-            replace: routerApi.replace,
-            setParams: routerApi.setParams,
-        },
-    }).module;
-
-    return {
-        ...baseModule,
-        Stack: {
-            Screen: ({ options }: { options: PickerStackOptionsInput }) => {
-                React.useEffect(() => {
-                    setOptionsSpy(options);
-                }, [options]);
-                return null;
-            },
-        },
-        useNavigation: () => navigationApi,
-        useLocalSearchParams: () => localSearchParams,
-    };
-});
 
 describe('SecretPickerScreen (Stack.Screen options stability)', () => {
     afterEach(() => {

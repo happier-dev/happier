@@ -51,6 +51,83 @@ export function enableReactActEnvironment() {
     (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 }
 
+type PickerModuleFactory = () => unknown | Promise<unknown>;
+type PickerStorageModuleFactory = (importOriginal: <T>() => Promise<T>) => unknown | Promise<unknown>;
+
+type PickerCommonModuleMocksOptions = Readonly<{
+    expoRouter?: PickerModuleFactory;
+    modal?: PickerModuleFactory;
+    reactNative?: PickerModuleFactory;
+    storage?: PickerStorageModuleFactory;
+    text?: PickerModuleFactory;
+    unistyles?: PickerModuleFactory;
+}>;
+
+const pickerCommonModuleMocksState = vi.hoisted(() => ({
+    options: {} as PickerCommonModuleMocksOptions,
+}));
+
+export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksOptions = {}) {
+    pickerCommonModuleMocksState.options = options;
+
+    vi.mock('@/text', async () => {
+        const activeOptions = pickerCommonModuleMocksState.options;
+        if (activeOptions.text) {
+            return await activeOptions.text();
+        }
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock();
+    });
+
+    vi.mock('react-native', async () => {
+        const activeOptions = pickerCommonModuleMocksState.options;
+        if (activeOptions.reactNative) {
+            return await activeOptions.reactNative();
+        }
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock();
+    });
+
+    vi.mock('expo-router', async () => {
+        const activeOptions = pickerCommonModuleMocksState.options;
+        if (activeOptions.expoRouter) {
+            return await activeOptions.expoRouter();
+        }
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock().module;
+    });
+
+    vi.mock('react-native-unistyles', async () => {
+        const activeOptions = pickerCommonModuleMocksState.options;
+        if (activeOptions.unistyles) {
+            return await activeOptions.unistyles();
+        }
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
+    });
+
+    vi.mock('@/modal', async () => {
+        const activeOptions = pickerCommonModuleMocksState.options;
+        if (activeOptions.modal) {
+            return await activeOptions.modal();
+        }
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    });
+
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        const activeOptions = pickerCommonModuleMocksState.options;
+        if (activeOptions.storage) {
+            return await activeOptions.storage(importOriginal);
+        }
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {},
+        });
+    });
+}
+
 export const PICKER_NAV_STATE = { index: 1, routes: [{ key: 'a' }, { key: 'b' }] } as const;
 
 export const PICKER_THEME_COLORS = {

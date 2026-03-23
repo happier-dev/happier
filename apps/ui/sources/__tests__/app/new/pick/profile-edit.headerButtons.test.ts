@@ -9,6 +9,7 @@ import {
     createRouterMock,
     createStackOptionsCapture,
     enableReactActEnvironment,
+    installPickerCommonModuleMocks,
     PICKER_NAV_STATE,
     PICKER_THEME_COLORS,
 } from './testHarness';
@@ -18,18 +19,6 @@ enableReactActEnvironment();
 type KeyboardAvoidingViewProps = Readonly<{
     children?: React.ReactNode;
 } & Record<string, unknown>>;
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            KeyboardAvoidingView: (props: KeyboardAvoidingViewProps) =>
-                React.createElement('KeyboardAvoidingView', props, props.children),
-            Platform: { OS: 'ios' },
-            useWindowDimensions: () => ({ width: 390, height: 844 }),
-        }
-    );
-});
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
@@ -50,35 +39,54 @@ navigationMock.setOptions = vi.fn();
 navigationMock.addListener = vi.fn(() => ({ remove: vi.fn() }));
 const stackOptionsCapture = createStackOptionsCapture();
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        navigation: navigationMock,
-        params: {
-            profileData: JSON.stringify({
-                id: 'p1',
-                name: 'Test profile',
-                isBuiltIn: false,
-                compatibility: { claude: true, codex: true, gemini: true },
-            }),
-        },
-        router: {
-            push: routerMock.push,
-            back: routerMock.back,
-            replace: routerMock.replace,
-            setParams: routerMock.setParams,
-        },
-        stackOptionsCapture,
-    }).module;
+installPickerCommonModuleMocks({
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            KeyboardAvoidingView: (props: KeyboardAvoidingViewProps) =>
+                React.createElement('KeyboardAvoidingView', props, props.children),
+            Platform: { OS: 'ios' },
+            useWindowDimensions: () => ({ width: 390, height: 844 }),
+        }),
+    expoRouter: async () =>
+        (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+            navigation: navigationMock,
+            params: {
+                profileData: JSON.stringify({
+                    id: 'p1',
+                    name: 'Test profile',
+                    isBuiltIn: false,
+                    compatibility: { claude: true, codex: true, gemini: true },
+                }),
+            },
+            router: {
+                push: routerMock.push,
+                back: routerMock.back,
+                replace: routerMock.replace,
+                setParams: routerMock.setParams,
+            },
+            stackOptionsCapture,
+        }).module,
+    unistyles: async () =>
+        (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
+            theme: { colors: { header: PICKER_THEME_COLORS.header, groupped: PICKER_THEME_COLORS.groupped } },
+            runtime: { insets: { bottom: 0 } },
+        }),
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: () => [[], vi.fn()],
+            },
+        }),
+    modal: async () =>
+        (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                show: vi.fn(),
+            },
+        }).module,
 });
-
-vi.mock('react-native-unistyles', async () =>
-    (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
-        theme: { colors: { header: PICKER_THEME_COLORS.header, groupped: PICKER_THEME_COLORS.groupped } },
-        runtime: { insets: { bottom: 0 } },
-    }));
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 vi.mock('@/components/profiles/edit', () => ({
     ProfileEditForm: () => React.createElement('ProfileEditForm'),
@@ -87,14 +95,6 @@ vi.mock('@/components/profiles/edit', () => ({
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1024 },
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSettingMutable: () => [[], vi.fn()],
-        },
-    }));
 
 vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     DEFAULT_PROFILES: [],
@@ -108,16 +108,6 @@ vi.mock('@/sync/domains/profiles/profileMutations', () => ({
     createEmptyCustomProfile: () => ({ id: 'new', name: '', isBuiltIn: false, compatibility: { claude: true, codex: true, gemini: true } }),
     duplicateProfileForEdit: <T,>(profile: T) => profile,
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            show: vi.fn(),
-        },
-    }).module;
-});
 
 vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
     promptUnsavedChangesAlert: vi.fn(async () => 'keep'),

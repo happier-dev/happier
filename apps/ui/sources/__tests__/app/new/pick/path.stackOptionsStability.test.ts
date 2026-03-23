@@ -10,8 +10,8 @@ import {
     createNavigationMock,
     createRouterMock,
     enableReactActEnvironment,
+    installPickerCommonModuleMocks,
     PICKER_NAV_STATE,
-    PICKER_THEME_COLORS,
     type PickerStackOptionsInput,
 } from './testHarness';
 
@@ -37,8 +37,6 @@ const stableFavoriteDirectories: string[] = [];
 let localSearchParams: { machineId: string; selectedPath: string } = { machineId: 'm1', selectedPath: '' };
 const routerApi = createRouterMock();
 const navigationApi = createNavigationMock();
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 type ItemGroupProps = React.PropsWithChildren<Record<string, never>>;
 type PathSelectorProps = {
@@ -80,68 +78,60 @@ vi.mock('@/utils/sessions/recentPaths', () => ({
     getRecentPathsForMachine: () => [],
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Platform: { OS: 'ios', select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? null },
-                                    }
-    );
-});
-
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@react-navigation/native', () => ({
     CommonActions: {
         setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
     },
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useAllMachines: () => stableMachines,
-            useSessions: () => stableSessions,
-            useSetting: (key: string) => {
-                if (key === 'usePathPickerSearch') return false;
-                if (key === 'recentMachinePaths') return stableRecentMachinePaths;
-                return null;
+installPickerCommonModuleMocks({
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            Platform: { OS: 'ios', select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? null },
+        }),
+    unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
+    storage: async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useAllMachines: () => stableMachines,
+                useSessions: () => stableSessions,
+                useSetting: (key: string) => {
+                    if (key === 'usePathPickerSearch') return false;
+                    if (key === 'recentMachinePaths') return stableRecentMachinePaths;
+                    return null;
+                },
+                useSettingMutable: () => [stableFavoriteDirectories, vi.fn()],
             },
-            useSettingMutable: () => [stableFavoriteDirectories, vi.fn()],
-        },
-    }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const baseModule = createExpoRouterMock({
-        navigation: navigationApi,
-        router: {
-            push: routerApi.push,
-            back: routerApi.back,
-            replace: routerApi.replace,
-            setParams: routerApi.setParams,
-        },
-    }).module;
-
-    return {
-        ...baseModule,
-        Stack: {
-            Screen: ({ options }: { options: PickerStackOptionsInput }) => {
-                React.useEffect(() => {
-                    setOptionsSpy(options);
-                }, [options]);
-                return null;
+        }),
+    expoRouter: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const baseModule = createExpoRouterMock({
+            navigation: navigationApi,
+            router: {
+                push: routerApi.push,
+                back: routerApi.back,
+                replace: routerApi.replace,
+                setParams: routerApi.setParams,
             },
-        },
-        useNavigation: () => navigationApi,
-        useLocalSearchParams: () => localSearchParams,
-    };
+        }).module;
+
+        return {
+            ...baseModule,
+            Stack: {
+                Screen: ({ options }: { options: PickerStackOptionsInput }) => {
+                    React.useEffect(() => {
+                        setOptionsSpy(options);
+                    }, [options]);
+                    return null;
+                },
+            },
+            useNavigation: () => navigationApi,
+            useLocalSearchParams: () => localSearchParams,
+        };
+    },
 });
 
 describe('PathPickerScreen (Stack.Screen options stability)', () => {

@@ -9,57 +9,20 @@ import {
     enableReactActEnvironment,
     PICKER_NAV_STATE,
 } from './testHarness';
-import { createMissingRequiredSecretScenario } from './profileSecretRequirementTestHarness';
+import {
+    captureProfilesListProps,
+    createMissingRequiredSecretScenario,
+    getCapturedProfilePressHandler,
+    getProfileSecretRequirementSetting,
+    profileSecretRequirementModalMock,
+    resetProfileSecretRequirementHarness,
+    useProfileSecretRequirementSettingMutable,
+} from './profileSecretRequirementTestHarness';
 import type { ProfilesListProps } from '@/components/profiles/ProfilesList';
 
 enableReactActEnvironment();
 
-type CapturedProfilesListProps = Pick<ProfilesListProps, 'onPressProfile'>;
-
-const modalMockRef = vi.hoisted(() => ({
-    current: null as {
-        module: unknown;
-        spies: {
-            show: ReturnType<typeof vi.fn>;
-            alert: ReturnType<typeof vi.fn>;
-            prompt: ReturnType<typeof vi.fn>;
-            confirm: ReturnType<typeof vi.fn>;
-        };
-    } | null,
-}));
-
 const missingRequiredSecretScenario = createMissingRequiredSecretScenario();
-
-let capturedProfilesListProps: CapturedProfilesListProps | null = null;
-
-function captureProfilesListProps(props: CapturedProfilesListProps) {
-    capturedProfilesListProps = props;
-}
-
-function resetProfileSecretRequirementHarness() {
-    capturedProfilesListProps = null;
-    modalMockRef.current?.spies.show.mockReset();
-    modalMockRef.current?.spies.alert.mockReset();
-    modalMockRef.current?.spies.prompt.mockReset();
-    modalMockRef.current?.spies.confirm.mockReset();
-}
-
-function getCapturedProfilePressHandler() {
-    const onPressProfile = capturedProfilesListProps?.onPressProfile;
-    if (!onPressProfile) {
-        throw new Error('Expected ProfilesList onPressProfile handler');
-    }
-    return onPressProfile;
-}
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'ios' },
-    });
-});
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
@@ -81,6 +44,17 @@ const { routerMock, navigationMock } = vi.hoisted(() => ({
     },
 }));
 
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: { OS: 'ios' },
+                }
+    );
+});
+
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const module = createExpoRouterMock({
@@ -101,23 +75,15 @@ vi.mock('expo-router', async () => {
 });
 
 vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    modalMockRef.current = modalMock;
-    return modalMock.module;
+    return profileSecretRequirementModalMock.module;
 });
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
     (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
         importOriginal,
         overrides: {
-            useSetting: (await import('@/dev/testkit/mocks/storage')).createUseSettingMock({
-                values: {
-                    useProfiles: true,
-                    experiments: false,
-                },
-            }),
-            useSettingMutable: () => [[], vi.fn()],
+            useSetting: getProfileSecretRequirementSetting,
+            useSettingMutable: useProfileSecretRequirementSettingMutable,
         },
     }));
 
@@ -202,7 +168,7 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
             await onPressProfile(missingRequiredSecretScenario.profile);
         });
 
-        expect(modalMockRef.current?.spies.show).not.toHaveBeenCalled();
+        expect(profileSecretRequirementModalMock.spies.show).not.toHaveBeenCalled();
         expect(routerMock.push).toHaveBeenCalledTimes(1);
         expect(routerMock.push).toHaveBeenCalledWith({
             pathname: '/new/pick/secret-requirement',

@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).expo = { EventEmitter: class { } };
@@ -32,47 +33,26 @@ const mockState = vi.hoisted(() => ({
     sessionsState: [] as Array<unknown>,
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                TurboModuleRegistry: { getEnforcing: () => ({}) },
-                                View: 'View',
-                                Text: 'Text',
-                                ScrollView: 'ScrollView',
-                                ActivityIndicator: 'ActivityIndicator',
-                                RefreshControl: 'RefreshControl',
-                                Pressable: 'Pressable',
-                                TextInput: 'TextInput',
-                            }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
-        params: { id: 'machine-1' },
-    });
-    return routerMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}), mono: () => ({}) } }));
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+installMachineDetailsCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSessions: () => mockState.sessionsState,
+            useAllMachines: () => [],
+            useMachine: () => createMachineRecord(),
+            storage: {
+                getState: () => ({
+                    settings: {},
+                    sessions: mockState.machineTargetSessionsState,
+                    machines: mockState.machinesState,
+                    getProjectForSession: (sessionId: string) => mockState.projectForSession[sessionId] ?? null,
+                }),
+            },
+            useSetting: () => false,
+            useSettingMutable: () => [null, vi.fn()],
+            useSettings: () => ({}),
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -109,18 +89,6 @@ vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
     openMachinePathBrowserModal: (params: unknown) => mockState.openMachinePathBrowserModalMock(params),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(),
-            prompt: vi.fn(),
-            show: vi.fn(),
-        },
-    }).module;
-});
-
 vi.mock('@/sync/ops', () => ({
     machineSpawnNewSession: vi.fn(async () => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
     machineStopDaemon: vi.fn(async () => ({ message: 'noop' })),
@@ -133,26 +101,6 @@ vi.mock('@/sync/ops', () => ({
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStop: vi.fn(async () => ({ ok: true })),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSessions: () => mockState.sessionsState,
-    useAllMachines: () => [],
-    useMachine: () => createMachineRecord(),
-    storage: {
-            getState: () => ({
-                settings: {},
-                sessions: mockState.machineTargetSessionsState,
-                machines: mockState.machinesState,
-                getProjectForSession: (sessionId: string) => mockState.projectForSession[sessionId] ?? null,
-            }),
-        },
-    useSetting: () => false,
-    useSettingMutable: () => [null, vi.fn()],
-    useSettings: () => ({}),
-});
-});
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => () => {} }));
 vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({

@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStackOptionsCapture } from '@/dev/testkit/mocks/router';
 import { renderScreen } from '@/dev/testkit';
+import { installAutomationAppRouteCommonModuleMocks } from './automationAppRouteTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,21 +54,6 @@ const hydrateReadyState = vi.hoisted(() => ({
     ready: true,
 }));
 const stackOptionsCapture = createStackOptionsCapture();
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { back: routerBackSpy, replace: routerReplaceSpy },
-        params: { id: 'a1' },
-        stackOptionsCapture,
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -122,18 +108,6 @@ vi.mock('@/components/automations/shared/ExistingSessionAutomationUnavailableNot
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useAutomation: () => automationState.value,
-    useSession: () => sessionState.value,
-    useSettings: () => ({}),
-    storage: {
-        getState: () => getStateSpy(),
-    },
-});
-});
-
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: () => hydrateReadyState.ready,
 }));
@@ -171,21 +145,45 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
     navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => {
-        const labels: Record<string, string> = {
-            'automations.edit.title': 'Edit automation',
-            'automations.edit.saveAutomationLabel': 'Save automation',
-            'common.back': 'Back',
-        };
-        return labels[key] ?? key;
-    } });
+installAutomationAppRouteCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { back: routerBackSpy, replace: routerReplaceSpy },
+            params: { id: 'a1' },
+            stackOptionsCapture,
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useAutomation: () => automationState.value,
+            useSession: () => sessionState.value,
+            useSettings: () => ({}),
+            storage: {
+                getState: () => getStateSpy(),
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => {
+            const labels: Record<string, string> = {
+                'automations.edit.title': 'Edit automation',
+                'automations.edit.saveAutomationLabel': 'Save automation',
+                'common.back': 'Back',
+            };
+            return labels[key] ?? key;
+        } });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
 });
 
 describe('AutomationEditScreen route', () => {

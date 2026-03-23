@@ -288,11 +288,9 @@ describe('RootLayout notification routing', () => {
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            tree = (await renderScreen(React.createElement(RootLayout))).tree;
-            await act(async () => {
-                // flush microtasks
-                await Promise.resolve();
-            });
+            const screen = await renderScreen(React.createElement(RootLayout));
+            tree = screen.tree;
+            await act(async () => {});
             expect(router.push).not.toHaveBeenCalled();
         } finally {
             if (tree) {
@@ -312,10 +310,11 @@ describe('RootLayout restore navigation', () => {
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            tree = (await renderScreen(React.createElement(RootLayout))).tree;
+            const screen = await renderScreen(React.createElement(RootLayout));
+            tree = screen.tree;
             if (!tree) throw new Error('Expected renderer');
 
-            const screens = tree.root.findAllByType('StackScreen' as any);
+            const screens = screen.findAllByType('StackScreen' as any);
             const restoreIndex = screens.find((s) => s.props?.name === 'restore/index');
             expect(restoreIndex?.props?.options?.headerTitle).toBe('connect.restoreAccount');
 
