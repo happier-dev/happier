@@ -1,15 +1,14 @@
-import type { UnistylesThemes } from 'react-native-unistyles';
-
 import type { AgentUiConfig } from '@/agents/registry/registryUi';
+import { PROVIDER_LOGO_SVG_XML } from '@/agents/registry/providerLogoSvgXml';
 
 export const CODEX_UI: AgentUiConfig = {
     id: 'codex',
-    icon: require('@/assets/images/icon-gpt.png'),
-    svgIconXml: null,
-    tintColor: (theme: UnistylesThemes[keyof UnistylesThemes]) => theme.colors.text,
+    icon: null,
+    svgIconXml: PROVIDER_LOGO_SVG_XML.codex ?? null,
+    tintColor: null,
     avatarOverlay: {
         circleScale: 0.35,
-        iconScale: ({ size }: { size: number }) => Math.round(size * 0.25),
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),
     },
     cliGlyph: '꩜',
 };

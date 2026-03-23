@@ -1,13 +1,14 @@
 import type { AgentUiConfig } from '@/agents/registry/registryUi';
+import { PROVIDER_LOGO_SVG_XML } from '@/agents/registry/providerLogoSvgXml';
 
 export const CLAUDE_UI: AgentUiConfig = {
     id: 'claude',
-    icon: require('@/assets/images/icon-claude.png'),
-    svgIconXml: null,
+    icon: null,
+    svgIconXml: PROVIDER_LOGO_SVG_XML.claude ?? null,
     tintColor: null,
     avatarOverlay: {
         circleScale: 0.35,
-        iconScale: ({ size }: { size: number }) => Math.round(size * 0.28),
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),
     },
     // iOS can render dingbat glyphs as emoji; force text presentation (U+FE0E).
     cliGlyph: '\u2733\uFE0E',

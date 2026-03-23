@@ -5,10 +5,11 @@ export const QWEN_UI: AgentUiConfig = {
     id: 'qwen',
     icon: null,
     svgIconXml: PROVIDER_LOGO_SVG_XML.qwen ?? null,
+    pickerIconScale: 0.9,
     tintColor: null,
     avatarOverlay: {
         circleScale: 0.35,
-        iconScale: ({ size }: { size: number }) => Math.round(size * 0.25),
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),
     },
     cliGlyph: 'Q',
 };

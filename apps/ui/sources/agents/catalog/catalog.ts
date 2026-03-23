@@ -92,6 +92,10 @@ export function getAgentAvatarOverlaySizes(
     return registryUi().getAgentAvatarOverlaySizes(agentId, size);
 }
 
+export function getAgentPickerIconScale(agentId: AgentId): ReturnType<RegistryUiModule['getAgentPickerIconScale']> {
+    return registryUi().getAgentPickerIconScale(agentId);
+}
+
 export function getAgentCliGlyph(agentId: AgentId): ReturnType<RegistryUiModule['getAgentCliGlyph']> {
     return registryUi().getAgentCliGlyph(agentId);
 }

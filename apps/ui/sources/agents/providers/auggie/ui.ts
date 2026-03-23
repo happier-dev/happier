@@ -5,10 +5,11 @@ export const AUGGIE_UI: AgentUiConfig = {
     id: 'auggie',
     icon: null,
     svgIconXml: PROVIDER_LOGO_SVG_XML.auggie ?? null,
+    pickerIconScale: 1.15,
     tintColor: null,
     avatarOverlay: {
         circleScale: 0.35,
-        iconScale: ({ size }: { size: number }) => Math.round(size * 0.25),
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),
     },
     cliGlyph: 'A',
 };

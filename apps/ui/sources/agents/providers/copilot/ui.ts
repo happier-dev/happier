@@ -8,7 +8,7 @@ export const COPILOT_UI: AgentUiConfig = {
     tintColor: null,
     avatarOverlay: {
         circleScale: 0.35,
-        iconScale: ({ size }: { size: number }) => Math.round(size * 0.25),
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),
     },
     cliGlyph: 'CP',
 };

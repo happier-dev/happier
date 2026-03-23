@@ -5,10 +5,11 @@ export const PI_UI: AgentUiConfig = {
     id: 'pi',
     icon: null,
     svgIconXml: PROVIDER_LOGO_SVG_XML.pi ?? null,
+    pickerIconScale: 0.9,
     tintColor: null,
     avatarOverlay: {
         circleScale: 0.35,
-        iconScale: ({ size }: { size: number }) => Math.round(size * 0.25),
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),
     },
     cliGlyph: 'PI',
 };
