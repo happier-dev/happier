@@ -177,6 +177,53 @@ describe('useNewSessionAgentPickerControls', () => {
         }));
     });
 
+    it('marks engine rail selections as immediate updates that keep the popover open', async () => {
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [
+                {
+                    target: { kind: 'builtInAgent', agentId: 'claude' },
+                    targetKey: 'agent:claude',
+                    title: 'Claude',
+                    subtitle: null,
+                } as any,
+                {
+                    target: { kind: 'builtInAgent', agentId: 'codex' },
+                    targetKey: 'agent:codex',
+                    title: 'Codex',
+                    subtitle: null,
+                } as any,
+            ],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => true,
+            selectedBackendEntry: {
+                target: { kind: 'builtInAgent', agentId: 'claude' },
+                targetKey: 'agent:claude',
+                title: 'Claude',
+                subtitle: null,
+            } as any,
+            selectedBackendTargetKey: 'agent:claude',
+            setBackendTarget: vi.fn(),
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+        }));
+
+        const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === 'agent:codex');
+
+        expect(codexOption?.onSelectImmediate).toBeTypeOf('function');
+        expect(codexOption?.closeOnSelectImmediate).toBe(false);
+    });
+
     it('does not expose an explicit apply action for detailed engine options', async () => {
         const hook = await renderHook(() => useNewSessionAgentPickerControls({
             useProfiles: false,

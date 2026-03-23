@@ -3,6 +3,7 @@ import * as React from 'react';
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
@@ -138,9 +139,16 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
 	            return {
 	            id: entry.targetKey,
 	            label: entry.title,
-	            icon: <AgentIcon agentId={entry.iconAgentId} size={12} />,
+	            icon: (
+	                <AgentIcon
+	                    agentId={entry.iconAgentId}
+	                    size={12}
+	                    style={{ transform: [{ scale: getAgentPickerIconScale(entry.iconAgentId) }] }}
+	                />
+	            ),
 	            subtitle,
 	            disabled,
+                closeOnSelectImmediate: false,
 	            onSelectImmediate: () => {
                 if (disabled) return;
                 const nextSelection = getEngineSelectionForTargetKey(entry.targetKey);

@@ -83,7 +83,9 @@ export function AgentInputChipPickerPanel(
     }
     if (option.onSelectImmediate) {
       option.onSelectImmediate();
-      props.onRequestClose();
+      if (option.closeOnSelectImmediate !== false) {
+        props.onRequestClose();
+      }
       return;
     }
   }, [props.onRequestClose, props.options]);

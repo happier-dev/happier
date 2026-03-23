@@ -164,6 +164,46 @@ describe('AgentInputChipPickerPopover', () => {
         expect(screen.findByTestId('agent-input-chip-picker.apply')).toBeNull();
     });
 
+    it('keeps the popover open for immediate detailed selections that opt out of auto-close', async () => {
+        const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
+        const onSelect = vi.fn();
+        const onRequestClose = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerPopover
+            open
+            anchorRef={{ current: { nodeType: 'View' } } as any}
+            title="Pick"
+            options={[
+                {
+                    id: 'one',
+                    label: 'Primary',
+                    sectionId: 'linked',
+                    sectionLabel: 'Linked',
+                    detailDescription: 'Primary checkout',
+                } as any,
+                {
+                    id: 'two',
+                    label: 'Feature',
+                    sectionId: 'linked',
+                    sectionLabel: 'Linked',
+                    detailDescription: 'Feature checkout',
+                    closeOnSelectImmediate: false,
+                    onSelectImmediate: () => {
+                        onSelect('two');
+                    },
+                } as any,
+            ]}
+            selectedOptionId="one"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
+
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
+
+        expect(onSelect).toHaveBeenCalledWith('two');
+        expect(onRequestClose).not.toHaveBeenCalled();
+    });
+
     it('selects and closes when choosing a detail list option', async () => {
         const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
         const onSelect = vi.fn();

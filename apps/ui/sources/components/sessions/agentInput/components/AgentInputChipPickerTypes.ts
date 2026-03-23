@@ -22,6 +22,7 @@ export type AgentInputChipPickerOption = Readonly<{
     detailActionLabel?: string;
     onDetailAction?: () => void;
     onSelectImmediate?: () => void;
+    closeOnSelectImmediate?: boolean;
     onApply?: () => void;
     disabled?: boolean;
 }>;
