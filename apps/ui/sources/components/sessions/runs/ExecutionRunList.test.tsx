@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -57,16 +56,14 @@ describe('ExecutionRunList', () => {
   it('groups runs by display.groupId when provided', async () => {
     const { ExecutionRunList } = await import('./ExecutionRunList');
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(ExecutionRunList, {
+    const screen = await renderScreen(React.createElement(ExecutionRunList, {
           runs: [
             { runId: 'r1', intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, status: 'running', display: { groupId: 'g1' } },
             { runId: 'r2', intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, status: 'running', display: { groupId: 'g1' } },
             { runId: 'r3', intent: 'plan', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, status: 'succeeded' },
           ],
-        }))).tree;
+        }));
 
-    const texts = tree!.root.findAllByType('Text').map((n: any) => String(n.props.children));
-    expect(texts.join('\n')).toContain('Group g1');
+    expect(screen.getTextContent()).toContain('Group g1');
   });
 });

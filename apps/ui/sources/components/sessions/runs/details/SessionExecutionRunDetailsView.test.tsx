@@ -3,6 +3,7 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionExecutionRunDetailsCommonModuleMocks } from './sessionExecutionRunDetailsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -84,42 +85,19 @@ function createExecutionRunGetResponse(overrides?: Record<string, unknown>) {
     };
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                                            Platform: {
-                                                                                OS: 'web',
-                                                                                select: (values: any) => values?.web ?? values?.default,
-                                                                            },
-                                                                            AppState: {
-                                                                                currentState: 'active',
-                                                                                addEventListener: () => ({ remove: () => {} }),
-                                                                            },
-                                                                            View: ({ children, ...props }: any) => React.createElement('View', props, children),
-                                                                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                                                                            ActivityIndicator: 'ActivityIndicator',
-                                                                            TextInput: ({ ...props }: any) => React.createElement('TextInput', props),
-                                                                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: vi.fn(), back: vi.fn() },
-    });
-    return routerMock.module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installSessionExecutionRunDetailsCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => ({ sessions: { s1: { metadata: { machineId: 'm1' } } } }),
+            },
+            useSession: () => ({ id: 's1', metadata: { flavor: 'codex' }, accessLevel: 'edit', canApprovePermissions: true }),
+            useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: sessionMessagesState.isLoaded }),
+            useResolvedSessionMessageRouteId: () => 'tool-msg-1',
+            useMessage: () => sessionMessagesState.messages[0] ?? null,
+        });
+    },
 });
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
@@ -140,19 +118,6 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
 vi.mock('@/sync/ops/machineExecutionRuns', () => ({
     machineExecutionRunsList: vi.fn(async () => ({ ok: true, runs: [] })),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => ({ sessions: { s1: { metadata: { machineId: 'm1' } } } }),
-    },
-    useSession: () => ({ id: 's1', metadata: { flavor: 'codex' }, accessLevel: 'edit', canApprovePermissions: true }),
-    useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: sessionMessagesState.isLoaded }),
-    useResolvedSessionMessageRouteId: () => 'tool-msg-1',
-    useMessage: () => sessionMessagesState.messages[0] ?? null,
-});
-});
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
     resolveServerIdForSessionIdFromLocalCache: () => null,
