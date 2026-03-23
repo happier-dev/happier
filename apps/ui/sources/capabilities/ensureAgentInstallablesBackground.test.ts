@@ -24,13 +24,15 @@ function buildMissingCodexAcpResults() {
     };
 }
 
-async function withFrozenTime<T>(run: () => Promise<T>): Promise<T> {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+async function withMockedNow<T>(initialNowMs: number, run: (setNowMs: (nextNowMs: number) => void) => Promise<T>): Promise<T> {
+    let currentNowMs = initialNowMs;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => currentNowMs);
     try {
-        return await run();
+        return await run((nextNowMs) => {
+            currentNowMs = nextNowMs;
+        });
     } finally {
-        vi.useRealTimers();
+        nowSpy.mockRestore();
     }
 }
 
@@ -156,7 +158,7 @@ describe('ensureAgentInstallablesBackground', () => {
     });
 
     it('suppresses duplicate retries during the success cooldown window', async () => {
-        await withFrozenTime(async () => {
+        await withMockedNow(Date.parse('2026-01-01T00:00:00.000Z'), async (setNowMs) => {
             const settings = settingsParse({ codexBackendMode: 'acp' } as any);
             const prefetchMachineCapabilities = vi.fn(async () => {});
             const machineCapabilitiesInvoke = vi.fn(
@@ -263,7 +265,7 @@ describe('ensureAgentInstallablesBackground', () => {
     });
 
     it('retries after a successful invoke if the dep is still missing later', async () => {
-        await withFrozenTime(async () => {
+        await withMockedNow(Date.parse('2026-01-01T00:00:00.000Z'), async (setNowMs) => {
             const settings = settingsParse({ codexBackendMode: 'acp' } as any);
 
             const prefetchMachineCapabilities = vi.fn(async () => {});
@@ -283,7 +285,7 @@ describe('ensureAgentInstallablesBackground', () => {
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
             );
 
-            vi.setSystemTime(new Date('2026-01-01T01:00:00.000Z'));
+            setNowMs(Date.parse('2026-01-01T01:00:00.000Z'));
 
             await ensureAgentInstallablesBackground(
                 { agentId: 'codex', machineId: 'm_ok_retry', serverId: 's_ok_retry', settings, resumeSessionId: '' },
@@ -295,7 +297,7 @@ describe('ensureAgentInstallablesBackground', () => {
     });
 
     it('retries after an in-flight block ages out', async () => {
-        await withFrozenTime(async () => {
+        await withMockedNow(Date.parse('2026-01-01T00:00:00.000Z'), async (setNowMs) => {
             const settings = settingsParse({ codexBackendMode: 'acp' } as any);
             const prefetchMachineCapabilities = vi.fn(async () => {});
             let resolveInvoke: (() => void) | null = null;
@@ -320,8 +322,10 @@ describe('ensureAgentInstallablesBackground', () => {
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
             );
 
-            await Promise.resolve();
-            vi.setSystemTime(new Date('2026-01-01T00:06:00.000Z'));
+            await vi.waitFor(() => {
+                expect(resolveInvoke).not.toBeNull();
+            });
+            setNowMs(Date.parse('2026-01-01T00:06:00.000Z'));
 
             await ensureAgentInstallablesBackground(
                 { agentId: 'codex', machineId: 'm_stale', serverId: 's_stale', settings, resumeSessionId: '' },

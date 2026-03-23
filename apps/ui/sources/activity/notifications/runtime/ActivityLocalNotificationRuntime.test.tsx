@@ -60,12 +60,12 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            Platform: {
-                get OS() {
-                    return reactNativeRuntime.platformOs;
-                },
-            },
-        }
+                    Platform: {
+                        get OS() {
+                            return reactNativeRuntime.platformOs;
+                        },
+                    },
+                }
     );
 });
 
