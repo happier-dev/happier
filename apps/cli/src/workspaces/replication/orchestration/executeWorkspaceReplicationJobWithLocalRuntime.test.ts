@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { access, copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -168,6 +168,171 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
                 await readFile(join(targetWorkspaceRoot, 'README.md'), 'utf8'),
             );
             expect(written).toBe(fileContents);
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+            await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
+    });
+
+    it('persists transferred progress counters during blob-pack transfer (per-pack)', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-target-progress-'));
+        const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-source-progress-'));
+        const sourceWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-source-workspace-progress-'));
+        const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-target-workspace-progress-'));
+
+        try {
+            const { createWorkspaceReplicationCasStore } = await import('../cas/workspaceReplicationCasStore');
+            const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+            const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+            const { createWorkspaceReplicationBlobPackPayloadSource } = await import('../transport/createWorkspaceReplicationBlobPackPayloadSource');
+            const { writeWorkspaceReplicationSourceOfferToFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+            const { executeWorkspaceReplicationJobWithLocalRuntime } = await import('./executeWorkspaceReplicationJobWithLocalRuntime');
+
+            const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+            const scope = {
+                sourceMachineId: 'machine-source',
+                sourceWorkspaceRoot,
+                targetMachineId: 'machine-target',
+                targetWorkspaceRoot,
+                mode: 'one_way_safe' as const,
+            };
+            const relationship = await relationships.ensureRelationship(scope);
+
+            const sourceCas = createWorkspaceReplicationCasStore({ activeServerDir: sourceActiveServerDir });
+            const fileEntries: WorkspaceReplicationSourceOffer['manifest']['entries'] = [];
+            const blobIndex: WorkspaceReplicationSourceOffer['blobIndex'] = [];
+            let totalBytes = 0;
+
+            // Force >1 blob pack with the default max-blobs=256 by creating 257 distinct blobs.
+            await mkdir(join(sourceWorkspaceRoot, 'files'), { recursive: true });
+            fileEntries.push({
+                kind: 'directory',
+                relativePath: 'files',
+            });
+            for (let i = 0; i < 257; i += 1) {
+                const contents = `blob-${i}\n`;
+                const digest = sha256DigestOfString(contents);
+                const relPath = `files/file-${i}.txt`;
+                const sourcePath = join(sourceWorkspaceRoot, relPath);
+                await writeFile(sourcePath, contents, 'utf8');
+                await sourceCas.commitFile({ digest, sourcePath });
+
+                const sizeBytes = Buffer.byteLength(contents);
+                totalBytes += sizeBytes;
+                fileEntries.push({
+                    kind: 'file',
+                    relativePath: relPath,
+                    digest,
+                    sizeBytes,
+                    executable: false,
+                });
+                blobIndex.push({ digest, sizeBytes });
+            }
+
+            const offer: WorkspaceReplicationSourceOffer = {
+                offerId: 'offer_progress_1',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_progress_1',
+                sourceFingerprint: sha256DigestOfString('offer-progress-fp'),
+                manifest: {
+                    entries: fileEntries,
+                    fingerprint: sha256DigestOfString('manifest-progress-fp'),
+                },
+                blobIndex,
+            };
+
+            const offerTempDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-offer-progress-'));
+            const offerPath = join(offerTempDir, 'source-offer.txt');
+            await writeWorkspaceReplicationSourceOfferToFile({
+                offer,
+                filePath: offerPath,
+            });
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                schemaVersion: 1,
+                jobId: 'job_progress_1',
+                relationshipId: relationship.relationshipId,
+                directionId: offer.directionId,
+                offerId: offer.offerId,
+                mode: 'one_way_safe',
+                correlationId: 'corr_progress_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'pending',
+                    phase: 'negotiate_missing_digests',
+                    checkpoint: 'job_created',
+                    progressCounters: {
+                        plannedFiles: 0,
+                        plannedBytes: 0,
+                        transferredFiles: 0,
+                        transferredBytes: 0,
+                        appliedFiles: 0,
+                        appliedBytes: 0,
+                    },
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            let observedTransferredBytesDuringTransfer = 0;
+            let requestCount = 0;
+
+            const result = await executeWorkspaceReplicationJobWithLocalRuntime({
+                activeServerDir,
+                jobStore,
+                relationships,
+                jobId: 'job_progress_1',
+                now: () => 42,
+                relationshipScope: scope,
+                resolveSourceOfferById: async () => {
+                    const { readWorkspaceReplicationSourceOfferFromFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+                    return await readWorkspaceReplicationSourceOfferFromFile({
+                        transferId: 'offer_transfer_progress_1',
+                        filePath: offerPath,
+                        legacyWholeBufferMaxBytes: 1024 * 1024,
+                    });
+                },
+                requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
+                    requestCount += 1;
+
+                    // By the time we request the 2nd pack, the 1st pack has already been received
+                    // into CAS. The job record should reflect that progress (not wait until the end).
+                    if (requestCount === 2) {
+                        const midTransfer = await jobStore.read('job_progress_1');
+                        observedTransferredBytesDuringTransfer = midTransfer?.status.progressCounters.transferredBytes ?? 0;
+                    }
+
+                    const payloadSource = await createWorkspaceReplicationBlobPackPayloadSource({
+                        activeServerDir: sourceActiveServerDir,
+                        packId,
+                        digests,
+                    });
+                    if (payloadSource.kind !== 'file') {
+                        throw new Error('expected file payload source');
+                    }
+                    await copyFile(payloadSource.filePath, destinationPath);
+                    await payloadSource.dispose?.();
+                },
+                apply: {
+                    targetPath: targetWorkspaceRoot,
+                    strategy: 'transfer_snapshot',
+                    conflictPolicy: 'replace_existing',
+                },
+            });
+
+            expect(requestCount).toBeGreaterThanOrEqual(2);
+            expect(observedTransferredBytesDuringTransfer).toBeGreaterThan(0);
+            expect(result.status.status).toBe('completed');
+            expect(result.status.progressCounters).toMatchObject({
+                plannedFiles: 257,
+                plannedBytes: totalBytes,
+                transferredFiles: 257,
+                transferredBytes: totalBytes,
+            });
         } finally {
             await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
             await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);

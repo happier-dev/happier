@@ -14,6 +14,7 @@ describe('abortWorkspaceReplicationJob', () => {
 
             const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
             await jobStore.write({
+                schemaVersion: 1,
                 jobId: 'job_abort_1',
                 correlationId: 'handoff_abort_1',
                 createdAtMs: 10,
@@ -64,6 +65,7 @@ describe('abortWorkspaceReplicationJob', () => {
 
             const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
             await jobStore.write({
+                schemaVersion: 1,
                 jobId: 'job_abort_2',
                 correlationId: 'handoff_abort_2',
                 createdAtMs: 10,

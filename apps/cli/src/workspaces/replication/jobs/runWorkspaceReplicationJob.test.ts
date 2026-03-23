@@ -14,6 +14,7 @@ describe('runWorkspaceReplicationJob', () => {
 
             const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
             await jobStore.write({
+                schemaVersion: 1,
                 jobId: 'job_1',
                 correlationId: 'handoff_1',
                 createdAtMs: 10,
@@ -90,6 +91,7 @@ describe('runWorkspaceReplicationJob', () => {
 
             const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
             await jobStore.write({
+                schemaVersion: 1,
                 jobId: 'job_2',
                 correlationId: 'handoff_2',
                 createdAtMs: 10,
@@ -146,6 +148,7 @@ describe('runWorkspaceReplicationJob', () => {
 
             const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
             await jobStore.write({
+                schemaVersion: 1,
                 jobId: 'job_cancel_1',
                 correlationId: 'handoff_cancel_1',
                 createdAtMs: 10,
@@ -202,6 +205,7 @@ describe('runWorkspaceReplicationJob', () => {
 
             const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
             await jobStore.write({
+                schemaVersion: 1,
                 jobId: 'job_cancel_sticky_1',
                 correlationId: 'handoff_cancel_sticky_1',
                 createdAtMs: 10,

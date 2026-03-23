@@ -208,6 +208,25 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
                     });
                     transferredFiles += result.transferredBlobs;
                     transferredBytes += result.transferredBytes;
+
+                    // Persist incremental progress so large transfers remain observable and liveness
+                    // detection can rely on real counter movement (not only checkpoint edges).
+                    await runWorkspaceReplicationJob({
+                        jobStore: params.jobStore,
+                        jobId: job.jobId,
+                        now: params.now,
+                        run: async (record) => ({
+                            ...record,
+                            status: {
+                                ...record.status,
+                                progressCounters: {
+                                    ...record.status.progressCounters,
+                                    transferredFiles,
+                                    transferredBytes,
+                                },
+                            },
+                        }),
+                    });
                 } finally {
                     await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
                 }
