@@ -192,6 +192,9 @@ async function probeOpenCodeModelsVerbose(params: Readonly<{ cwd: string; timeou
 
 export const openCodePreflightModelsProbeAdapter: PreflightModelsProbeAdapter = {
   failureCacheStrategy: 'cooldown',
+  // Fallback: if `models --verbose` parsing fails for any reason, the core probe can still
+  // populate the model list via the plain `models` command (without model-scoped options).
+  cliModelsCommandArgs: ['models'],
   probeModelsRaw: async ({ cwd, timeoutMs }) => {
     return await probeOpenCodeModelsVerbose({ cwd, timeoutMs });
   },

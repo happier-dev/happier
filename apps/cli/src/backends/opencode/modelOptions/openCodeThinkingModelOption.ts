@@ -1,4 +1,9 @@
 import { asRecord, normalizeString } from '../server/openCodeParsing';
+import type { Metadata } from '@/api/types';
+
+type SessionModelOptions = NonNullable<
+  NonNullable<NonNullable<Metadata['sessionModelsV1']>['availableModels']>[number]['modelOptions']
+>;
 
 function variantSupportsReasoningEffort(raw: unknown): boolean {
   const rec = asRecord(raw);
@@ -39,13 +44,7 @@ function sortVariantIds(ids: ReadonlyArray<string>): string[] {
 export function buildOpenCodeThinkingModelOptionsFromVariants(
   variantsRaw: unknown,
   currentValueCandidate: string | null,
-): Array<{
-  id: string;
-  name: string;
-  type: string;
-  currentValue: string;
-  options: Array<{ value: string; name: string }>;
-}> | null {
+): SessionModelOptions | null {
   const variants = asRecord(variantsRaw);
   if (!variants) return null;
 

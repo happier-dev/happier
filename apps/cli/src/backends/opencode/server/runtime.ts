@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { McpServerConfig } from '@/agent';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { PermissionMode } from '@/api/types';
+import type { Metadata, PermissionMode } from '@/api/types';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import { configuration } from '@/configuration';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -41,6 +41,7 @@ import { resolvePreferredChangeTitleToolNameForProvider } from '@/agent/promptin
 import { extractOpenCodeFileDiff } from '../utils/extractOpenCodeFileDiff';
 import { readOpenCodeSessionRuntimeHandleFromMetadata } from '../utils/opencodeSessionAffinity';
 import { extractOpenCodeSessionDiffPayload } from './extractOpenCodeSessionDiffPayload';
+import { buildOpenCodeThinkingModelOptionsFromVariants } from '../modelOptions/openCodeThinkingModelOption';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -199,7 +200,9 @@ export function createOpenCodeServerRuntime(params: {
         });
       });
 
-      const availableModels: Array<{ id: string; name: string; description?: string }> = [];
+      type SessionModelEntry = NonNullable<NonNullable<Metadata['sessionModelsV1']>['availableModels']>[number];
+      const variantCandidate = typeof configOverrides.variant === 'string' ? String(configOverrides.variant).trim() : null;
+      const availableModels: SessionModelEntry[] = [];
       for (const p of includedProviders) {
         const providerId = normalizeString((p as any)?.id);
         if (!providerId) continue;
@@ -213,7 +216,17 @@ export function createOpenCodeServerRuntime(params: {
           const fullId = `${providerId}/${modelId}`;
           const name = normalizeString(asRecord(modelRec)?.name) || modelId;
           const description = normalizeString(asRecord(modelRec)?.family) || '';
-          availableModels.push({ id: fullId, name, ...(description ? { description } : {}) });
+          const capabilities = asRecord((asRecord(modelRec) as any)?.capabilities);
+          const supportsReasoning = capabilities ? capabilities.reasoning === true : false;
+          const modelOptions: SessionModelEntry['modelOptions'] | null = supportsReasoning
+            ? (buildOpenCodeThinkingModelOptionsFromVariants((asRecord(modelRec) as any)?.variants, variantCandidate) as SessionModelEntry['modelOptions'])
+            : null;
+          availableModels.push({
+            id: fullId,
+            name,
+            ...(description ? { description } : {}),
+            ...(modelOptions ? { modelOptions } : {}),
+          });
         }
       }
 
@@ -248,6 +261,13 @@ export function createOpenCodeServerRuntime(params: {
           updatedAt,
           currentModeId,
           availableModes,
+        },
+        sessionModelsV1: {
+          v: 1,
+          provider,
+          updatedAt,
+          currentModelId,
+          availableModels,
         },
         acpSessionModelsV1: {
           v: 1,
@@ -2041,6 +2061,19 @@ export function createOpenCodeServerRuntime(params: {
     async setSessionConfigOption(configId: string, value: string | number | boolean | null): Promise<void> {
       const normalizedId = typeof configId === 'string' ? configId.trim() : '';
       if (!normalizedId) return;
+      if (normalizedId === 'reasoning_effort') {
+        if (value === null) {
+          delete configOverrides.variant;
+          return;
+        }
+        const variant = typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+        if (!variant) {
+          delete configOverrides.variant;
+          return;
+        }
+        configOverrides.variant = variant;
+        return;
+      }
       if (value === null) {
         delete configOverrides[normalizedId];
         return;

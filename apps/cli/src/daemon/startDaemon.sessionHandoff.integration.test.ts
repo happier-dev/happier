@@ -15,6 +15,7 @@ const harness = vi.hoisted(() => {
                 expiresAt: 30_000,
             })),
         readPublishedTransfer: vi.fn(() => null),
+        resolveOnDemandTransferOnOpen: vi.fn(async () => null),
         clearPublishedTransfer: vi.fn(),
     };
     const startAutomationWorker = vi.fn(() => ({
@@ -347,8 +348,17 @@ describe('startDaemon session handoff wiring (integration)', () => {
         const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
         try {
+            const { startDirectPeerTransferServer } = await import('@/machines/transfer/directPeerTransport');
             const { startDaemon } = await import('./startDaemon');
             await startDaemon();
+
+            expect(startDirectPeerTransferServer).toHaveBeenCalledTimes(1);
+            const startedArgs = (startDirectPeerTransferServer as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(0)?.[0] as {
+                resolveOnDemandTransfer?: (input: { transferId: string; transferToken: string; requestBody: unknown }) => Promise<unknown>;
+            } | undefined;
+            expect(startedArgs?.resolveOnDemandTransfer).toEqual(expect.any(Function));
+            await startedArgs?.resolveOnDemandTransfer?.({ transferId: 'on-demand-1', transferToken: 'token_1', requestBody: { ok: true } });
+            expect(harness.directPeerRegistry.resolveOnDemandTransferOnOpen).toHaveBeenCalledTimes(1);
 
             const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0];
             expect(handlers?.directPeerTransfer).toBeDefined();

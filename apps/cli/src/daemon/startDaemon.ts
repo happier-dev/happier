@@ -1347,6 +1347,7 @@ export async function startDaemon(): Promise<void> {
     let directPeerRegistry: ReturnType<typeof createDirectPeerTransferRegistry> | null = null;
     const { port: directPeerPort, stop: stopDirectPeerServer } = await startDirectPeerTransferServer({
       readPublishedTransfer: (input) => directPeerRegistry?.readPublishedTransfer(input) ?? null,
+      resolveOnDemandTransfer: async (input) => await directPeerRegistry?.resolveOnDemandTransferOnOpen(input) ?? null,
     });
     directPeerRegistry = createDirectPeerTransferRegistry({
       advertisedPort: directPeerPort,

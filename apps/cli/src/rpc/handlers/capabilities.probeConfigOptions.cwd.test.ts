@@ -90,7 +90,7 @@ describe('capabilities.invoke(cli.* probeConfigOptions)', () => {
     expect(bootstrapAccountSettingsContextMock).toHaveBeenCalledWith(expect.objectContaining({
       credentials: { token: 'token' },
       mode: 'blocking',
-      refresh: 'force',
+      refresh: 'auto',
     }));
     expect(probeSpy).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'codex',
