@@ -29,6 +29,80 @@ function createSessionHarness(initialMetadata: MutableMetadata = {}): Readonly<{
 }
 
 describe('publishCodexAppServerSessionControlsMetadata', () => {
+    it('accepts snake_case reasoning effort fields from model/list', async () => {
+        const client = {
+            request: vi.fn(async (method: string) => {
+                if (method === 'collaborationMode/list') {
+                    return {
+                        data: [{ name: 'Default', mode: 'default', reasoning_effort: null }],
+                    };
+                }
+                if (method === 'model/list') {
+                    return {
+                        data: [
+                            {
+                                id: 'gpt-5.4',
+                                displayName: 'GPT-5.4',
+                                isDefault: true,
+                                supported_reasoning_efforts: [
+                                    { reasoning_effort: 'medium', description: 'Balanced' },
+                                    { reasoning_effort: 'high', description: 'Deep' },
+                                ],
+                                default_reasoning_effort: 'high',
+                            },
+                        ],
+                    };
+                }
+                throw new Error(`Unexpected method: ${method}`);
+            }),
+        };
+        const { session, getMetadata } = createSessionHarness();
+
+        await publishCodexAppServerSessionControlsMetadata({
+            client,
+            session,
+            provider: 'codex',
+            updatedAt: 777,
+            authMethod: 'oauth_cli',
+            currentModelId: 'gpt-5.4',
+        });
+
+        expect(getMetadata()[SESSION_MODELS_STATE_KEY]).toEqual({
+            v: 1,
+            provider: 'codex',
+            updatedAt: 777,
+            currentModelId: 'gpt-5.4',
+            availableModels: [
+                {
+                    id: 'gpt-5.4',
+                    name: 'GPT 5.4',
+                    modelOptions: [
+                        {
+                            id: 'reasoning_effort',
+                            name: 'Thinking',
+                            type: 'select',
+                            currentValue: 'high',
+                            options: [
+                                { value: 'medium', name: 'Medium', description: 'Balanced' },
+                                { value: 'high', name: 'High', description: 'Deep' },
+                            ],
+                        },
+                        {
+                            id: 'service_tier',
+                            name: 'Speed',
+                            type: 'select',
+                            currentValue: 'standard',
+                            options: [
+                                { value: 'standard', name: 'Standard' },
+                                { value: 'fast', name: 'Fast' },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+    });
+
     it('publishes generic session modes and rich model metadata with model-scoped options', async () => {
         const client = {
             request: vi.fn(async (method: string) => {
@@ -122,9 +196,9 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                                 ],
                             },
                             {
-                                id: 'speed',
-                                name: 'Fast',
-                                type: 'boolean',
+                                id: 'service_tier',
+                                name: 'Speed',
+                                type: 'select',
                                 currentValue: 'fast',
                                 options: [
                                     { value: 'standard', name: 'Standard' },
@@ -187,7 +261,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                 v: 1,
                 provider: 'codex',
                 updatedAt: 1,
-                configOptions: [{ id: 'speed', name: 'Speed', type: 'select', currentValue: 'fast' }],
+                configOptions: [{ id: 'service_tier', name: 'Speed', type: 'select', currentValue: 'fast' }],
             },
         });
 
@@ -242,11 +316,29 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                 throw new Error(`Unexpected method: ${method}`);
             }),
         };
-        const { session, getMetadata } = createSessionHarness({
-            [SESSION_MODES_STATE_KEY]: { stale: true },
-            [SESSION_MODELS_STATE_KEY]: { stale: true },
-            [SESSION_CONFIG_OPTIONS_STATE_KEY]: { stale: true },
-        });
+        const seedMetadata = {
+            [SESSION_MODES_STATE_KEY]: {
+                v: 1,
+                provider: 'codex',
+                updatedAt: 1,
+                currentModeId: 'default',
+                availableModes: [{ id: 'default', name: 'Default' }],
+            },
+            [SESSION_MODELS_STATE_KEY]: {
+                v: 1,
+                provider: 'codex',
+                updatedAt: 1,
+                currentModelId: 'gpt-5.4',
+                availableModels: [{ id: 'gpt-5.4', name: 'GPT 5.4' }],
+            },
+            [SESSION_CONFIG_OPTIONS_STATE_KEY]: {
+                v: 1,
+                provider: 'codex',
+                updatedAt: 1,
+                configOptions: [{ id: 'some', name: 'Some', type: 'string', currentValue: 'x' }],
+            },
+        };
+        const { session, getMetadata } = createSessionHarness(seedMetadata);
 
         await publishCodexAppServerSessionControlsMetadata({
             client,
@@ -256,17 +348,14 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
             authMethod: 'oauth_cli',
         });
 
-        expect(getMetadata()[SESSION_MODES_STATE_KEY]).toBeUndefined();
-        expect(getMetadata()[SESSION_MODELS_STATE_KEY]).toBeUndefined();
-        expect(getMetadata()[SESSION_CONFIG_OPTIONS_STATE_KEY]).toEqual({
-            v: 1,
-            provider: 'codex',
-            updatedAt: 789,
-            configOptions: [],
-        });
+        // If the list endpoints fail or return no usable items, keep the last known-good
+        // session controls metadata sticky so the UI does not lose dynamic controls.
+        expect(getMetadata()[SESSION_MODES_STATE_KEY]).toEqual(seedMetadata[SESSION_MODES_STATE_KEY]);
+        expect(getMetadata()[SESSION_MODELS_STATE_KEY]).toEqual(seedMetadata[SESSION_MODELS_STATE_KEY]);
+        expect(getMetadata()[SESSION_CONFIG_OPTIONS_STATE_KEY]).toEqual(seedMetadata[SESSION_CONFIG_OPTIONS_STATE_KEY]);
     });
 
-    it('does not fabricate a current mode when the provider only returns available collaboration modes', async () => {
+    it('prefers the provider default mode id when the collaboration mode list omits explicit current markers', async () => {
         const client = {
             request: vi.fn(async (method: string) => {
                 if (method === 'collaborationMode/list') {
@@ -299,7 +388,16 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
             currentModelId: 'gpt-5.4',
         });
 
-        expect(getMetadata()[SESSION_MODES_STATE_KEY]).toBeUndefined();
+        expect(getMetadata()[SESSION_MODES_STATE_KEY]).toEqual({
+            v: 1,
+            provider: 'codex',
+            updatedAt: 900,
+            currentModeId: 'default',
+            availableModes: [
+                { id: 'plan', name: 'Plan' },
+                { id: 'default', name: 'Default' },
+            ],
+        });
         expect(getMetadata()[SESSION_MODELS_STATE_KEY]).toEqual({
             v: 1,
             provider: 'codex',
@@ -311,9 +409,9 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                     name: 'GPT 5.4',
                     modelOptions: [
                         {
-                            id: 'speed',
-                            name: 'Fast',
-                            type: 'boolean',
+                            id: 'service_tier',
+                            name: 'Speed',
+                            type: 'select',
                             currentValue: 'standard',
                             options: [
                                 { value: 'standard', name: 'Standard' },
@@ -371,9 +469,9 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                     name: 'GPT 5.4',
                     modelOptions: [
                         {
-                            id: 'speed',
-                            name: 'Fast',
-                            type: 'boolean',
+                            id: 'service_tier',
+                            name: 'Speed',
+                            type: 'select',
                             currentValue: 'standard',
                             options: [
                                 { value: 'standard', name: 'Standard' },

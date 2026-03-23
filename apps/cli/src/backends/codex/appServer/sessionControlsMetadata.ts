@@ -150,9 +150,16 @@ function buildReasoningEffortModelOption(params: Readonly<{
     currentModelId: string | null;
     currentReasoningEffort?: string | null;
 }>): SessionConfigOption | null {
-    const values = normalizeReasoningEffortChoices(params.record.supportedReasoningEfforts);
+    const supportedReasoningEffortsRaw =
+        params.record['supportedReasoningEfforts']
+        ?? params.record['supported_reasoning_efforts']
+        ?? params.record['supported_reasoning_effort'];
+    const values = normalizeReasoningEffortChoices(supportedReasoningEffortsRaw);
     if (values.length === 0) return null;
-    const defaultValue = normalizeString(params.record.defaultReasoningEffort) ?? values[0]?.value ?? null;
+    const defaultReasoningEffortRaw =
+        params.record['defaultReasoningEffort']
+        ?? params.record['default_reasoning_effort'];
+    const defaultValue = normalizeString(defaultReasoningEffortRaw) ?? values[0]?.value ?? null;
     if (!defaultValue) return null;
     const currentValue = params.modelId === params.currentModelId
         ? (params.currentReasoningEffort ?? defaultValue)
@@ -178,9 +185,9 @@ function buildSpeedModelOption(params: Readonly<{
 }>): SessionConfigOption | null {
     if (!isSpeedEligible({ authMethod: params.authMethod, currentModelId: params.modelId })) return null;
     return {
-        id: 'speed',
-        name: 'Fast',
-        type: 'boolean',
+        id: 'service_tier',
+        name: 'Speed',
+        type: 'select',
         currentValue: params.modelId === params.currentModelId
             ? (params.currentServiceTier === 'fast' ? 'fast' : 'standard')
             : 'standard',
@@ -279,6 +286,67 @@ function resolveCurrentId(
     return params?.fallbackToFirst === true ? options[0]?.id ?? null : null;
 }
 
+function resolveCodexCurrentCollaborationModeId(
+    modesResponse: unknown,
+    availableModes: readonly SessionControlOption[],
+): string | null {
+    if (availableModes.length === 0) return null;
+    const explicit = resolveCurrentId(modesResponse, availableModes);
+    if (explicit) return explicit;
+    const defaultEntry = availableModes.find((entry) => entry.id === 'default');
+    if (defaultEntry) return defaultEntry.id;
+    return availableModes[0]?.id ?? null;
+}
+
+function hasGenericSessionModesState(value: unknown, provider: string): value is {
+    v: 1;
+    provider: string;
+    updatedAt: number;
+    currentModeId: string;
+    availableModes: SessionControlOption[];
+} {
+    const record = asRecord(value);
+    if (!record) return false;
+    if (record.v !== 1) return false;
+    if (record.provider !== provider) return false;
+    if (!(typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt))) return false;
+    if (typeof record.currentModeId !== 'string') return false;
+    if (!Array.isArray(record.availableModes)) return false;
+    return true;
+}
+
+function hasGenericSessionModelsState(value: unknown, provider: string): value is {
+    v: 1;
+    provider: string;
+    updatedAt: number;
+    currentModelId: string;
+    availableModels: SessionModelOption[];
+} {
+    const record = asRecord(value);
+    if (!record) return false;
+    if (record.v !== 1) return false;
+    if (record.provider !== provider) return false;
+    if (!(typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt))) return false;
+    if (typeof record.currentModelId !== 'string') return false;
+    if (!Array.isArray(record.availableModels)) return false;
+    return true;
+}
+
+function hasGenericSessionConfigOptionsState(value: unknown, provider: string): value is {
+    v: 1;
+    provider: string;
+    updatedAt: number;
+    configOptions: SessionConfigOption[];
+} {
+    const record = asRecord(value);
+    if (!record) return false;
+    if (record.v !== 1) return false;
+    if (record.provider !== provider) return false;
+    if (!(typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt))) return false;
+    if (!Array.isArray(record.configOptions)) return false;
+    return true;
+}
+
 function isSpeedEligible(params: Readonly<{
     authMethod?: string | null;
     currentModelId: string | null;
@@ -341,7 +409,7 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
     }));
     const currentModeId = availableModes.some((entry) => entry.id === params.currentModeId)
         ? params.currentModeId ?? null
-        : resolveCurrentId(modesResponse, availableModes);
+        : resolveCodexCurrentCollaborationModeId(modesResponse, availableModes);
     const availableModels = normalizeSessionModelMasks({
         value: modelsResponse,
         authMethod: params.authMethod,
@@ -395,33 +463,65 @@ export async function publishCodexAppServerSessionControlsMetadata(params: Reado
 
     await Promise.resolve(params.session.updateMetadata((metadata) => ({
         ...metadata,
-        ...(availableModes.length > 0 && currentModeId
-            ? {
-                [SESSION_MODES_STATE_KEY]: {
+        [SESSION_MODES_STATE_KEY]: (() => {
+            const existing = (metadata as Record<string, unknown>)[SESSION_MODES_STATE_KEY];
+            if (!(availableModes.length > 0)) {
+                // If the probe produced no usable items, keep the last known-good state if present;
+                // otherwise publish an empty placeholder so the UI can show a loading state.
+                if (hasGenericSessionModesState(existing, provider)) return existing;
+                return {
                     v: 1,
                     provider,
                     updatedAt,
-                    currentModeId,
-                    availableModes,
-                },
+                    currentModeId: normalizeString(params.currentModeId) ?? 'default',
+                    availableModes: [],
+                };
             }
-            : { [SESSION_MODES_STATE_KEY]: undefined }),
-        ...(availableModels.length > 0 && currentModelId
-            ? {
-                [SESSION_MODELS_STATE_KEY]: {
+            return {
+                v: 1,
+                provider,
+                updatedAt,
+                currentModeId: currentModeId ?? normalizeString(params.currentModeId) ?? 'default',
+                availableModes,
+            };
+        })(),
+        [SESSION_MODELS_STATE_KEY]: (() => {
+            const existing = (metadata as Record<string, unknown>)[SESSION_MODELS_STATE_KEY];
+            if (!(availableModels.length > 0)) {
+                if (hasGenericSessionModelsState(existing, provider)) return existing;
+                return {
                     v: 1,
                     provider,
                     updatedAt,
-                    currentModelId,
-                    availableModels,
-                },
+                    currentModelId: normalizeString(params.currentModelId) ?? 'default',
+                    availableModels: [],
+                };
             }
-            : { [SESSION_MODELS_STATE_KEY]: undefined }),
-        [SESSION_CONFIG_OPTIONS_STATE_KEY]: {
-            v: 1,
-            provider,
-            updatedAt,
-            configOptions,
-        },
+            return {
+                v: 1,
+                provider,
+                updatedAt,
+                currentModelId: currentModelId ?? normalizeString(params.currentModelId) ?? 'default',
+                availableModels,
+            };
+        })(),
+        [SESSION_CONFIG_OPTIONS_STATE_KEY]: (() => {
+            const existing = (metadata as Record<string, unknown>)[SESSION_CONFIG_OPTIONS_STATE_KEY];
+            if (!(availableModels.length > 0)) {
+                if (hasGenericSessionConfigOptionsState(existing, provider)) return existing;
+                return {
+                    v: 1,
+                    provider,
+                    updatedAt,
+                    configOptions: [],
+                };
+            }
+            return {
+                v: 1,
+                provider,
+                updatedAt,
+                configOptions,
+            };
+        })(),
     })));
 }
