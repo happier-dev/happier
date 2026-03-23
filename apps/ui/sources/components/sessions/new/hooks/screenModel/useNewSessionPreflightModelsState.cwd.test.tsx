@@ -56,7 +56,7 @@ describe('useNewSessionPreflightModelsState', () => {
     });
   });
 
-  it('forwards the Codex backend mode override to capabilities.invoke(cli.codex probeModels)', async () => {
+  it('forwards probeContext.capabilityParams to capabilities.invoke(... probeModels)', async () => {
     const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
 
     machineCapabilitiesInvokeMock.mockClear();
@@ -68,7 +68,10 @@ describe('useNewSessionPreflightModelsState', () => {
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
-        codexBackendModeOverride: 'appServer',
+        probeContext: {
+          cacheKeySuffixParts: ['appServer'],
+          capabilityParams: { runtimeKindOverride: 'appServer' },
+        },
       } as any);
       return null;
     }
@@ -86,7 +89,7 @@ describe('useNewSessionPreflightModelsState', () => {
       method: 'probeModels',
       params: expect.objectContaining({
         cwd: '/repo',
-        codexBackendModeOverride: 'appServer',
+        runtimeKindOverride: 'appServer',
       }),
     });
   });

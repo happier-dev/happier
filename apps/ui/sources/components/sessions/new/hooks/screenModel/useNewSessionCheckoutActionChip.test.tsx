@@ -20,7 +20,7 @@ describe('useNewSessionCheckoutActionChip', () => {
         vi.clearAllMocks();
     });
 
-    it('applies pure selection checkout options immediately without requiring the detail apply action', async () => {
+    it('applies no-worktree immediately and groups existing worktrees under a single picker mode', async () => {
         const setSelectedPath = vi.fn();
         const setCheckoutCreationDraft = vi.fn();
         const setCheckoutPickerOpen = vi.fn();
@@ -77,10 +77,12 @@ describe('useNewSessionCheckoutActionChip', () => {
         await renderScreen(<Probe />);
 
         const currentPathOption = chip.collapsedOptionsPopover.options.find((option: any) => option.id === 'current_path');
-        const linkedCheckoutOption = chip.collapsedOptionsPopover.options.find((option: any) => option.id === 'checkout:/repo/.worktrees/release');
+        const existingModeOption = chip.collapsedOptionsPopover.options.find((option: any) => option.id === '__existing_worktree__');
 
         expect(currentPathOption.onSelectImmediate).toBeTypeOf('function');
-        expect(linkedCheckoutOption.onSelectImmediate).toBeTypeOf('function');
+        expect(existingModeOption.detailSelectOptions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'checkout:/repo/.worktrees/release' }),
+        ]));
 
         await act(async () => {
             currentPathOption.onSelectImmediate();
@@ -88,18 +90,6 @@ describe('useNewSessionCheckoutActionChip', () => {
 
         expect(setCheckoutCreationDraft).toHaveBeenCalledWith(null);
         expect(setSelectedPath).toHaveBeenCalledWith('/repo/packages/app');
-        expect(setCheckoutPickerOpen).toHaveBeenCalledWith(false);
-        expect(shouldReconcileInitialHydratedCheckoutCreationDraftRef.current).toBe(false);
-
-        vi.clearAllMocks();
-        shouldReconcileInitialHydratedCheckoutCreationDraftRef.current = true;
-
-        await act(async () => {
-            linkedCheckoutOption.onSelectImmediate();
-        });
-
-        expect(setCheckoutCreationDraft).toHaveBeenCalledWith(null);
-        expect(setSelectedPath).toHaveBeenCalledWith('/repo/.worktrees/release');
         expect(setCheckoutPickerOpen).toHaveBeenCalledWith(false);
         expect(shouldReconcileInitialHydratedCheckoutCreationDraftRef.current).toBe(false);
     });

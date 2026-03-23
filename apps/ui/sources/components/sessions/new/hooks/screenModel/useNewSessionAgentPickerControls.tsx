@@ -2,12 +2,15 @@ import * as React from 'react';
 
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { t } from '@/text';
+import type { Settings } from '@/sync/domains/settings/settings';
+import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 
 type EngineSelection = Readonly<{
     modelId: string;
@@ -31,10 +34,10 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     setAcpSessionModeId: React.Dispatch<React.SetStateAction<string | null>>;
     sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
     setSessionConfigOptionOverrides: React.Dispatch<React.SetStateAction<ReturnType<typeof buildAcpConfigOptionOverridesV1> | null>>;
-    codexBackendModeOverride: 'mcp' | 'acp' | 'appServer' | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
     selectedPath: string | null;
+    settings: Settings;
 }>): Readonly<{
     agentPickerOptions?: ReadonlyArray<AgentInputChipPickerOption>;
     handleAgentPickerSelect: (selectedId: string) => void;
@@ -132,25 +135,30 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
                 ? t('newSession.aiBackendNotCompatibleWithSelectedProfile')
                 : undefined;
 
-            return {
-            id: entry.targetKey,
-            label: entry.title,
-            subtitle,
-            disabled,
-            onSelectImmediate: () => {
+	            return {
+	            id: entry.targetKey,
+	            label: entry.title,
+	            icon: <AgentIcon agentId={entry.iconAgentId} size={12} />,
+	            subtitle,
+	            disabled,
+	            onSelectImmediate: () => {
                 if (disabled) return;
                 const nextSelection = getEngineSelectionForTargetKey(entry.targetKey);
                 applyEngineSelection(entry, nextSelection);
             },
             renderDetailContent: () => {
                 const selection = getEngineSelectionForTargetKey(entry.targetKey);
+                const capabilityProbeContext = resolveNewSessionCapabilityProbeContext({
+                    backendTarget: entry.target,
+                    settings: params.settings,
+                });
                 return (
                     <NewSessionEngineOptionDetail
                         backendTarget={entry.target}
                         selectedMachineId={params.selectedMachineId}
                         capabilityServerId={params.capabilityServerId}
                         cwd={params.selectedPath}
-                        codexBackendModeOverride={params.codexBackendModeOverride}
+                        capabilityProbeContext={capabilityProbeContext}
                         selectedModelId={selection.modelId}
                         selectedSessionModeId={selection.sessionModeId}
                         selectedConfigOverrides={selection.configOverrides}
@@ -168,11 +176,11 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         compatibleBackendTargetKeys,
         getEngineSelectionForTargetKey,
         params.capabilityServerId,
-        params.codexBackendModeOverride,
         params.isBackendEntrySelectable,
         params.resolvedBackendEntries,
         params.selectedMachineId,
         params.selectedPath,
+        params.settings,
         profileForAgentSelection,
     ]);
 

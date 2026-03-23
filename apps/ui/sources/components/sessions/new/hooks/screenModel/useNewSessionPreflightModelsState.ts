@@ -13,20 +13,21 @@ import {
     writeDynamicModelProbeCacheError,
     writeDynamicModelProbeCacheSuccess,
 } from '@/sync/domains/models/dynamicModelProbeCache';
+import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 
 export function useNewSessionPreflightModelsState(params: Readonly<{
     backendTarget: BackendTargetRefV1;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
-    codexBackendModeOverride?: 'mcp' | 'acp' | 'appServer' | null;
+    probeContext?: NewSessionCapabilityProbeContext | null;
 }>): Readonly<{
     preflightModels: PreflightModelList | null;
     modelOptions: ReturnType<typeof getModelOptionsForAgentTypeOrPreflight>;
     probe: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
         refreshedAt: number | null;
-        refresh: () => void;
+        onRefresh: () => void;
     }>;
 }> {
     const [preflightModels, setPreflightModels] = React.useState<PreflightModelList | null>(null);
@@ -34,8 +35,11 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     const [refreshedAt, setRefreshedAt] = React.useState<number | null>(null);
     const [refreshNonce, setRefreshNonce] = React.useState(0);
     const lastHandledRefreshNonceRef = React.useRef(0);
+    const preflightModelsRef = React.useRef<PreflightModelList | null>(null);
+    const refreshedAtRef = React.useRef<number | null>(null);
+    const lastScopeKeyRef = React.useRef<string | null>(null);
 
-    const refresh = React.useCallback(() => {
+    const onRefresh = React.useCallback(() => {
         setRefreshNonce((n) => n + 1);
     }, []);
 
@@ -55,21 +59,44 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
     const backendTargetKey = React.useMemo(() => buildBackendTargetKey(backendTarget), [backendTarget]);
 
+    const probeScopeKey = React.useMemo(() => {
+        const machineId = String(params.selectedMachineId ?? '').trim();
+        if (!machineId) return null;
+        const serverId = String(params.capabilityServerId ?? '').trim() || 'active';
+        const extraKeySuffixParts = Array.isArray(params.probeContext?.cacheKeySuffixParts)
+            ? params.probeContext!.cacheKeySuffixParts!.map((part) => String(part ?? '').trim()).filter(Boolean)
+            : [];
+        // Scope key excludes cwd so switching worktrees doesn't flash the dynamic model list.
+        return JSON.stringify([
+            'dynamicModelProbeScope',
+            serverId,
+            machineId,
+            backendTargetKey,
+            ...extraKeySuffixParts,
+        ]);
+    }, [backendTargetKey, params.capabilityServerId, params.probeContext?.cacheKeySuffixParts, params.selectedMachineId]);
+
     const preflightModelsKey = React.useMemo(() => {
         return buildDynamicModelProbeCacheKey({
             machineId: params.selectedMachineId,
             targetKey: backendTargetKey,
             serverId: params.capabilityServerId,
             cwd: params.cwd ?? null,
-            codexBackendModeOverride: params.codexBackendModeOverride ?? null,
+            extraKeySuffixParts: params.probeContext?.cacheKeySuffixParts ?? null,
         });
-    }, [backendTargetKey, params.capabilityServerId, params.codexBackendModeOverride, params.cwd, params.selectedMachineId]);
+    }, [backendTargetKey, params.capabilityServerId, params.cwd, params.probeContext?.cacheKeySuffixParts, params.selectedMachineId]);
+
+    React.useEffect(() => {
+        preflightModelsRef.current = preflightModels;
+        refreshedAtRef.current = refreshedAt;
+    }, [preflightModels, refreshedAt]);
 
     React.useEffect(() => {
         if (!preflightModelsKey) {
             setPreflightModels(null);
             setProbePhase('idle');
             setRefreshedAt(null);
+            lastScopeKeyRef.current = probeScopeKey;
             return;
         }
 
@@ -80,8 +107,16 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
         const cacheEntry = readDynamicModelProbeCache(preflightModelsKey);
         const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
-        setPreflightModels(cached);
-        setRefreshedAt(cacheEntry?.kind === 'success' ? cacheEntry.updatedAt : null);
+        const scopeStable = lastScopeKeyRef.current !== null && probeScopeKey !== null && lastScopeKeyRef.current === probeScopeKey;
+        lastScopeKeyRef.current = probeScopeKey;
+        if (cached) {
+            setPreflightModels(cached);
+            setRefreshedAt(cacheEntry?.updatedAt ?? null);
+        } else if (!scopeStable) {
+            // Engine/machine/server scope changed: clear any previous list to avoid showing the wrong provider's models.
+            setPreflightModels(null);
+            setRefreshedAt(null);
+        }
 
         const nowMs = Date.now();
         if (!shouldForceProbe && cacheEntry && nowMs >= 0 && nowMs < cacheEntry.expiresAt) {
@@ -100,7 +135,8 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             }
             const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
 
-            setProbePhase(cached ? 'refreshing' : 'loading');
+            const hasExisting = Boolean(preflightModelsRef.current);
+            setProbePhase(hasExisting ? 'refreshing' : 'loading');
             const list = await runDynamicModelProbeDedupe(preflightModelsKey, async () => {
                 const res = await machineCapabilitiesInvoke(params.selectedMachineId!, {
                     id: `cli.${agentType}` as any,
@@ -108,7 +144,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                     params: {
                         timeoutMs: 15_000,
                         backendTarget,
-                        ...(params.codexBackendModeOverride ? { codexBackendModeOverride: params.codexBackendModeOverride } : {}),
+                        ...(params.probeContext?.capabilityParams ? params.probeContext.capabilityParams : {}),
                         ...(cwd ? { cwd } : {}),
                     },
                 }, {
@@ -159,13 +195,24 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 return;
             }
 
+            const stale = preflightModelsRef.current;
+            const staleUpdatedAt = refreshedAtRef.current;
+            if (stale && staleUpdatedAt) {
+                // When switching cwd/worktree, keep the last usable list on screen even if the new probe fails.
+                writeDynamicModelProbeCacheSuccess(preflightModelsKey, stale, commitNowMs);
+                setPreflightModels(stale);
+                setRefreshedAt(commitNowMs);
+                setProbePhase('idle');
+                return;
+            }
+
             writeDynamicModelProbeCacheError(preflightModelsKey, commitNowMs);
             setProbePhase('idle');
         };
 
         void run();
         return () => { cancelled = true; };
-    }, [agentType, backendTarget, preflightModelsKey, params.capabilityServerId, params.codexBackendModeOverride, params.cwd, params.selectedMachineId, refreshNonce]);
+    }, [agentType, backendTarget, preflightModelsKey, probeScopeKey, params.capabilityServerId, params.cwd, params.selectedMachineId, params.probeContext?.capabilityParams, refreshNonce]);
 
     const modelOptions = React.useMemo(
         () => getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: preflightModels }),
@@ -178,7 +225,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         probe: {
             phase: probePhase,
             refreshedAt,
-            refresh,
+            onRefresh,
         },
     };
 }

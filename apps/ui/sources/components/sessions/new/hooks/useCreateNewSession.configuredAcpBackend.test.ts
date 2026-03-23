@@ -452,7 +452,6 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                         timezone: null,
                     },
                 }),
-                codexBackendModeOverride: 'appServer',
             } as any);
 
             handleCreateSession = hook.handleCreateSession as () => Promise<void>;

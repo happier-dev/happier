@@ -2,44 +2,47 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('View', props, props.children),
-                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Pressable', props, props.children),
-                                            Platform: {
-                                            OS: 'web',
-                                            select: (v: any) => v.web ?? v.default ?? null,
-                                        },
-                                        }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: () => <>{'.'}</>,
-}));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                input: { background: '#fff', text: '#000', placeholder: '#999' },
-                button: { primary: { background: '#00f' } },
+installNewSessionComponentsCommonModuleMocks({
+    icons: () => ({
+        Ionicons: () => <>{'.'}</>,
+    }),
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            Platform: {
+                OS: 'web',
+                select: (v: any) => v.web ?? v.default ?? null,
             },
-        },
-        rt: { themeName: 'light' },
-    });
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: '#000',
+                    textSecondary: '#666',
+                    divider: '#ddd',
+                    input: { background: '#fff', text: '#000', placeholder: '#999' },
+                    button: { primary: { background: '#00f' } },
+                },
+            },
+            rt: { themeName: 'light' },
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -74,11 +77,6 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
 vi.mock('@/utils/path/pathUtils', () => ({
     resolveAbsolutePath: (path: string) => path,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),

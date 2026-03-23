@@ -39,7 +39,6 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     setAcpConfigOptionOverride: (configId: string, value: string) => void;
     mcpSelection: SessionMcpSelectionV1;
     setMcpSelection: React.Dispatch<React.SetStateAction<SessionMcpSelectionV1>>;
-    codexBackendModeOverride: 'mcp' | 'acp' | 'appServer' | null;
 }> {
     const [modelMode, setModelMode] = React.useState<ModelMode>(() => {
         const core = getAgentCore(params.agentType);
@@ -92,16 +91,6 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         );
     });
 
-    const codexBackendModeOverride = React.useMemo(() => {
-        if (params.agentType !== 'codex') return null;
-        const mode = params.hydratedTempAuthoringDraft?.codexBackendMode ?? params.hydratedPersistedAuthoringDraft?.codexBackendMode;
-        return mode === 'mcp' || mode === 'acp' || mode === 'appServer' ? mode : null;
-    }, [
-        params.agentType,
-        params.hydratedPersistedAuthoringDraft?.codexBackendMode,
-        params.hydratedTempAuthoringDraft?.codexBackendMode,
-    ]);
-
     const setAcpConfigOptionOverride = React.useCallback((configId: string, value: string) => {
         const normalizedConfigId = typeof configId === 'string' ? configId.trim() : '';
         const normalizedValue = typeof value === 'string' ? value.trim() : '';
@@ -130,6 +119,5 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         setAcpConfigOptionOverride,
         mcpSelection,
         setMcpSelection,
-        codexBackendModeOverride,
     };
 }

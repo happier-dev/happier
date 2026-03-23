@@ -2,6 +2,8 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { createPassThroughComponent } from '@/dev/testkit/mocks/components';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { MachineSelector } from './MachineSelector';
 import { renderScreen } from '@/dev/testkit';
 
@@ -17,28 +19,28 @@ const captured = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            dark: false,
-            colors: {
-                textSecondary: '#666',
-                status: { connected: '#0f0', disconnected: '#f00' },
-                button: { primary: { background: '#00f' } },
+installNewSessionComponentsCommonModuleMocks({
+    icons: () => ({
+        Ionicons: createPassThroughComponent('Ionicons'),
+    }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                dark: false,
+                colors: {
+                    textSecondary: '#666',
+                    status: { connected: '#0f0', disconnected: '#f00' },
+                    button: { primary: { background: '#00f' } },
+                },
             },
-        },
-        rt: { themeName: 'light' },
-    });
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+            rt: { themeName: 'light' },
+        });
+    },
 });
 
 vi.mock('@/components/ui/forms/SearchableListSelector', () => ({

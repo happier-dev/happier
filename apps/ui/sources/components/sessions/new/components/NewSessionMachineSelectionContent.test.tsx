@@ -4,6 +4,7 @@ import renderer from 'react-test-renderer';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerScopedMachine } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -15,6 +16,13 @@ type CapturedServerScopedMachineSelectorProps = Readonly<Record<string, unknown>
 const capturedMachineSelectorProps: CapturedMachineSelectorProps[] = [];
 const capturedServerScopedMachineSelectorProps: CapturedServerScopedMachineSelectorProps[] = [];
 
+installNewSessionComponentsCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+});
+
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
 }));
@@ -22,11 +30,6 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children }: { children?: React.ReactNode }) => React.createElement('Text', null, children),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('./MachineSelector', () => ({
     MachineSelector: (props: CapturedMachineSelectorProps) => {

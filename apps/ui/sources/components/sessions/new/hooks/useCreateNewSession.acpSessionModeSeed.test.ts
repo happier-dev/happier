@@ -482,7 +482,6 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: null,
-        codexBackendModeOverride: 'appServer',
         sessionPrompt: 'hello',
         resumeSessionId: '',
         agentNewSessionOptions: null,
@@ -507,8 +506,8 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     });
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      codexBackendMode: 'appServer',
-      experimentalCodexAcp: false,
+      codexBackendMode: 'acp',
+      experimentalCodexAcp: true,
     }));
   });
 

@@ -1,48 +1,47 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('View', props, props.children),
-                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Text', props, props.children),
-                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Pressable', props, props.children),
-                                            ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props),
-                                            Dimensions: {
-                                                get: () => ({ width: 1440, height: 900 }),
-                                            },
-                                            Platform: {
-                                            OS: 'web',
-                                            select: (value: Record<string, unknown>) => value.web ?? value.default ?? value.ios ?? value.android,
-                                        },
-                                            Linking: { openURL: vi.fn() },
-                                        }
-    );
+installNewSessionComponentsCommonModuleMocks({
+    icons: () => ({
+        Ionicons: () => <>{'.'}</>,
+    }),
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Text', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props),
+            Dimensions: {
+                get: () => ({ width: 1440, height: 900 }),
+            },
+            Platform: {
+                OS: 'web',
+                select: (value: Record<string, unknown>) => value.web ?? value.default ?? value.ios ?? value.android,
+            },
+            Linking: { openURL: vi.fn() },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: Record<string, unknown>) =>
+                params ? `${key}:${JSON.stringify(params)}` : key,
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: () => <>{'.'}</>,
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) =>
-        params ? `${key}:${JSON.stringify(params)}` : key });
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-}));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -93,13 +92,9 @@ vi.mock('@/components/ui/lists/Item', () => ({
     },
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex'],
+    DEFAULT_AGENT_ID: 'codex',
     getAgentCore: () => ({
         displayNameKey: 'agents.codex',
         cli: {
@@ -115,62 +110,42 @@ describe('CliNotDetectedBanner', () => {
     it('does not emit raw text nodes under non-Text parents when icons render as text on web', async () => {
         const { CliNotDetectedBanner } = await import('./CliNotDetectedBanner');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<CliNotDetectedBanner
-                    agentId={'codex' as any}
-                    theme={{
-                        colors: {
-                            warning: '#d97706',
-                            text: '#111827',
-                            textSecondary: '#6b7280',
-                            textLink: '#2563eb',
-                            box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
-                        },
-                    }}
-                    onDismiss={() => {}}
-                />)).tree;
+        const screen = await renderScreen(<CliNotDetectedBanner
+            agentId={'codex' as any}
+            theme={{
+                colors: {
+                    warning: '#d97706',
+                    text: '#111827',
+                    textSecondary: '#6b7280',
+                    textLink: '#2563eb',
+                    box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
+                },
+            }}
+            onDismiss={() => {}}
+        />);
 
-        const badNodes: Array<{ parent: string | null; value: string }> = [];
-        const walk = (node: any, parentType: string | null) => {
-            if (node == null) return;
-            if (typeof node === 'string') {
-                if (parentType !== 'Text' && node.trim().length > 0) badNodes.push({ parent: parentType, value: node });
-                return;
-            }
-            if (Array.isArray(node)) {
-                for (const child of node) walk(child, parentType);
-                return;
-            }
-            const nextParent = typeof node.type === 'string' ? node.type : parentType;
-            const children = Array.isArray(node.children) ? node.children : [];
-            for (const child of children) walk(child, nextParent);
-        };
-
-        walk(tree.toJSON(), null);
-
-        expect(badNodes).toEqual([]);
+        expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
     });
 
     it('renders the warning inside an ItemGroup and Item', async () => {
         const { CliNotDetectedBanner } = await import('./CliNotDetectedBanner');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<CliNotDetectedBanner
-                    agentId={'codex' as any}
-                    theme={{
-                        colors: {
-                            warning: '#d97706',
-                            text: '#111827',
-                            textSecondary: '#6b7280',
-                            textLink: '#2563eb',
-                            box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
-                        },
-                    }}
-                    onDismiss={() => {}}
-                />)).tree;
+        const screen = await renderScreen(<CliNotDetectedBanner
+            agentId={'codex' as any}
+            theme={{
+                colors: {
+                    warning: '#d97706',
+                    text: '#111827',
+                    textSecondary: '#6b7280',
+                    textLink: '#2563eb',
+                    box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
+                },
+            }}
+            onDismiss={() => {}}
+        />);
 
-        const groups = tree.root.findAllByType('ItemGroup' as any);
-        const items = tree.root.findAllByType('Item' as any);
+        const groups = screen.findAllByType('ItemGroup' as any);
+        const items = screen.findAllByType('Item' as any);
 
         expect(groups).toHaveLength(1);
         expect(items).toHaveLength(1);

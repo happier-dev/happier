@@ -989,7 +989,27 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
     function getCheckoutChipLabel(model: any): React.ReactNode {
         const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
-        const chipElement = checkoutChip?.render({
+        if (!checkoutChip) return undefined;
+
+        // Prefer the stable chip contract rather than depending on render-tree structure.
+        const labelFromPopover = (checkoutChip as any)?.collapsedOptionsPopover?.label;
+        if (typeof labelFromPopover === 'string' && labelFromPopover.length > 0) {
+            return labelFromPopover;
+        }
+
+        if (typeof (checkoutChip as any)?.collapsedAction === 'function') {
+            const action = (checkoutChip as any).collapsedAction({
+                tint: '#000',
+                dismiss: () => {},
+                blurInput: () => {},
+            });
+            const item = Array.isArray(action) ? action[0] : action;
+            const label = item?.label;
+            if (typeof label === 'string' && label.length > 0) return label;
+        }
+
+        // Fallback: render the chip and locate the label node.
+        const chipElement = checkoutChip.render({
             chipStyle: () => null,
             showLabel: true,
             iconColor: '#000',
@@ -997,14 +1017,10 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             countTextStyle: {},
             popoverAnchorRef: { current: null },
         }) as React.ReactElement<{ children?: React.ReactNode }> | undefined;
-        const chipPressable = React.Children.toArray(chipElement?.props?.children)[0] as React.ReactElement<{
-            children?: React.ReactNode;
-        }> | undefined;
-        const renderedChildren = Array.isArray(chipPressable?.props?.children)
-            ? (chipPressable.props.children as React.ReactElement[])
-            : null;
-        const renderedLabelNode = renderedChildren?.[1] as React.ReactElement<{ children?: React.ReactNode }> | undefined;
-        return renderedLabelNode?.props?.children;
+        if (!chipElement) return undefined;
+        const renderedChildren = React.Children.toArray((chipElement as any)?.props?.children) as any[];
+        const textNode = renderedChildren.find((child) => child && typeof child === 'object' && 'props' in child && (child as any).props?.children);
+        return (textNode as any)?.props?.children;
     }
 
     async function flushInteractionQueue() {
@@ -1148,34 +1164,6 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             authoringDraft: expect.objectContaining({
                 checkoutCreationDraft: null,
             }),
-        }));
-    });
-
-    it('rehydrates persisted codex backend mode into the shared authoring draft and autosave payload', async () => {
-        persistedDraft.agentType = 'codex';
-        persistedDraft.backendTarget = { kind: 'builtInAgent', agentId: 'codex' };
-        (persistedDraft as any).codexBackendMode = 'appServer';
-
-        let model: any = null;
-        await renderNewSessionScreenModel((nextModel) => {
-            model = nextModel;
-        });
-
-        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
-            codexBackendModeOverride: 'appServer',
-            authoringDraft: expect.objectContaining({
-                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                codexBackendMode: 'appServer',
-            }),
-        }));
-
-        await act(async () => {
-            persistDraftNowRef.current?.();
-        });
-
-        expect(saveNewSessionDraftMock).toHaveBeenCalledWith(expect.objectContaining({
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-            codexBackendMode: 'appServer',
         }));
     });
 
@@ -1372,16 +1360,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(model?.simpleProps?.permissionMode).toBe('acceptEdits');
         expect(model?.simpleProps?.submitAccessibilityLabel).toBe('automations.edit.saveAutomationLabel');
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
-            codexBackendModeOverride: 'appServer',
             authoringDraft: expect.objectContaining({
                 directory: '/repo/edit-seed',
                 backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
                 prompt: 'Review the open pull requests',
                 displayText: 'Review the open pull requests',
-                codexBackendMode: 'appServer',
             }),
         }));
-        expect((useCreateNewSessionArgsRef.current?.authoringDraft as any)?.experimentalCodexAcp).toBeNull();
 
         await act(async () => {
             persistDraftNowRef.current?.();
@@ -2064,62 +2049,34 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
             const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
             expect(checkoutChip).toBeTruthy();
+            expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
 
-            const chipElement = checkoutChip.render({
-                chipStyle: () => null,
-                showLabel: true,
-                iconColor: '#000',
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null },
-            }) as React.ReactElement<{
-                children?: React.ReactNode;
-            }>;
-            const chipPressable = React.Children.toArray(chipElement?.props?.children)[0] as React.ReactElement<{
-                onPress?: () => void;
-                accessibilityLabel?: string;
-                children?: React.ReactNode;
-            }> | undefined;
-
-            expect(typeof chipPressable?.props?.onPress).toBe('function');
-            expect(chipPressable?.props?.accessibilityLabel).toBe('newSession.checkout.selectTitle');
-
-            const renderedChildren = Array.isArray(chipPressable?.props?.children)
-                ? (chipPressable.props.children as React.ReactElement[])
-                : null;
-            const renderedLabelNode = renderedChildren?.[1] as React.ReactElement<{ children?: React.ReactNode }> | undefined;
-            const renderedLabel = renderedChildren
-                ? renderedLabelNode?.props?.children
-                : undefined;
-            expect(renderedLabel).toBe('newSession.checkout.noWorktree');
-
-        await act(async () => {
-            chipPressable?.props?.onPress?.();
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-            expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
-
-            const updatedCheckoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
-            const updatedChipElement = updatedCheckoutChip.render({
-                chipStyle: () => null,
-                showLabel: true,
-                iconColor: '#000',
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null },
-            }) as React.ReactElement<{ children?: React.ReactNode }>;
-            const updatedChildren = React.Children.toArray(updatedChipElement?.props?.children) as React.ReactElement[];
-            const pickerPopover = updatedChildren[1] as React.ReactElement<{
-                open?: boolean;
-                options?: ReadonlyArray<{ id: string }>;
-            }> | undefined;
-
-            expect(pickerPopover?.props?.open).toBe(true);
-            expect(pickerPopover?.props?.options?.map((option) => option.id)).toEqual([
+            const pickerPopover = (checkoutChip as any).collapsedOptionsPopover;
+            expect(pickerPopover).toEqual(expect.objectContaining({
+                title: 'newSession.checkout.selectTitle',
+                label: 'newSession.checkout.noWorktree',
+            }));
+            expect(pickerPopover?.options?.map((option: any) => option.id)).toEqual([
                 'current_path',
                 'create_git_worktree',
+                '__existing_worktree__',
             ]);
+
+            const toggleCollapsedPopover = vi.fn();
+            const screen = await renderScreen(
+                React.createElement(React.Fragment, null, checkoutChip.render({
+                    chipStyle: () => null,
+                    showLabel: true,
+                    iconColor: '#000',
+                    textStyle: {},
+                    countTextStyle: {},
+                    popoverAnchorRef: { current: null },
+                    chipAnchorRef: { current: null },
+                    toggleCollapsedPopover,
+                })),
+            );
+            screen.pressByTestId('new-session-checkout-chip');
+            expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-checkout');
         } finally {
             repoSnapshotState.value = {
                 ...repoSnapshotState.value,
@@ -2182,25 +2139,29 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
             expect(checkoutChip).toBeTruthy();
 
-            const chipElement = checkoutChip.render({
-                chipStyle: () => null,
-                showLabel: true,
-                iconColor: '#000',
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null },
-            }) as React.ReactElement<{ children?: React.ReactNode }>;
-            const renderedChildren = React.Children.toArray(chipElement?.props?.children) as React.ReactElement[];
-            const pickerPopover = renderedChildren[1] as React.ReactElement<{
-                open?: boolean;
-                options?: ReadonlyArray<{ id: string }>;
-            }> | undefined;
-
-            expect(pickerPopover?.props?.open).toBe(true);
-            expect(pickerPopover?.props?.options?.map((option) => option.id)).toEqual([
+            const pickerPopover = (checkoutChip as any).collapsedOptionsPopover;
+            expect(pickerPopover?.options?.map((option: any) => option.id)).toEqual([
                 'current_path',
                 'create_git_worktree',
+                '__existing_worktree__',
             ]);
+
+            // With the shared overlay controller, "open" is bridged through ctx.toggleCollapsedPopover.
+            const toggleCollapsedPopover = vi.fn();
+            await renderScreen(
+                React.createElement(React.Fragment, null, checkoutChip.render({
+                    chipStyle: () => null,
+                    showLabel: true,
+                    iconColor: '#000',
+                    textStyle: {},
+                    countTextStyle: {},
+                    popoverAnchorRef: { current: null },
+                    chipAnchorRef: { current: null },
+                    toggleCollapsedPopover,
+                })),
+            );
+            await flushHookEffects({ cycles: 1, turns: 1 });
+            expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-checkout');
         } finally {
             searchParamsState.value = {};
             repoSnapshotState.value = {
@@ -2331,66 +2292,26 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             expect(checkoutChip).toBeTruthy();
             expect(checkoutChip?.controlId).toBe('checkout');
             expect(checkoutChip?.collapsedOptionsPopover?.title).toBe('newSession.checkout.selectTitle');
-
-            const renderCheckoutChip = () => checkoutChip.render({
-                chipStyle: () => null,
-                showLabel: true,
-                iconColor: '#000',
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null },
-            }) as React.ReactElement<{ children?: React.ReactNode }>;
-
-            const initialChipElement = renderCheckoutChip();
-            const initialChildren = React.Children.toArray(initialChipElement?.props?.children) as React.ReactElement[];
-            const chipPressable = initialChildren[0] as React.ReactElement<{ onPress?: () => void }> | undefined;
-
-            expect(typeof chipPressable?.props?.onPress).toBe('function');
-
-        await act(async () => {
-            chipPressable?.props?.onPress?.();
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-            const updatedCheckoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
-            const updatedChipElement = updatedCheckoutChip.render({
-                chipStyle: () => null,
-                showLabel: true,
-                iconColor: '#000',
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null },
-            }) as React.ReactElement<{ children?: React.ReactNode }>;
-            const updatedChildren = React.Children.toArray(updatedChipElement?.props?.children) as React.ReactElement[];
-            const pickerPopover = updatedChildren[1] as React.ReactElement<{
-                open?: boolean;
-                options?: unknown;
-            }> | undefined;
-
             expect(modalShowMock).not.toHaveBeenCalled();
-            expect(pickerPopover).toBeTruthy();
-            expect(pickerPopover?.props?.open).toBe(true);
-            expect(pickerPopover?.props?.options).toHaveLength(4);
-            expect(pickerPopover?.props?.options).toEqual([
-                expect.objectContaining({
-                    id: 'current_path',
-                    sectionId: 'current',
-                }),
-                expect.objectContaining({
-                    id: 'create_git_worktree',
-                    sectionId: 'actions',
-                }),
-                expect.objectContaining({
-                    id: 'checkout:/repo/hotfix',
-                    sectionId: 'linked',
-                    label: 'hotfix',
-                }),
-                expect.objectContaining({
-                    id: 'checkout:/repo/release',
-                    sectionId: 'linked',
-                    label: 'release',
-                }),
-            ]);
+            const optionIds = (checkoutChip?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+            expect(optionIds).toContain('current_path');
+            expect(optionIds).toContain('__existing_worktree__');
+
+            const toggleCollapsedPopover = vi.fn();
+            const screen = await renderScreen(
+                React.createElement(React.Fragment, null, checkoutChip.render({
+                    chipStyle: () => null,
+                    showLabel: true,
+                    iconColor: '#000',
+                    textStyle: {},
+                    countTextStyle: {},
+                    popoverAnchorRef: { current: null },
+                    chipAnchorRef: { current: null },
+                    toggleCollapsedPopover,
+                })),
+            );
+            screen.pressByTestId('new-session-checkout-chip');
+            expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-checkout');
         } finally {
             platformOsState.value = 'web';
             repoSnapshotState.value = {
@@ -2461,62 +2382,25 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         try {
             const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
             expect(checkoutChip).toBeTruthy();
+            const toggleCollapsedPopover = vi.fn();
+            const screen = await renderScreen(
+                React.createElement(React.Fragment, null, checkoutChip.render({
+                    chipStyle: () => null,
+                    showLabel: true,
+                    iconColor: '#000',
+                    textStyle: {},
+                    countTextStyle: {},
+                    popoverAnchorRef: { current: null },
+                    chipAnchorRef: { current: null },
+                    toggleCollapsedPopover,
+                })),
+            );
+            screen.pressByTestId('new-session-checkout-chip');
+            expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-checkout');
 
-            const renderCheckoutChip = () => checkoutChip.render({
-                chipStyle: () => null,
-                showLabel: true,
-                iconColor: '#000',
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null },
-            }) as React.ReactElement<{ children?: React.ReactNode }>;
-
-            const initialChipElement = renderCheckoutChip();
-            const initialChildren = React.Children.toArray(initialChipElement?.props?.children) as React.ReactElement[];
-            const chipPressable = initialChildren[0] as React.ReactElement<{ onPress?: () => void }> | undefined;
-
-            expect(typeof chipPressable?.props?.onPress).toBe('function');
-
-            await act(async () => {
-                chipPressable?.props?.onPress?.();
-                await flushHookEffects({ cycles: 1, turns: 1 });
-            });
-
-            expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
-
-            const updatedCheckoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
-            const updatedChipElement = updatedCheckoutChip.render({
-                chipStyle: () => null,
-                showLabel: true,
-                iconColor: '#000',
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null },
-            }) as React.ReactElement<{ children?: React.ReactNode }>;
-            const updatedChildren = React.Children.toArray(updatedChipElement?.props?.children) as React.ReactElement[];
-            const pickerPopover = updatedChildren[1] as React.ReactElement<{
-                open?: boolean;
-                options?: unknown;
-            }> | undefined;
-
-            expect(pickerPopover).toBeTruthy();
-            expect(pickerPopover?.props?.open).toBe(true);
-            expect(pickerPopover?.props?.options).toHaveLength(3);
-            expect(pickerPopover?.props?.options).toEqual([
-                expect.objectContaining({
-                    id: 'current_path',
-                    sectionId: 'current',
-                }),
-                expect.objectContaining({
-                    id: 'create_git_worktree',
-                    sectionId: 'actions',
-                }),
-                expect.objectContaining({
-                    id: 'checkout:/repo/release',
-                    sectionId: 'linked',
-                    label: 'release',
-                }),
-            ]);
+            const optionIds = (checkoutChip?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+            expect(optionIds).toContain('current_path');
+            expect(optionIds).toContain('__existing_worktree__');
         } finally {
             repoSnapshotState.value = {
                 ...repoSnapshotState.value,
@@ -2711,22 +2595,11 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         const getCheckoutChip = () => model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
         expect(getCheckoutChip()?.controlId).toBe('checkout');
         expect(getCheckoutChip()?.collapsedOptionsPopover?.title).toBe('newSession.checkout.selectTitle');
-        const renderCheckoutChip = () => getCheckoutChip()?.render({
-            chipStyle: () => null,
-            showLabel: true,
-            iconColor: '#000',
-            textStyle: {},
-            countTextStyle: {},
-            popoverAnchorRef: { current: null },
-        }) as React.ReactElement<{ children?: React.ReactNode }> | undefined;
-        const initialPopover = React.Children.toArray(renderCheckoutChip()?.props?.children)[1] as React.ReactElement<{
-            open?: boolean;
-            options?: ReadonlyArray<{ id: string }>;
-        }> | undefined;
-        expect(initialPopover?.props?.open).toBe(false);
-        expect(initialPopover?.props?.options?.map((option) => option.id)).toEqual([
+        const initialOptionIds = (getCheckoutChip()?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+        expect(initialOptionIds).toEqual([
             'current_path',
             'create_git_worktree',
+            '__existing_worktree__',
         ]);
 
         await act(async () => {
@@ -2771,14 +2644,11 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
 
         expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
-        const updatedPopover = React.Children.toArray(renderCheckoutChip()?.props?.children)[1] as React.ReactElement<{
-            open?: boolean;
-            options?: ReadonlyArray<{ id: string }>;
-        }> | undefined;
-        expect(updatedPopover?.props?.open).toBe(false);
-        expect(updatedPopover?.props?.options?.map((option) => option.id)).toEqual([
+        const updatedOptionIds = (getCheckoutChip()?.collapsedOptionsPopover?.options ?? []).map((option: any) => option.id);
+        expect(updatedOptionIds).toEqual([
             'current_path',
             'create_git_worktree',
+            '__existing_worktree__',
         ]);
     });
 

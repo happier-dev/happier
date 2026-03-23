@@ -1,30 +1,46 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('View', props, props.children),
-                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Text', props, props.children),
-                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Pressable', props, props.children),
-                                            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('ScrollView', props, props.children),
-                                            Platform: {
-                                            OS: 'web',
-                                            select: (value: any) => value.web ?? value.default ?? null,
-                                        },
-                                            Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
-                                        }
-    );
+installNewSessionComponentsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Text', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('ScrollView', props, props.children),
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value.web ?? value.default ?? null,
+            },
+            Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    icons: async () => ({
+        Ionicons: () => React.createElement('Ionicons'),
+    }),
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: vi.fn(),
+            },
+        }).module;
+    },
 });
 
 vi.mock('react-native-keyboard-controller', () => ({
@@ -42,15 +58,6 @@ vi.mock('color', () => ({
         alpha: () => ({ rgb: () => ({ string: () => 'rgba(0,0,0,0.08)' }) }),
     }),
 }));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: () => React.createElement('Ionicons'),
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: () => null,
@@ -118,21 +125,10 @@ vi.mock('@/sync/sync', () => ({
     sync: { sendMessage: vi.fn() },
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(),
-        },
-    }).module;
-});
-
 describe('NewSessionWizard submit deferral', () => {
     it('defers web submission by one animation frame before invoking handleCreateSession', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
         const handleCreateSession = vi.fn();
-        vi.useFakeTimers();
 
         const screen = await renderScreen(<NewSessionWizard
                     layout={{
@@ -228,14 +224,13 @@ describe('NewSessionWizard submit deferral', () => {
 
             expect(handleCreateSession).not.toHaveBeenCalled();
 
-            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 0, frames: 1 });
+            await new Promise<void>((resolve) => {
+                setTimeout(resolve, 0);
+            });
 
             expect(handleCreateSession).toHaveBeenCalledTimes(1);
         } finally {
-            await act(async () => {
-                screen.tree.unmount();
-            });
-            vi.useRealTimers();
+            await screen.unmount();
         }
     });
 });

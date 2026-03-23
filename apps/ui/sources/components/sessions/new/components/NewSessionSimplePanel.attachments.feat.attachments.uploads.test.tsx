@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -21,22 +22,31 @@ const uploadAttachmentDraftsToSessionSpy = vi.hoisted(() => vi.fn());
 const formatAttachmentsBlockSpy = vi.hoisted(() => vi.fn(() => ''));
 const followUpSpawnedSessionWithServerScopeSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('View', props, props.children),
-                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Pressable', props, props.children),
-                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Text', props, props.children),
-                                            Platform: {
-                                            OS: 'web',
-                                            select: (v: any) => v.web ?? v.default ?? null,
-                                        },
-                                        }
-    );
+installNewSessionComponentsCommonModuleMocks({
+    icons: () => ({
+        Ionicons: (props: Record<string, unknown>) => (
+            mockEnv.iconsRenderAsText ? <>{'.'}</> : React.createElement('Ionicons', props, null)
+        ),
+    }),
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Text', props, props.children),
+            Platform: {
+                OS: 'web',
+                select: (v: any) => v.web ?? v.default ?? null,
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
 });
 
 vi.mock('react-native-keyboard-controller', () => ({
@@ -112,17 +122,6 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'attachments.uploads',
 }));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: Record<string, unknown>) => (
-        mockEnv.iconsRenderAsText ? <>{'.'}</> : React.createElement('Ionicons', props, null)
-    ),
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('NewSessionSimplePanel (attachments.uploads)', () => {
     it('wires AgentInput attachments handlers and attach action when enabled', async () => {

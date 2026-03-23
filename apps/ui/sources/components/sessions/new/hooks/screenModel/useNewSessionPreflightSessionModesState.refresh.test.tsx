@@ -58,7 +58,7 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
     expect((latest.modeOptions ?? []).some((o: any) => o.id === 'mode1')).toBe(true);
 
     await act(async () => {
-      latest.probe.refresh();
+      latest.probe.onRefresh?.();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 

@@ -2,23 +2,23 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: 'View',
-                                            Pressable: 'Pressable',
-                                        }
-    );
+installNewSessionComponentsCommonModuleMocks({
+    icons: () => ({
+        Ionicons: () => <>{'.'}</>,
+    }),
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Pressable: 'Pressable',
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: () => <>{'.'}</>,
-}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',

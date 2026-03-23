@@ -51,6 +51,7 @@ import { useNewSessionWizardProps } from '@/components/sessions/new/hooks/useNew
 import { buildNewSessionProfileSelectionPopover } from '@/components/sessions/new/components/buildNewSessionProfileSelectionPopover';
 import { useNewSessionAgentPickerControls } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentPickerControls';
 import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/modules/resolveNewSessionCapabilityServerId';
+import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import {
     resolveNextSelectableBackendEntryForNewSession,
@@ -454,7 +455,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setAcpConfigOptionOverride,
         mcpSelection,
         setMcpSelection,
-        codexBackendModeOverride,
     } = useNewSessionAgentAuthoringOptionsState({
         agentType,
         hydratedTempAuthoringDraft,
@@ -555,7 +555,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         capabilityServerId,
         cwd: selectedPath,
-        codexBackendModeOverride,
+        probeContext: resolveNewSessionCapabilityProbeContext({ backendTarget, settings }),
     });
 
     const { preflightModes: preflightSessionModes, modeOptions: acpSessionModeOptions, probe: acpSessionModeProbeState } =
@@ -1129,10 +1129,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setAcpSessionModeId,
         sessionConfigOptionOverrides,
         setSessionConfigOptionOverrides,
-        codexBackendModeOverride,
         selectedMachineId,
         capabilityServerId,
         selectedPath,
+        settings,
     });
 
     const agentOptionState = agentNewSessionOptionStateByAgentId[selectedBackendTargetKey] ?? null;
@@ -1193,7 +1193,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentNewSessionOptions,
         settings,
         effectiveWindowsRemoteSessionLaunchMode: effectiveWindowsRemoteSessionLaunchMode ?? null,
-        codexBackendModeOverride,
         acpSessionModeId,
         sessionConfigOptionOverrides,
         automationEditId,
@@ -1224,7 +1223,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         modelMode,
         acpSessionModeId,
         sessionConfigOptionOverrides,
-        codexBackendModeOverride,
         sessionPrompt,
         automationEditId,
         resumeSessionId,
@@ -1365,19 +1363,19 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         modelOptions,
         modelOptionsProbe: {
             phase: modelOptionsProbeState.phase,
-            onRefresh: modelOptionsProbeState.refresh,
+            onRefresh: modelOptionsProbeState.onRefresh,
         },
         acpSessionModeOptions,
         acpSessionModeProbe: {
             phase: acpSessionModeProbeState.phase,
-            onRefresh: acpSessionModeProbeState.refresh,
+            onRefresh: acpSessionModeProbeState.onRefresh,
         },
         acpSessionModeId,
         setAcpSessionModeId,
         acpConfigOptions: acpConfigOptions ?? undefined,
         acpConfigOptionsProbe: {
             phase: acpConfigOptionsProbeState.phase,
-            onRefresh: acpConfigOptionsProbeState.refresh,
+            onRefresh: acpConfigOptionsProbeState.onRefresh,
         },
         acpConfigOptionOverrides: sessionConfigOptionOverrides,
         setAcpConfigOptionOverride,
@@ -1475,19 +1473,19 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         modelOptions,
         modelOptionsProbe: {
             phase: modelOptionsProbeState.phase,
-            onRefresh: modelOptionsProbeState.refresh,
+            onRefresh: modelOptionsProbeState.onRefresh,
         },
         acpSessionModeOptions,
         acpSessionModeProbe: {
             phase: acpSessionModeProbeState.phase,
-            onRefresh: acpSessionModeProbeState.refresh,
+            onRefresh: acpSessionModeProbeState.onRefresh,
         },
         acpSessionModeId,
         setAcpSessionModeId,
         acpConfigOptions: acpConfigOptions ?? undefined,
         acpConfigOptionsProbe: {
             phase: acpConfigOptionsProbeState.phase,
-            onRefresh: acpConfigOptionsProbeState.refresh,
+            onRefresh: acpConfigOptionsProbeState.onRefresh,
         },
         acpConfigOptionOverrides: sessionConfigOptionOverrides,
         setAcpConfigOptionOverride,

@@ -2,31 +2,48 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const AgentInputMock = vi.fn((_props: any) => null);
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('View', props, props.children),
-                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Text', props, props.children),
-                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Pressable', props, props.children),
-                                            AppState: {
-                                            addEventListener: () => ({ remove: () => {} }),
-                                        },
-                                            Platform: {
-                                            OS: 'ios',
-                                            select: (v: any) => v.ios,
-                                        },
-                                        }
-    );
+installNewSessionComponentsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Text', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            Platform: {
+                OS: 'ios',
+                select: (v: any) => v.ios,
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSettings: () => ({
+                profiles: [],
+                agentInputEnterToSend: true,
+                agentInputActionBarLayout: 'wrap',
+                agentInputChipDensity: 'labels',
+                sessionPermissionModeApplyTiming: 'immediate',
+            }),
+        });
+    },
 });
 
 vi.mock('react-native-keyboard-controller', () => ({
@@ -49,11 +66,6 @@ vi.mock('@/components/ui/popover', () => ({
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: AgentInputMock,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
     it('passes modelOptions to AgentInput as modelOptionsOverride', async () => {

@@ -118,7 +118,6 @@ export function useCreateNewSession(params: Readonly<{
      */
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
-    codexBackendModeOverride?: CodexBackendMode | null;
 
     sessionPrompt: string;
     resumeSessionId: string;
@@ -144,10 +143,9 @@ export function useCreateNewSession(params: Readonly<{
     const mountedRef = useMountedRef();
     const applySettings = useApplySettings();
     const latestParamsRef = React.useRef(params);
-
-    React.useEffect(() => {
-        latestParamsRef.current = params;
-    }, [params]);
+    // Keep the latest params available synchronously so event handlers can't observe
+    // a stale snapshot in the window between rerender and effect flush.
+    latestParamsRef.current = params;
 
     const handleCreateSession = React.useCallback(async (opts?: HandleCreateSessionOptions) => {
         const current = latestParamsRef.current;
@@ -159,7 +157,7 @@ export function useCreateNewSession(params: Readonly<{
             Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
             return;
         }
-        if (!current.selectedPath) {
+        if (current.selectedPath.trim().length === 0) {
             Modal.alert(t('common.error'), t('newSession.noPathSelected'));
             return;
         }
@@ -319,12 +317,9 @@ export function useCreateNewSession(params: Readonly<{
                 sessionOverride: current.windowsRemoteSessionLaunchModeOverride ?? undefined,
             }).mode;
             const normalizedSessionPrompt = current.sessionPrompt.trim();
-            const effectiveSpawnSettings = current.agentType === 'codex' && current.codexBackendModeOverride
-                ? { ...current.settings, codexBackendMode: current.codexBackendModeOverride }
-                : current.settings;
             const spawnSessionExtras = buildSpawnSessionExtrasFromUiState({
                 agentId: current.agentType,
-                settings: effectiveSpawnSettings,
+                settings: current.settings,
                 resumeSessionId: current.resumeSessionId,
             });
             const authoringDraft = buildNewSessionAuthoringDraftFromResolvedInputs({
@@ -421,7 +416,7 @@ export function useCreateNewSession(params: Readonly<{
                 return;
             }
             const actualPath = checkoutResult.path;
-            const sessionPath = checkoutResult.sessionPath;
+            const sessionPath = checkoutResult.sessionPath.trim() || current.selectedPath.trim();
             rollbackActualPath = actualPath;
 
             const result = await machineSpawnNewSession({

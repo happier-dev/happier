@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 
@@ -8,49 +8,45 @@ import { useNewSessionDraftAutoPersist } from './useNewSessionDraftAutoPersist';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('useNewSessionDraftAutoPersist', () => {
-    it('flushes the pending persist callback on unmount', async () => {
+    beforeEach(() => {
         vi.useFakeTimers();
-        try {
-            const persistDraftNow = vi.fn();
+    });
 
-            const hook = await renderHook(() =>
-                useNewSessionDraftAutoPersist({
-                    persistDraftNow,
-                }),
-            );
+    afterEach(() => {
+        vi.useRealTimers();
+    });
 
-            // Unmount before the debounce timer fires.
-            await hook.unmount();
-            await flushHookEffects();
+    it('flushes the pending persist callback on unmount', async () => {
+        const persistDraftNow = vi.fn();
 
-            expect(persistDraftNow).toHaveBeenCalledTimes(1);
-        } finally {
-            vi.useRealTimers();
-        }
+        const hook = await renderHook(() =>
+            useNewSessionDraftAutoPersist({
+                persistDraftNow,
+            }),
+        );
+
+        // Unmount before the debounce timer fires.
+        await hook.unmount();
+
+        expect(persistDraftNow).toHaveBeenCalledTimes(1);
     });
 
     it('does not flush a pending persist callback after persistence is disabled', async () => {
-        vi.useFakeTimers();
-        try {
-            const persistDraftNow = vi.fn();
-            let persistenceEnabled = true;
+        const persistDraftNow = vi.fn();
+        let persistenceEnabled = true;
 
-            const hook = await renderHook(() =>
-                useNewSessionDraftAutoPersist({
-                    persistDraftNow,
-                    persistenceEnabled,
-                }),
-            );
+        const hook = await renderHook(() =>
+            useNewSessionDraftAutoPersist({
+                persistDraftNow,
+                persistenceEnabled,
+            }),
+        );
 
-            persistenceEnabled = false;
-            await hook.rerender();
-            await flushHookEffects({ runAllTimers: true });
-            await hook.unmount();
-            await flushHookEffects();
+        persistenceEnabled = false;
+        await hook.rerender();
+        await flushHookEffects({ runAllTimers: true });
+        await hook.unmount();
 
-            expect(persistDraftNow).not.toHaveBeenCalled();
-        } finally {
-            vi.useRealTimers();
-        }
+        expect(persistDraftNow).not.toHaveBeenCalled();
     });
 });

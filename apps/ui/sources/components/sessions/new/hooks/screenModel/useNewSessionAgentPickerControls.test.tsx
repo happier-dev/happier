@@ -79,10 +79,10 @@ describe('useNewSessionAgentPickerControls', () => {
             setAcpSessionModeId: vi.fn() as any,
             sessionConfigOptionOverrides: null,
             setSessionConfigOptionOverrides: vi.fn() as any,
-            codexBackendModeOverride: null,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
+            settings: {} as any,
         }));
 
         expect(modalMockState.alert).not.toHaveBeenCalled();
@@ -137,10 +137,10 @@ describe('useNewSessionAgentPickerControls', () => {
             setAcpSessionModeId: setAcpSessionModeId as any,
             sessionConfigOptionOverrides: null,
             setSessionConfigOptionOverrides: setSessionConfigOptionOverrides as any,
-            codexBackendModeOverride: null,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
+            settings: {} as any,
         }));
 
         const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === 'agent:codex');
@@ -212,10 +212,10 @@ describe('useNewSessionAgentPickerControls', () => {
             setAcpSessionModeId: vi.fn() as any,
             sessionConfigOptionOverrides: null,
             setSessionConfigOptionOverrides: vi.fn() as any,
-            codexBackendModeOverride: null,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
+            settings: {} as any,
         }));
 
         const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === 'agent:codex');
@@ -264,10 +264,10 @@ describe('useNewSessionAgentPickerControls', () => {
             setAcpSessionModeId: setAcpSessionModeId as any,
             sessionConfigOptionOverrides: null,
             setSessionConfigOptionOverrides: setSessionConfigOptionOverrides as any,
-            codexBackendModeOverride: null,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
+            settings: {} as any,
         }));
 
         const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === 'agent:codex');

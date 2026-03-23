@@ -5,55 +5,55 @@ import { createPassThroughComponent, createPassThroughModule } from '@/dev/testk
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: createPassThroughComponent('View'),
-                                    Pressable: createPassThroughComponent('Pressable'),
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: <T,>(values: { ios?: T; default?: T }) => values.ios ?? values.default,
-                                    },
-                                    InteractionManager: {
-                                        runAfterInteractions: (cb: () => void) => {
-                                            cb();
-                                            return { cancel: () => undefined };
-                                        },
-                                    },
-                                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: createPassThroughComponent('Ionicons'),
-}));
-
-vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: () => undefined,
-}));
-
-vi.mock('react-native-unistyles', async () => await createUnistylesMock({
-    theme: {
-        colors: {
-            groupped: { background: '#f5f5f5' },
-            surface: '#fff',
-            divider: '#ddd',
-            text: '#111',
-            textSecondary: '#666',
-            textDestructive: '#d00',
-            button: {
-                primary: {
-                    background: '#00f',
-                    tint: '#fff',
+installNewSessionComponentsCommonModuleMocks({
+    icons: () => ({
+        Ionicons: createPassThroughComponent('Ionicons'),
+    }),
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: createPassThroughComponent('View'),
+            Pressable: createPassThroughComponent('Pressable'),
+            Platform: {
+                OS: 'ios',
+                select: <T,>(values: { ios?: T; default?: T }) => values.ios ?? values.default,
+            },
+            InteractionManager: {
+                runAfterInteractions: (cb: () => void) => {
+                    cb();
+                    return { cancel: () => undefined };
+                },
+            },
+        });
+    },
+    text: () => createTextModuleMock({ translate: (key) => key }),
+    unistyles: async () => await createUnistylesMock({
+        theme: {
+            colors: {
+                groupped: { background: '#f5f5f5' },
+                surface: '#fff',
+                divider: '#ddd',
+                text: '#111',
+                textSecondary: '#666',
+                textDestructive: '#d00',
+                button: {
+                    primary: {
+                        background: '#00f',
+                        tint: '#fff',
+                    },
                 },
             },
         },
-    },
+    }),
+});
+
+vi.mock('@react-navigation/native', () => ({
+    useFocusEffect: () => undefined,
 }));
 
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({
@@ -64,7 +64,6 @@ vi.mock('@/components/ui/forms/MultiTextInput', () => ({
 vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
 vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
 vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text']));
-vi.mock('@/text', () => createTextModuleMock({ translate: (key) => key }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'claude',

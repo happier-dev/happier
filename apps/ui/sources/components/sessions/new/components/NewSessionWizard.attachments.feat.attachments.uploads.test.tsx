@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,27 +19,20 @@ const uploadAttachmentDraftsToSessionSpy = vi.hoisted(() => vi.fn());
 const formatAttachmentsBlockSpy = vi.hoisted(() => vi.fn(() => ''));
 const followUpSpawnedSessionWithServerScopeSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('View', props, props.children),
-                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Text', props, props.children),
-                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Pressable', props, props.children),
-                                            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('ScrollView', props, props.children),
-                                            Platform: {
-                                            OS: 'web',
-                                            select: (v: any) => v.web ?? v.default ?? null,
-                                        },
-                                            Dimensions: {
-                                                get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-                                            },
-                                        }
-    );
+installNewSessionComponentsCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: vi.fn(),
+            },
+        }).module;
+    },
 });
 
 vi.mock('react-native-keyboard-controller', () => ({
@@ -116,15 +110,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'attachments.uploads',
 }));
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: () => null,
 }));
@@ -144,16 +129,6 @@ vi.mock('@/components/sessions/new/components/WizardSectionHeaderRow', () => ({
 vi.mock('@/components/profiles/ProfilesList', () => ({
     ProfilesList: () => null,
 }));
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(),
-        },
-    }).module;
-});
-
 describe('NewSessionWizard (attachments.uploads)', () => {
     it('wires AgentInput attachments handlers and attach action when enabled', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
@@ -269,8 +244,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
     it('renders an inline automation section when provided by the shared composer model', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(NewSessionWizard, {
+        const screen = await renderScreen(React.createElement(NewSessionWizard, {
                     layout: {
                         theme: {
                             colors: {
@@ -362,17 +336,16 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         automationSection: React.createElement('AutomationSection'),
                         agentInputExtraActionChips: [],
                     },
-                }))).tree;
+                }));
 
-        expect(() => tree!.root.findByType('AutomationSection' as any)).not.toThrow();
+        expect(() => screen.findByType('AutomationSection' as any)).not.toThrow();
     });
 
     it('renders the automation section after the agent input when provided by the shared composer model', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
         AgentInputMock.mockImplementation(() => React.createElement('AgentInput', null));
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(NewSessionWizard, {
+        const screen = await renderScreen(React.createElement(NewSessionWizard, {
                     layout: {
                         theme: {
                             colors: {
@@ -464,11 +437,12 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         automationSection: React.createElement('AutomationSection'),
                         agentInputExtraActionChips: [],
                     },
-                }))).tree;
+                }));
 
-        const renderedOrder = tree!.root.findAll((node) => (
-            String(node.type) === 'AutomationSection' || String(node.type) === 'AgentInput'
-        )).map((node) => String(node.type));
+        const renderedOrder = [
+            ...screen.findAllByType('AgentInput'),
+            ...screen.findAllByType('AutomationSection'),
+        ].map((node) => String(node.type));
 
         expect(renderedOrder).toEqual(['AgentInput', 'AutomationSection']);
 
@@ -478,8 +452,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
     it('shows an inline warning when the selected machine is offline', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(NewSessionWizard, {
+        const screen = await renderScreen(React.createElement(NewSessionWizard, {
                     layout: {
                         theme: {
                             colors: {
@@ -610,16 +583,9 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         emptyAutocompleteSuggestions: async () => [],
                         agentInputExtraActionChips: [],
                     },
-                }))).tree;
+                }));
 
-        const textValues = tree!.root
-            .findAllByType('Text')
-            .map((node: any) => {
-                const children = node?.props?.children;
-                if (Array.isArray(children)) return children.join('');
-                return typeof children === 'string' ? children : '';
-            })
-            .filter(Boolean);
+        const textValues = screen.getTextContent();
 
         expect(textValues).toContain('newSession.machineOfflineInlineTitle');
         expect(textValues).toContain('newSession.machineOfflineInlineBody');

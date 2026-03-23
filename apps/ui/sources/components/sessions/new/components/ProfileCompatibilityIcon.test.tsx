@@ -1,22 +1,21 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: 'View',
-                                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installNewSessionComponentsCommonModuleMocks({
+    storage: () => createStorageModuleStub({
+        useSetting: () => ({
+            v: 2,
+            backends: [{ id: 'custom-acp', title: 'Custom ACP', command: 'custom-acp', args: [] }],
+        }),
+    }),
+    text: () => createTextModuleMock({ translate: (key) => key }),
 });
 
 vi.mock('@/constants/Typography', () => ({
@@ -65,41 +64,28 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['claude', 'codex', 'opencode', 'auggie'],
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: () => ({
-        v: 2,
-        backends: [{ id: 'custom-acp', title: 'Custom ACP', command: 'custom-acp', args: [] }],
-    }),
-});
-});
-
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('ProfileCompatibilityIcon', () => {
     it('shows only the first two compatible backend glyphs followed by ellipsis when more than two backends are supported', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
 
-        const screen = await renderScreen(<ProfileCompatibilityIcon
-                    profile={{
-                        isBuiltIn: false,
-                        compatibility: {
-                            claude: true,
-                            codex: true,
-                            opencode: true,
-                            auggie: true,
-                        },
-                        compatibilityByTargetKey: {},
-                    }}
-                } />);
+        const screen = await renderScreen(
+            <ProfileCompatibilityIcon
+                profile={{
+                    isBuiltIn: false,
+                    compatibility: {
+                        claude: true,
+                        codex: true,
+                        opencode: true,
+                        auggie: true,
+                    },
+                    compatibilityByTargetKey: {},
+                }}
+            />,
+        );
 
         const glyphs = screen.findAllByType('Text').map((node: any) => node.props.children);
         expect(glyphs).toEqual(['CL', 'CX', '...']);
@@ -108,15 +94,17 @@ describe('ProfileCompatibilityIcon', () => {
     it('shows the custom ACP glyph when a profile is only compatible with a configured ACP backend', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
 
-        const screen = await renderScreen(<ProfileCompatibilityIcon
-                    profile={{
-                        isBuiltIn: false,
-                        compatibility: {},
-                        compatibilityByTargetKey: {
-                            'acpBackend:custom-acp': true,
-                        },
-                    }}
-                } />);
+        const screen = await renderScreen(
+            <ProfileCompatibilityIcon
+                profile={{
+                    isBuiltIn: false,
+                    compatibility: {},
+                    compatibilityByTargetKey: {
+                        'acpBackend:custom-acp': true,
+                    },
+                }}
+            />,
+        );
 
         const glyphs = screen.findAllByType('Text').map((node: any) => node.props.children);
         expect(glyphs).toEqual(['CA']);

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 
 import { createCapturingComponent, createPassThroughComponent, createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
@@ -20,35 +21,38 @@ const expoRouterMock = createExpoRouterMock({
     router: { replace: vi.fn() },
 });
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: createPassThroughComponent('View'),
-                                    Pressable: createPassThroughComponent('Pressable'),
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: <T,>(values: { ios?: T; default?: T }) => values.ios ?? values.default,
-                                    },
-                                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: createPassThroughComponent('Ionicons'),
-}));
-
-vi.mock('expo-router', () => expoRouterMock.module);
-
-vi.mock('react-native-unistyles', async () => await createUnistylesMock({
-    theme: {
-        colors: {
-            groupped: { background: '#fff' },
-            text: '#111',
-            textSecondary: '#666',
+installNewSessionComponentsCommonModuleMocks({
+    icons: () => ({
+        Ionicons: createPassThroughComponent('Ionicons'),
+    }),
+    reactNative: () => createReactNativeWebMock({
+        View: createPassThroughComponent('View'),
+        Pressable: createPassThroughComponent('Pressable'),
+        Platform: {
+            OS: 'ios',
+            select: <T,>(values: { ios?: T; default?: T }) => values.ios ?? values.default,
         },
-    },
-}));
+    }),
+    router: () => expoRouterMock.module,
+    storage: () => createStorageModuleStub({
+        useSetting: (key: string) => {
+            if (key === 'serverSelectionGroups') return [];
+            if (key === 'serverSelectionActiveTargetKind') return 'all';
+            if (key === 'serverSelectionActiveTargetId') return null;
+            return null;
+        },
+    }),
+    text: () => createTextModuleMock(),
+    unistyles: () => createUnistylesMock({
+        theme: {
+            colors: {
+                groupped: { background: '#fff' },
+                text: '#111',
+                textSecondary: '#666',
+            },
+        },
+    }),
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
 vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
@@ -58,16 +62,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
     }),
 }));
 vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text']));
-vi.mock('@/text', () => createTextModuleMock());
-
-vi.mock('@/sync/domains/state/storage', () => createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'serverSelectionGroups') return [];
-        if (key === 'serverSelectionActiveTargetKind') return 'all';
-        if (key === 'serverSelectionActiveTargetId') return null;
-        return null;
-    },
-}));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({

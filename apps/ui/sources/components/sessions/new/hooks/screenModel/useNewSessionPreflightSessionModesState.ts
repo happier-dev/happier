@@ -29,7 +29,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
     probe: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
         refreshedAt: number | null;
-        refresh: () => void;
+        onRefresh: () => void;
     }>;
 }> {
     const [preflightModes, setPreflightModes] = React.useState<PreflightSessionModeList | null>(null);
@@ -38,7 +38,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
     const [refreshNonce, setRefreshNonce] = React.useState(0);
     const lastHandledRefreshNonceRef = React.useRef(0);
 
-    const refresh = React.useCallback(() => {
+    const onRefresh = React.useCallback(() => {
         setRefreshNonce((n) => n + 1);
     }, []);
 
@@ -223,7 +223,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         probe: {
             phase: probePhase,
             refreshedAt,
-            refresh,
+            onRefresh,
         },
     };
 }

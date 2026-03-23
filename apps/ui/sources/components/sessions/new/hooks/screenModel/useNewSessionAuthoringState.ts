@@ -41,7 +41,6 @@ export function useNewSessionAuthoringState(params: Readonly<{
     agentNewSessionOptions: Record<string, unknown> | null;
     settings: Settings;
     effectiveWindowsRemoteSessionLaunchMode: BuildResolvedInputs['windowsRemoteSessionLaunchMode'];
-    codexBackendModeOverride: BuildResolvedInputs['codexBackendMode'];
     acpSessionModeId: string | null;
     sessionConfigOptionOverrides: BuildResolvedInputs['sessionConfigOptionOverrides'];
     automationEditId: string | null;
@@ -89,7 +88,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         windowsRemoteSessionLaunchMode: params.effectiveWindowsRemoteSessionLaunchMode ?? null,
         windowsRemoteSessionConsole: null,
         experimentalCodexAcp: null,
-        codexBackendMode: params.codexBackendModeOverride ?? null,
+        codexBackendMode: null,
         acpSessionModeId: params.acpSessionModeId ?? null,
         sessionConfigOptionOverrides: params.sessionConfigOptionOverrides,
         automation: effectiveAutomationDraft.enabled ? effectiveAutomationDraft : null,
@@ -99,7 +98,6 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.agentType,
         params.backendTarget,
         params.checkoutCreationDraft,
-        params.codexBackendModeOverride,
         params.effectiveWindowsRemoteSessionLaunchMode,
         params.mcpSelection,
         params.modelMode,

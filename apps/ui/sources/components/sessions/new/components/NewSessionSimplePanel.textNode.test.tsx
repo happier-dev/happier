@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { collectUnexpectedRawTextNodes, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,73 +12,81 @@ const mockEnv = vi.hoisted(() => ({
 }));
 const agentInputPropsRef: { current: Record<string, unknown> | null } = { current: null };
 
+installNewSessionComponentsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Text', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('ScrollView', props, props.children),
+            ActivityIndicator: (props: Record<string, unknown>) =>
+                React.createElement('ActivityIndicator', props, null),
+            Platform: {
+                OS: 'web',
+                select: (v: any) => v.web ?? v.default ?? v.ios,
+            },
+            AppState: {
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+            useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
+            Dimensions: {
+                get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }),
+            },
+        });
+    },
+    icons: async () => ({
+        Ionicons: () => <>{'.'}</>,
+        Octicons: () => <>{'.'}</>,
+    }),
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSetting: (key: string) => {
+                if (key === 'profiles') return [];
+                if (key === 'agentInputEnterToSend') return true;
+                if (key === 'agentInputActionBarLayout') return 'wrap';
+                if (key === 'agentInputChipDensity') return 'labels';
+                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
+                return null;
+            },
+            useSettings: () => ({
+                profiles: [],
+                agentInputEnterToSend: true,
+                agentInputActionBarLayout: 'wrap',
+                agentInputChipDensity: 'labels',
+                sessionPermissionModeApplyTiming: 'immediate',
+            }),
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesVersion: () => 0,
+            useSessionMessagesReducerState: () => null,
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+});
+
 afterEach(() => {
     standardCleanup();
     vi.unstubAllGlobals();
     agentInputPropsRef.current = null;
 });
 
-function stubQueuedRequestAnimationFrame(): {
-    readonly queuedFrame: FrameRequestCallback | null;
-    flushAll: (timestamp?: number) => void;
-} {
-    const state = { queuedFrames: [] as FrameRequestCallback[] };
-    vi.stubGlobal('requestAnimationFrame', vi.fn((cb: FrameRequestCallback) => {
-        state.queuedFrames.push(cb);
-        return state.queuedFrames.length;
-    }));
-
-    return {
-        get queuedFrame() {
-            return state.queuedFrames[state.queuedFrames.length - 1] ?? null;
-        },
-        flushAll(timestamp = 16) {
-            const queuedFrames = [...state.queuedFrames];
-            state.queuedFrames.length = 0;
-            for (const frame of queuedFrames) {
-                frame(timestamp);
-            }
-        },
-    };
-}
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('View', props, props.children),
-                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Text', props, props.children),
-                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('Pressable', props, props.children),
-                                            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                                React.createElement('ScrollView', props, props.children),
-                                            ActivityIndicator: (props: Record<string, unknown>) =>
-                                                React.createElement('ActivityIndicator', props, null),
-                                            Platform: {
-                                            OS: 'web',
-                                            select: (v: any) => v.web ?? v.default ?? v.ios,
-                                        },
-                                            AppState: {
-                                            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                                        },
-                                            useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
-                                            Dimensions: {
-                                                get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }),
-                                            },
-                                        }
-    );
-});
-
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('KeyboardAvoidingView', props, props.children),
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: () => <>{'.'}</>,
-    Octicons: () => <>{'.'}</>,
 }));
 
 vi.mock('expo-image', () => ({
@@ -189,11 +198,6 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeSessionModePickerControl: () => null,
 }));
@@ -201,32 +205,6 @@ vi.mock('@/sync/acp/sessionModeControl', () => ({
 vi.mock('@/sync/acp/configOptionsControl', () => ({
     computeAcpConfigOptionControls: () => null,
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useSetting: (key: string) => {
-            if (key === 'profiles') return [];
-            if (key === 'agentInputEnterToSend') return true;
-            if (key === 'agentInputActionBarLayout') return 'wrap';
-            if (key === 'agentInputChipDensity') return 'labels';
-            if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-            return null;
-        },
-        useSettings: () => ({
-            profiles: [],
-            agentInputEnterToSend: true,
-            agentInputActionBarLayout: 'wrap',
-            agentInputChipDensity: 'labels',
-            sessionPermissionModeApplyTiming: 'immediate',
-        }),
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-        useSessionMessagesById: () => ({}),
-        useSessionMessagesVersion: () => 0,
-        useSessionMessagesReducerState: () => null,
-    });
-});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
@@ -262,11 +240,6 @@ vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
 vi.mock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
     describeEffectivePermissionMode: () => ({ effectiveMode: 'default' }),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
     AttachmentFilePicker: () => null,
@@ -304,6 +277,14 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: { sendMessage: vi.fn() },
 }));
+
+vi.mock('@/utils/platform/deferOnWeb', async () => {
+    const mod = await import('@/utils/platform/deferOnWeb');
+    return {
+        ...mod,
+        deferOnWeb: (callback: () => void) => callback(),
+    };
+});
 
 describe('NewSessionSimplePanel', () => {
     it('does not render the legacy visible session type selector even when the feature flag is enabled', async () => {
@@ -349,7 +330,6 @@ describe('NewSessionSimplePanel', () => {
         const textContent = screen.getTextContent();
         expect(textContent).not.toContain('newSession.sessionType.title');
         expect(textContent).not.toContain('newSession.selectSessionTypeTitle');
-        await screen.unmount();
     });
 
     it('does not emit raw text nodes under non-Text parents when icons render as text on web', async () => {
@@ -393,8 +373,6 @@ describe('NewSessionSimplePanel', () => {
         );
 
         expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
-
-        await screen.unmount();
     });
 
     it('renders an inline automation section when provided by the shared composer model', async () => {
@@ -439,7 +417,6 @@ describe('NewSessionSimplePanel', () => {
         );
 
         expect(screen.findByType('AutomationSection' as any)).toBeTruthy();
-        await screen.unmount();
     });
 
     it('renders the automation section after the agent input', async () => {
@@ -491,17 +468,14 @@ describe('NewSessionSimplePanel', () => {
         expect(agentInput?.parent?.children.indexOf(agentInput)).toBeLessThan(
             automationSection?.parent?.children.indexOf(automationSection) ?? -1,
         );
-        await screen.unmount();
     });
 
     it('uses the latest handleCreateSession callback after rerendering', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         const firstHandleCreateSession = vi.fn();
         const secondHandleCreateSession = vi.fn();
-        const raf = stubQueuedRequestAnimationFrame();
         agentInputPropsRef.current = null;
 
-        let screen!: Awaited<ReturnType<typeof renderScreen>>;
         const renderPanel = (handleCreateSession: () => void) => (
             <NewSessionSimplePanel
                 popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
@@ -539,7 +513,7 @@ describe('NewSessionSimplePanel', () => {
             />
         );
 
-        screen = await renderScreen(renderPanel(firstHandleCreateSession));
+        const screen = await renderScreen(renderPanel(firstHandleCreateSession));
 
         act(() => {
             screen.tree.update(renderPanel(secondHandleCreateSession));
@@ -548,88 +522,61 @@ describe('NewSessionSimplePanel', () => {
         const sendButton = screen.findByTestId('new-session-composer-send');
         expect(sendButton).toBeTruthy();
 
-        try {
-            act(() => {
-                invokeTestInstanceHandler(sendButton, 'onPress', undefined, 'new-session-composer-send');
-            });
+        act(() => {
+            invokeTestInstanceHandler(sendButton, 'onPress', undefined, 'new-session-composer-send');
+        });
 
-            expect(firstHandleCreateSession).not.toHaveBeenCalled();
-            expect(secondHandleCreateSession).not.toHaveBeenCalled();
-            expect(raf.queuedFrame).toBeTypeOf('function');
-
-            act(() => {
-                raf.flushAll();
-            });
-
-            expect(firstHandleCreateSession).not.toHaveBeenCalled();
-            expect(secondHandleCreateSession).toHaveBeenCalledTimes(1);
-        } finally {
-            await screen.unmount();
-        }
+        expect(firstHandleCreateSession).not.toHaveBeenCalled();
+        expect(secondHandleCreateSession).toHaveBeenCalledTimes(1);
     });
 
-    it('defers web submission by one animation frame before invoking handleCreateSession', async () => {
+    it('submits through the shared composer controller when send is pressed', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         const handleCreateSession = vi.fn();
-        const raf = stubQueuedRequestAnimationFrame();
         agentInputPropsRef.current = null;
 
-        let screen = undefined as Awaited<ReturnType<typeof renderScreen>> | undefined;
-        try {
-            screen = await renderScreen(<NewSessionSimplePanel
-                        popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
-                        headerHeight={44}
-                        safeAreaTop={0}
-                        safeAreaBottom={0}
-                        newSessionTopPadding={0}
-                        newSessionSidePadding={0}
-                        newSessionBottomPadding={0}
-                        containerStyle={{}}
-                        sessionPrompt="hello"
-                        setSessionPrompt={() => {}}
-                        handleCreateSession={handleCreateSession}
-                        canCreate={true}
-                        isCreating={false}
-                        emptyAutocompletePrefixes={[]}
-                        emptyAutocompleteSuggestions={async () => []}
-                        sessionPromptInputMaxHeight={200}
-                        agentInputExtraActionChips={[]}
-                        agentType="codex"
-                        handleAgentClick={() => {}}
-                        permissionMode="default"
-                        handlePermissionModeChange={() => {}}
-                        modelMode="default"
-                        setModelMode={() => {}}
-                        modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
-                        connectionStatus={undefined}
-                        machineName={undefined}
-                        selectedPath=""
-                        showResumePicker={false}
-                        resumeSessionId={null}
-                        isResumeSupportChecking={false}
-                        useProfiles={false}
-                        selectedProfileId={null}
-            />);
+        const screen = await renderScreen(<NewSessionSimplePanel
+                    popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                    headerHeight={44}
+                    safeAreaTop={0}
+                    safeAreaBottom={0}
+                    newSessionTopPadding={0}
+                    newSessionSidePadding={0}
+                    newSessionBottomPadding={0}
+                    containerStyle={{}}
+                    sessionPrompt="hello"
+                    setSessionPrompt={() => {}}
+                    handleCreateSession={handleCreateSession}
+                    canCreate={true}
+                    isCreating={false}
+                    emptyAutocompletePrefixes={[]}
+                    emptyAutocompleteSuggestions={async () => []}
+                    sessionPromptInputMaxHeight={200}
+                    agentInputExtraActionChips={[]}
+                    agentType="codex"
+                    handleAgentClick={() => {}}
+                    permissionMode="default"
+                    handlePermissionModeChange={() => {}}
+                    modelMode="default"
+                    setModelMode={() => {}}
+                    modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                    connectionStatus={undefined}
+                    machineName={undefined}
+                    selectedPath=""
+                    showResumePicker={false}
+                    resumeSessionId={null}
+                    isResumeSupportChecking={false}
+                    useProfiles={false}
+                    selectedProfileId={null}
+        />);
 
-            const sendButton = screen.findByTestId('new-session-composer-send');
-            expect(sendButton).toBeTruthy();
+        const sendButton = screen.findByTestId('new-session-composer-send');
+        expect(sendButton).toBeTruthy();
 
-            act(() => {
-                invokeTestInstanceHandler(sendButton, 'onPress', undefined, 'new-session-composer-send');
-            });
+        act(() => {
+            invokeTestInstanceHandler(sendButton, 'onPress', undefined, 'new-session-composer-send');
+        });
 
-            expect(handleCreateSession).not.toHaveBeenCalled();
-            expect(raf.queuedFrame).toBeTypeOf('function');
-
-            act(() => {
-                raf.flushAll();
-            });
-
-            expect(handleCreateSession).toHaveBeenCalledTimes(1);
-        } finally {
-            if (screen) {
-                await screen.unmount();
-            }
-        }
+        expect(handleCreateSession).toHaveBeenCalledTimes(1);
     });
 });

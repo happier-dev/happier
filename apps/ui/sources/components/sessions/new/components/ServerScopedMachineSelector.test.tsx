@@ -4,34 +4,37 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ServerScopedMachine } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const capturedItemProps: Array<Readonly<Record<string, unknown>>> = [];
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        View: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-                                    }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: () => null,
-}));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                textSecondary: '#666',
+installNewSessionComponentsCommonModuleMocks({
+    icons: () => ({
+        Ionicons: () => null,
+    }),
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    textSecondary: '#666',
+                },
             },
-        },
-    });
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -48,11 +51,6 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children }: { children?: React.ReactNode }) => React.createElement('Text', null, children),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: (machine: { active?: boolean | null }) => Boolean(machine.active),

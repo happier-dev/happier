@@ -67,7 +67,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     probe: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
         refreshedAt: number | null;
-        refresh: () => void;
+        onRefresh: () => void;
     }>;
 }> {
     const [configOptions, setConfigOptions] = React.useState<readonly AcpConfigOption[] | null>(null);
@@ -80,7 +80,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         configOptionsRef.current = configOptions;
     }, [configOptions]);
 
-    const refresh = React.useCallback(() => {
+    const onRefresh = React.useCallback(() => {
         setRefreshNonce((current) => current + 1);
     }, []);
 
@@ -154,7 +154,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         probe: {
             phase: probePhase,
             refreshedAt,
-            refresh,
+            onRefresh,
         },
     };
 }

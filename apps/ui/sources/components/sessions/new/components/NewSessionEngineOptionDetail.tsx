@@ -6,7 +6,10 @@ import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { AgentInputEngineDetail } from '@/components/sessions/agentInput/components/AgentInputEngineDetail';
 import { useNewSessionPreflightConfigOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState';
-import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
+import {
+    useNewSessionPreflightModelsState,
+} from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
+import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { useNewSessionPreflightSessionModesState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/acp/configOptionsControl';
 import { t } from '@/text';
@@ -16,7 +19,7 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
-    codexBackendModeOverride?: 'mcp' | 'acp' | 'appServer' | null;
+    capabilityProbeContext?: NewSessionCapabilityProbeContext | null;
     selectedModelId?: string | null;
     selectedSessionModeId?: string | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
@@ -51,7 +54,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,
-        codexBackendModeOverride: props.codexBackendModeOverride ?? null,
+        probeContext: props.capabilityProbeContext ?? null,
     });
     const { modeOptions } = useNewSessionPreflightSessionModesState({
         backendTarget: props.backendTarget,
@@ -173,7 +176,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                     modelId,
                 });
             }}
-            onSubmitCustomModel={canEnterCustomModel ? (modelId) => {
+            onSubmitCustomValue={canEnterCustomModel ? (modelId) => {
                 publishSelection({
                     ...selectionRef.current,
                     modelId,
