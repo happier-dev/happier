@@ -17,6 +17,7 @@ describe('workspaceReplicationGc', () => {
             const paths = createWorkspaceReplicationPaths({ activeServerDir });
 
             await jobStore.write({
+                schemaVersion: 1,
                 jobId: 'job_keep_running',
                 correlationId: 'handoff_keep_running',
                 createdAtMs: 100,
@@ -31,6 +32,7 @@ describe('workspaceReplicationGc', () => {
                 },
             });
             await jobStore.write({
+                schemaVersion: 1,
                 jobId: 'job_remove_completed',
                 correlationId: 'handoff_remove_completed',
                 createdAtMs: 10,
@@ -187,6 +189,7 @@ describe('workspaceReplicationGc', () => {
             await mkdir(join(paths.casDirectory, 'sha256'), { recursive: true });
 
             await jobStore.write({
+                schemaVersion: 1,
                 jobId: 'job_active',
                 correlationId: 'handoff_active',
                 createdAtMs: 10,
