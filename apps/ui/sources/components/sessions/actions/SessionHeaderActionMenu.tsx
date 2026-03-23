@@ -8,7 +8,7 @@ import { useRouter } from 'expo-router';
 import { storage, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { t } from '@/text';
@@ -26,6 +26,7 @@ import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resol
 import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { useHasGlobalVoiceAgentConversation } from '@/voice/agent/useHasGlobalVoiceAgentConversation';
+import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -33,7 +34,23 @@ function normalizeNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function SessionHeaderActionMenu(props: Readonly<{ sessionId: string; session: Session }>) {
+export function SessionHeaderActionMenu(props: Readonly<{
+  sessionId: string;
+  session: Session;
+  /**
+   * Optional extra items to include in the action menu (typically from adjacent header icon actions
+   * that are folded into the three-dots menu on narrow layouts).
+   *
+   * Extra item IDs must not collide with protocol action spec IDs.
+   */
+  extraItems?: ReadonlyArray<DropdownMenuItem>;
+  /**
+   * Optional handler for selecting extra items. Return `true` when the selection was handled.
+   * This is primarily used to bridge extra items that need access to parent-owned state (e.g.
+   * opening a pane tab) without adding new cross-cutting dependencies here.
+   */
+  onSelectExtraItem?: (actionId: string) => boolean;
+}>) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const enabledAgentIds = useEnabledAgentIds();
@@ -63,7 +80,7 @@ export function SessionHeaderActionMenu(props: Readonly<{ sessionId: string; ses
   );
   const showTeleportAction = teleportAvailability.ok && hasGlobalVoiceAgentConversation;
   const actions = React.useMemo(() => {
-    const actionItems = listActionSpecs()
+    const actionItems: DropdownMenuItem[] = listActionSpecs()
       .filter((spec) => spec.surfaces.ui_button === true)
       .filter((spec) => isActionEnabledInState({ settings } as any, spec.id, { surface: 'ui_button', placement: 'session_action_menu' } as any))
       .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
@@ -75,16 +92,24 @@ export function SessionHeaderActionMenu(props: Readonly<{ sessionId: string; ses
         subtitle: spec.description,
       }));
 
-    if (!showTeleportAction) return actionItems;
-    return [
-      {
+    const out: DropdownMenuItem[] = [];
+
+    if (Array.isArray(props.extraItems) && props.extraItems.length > 0) {
+      out.push(...props.extraItems);
+    }
+
+    if (showTeleportAction) {
+      out.push({
         id: 'voice.teleport',
         title: t('voiceSurface.a11y.teleport'),
         subtitle: undefined,
-      },
-      ...actionItems,
-    ];
+      });
+    }
+
+    out.push(...actionItems);
+    return out;
   }, [
+    props.extraItems,
     props.session,
     sessionHandoffEnabled,
     sessionReplayEnabled,
@@ -101,6 +126,15 @@ export function SessionHeaderActionMenu(props: Readonly<{ sessionId: string; ses
       items={actions}
       onSelect={(actionId) => {
         setOpen(false);
+        if (props.onSelectExtraItem?.(actionId) === true) return;
+        if (actionId === 'header.openRuns') {
+          router.push((`/session/${props.sessionId}/runs`) as any);
+          return;
+        }
+        if (actionId === 'header.openAutomations') {
+          navigateWithBlurOnWeb(() => router.push((`/session/${props.sessionId}/automations`) as any));
+          return;
+        }
         if (actionId === 'voice.teleport') {
           fireAndForget(teleportVoiceAgentToSessionRoot({ sessionId: props.sessionId }), {
             tag: 'SessionHeaderActionMenu.execute.voiceTeleport',

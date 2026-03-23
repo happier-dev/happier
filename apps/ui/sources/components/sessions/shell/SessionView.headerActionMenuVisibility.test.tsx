@@ -3,6 +3,7 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { pressTestInstance, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
+import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -12,6 +13,7 @@ const routerPushSpy = vi.hoisted(() => vi.fn());
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android' }));
 const responsiveState = vi.hoisted(() => ({ deviceType: 'phone' as 'phone' | 'tablet', isLandscape: false }));
+const windowDimensionsState = vi.hoisted(() => ({ width: 800, height: 600 }));
 const executionRunsFeatureState = vi.hoisted(() => ({ enabled: false }));
 const sessionExecutionRunsSupportedState = vi.hoisted(() => ({ supported: false }));
 const executionRunsBackendsState = vi.hoisted(() => ({ backends: null as Record<string, unknown> | null }));
@@ -34,80 +36,16 @@ vi.mock('expo-linear-gradient', () => ({
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
-vi.mock('react-native', async () => {
-  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-  const module = await createReactNativeWebMock({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-  });
-  Object.defineProperty(module.Platform, 'OS', {
-    configurable: true,
-    get: () => platformState.os,
-  });
-  module.Platform.select = (spec: Record<string, unknown>) =>
-    spec && Object.prototype.hasOwnProperty.call(spec, platformState.os)
-      ? (spec as any)[platformState.os]
-      : (spec as any).default;
-  return module;
-});
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-vi.mock('react-native-unistyles', async () => {
-  const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-  return createUnistylesMock({
-    theme: {
-      text: '#000',
-      textSecondary: '#666',
-      textLink: '#00f',
-      surface: '#fff',
-      surfaceHigh: '#f5f5f5',
-      surfaceSelected: '#eef4ff',
-      divider: '#ddd',
-      border: '#ddd',
-      indigo: '#5856D6',
-      radio: { active: '#007AFF' },
-      accent: {
-        blue: '#007AFF',
-        green: '#34C759',
-        orange: '#FF9500',
-        yellow: '#FFCC00',
-        red: '#FF3B30',
-        indigo: '#5856D6',
-        purple: '#AF52DE',
-      },
-      modal: { border: '#ddd' },
-      input: { background: '#f5f5f5' },
-      header: { tint: '#000' },
-      status: { error: '#f00' },
-      shadow: { color: '#000', opacity: 0.2 },
-      groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
-    },
-  });
-});
 
 vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
   useIsFocused: () => true,
 }));
-vi.mock('expo-router', async () => {
-  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-  return createExpoRouterMock({
-    router: {
-      push: routerPushSpy,
-      back: vi.fn(),
-      replace: vi.fn(),
-      setParams: vi.fn(),
-    },
-  }).module;
-});
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
-}));
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-  translate: (key: string) => key,
 }));
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
@@ -221,48 +159,115 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 vi.mock('@/components/sessions/agentInput', () => ({
   AgentInput: () => null,
 }));
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(),
-            prompt: vi.fn(),
-        },
-    }).module;
-});
 vi.mock('@/utils/system/versionUtils', () => ({
   isVersionSupported: () => true,
   MINIMUM_CLI_VERSION: '0.0.0',
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installSessionShellCommonModuleMocks({
+  reactNative: async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const module = await createReactNativeWebMock({
+      View: 'View',
+      Text: 'Text',
+      Pressable: 'Pressable',
+      ActivityIndicator: 'ActivityIndicator',
+      useWindowDimensions: () => ({ width: windowDimensionsState.width, height: windowDimensionsState.height }),
+    });
+    Object.defineProperty(module.Platform, 'OS', {
+      configurable: true,
+      get: () => platformState.os,
+    });
+    module.Platform.select = (spec: Record<string, unknown>) =>
+      spec && Object.prototype.hasOwnProperty.call(spec, platformState.os)
+        ? (spec as any)[platformState.os]
+        : (spec as any).default;
+    return module;
+  },
+  unistyles: async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+      theme: {
+        text: '#000',
+        textSecondary: '#666',
+        textLink: '#00f',
+        surface: '#fff',
+        surfaceHigh: '#f5f5f5',
+        surfaceSelected: '#eef4ff',
+        divider: '#ddd',
+        border: '#ddd',
+        indigo: '#5856D6',
+        radio: { active: '#007AFF' },
+        accent: {
+          blue: '#007AFF',
+          green: '#34C759',
+          orange: '#FF9500',
+          yellow: '#FFCC00',
+          red: '#FF3B30',
+          indigo: '#5856D6',
+          purple: '#AF52DE',
+        },
+        modal: { border: '#ddd' },
+        input: { background: '#f5f5f5' },
+        header: { tint: '#000' },
+        status: { error: '#f00' },
+        shadow: { color: '#000', opacity: 0.2 },
+        groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
+      },
+    });
+  },
+  text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+    translate: (key: string) => key,
+  }),
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+      spies: {
+        alert: vi.fn(),
+        confirm: vi.fn(),
+        prompt: vi.fn(),
+      },
+    }).module;
+  },
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+      router: {
+        push: routerPushSpy,
+        back: vi.fn(),
+        replace: vi.fn(),
+        setParams: vi.fn(),
+      },
+    }).module;
+  },
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }) },
-    useSession: () => sessionState.session,
-    useIsDataReady: () => true,
-    useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
-    useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: true }),
-    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-    useSessionPendingMessages: () => ({ messages: [] }),
-    useSessionReviewCommentsDrafts: () => [],
-    useSessionUsage: () => null,
-    useLocalSetting: (key: string) => {
-      if (key === 'acknowledgedCliVersions') return {};
-      if (key === 'uiMultiPanePanelsEnabled') return false;
-      if (key === 'detailsPaneTabsBehavior') return 'preview';
-      if (key === 'rightPaneWidthPx') return 360;
-      if (key === 'rightPaneWidthBasisPx') return 1200;
-      if (key === 'detailsPaneWidthPx') return 520;
-      if (key === 'detailsPaneWidthBasisPx') return 1200;
-      return {};
-    },
-    useLocalSettingMutable: () => [null, vi.fn()],
-    useSetting: () => null,
-    useSettings: () => ({ experiments: true, featureToggles: {} }),
-    useAutomations: () => [],
-});
+      storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }) },
+      useSession: () => sessionState.session,
+      useIsDataReady: () => true,
+      useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
+      useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: true }),
+      useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+      useSessionPendingMessages: () => ({ messages: [] }),
+      useSessionReviewCommentsDrafts: () => [],
+      useSessionUsage: () => null,
+      useLocalSetting: (key: string) => {
+        if (key === 'acknowledgedCliVersions') return {};
+        if (key === 'uiMultiPanePanelsEnabled') return false;
+        if (key === 'detailsPaneTabsBehavior') return 'preview';
+        if (key === 'rightPaneWidthPx') return 360;
+        if (key === 'rightPaneWidthBasisPx') return 1200;
+        if (key === 'detailsPaneWidthPx') return 520;
+        if (key === 'detailsPaneWidthBasisPx') return 1200;
+        return {};
+      },
+      useLocalSettingMutable: () => [null, vi.fn()],
+      useSetting: () => null,
+      useSettings: () => ({ experiments: true, featureToggles: {} }),
+      useAutomations: () => [],
+    });
+  },
 });
 
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
@@ -318,6 +323,8 @@ describe('SessionView header action menu visibility', () => {
     headerActionMenuSpy.mockClear();
     routerPushSpy.mockReset();
     navigateWithBlurOnWebSpy.mockClear();
+    windowDimensionsState.width = 800;
+    windowDimensionsState.height = 600;
   });
 
   it('hides the open runs button when execution runs are unsupported for the session', async () => {
@@ -354,6 +361,34 @@ describe('SessionView header action menu visibility', () => {
 
     expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
     expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations');
+  });
+
+  it('folds runs and automations buttons into the header action menu when the header is narrow', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    windowDimensionsState.width = 420;
+    executionRunsFeatureState.enabled = true;
+    sessionExecutionRunsSupportedState.supported = true;
+    executionRunsBackendsState.backends = null;
+    automationsSupportState.enabled = true;
+
+    const screen = await renderSessionView();
+
+    const openRunsButton = findPressableByAccessibilityLabel(screen, 'session.openRuns');
+    const openAutomationsButton = findPressableByAccessibilityLabel(screen, 'session.openAutomations');
+    const openSubagentsButton = findPressableByAccessibilityLabel(screen, 'session.openSubagents');
+    expect(openRunsButton).toBeUndefined();
+    expect(openAutomationsButton).toBeUndefined();
+    expect(openSubagentsButton).toBeUndefined();
+
+    expect(headerActionMenuSpy).toHaveBeenCalled();
+    const props = headerActionMenuSpy.mock.calls.at(0)?.[0] as any;
+    const extraItems = props?.extraItems ?? [];
+    const extraIds = extraItems.map((it: any) => it?.id).filter(Boolean);
+    expect(extraIds).toContain('header.openRuns');
+    expect(extraIds).toContain('header.openAutomations');
+    expect(extraIds).toContain('header.openSubagents');
   });
 
   it('keeps the open runs button visible when the transcript already contains execution-run signals', async () => {
