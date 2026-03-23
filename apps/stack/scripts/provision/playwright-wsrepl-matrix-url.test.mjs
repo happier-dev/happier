@@ -30,7 +30,7 @@ test('qa wsrepl url helper resolves stack runtime ports using a loopback 127.0.0
   try {
     const out = qa.resolveQaUiUrl();
     const parsed = new URL(out);
-    assert.equal(parsed.origin, 'http://localhost:19364');
+    assert.equal(parsed.origin, 'http://127.0.0.1:19364');
     assert.equal(parsed.searchParams.get('server'), 'http://127.0.0.1:53288');
   } finally {
     if (prev === undefined) delete process.env.HAPPIER_QA_STACK_RUNTIME_JSON_PATH;
@@ -71,7 +71,7 @@ test('qa wsrepl url helper can auto-detect the newest stack.runtime.json when st
   try {
     const out = qa.resolveQaUiUrl();
     const parsed = new URL(out);
-    assert.equal(parsed.origin, 'http://localhost:50002');
+    assert.equal(parsed.origin, 'http://127.0.0.1:50002');
     assert.equal(parsed.searchParams.get('server'), 'http://127.0.0.1:50001');
   } finally {
     if (prevStacksDir === undefined) delete process.env.HAPPIER_QA_STACKS_DIR;
