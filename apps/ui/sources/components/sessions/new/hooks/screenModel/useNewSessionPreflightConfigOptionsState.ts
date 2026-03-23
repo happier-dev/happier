@@ -6,6 +6,15 @@ import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/acp/configOptionsControl';
 import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 
+function stableJsonStringify(value: unknown): string {
+    if (!value || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map((v) => stableJsonStringify(v)).join(',')}]`;
+
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJsonStringify(obj[k])}`).join(',')}}`;
+}
+
 export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     backendTarget: BackendTargetRefV1;
     selectedMachineId: string | null;
@@ -45,10 +54,11 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     }, [backendTargetAgentId, backendTargetBackendId, backendTargetKind]);
 
     const agentType = React.useMemo(() => resolveProviderAgentIdForBackendTarget(backendTarget), [backendTarget]);
-    const probeKey = React.useMemo(
-        () => buildBackendTargetKey(backendTarget),
-        [backendTarget],
-    );
+    const probeKey = React.useMemo(() => buildBackendTargetKey(backendTarget), [backendTarget]);
+    const probeContextKey = React.useMemo(() => stableJsonStringify({
+        cacheKeySuffixParts: params.probeContext?.cacheKeySuffixParts ?? null,
+        capabilityParams: params.probeContext?.capabilityParams ?? null,
+    }), [params.probeContext?.cacheKeySuffixParts, params.probeContext?.capabilityParams]);
 
     React.useEffect(() => {
         if (!params.selectedMachineId) {
@@ -92,7 +102,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         return () => {
             cancelled = true;
         };
-    }, [agentType, backendTarget, params.capabilityServerId, params.cwd, params.probeContext?.capabilityParams, probeKey, params.selectedMachineId, refreshNonce]);
+    }, [agentType, backendTarget, params.capabilityServerId, params.cwd, probeContextKey, probeKey, params.selectedMachineId, refreshNonce]);
 
     return {
         configOptions,
