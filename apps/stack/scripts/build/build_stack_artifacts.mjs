@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { commandExists, resolveBunCommand, resolveYarnCommand } from '@happier-dev/cli-common/componentArtifacts';
 
-import { resolveStackBaseDir } from '../utils/paths/paths.mjs';
+import { resolveStackBaseDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { parseArgs } from '../utils/cli/args.mjs';
 import { createRuntimeFingerprint } from '../runtime/shared/runtime_fingerprint.mjs';
 import { resolveStackComponentArtifactDir, resolveStackRuntimePaths } from '../runtime/shared/runtime_paths.mjs';
@@ -15,6 +15,7 @@ import { activateRuntimeSnapshot } from './activate_runtime_snapshot.mjs';
 import { parseBuildSelection } from './build_targets.mjs';
 import { acquireRuntimeBuildLock } from './runtime_build_lock.mjs';
 import { pruneComponentArtifacts, resolveRuntimeRetentionPolicy } from './runtime_retention.mjs';
+import { ensureStackRuntimeModePrefer } from '../runtime/shared/ensureStackRuntimeModePrefer.mjs';
 
 function assertNamedStack(env) {
   const stackName = String(env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
@@ -113,6 +114,9 @@ export async function buildStackArtifacts({ rootDir, argv = [], env = process.en
         artifacts,
         runtimeSnapshotKeepCount: retentionPolicy.runtimeSnapshotKeepCount,
       });
+
+      const { envPath } = resolveStackEnvPath(stackName, env);
+      await ensureStackRuntimeModePrefer({ envPath });
     }
 
     return {

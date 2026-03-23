@@ -181,8 +181,12 @@ test('macos lima repeat-validation wrapper records per-run artifacts for repeate
   assert.equal(await fileExists(summaryPath), true, 'expected summary.json to be written');
 
   const summary = JSON.parse(await readFile(summaryPath, 'utf8'));
+  assert.equal(summary.kind, 'lima_repeat_validation');
   assert.equal(summary.vmName, 'happy-repeat');
   assert.equal(summary.repeatCount, 2);
+  assert.equal(summary.status, 0);
+  assert.equal(summary.failureStage, null);
+  assert.equal(summary.failureReason, null);
   assert.equal(summary.runs.length, 2);
   assert.notEqual(summary.runs[0].guestSmokeDir, summary.runs[1].guestSmokeDir);
 
@@ -197,4 +201,169 @@ test('macos lima repeat-validation wrapper records per-run artifacts for repeate
   const limactlOut = await readFile(limactlLog, 'utf8');
   assert.match(limactlOut, /limactl create --name happy-repeat/);
   assert.equal((limactlOut.match(/limactl shell/g) ?? []).length, 2, 'expected two guest shell invocations');
+});
+
+test('macos lima repeat-validation wrapper writes summary.json with failureReason when a run fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-macos-lima-repeat-fail-'));
+  const binDir = join(root, 'bin');
+  const homeDir = join(root, 'home');
+  const reportDir = join(root, 'reports');
+  const logDir = join(root, 'logs');
+  const limaHome = join(homeDir, '.lima');
+
+  await mkdir(binDir, { recursive: true });
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(reportDir, { recursive: true });
+  await mkdir(logDir, { recursive: true });
+
+  const limactlLog = join(logDir, 'limactl.log');
+  const curlLog = join(logDir, 'curl.log');
+
+  const unamePath = join(binDir, 'uname');
+  await writeFile(unamePath, ['#!/usr/bin/env bash', 'echo Darwin'].join('\n') + '\n', 'utf8');
+  await chmod(unamePath, 0o755);
+
+  const curlPath = join(binDir, 'curl');
+  await writeFile(
+    curlPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `echo "curl $*" >> ${JSON.stringify(curlLog)}`,
+      'out=""',
+      'url=""',
+      'while [[ $# -gt 0 ]]; do',
+      '  case "$1" in',
+      '    -o)',
+      '      out="$2"',
+      '      shift 2',
+      '      continue',
+      '      ;;',
+      '    -f|-fs|-fsS|-fsSL|-s|-S|-L)',
+      '      shift',
+      '      continue',
+      '      ;;',
+      '    *)',
+      '      url="$1"',
+      '      shift',
+      '      continue',
+      '      ;;',
+      '  esac',
+      'done',
+      'if [[ -z "$out" ]]; then',
+      '  echo "missing -o output path" >&2',
+      '  exit 2',
+      'fi',
+      'case "$url" in',
+      '  *linux-ubuntu-provision.sh)',
+      '    cat >"$out" <<\'EOF\'',
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "provision $* profile=${1:-}"',
+      'EOF',
+      '    ;;',
+      '  *linux-ubuntu-hstack-smoke.sh)',
+      '    cat >"$out" <<\'EOF\'',
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'mkdir -p "${HSTACK_SMOKE_DIR:?}"',
+      'touch "${HSTACK_SMOKE_DIR}/smoke-ok"',
+      'echo "smoke ok: ${HSTACK_SMOKE_DIR}"',
+      'EOF',
+      '    ;;',
+      '  *)',
+      '    echo "unexpected url: $url" >&2',
+      '    exit 3',
+      '    ;;',
+      'esac',
+      'chmod +x "$out"',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  await chmod(curlPath, 0o755);
+
+  const limactlPath = join(binDir, 'limactl');
+  await writeFile(
+    limactlPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `echo "limactl $*" >> ${JSON.stringify(limactlLog)}`,
+      'cmd="${1:-}"',
+      'shift || true',
+      'case "$cmd" in',
+      '  create)',
+      '    name=""',
+      '    while [[ $# -gt 0 ]]; do',
+      '      if [[ "$1" == "--name" ]]; then',
+      '        name="$2"',
+      '        shift 2',
+      '        continue',
+      '      fi',
+      '      shift || true',
+      '    done',
+      '    mkdir -p "${LIMA_HOME:-$HOME/.lima}/${name}"',
+      '    printf "%s\\n" "memory: \\"4GiB\\"" > "${LIMA_HOME:-$HOME/.lima}/${name}/lima.yaml"',
+      '    exit 0',
+      '    ;;',
+      '  stop|start)',
+      '    exit 0',
+      '    ;;',
+      '  shell)',
+      '    # Fail closed on the second run by inspecting the injected HSTACK_SMOKE_DIR.',
+      '    while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done',
+      '    if [[ "${1:-}" == "--" ]]; then shift; fi',
+      '    if [[ "${1:-}" == "env" ]]; then',
+      '      shift',
+      '      while [[ $# -gt 0 && "$1" == *=* ]]; do',
+      '        export "$1"',
+      '        shift',
+      '      done',
+      '      if [[ "${HSTACK_SMOKE_DIR:-}" == *"-02" ]]; then',
+      '        echo "forced failure for run 02" >&2',
+      '        exit 42',
+      '      fi',
+      '    fi',
+      '    exec "$@"',
+      '    ;;',
+      '  *)',
+      '    exit 0',
+      '    ;;',
+      'esac',
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  await chmod(limactlPath, 0o755);
+
+  const scriptPath = join(__dirname, 'macos-lima-hstack-repeat-validation.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    LIMA_HOME: limaHome,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    HSTACK_RAW_BASE: 'https://example.test/apps/stack',
+    HSTACK_VERSION: '0.9.0-test',
+    HSTACK_REPEAT_COUNT: '2',
+    HSTACK_REPEAT_OUTPUT_DIR: reportDir,
+    HSTACK_PROVISION_PROFILE: 'happier',
+  };
+
+  const res = spawnSync('bash', [scriptPath, 'happy-repeat'], {
+    cwd: root,
+    env,
+    encoding: 'utf8',
+  });
+
+  assert.equal(res.status, 42, `expected exit 42\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const summaryPath = join(reportDir, 'summary.json');
+  assert.equal(await fileExists(summaryPath), true, 'expected summary.json to be written even on failure');
+  const summary = JSON.parse(await readFile(summaryPath, 'utf8'));
+  assert.equal(summary.kind, 'lima_repeat_validation');
+  assert.equal(summary.status, 42);
+  assert.equal(summary.failureStage, 'guest_smoke');
+  assert.ok(typeof summary.failureReason === 'string' && summary.failureReason.length > 0);
+  assert.equal(summary.runs.length, 2);
+  assert.equal(summary.runs[1].status, 42);
 });

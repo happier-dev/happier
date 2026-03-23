@@ -1,7 +1,7 @@
 import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
-import { getRootDir, resolveStackBaseDir } from './utils/paths/paths.mjs';
+import { getRootDir, resolveStackBaseDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { collectBuildSourceMetadata } from './build/collect_build_source_metadata.mjs';
 import { activateRuntimeSnapshot } from './build/activate_runtime_snapshot.mjs';
 import { resolveLatestComponentArtifact } from './build/resolve_latest_component_artifact.mjs';
@@ -10,6 +10,7 @@ import { resolveRuntimeRetentionPolicy } from './build/runtime_retention.mjs';
 import { createRuntimeFingerprint } from './runtime/shared/runtime_fingerprint.mjs';
 import { resolveStackRuntimePaths } from './runtime/shared/runtime_paths.mjs';
 import { inspectActiveRuntimeSnapshot } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
+import { ensureStackRuntimeModePrefer } from './runtime/shared/ensureStackRuntimeModePrefer.mjs';
 
 function resolveSelectedComponents(flags) {
   const explicit = {
@@ -99,6 +100,9 @@ async function main() {
       artifacts,
       runtimeSnapshotKeepCount: retentionPolicy.runtimeSnapshotKeepCount,
     });
+
+    const { envPath } = resolveStackEnvPath(stackName, process.env);
+    await ensureStackRuntimeModePrefer({ envPath });
 
     printResult({
       json,

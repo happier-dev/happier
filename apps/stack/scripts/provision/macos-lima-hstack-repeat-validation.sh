@@ -55,6 +55,11 @@ HSTACK_VERSION="${HSTACK_VERSION:-latest}"
 HSTACK_REPEAT_COUNT="${HSTACK_REPEAT_COUNT:-3}"
 HSTACK_PROVISION_PROFILE="${HSTACK_PROVISION_PROFILE:-happier}"
 
+FINALIZED=0
+STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+FAILURE_STAGE=""
+FAILURE_REASON=""
+
 timestamp() {
   date +"%Y%m%d-%H%M%S"
 }
@@ -130,6 +135,67 @@ GUEST_SMOKE_SCRIPT="${GUEST_CACHE_DIR}/linux-ubuntu-hstack-smoke.sh"
 
 mkdir -p "${REPORT_ROOT}/runs"
 
+ensure_summary() {
+  if [[ "${FINALIZED}" == "1" ]]; then
+    return 0
+  fi
+  FINALIZED=1
+  local status="${1:-0}"
+  local ended_at
+  ended_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  local payload
+  payload="$(python3 - "$VM_NAME" "$HSTACK_REPEAT_COUNT" "$REPORT_ROOT" "$status" "$STARTED_AT" "$ended_at" "$HSTACK_VERSION" "$HSTACK_RAW_BASE" "$HSTACK_PROVISION_PROFILE" "$FAILURE_STAGE" "$FAILURE_REASON" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+vm_name, repeat_count, report_root, status, started_at, ended_at, hstack_version, raw_base, provision_profile, failure_stage, failure_reason = sys.argv[1:]
+
+root = Path(report_root)
+runs = []
+for meta_path in sorted(root.glob("runs/*/meta.json")):
+  try:
+    runs.append(json.loads(meta_path.read_text(encoding="utf-8")))
+  except Exception:
+    continue
+
+resolved_failure_stage = failure_stage.strip() or None
+resolved_failure_reason = failure_reason.strip() or None
+status_int = int(status)
+if status_int == 0:
+  resolved_failure_stage = None
+  resolved_failure_reason = None
+if status_int != 0 and resolved_failure_stage is None:
+  for run in runs:
+    if int(run.get("status", 0)) != 0:
+      resolved_failure_stage = "guest_smoke"
+      resolved_failure_reason = resolved_failure_reason or f"run_failed:{run.get('runId','unknown')}"
+      break
+
+payload = {
+  "kind": "lima_repeat_validation",
+  "vmName": vm_name,
+  "repeatCount": int(repeat_count),
+  "reportRoot": report_root,
+  "startedAt": started_at,
+  "endedAt": ended_at,
+  "status": status_int,
+  "stackVersion": hstack_version,
+  "rawBase": raw_base,
+  "provisionProfile": provision_profile,
+  "failureStage": resolved_failure_stage,
+  "failureReason": resolved_failure_reason,
+  "runs": runs,
+}
+print(json.dumps(payload))
+PY
+)"
+  write_json_file "${REPORT_ROOT}/summary.json" "${payload}"
+}
+
+trap 'status=$?; ensure_summary "${status}"; exit "${status}"' EXIT
+
 echo "[lima-repeat] vm: ${VM_NAME}"
 echo "[lima-repeat] @happier-dev/stack: ${HSTACK_VERSION}"
 echo "[lima-repeat] repeat count: ${HSTACK_REPEAT_COUNT}"
@@ -137,6 +203,7 @@ echo "[lima-repeat] report dir: ${REPORT_ROOT}"
 echo "[lima-repeat] raw base: ${HSTACK_RAW_BASE}"
 
 echo "[lima-repeat] ensure VM exists + port forwarding..."
+FAILURE_STAGE="ensure_vm"
 "${SCRIPT_DIR}/macos-lima-vm.sh" "${VM_NAME}"
 
 guest_command="$(cat <<'EOF'
@@ -176,6 +243,7 @@ for i in $(seq 1 "${HSTACK_REPEAT_COUNT}"); do
   echo "[lima-repeat] run ${run_id}/${HSTACK_REPEAT_COUNT}: ${guest_smoke_dir}"
 
   mkdir -p "${run_dir}"
+  FAILURE_STAGE="guest_smoke"
   set +e
   limactl shell "${VM_NAME}" -- env \
     GUEST_CACHE_DIR="${GUEST_CACHE_DIR}" \
@@ -190,6 +258,9 @@ for i in $(seq 1 "${HSTACK_REPEAT_COUNT}"); do
     bash -lc "${guest_command}" 2>&1 | tee "${guest_log}"
   status="${PIPESTATUS[0]}"
   set -e
+  if [[ "${status}" != "0" && -z "${FAILURE_REASON}" ]]; then
+    FAILURE_REASON="run_failed:${run_id}"
+  fi
 
   ended_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   write_json_file "${meta_path}" "$(python3 - "$run_id" "$HSTACK_REPEAT_COUNT" "$status" "$guest_smoke_dir" "$guest_log" "$meta_path" "$started_at" "$ended_at" "$bootstrap_flag" "$VM_NAME" "$REPORT_ROOT" <<'PY'
@@ -222,31 +293,6 @@ PY
   fi
 done
 
-summary_path="${REPORT_ROOT}/summary.json"
-write_json_file "${summary_path}" "$(python3 - "$VM_NAME" "$HSTACK_REPEAT_COUNT" "$REPORT_ROOT" "${run_meta_paths[@]}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-vm_name = sys.argv[1]
-repeat_count = int(sys.argv[2])
-report_root = sys.argv[3]
-meta_paths = [Path(p) for p in sys.argv[4:]]
-runs = []
-for path in meta_paths:
-    if path.exists():
-      runs.append(json.loads(path.read_text(encoding='utf-8')))
-
-payload = {
-    'vmName': vm_name,
-    'repeatCount': repeat_count,
-    'reportRoot': report_root,
-    'runs': runs,
-}
-print(json.dumps(payload))
-PY
-)"
-
 if [[ "${#run_meta_paths[@]}" -eq 0 ]]; then
   echo "[lima-repeat] no runs executed" >&2
   exit 1
@@ -257,7 +303,7 @@ if [[ "${status:-0}" != "0" ]]; then
 fi
 
 echo "[lima-repeat] done"
-echo "[lima-repeat] summary: ${summary_path}"
+echo "[lima-repeat] summary: ${REPORT_ROOT}/summary.json"
 for description in "${run_descriptions[@]}"; do
   echo "[lima-repeat] run ${description}"
 done

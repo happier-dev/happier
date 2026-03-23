@@ -37,11 +37,12 @@ process.exit(0);
 async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl }) {
   const logDir = join(cliHomeDir, 'logs');
   await mkdir(logDir, { recursive: true });
+  const ownedLogPath = join(logDir, 'daemon-owned.log');
   const child = spawnDetachedTestProcess(
     process.execPath,
     [
       '-e',
-      "const { createWriteStream } = require('node:fs'); const { join } = require('node:path'); const s = createWriteStream(join(process.env.HAPPIER_HOME_DIR, 'logs', 'daemon-owned.log'), { flags: 'a' }); s.write('ready\\n'); setInterval(() => {}, 1000);",
+      "const fs = require('node:fs'); const p = process.env.DAEMON_OWNED_LOG_PATH || ''; if (!p) process.exit(2); const fd = fs.openSync(p, 'a'); fs.writeSync(fd, 'ready\\n'); setInterval(() => {}, 1000);",
       'daemon',
       'start-sync',
     ],
@@ -49,6 +50,7 @@ async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl }) {
       stdio: 'ignore',
       env: {
         ...process.env,
+        DAEMON_OWNED_LOG_PATH: ownedLogPath,
         HAPPIER_HOME_DIR: cliHomeDir,
         HAPPIER_SERVER_URL: internalServerUrl,
       },

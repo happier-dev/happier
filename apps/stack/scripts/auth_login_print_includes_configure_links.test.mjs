@@ -40,10 +40,10 @@ test('hstack auth login --print --json includes configure-server links and publi
   assert.match(parsed.cmd, /HAPPIER_PUBLIC_SERVER_URL="http:\/\/localhost:4102"/);
 
   assert.ok(parsed.configureServer, 'expected configureServer field');
-  assert.equal(
-    parsed.configureServer.webUrl,
-    `http://localhost:4102`
-  );
+  const configureUrl = new URL(parsed.configureServer.webUrl);
+  assert.equal(configureUrl.origin, 'http://localhost:4102');
+  assert.equal(configureUrl.pathname, '/');
+  assert.equal(configureUrl.searchParams.get('server'), parsed.publicServerUrl);
   assert.equal(
     parsed.configureServer.mobileUrl,
     `happier://server`

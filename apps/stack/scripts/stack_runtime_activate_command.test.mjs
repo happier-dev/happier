@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { writeArtifactManifest } from './runtime/shared/artifact_manifest.mjs';
 import { createRuntimeSnapshotFixture, runNode } from './testkit/runtime_snapshot_testkit.mjs';
+import { parseEnvToObject } from './utils/env/dotenv.mjs';
 
 function stackRootDirFromMeta(metaUrl) {
   const scriptsDir = dirname(fileURLToPath(metaUrl));
@@ -83,6 +84,9 @@ test('hstack stack runtime activate --web updates only the current runtime web p
     await readFile(join(fixture.stackDir, 'runtime', 'current', 'cli', 'happier'), 'utf8'),
     '#!/bin/sh\necho SNAPSHOT CLI HELP\n',
   );
+
+  const stackEnvAfter = parseEnvToObject(await readFile(join(fixture.stackDir, 'env'), 'utf8'));
+  assert.equal(stackEnvAfter.HAPPIER_STACK_RUNTIME_MODE, 'prefer');
 });
 
 test('hstack stack runtime activate --web fails closed when the active runtime server flavor mismatches the stack', async (t) => {

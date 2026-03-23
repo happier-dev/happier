@@ -68,7 +68,7 @@ test('resolvePackDirForComponent prefers explicitDir override', async () => {
 });
 
 test('stack package exposes happier as a published binary', async () => {
-  const pkg = JSON.parse(await readFile(resolve('apps', 'stack', 'package.json'), 'utf8'));
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.deepEqual(pkg.bin, {
     hstack: './bin/hstack.mjs',
     happier: './bin/happier.mjs',
