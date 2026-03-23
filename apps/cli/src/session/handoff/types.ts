@@ -14,7 +14,6 @@ export type HandoffResumePlan = Readonly<{
   environmentVariables?: Record<string, string>;
   transcriptStorage: 'direct' | 'persisted';
   approvedNewDirectoryCreation: true;
-  experimentalCodexAcp?: boolean;
   codexBackendMode?: SessionHandoffCodexBackendMode;
 }>; 
 

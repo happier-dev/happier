@@ -14,9 +14,7 @@ const SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION = 1 as const;
 
 const SessionHandoffPrepareTargetJobRecordSchema = z
   .object({
-    schemaVersion: z
-      .literal(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION)
-      .default(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION),
+    schemaVersion: z.literal(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION),
     jobId: z.string().min(1),
     handoffId: z.string().min(1),
     createdAtMs: z.number().int().min(0),
@@ -26,10 +24,47 @@ const SessionHandoffPrepareTargetJobRecordSchema = z
     completedAtMs: z.number().int().min(0).optional(),
     failedAtMs: z.number().int().min(0).optional(),
     lastErrorMessage: z.string().min(1).optional(),
+    workspaceReplicationJobId: z.string().min(1).optional(),
     status: SessionHandoffStatusSchema,
     prepareTargetResult: SessionHandoffPrepareTargetResultGetResponseSchema.optional(),
   })
-  .strip();
+  .strip()
+  .superRefine((record, ctx) => {
+    if (record.status.handoffId !== record.handoffId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['status', 'handoffId'],
+        message: 'Prepare-target job status must use the same handoffId as the record',
+      });
+    }
+
+    if (record.status.jobId && record.status.jobId !== record.jobId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['status', 'jobId'],
+        message: 'Prepare-target job status.jobId must match the record jobId',
+      });
+    }
+
+    if (record.prepareTargetResult && record.prepareTargetResult.handoffId !== record.handoffId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['prepareTargetResult', 'handoffId'],
+        message: 'Prepare-target job result must use the same handoffId as the record',
+      });
+    }
+
+    if (
+      record.prepareTargetResult
+      && record.prepareTargetResult.status.handoffId !== record.handoffId
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['prepareTargetResult', 'status', 'handoffId'],
+        message: 'Prepare-target job result status must use the same handoffId as the record',
+      });
+    }
+  });
 
 export type SessionHandoffPrepareTargetJobRecord = z.output<typeof SessionHandoffPrepareTargetJobRecordSchema>;
 export type SessionHandoffPrepareTargetJobRecordInput = Omit<SessionHandoffPrepareTargetJobRecord, 'schemaVersion'>;
@@ -45,14 +80,74 @@ export type SessionHandoffPrepareTargetJobStore = Readonly<{
   ) => Promise<SessionHandoffPrepareTargetJobRecord | null>;
 }>;
 
+function isTerminalPrepareTargetStatusCode(status: SessionHandoffPrepareTargetJobRecord['status']['status']): boolean {
+  return status === 'ready_for_cutover'
+    || status === 'completed'
+    || status === 'aborted'
+    || status === 'failed'
+    || status === 'awaiting_recovery';
+}
+
+export async function recoverSessionHandoffPrepareTargetJobsAfterRestart(input: Readonly<{
+  activeServerDir: string;
+  nowMs: number;
+}>): Promise<void> {
+  const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir: input.activeServerDir });
+  const jobs = await store.list();
+  await Promise.all(jobs.map(async (job) => {
+    if (isTerminalPrepareTargetStatusCode(job.status.status)) {
+      return;
+    }
+    await store.update(job.jobId, (current) => {
+      const { schemaVersion: _schemaVersion, ...rest } = current;
+      const previousProgress = rest.status.progress;
+      const nextProgress = previousProgress
+        ? {
+          ...previousProgress,
+          updatedAtMs: input.nowMs,
+          current: {
+            ...(previousProgress.current ?? {}),
+            phaseDetail: 'daemon_restart_missing_runner',
+          },
+        }
+        : previousProgress;
+
+      const recoveryMessage = 'Daemon restarted while the handoff prepare-target job was in progress';
+
+      if (rest.cancelRequestedAtMs) {
+        return {
+          ...rest,
+          updatedAtMs: input.nowMs,
+          abortedAtMs: rest.abortedAtMs ?? input.nowMs,
+          status: {
+            ...rest.status,
+            status: 'aborted',
+            ...(nextProgress ? { progress: nextProgress } : {}),
+          },
+          lastErrorMessage: rest.lastErrorMessage ?? recoveryMessage,
+        };
+      }
+
+      return {
+        ...rest,
+        updatedAtMs: input.nowMs,
+        failedAtMs: rest.failedAtMs ?? input.nowMs,
+        status: {
+          ...rest.status,
+          status: 'awaiting_recovery',
+          ...(nextProgress ? { progress: nextProgress } : {}),
+        },
+        lastErrorMessage: rest.lastErrorMessage ?? recoveryMessage,
+      };
+    });
+  }));
+}
+
 async function readPrepareTargetJobFile(filePath: string): Promise<SessionHandoffPrepareTargetJobRecord | null> {
   try {
     const raw = await readFile(filePath, 'utf8');
-    const value = JSON.parse(raw) as Record<string, unknown>;
-    const parsed = SessionHandoffPrepareTargetJobRecordSchema.safeParse({
-      ...value,
-      schemaVersion: SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION,
-    });
+    const value = JSON.parse(raw) as unknown;
+    const parsed = SessionHandoffPrepareTargetJobRecordSchema.safeParse(value);
     return parsed.success ? parsed.data : null;
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException;
@@ -68,6 +163,9 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
   const jobsDirectory = join(input.activeServerDir, 'session-handoff', 'prepare-target-jobs');
 
   function resolveJobPath(jobId: string): string {
+    if (!/^[A-Za-z0-9._-]+$/u.test(jobId)) {
+      throw new Error(`Invalid session handoff prepare-target job id: ${jobId}`);
+    }
     return join(jobsDirectory, `${jobId}.json`);
   }
 

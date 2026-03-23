@@ -57,6 +57,35 @@ describe('resolveSessionHandoffExportMetadata', () => {
         });
     });
 
+    it('ignores legacy raw-record local metadata (V2 split required; no undeployed compatibility)', () => {
+        const resolved = resolveSessionHandoffExportMetadata({
+            remoteMetadata: {
+                machineId: 'machine_target',
+                path: '/repo-source-current',
+                homeDir: '/Users/tester',
+                flavor: 'claude',
+            },
+            // Boundary cast: simulates legacy runtime input that no longer matches the V2-only type.
+            localMetadata: ({
+                // Previously we accepted raw-record local metadata and overlaid it.
+                // This is intentionally rejected so handoff metadata is always shaped as the
+                // split portable+runtime-local payload (no undeployed compatibility shims).
+                machineId: 'machine_target',
+                path: '/repo-source-stale',
+                homeDir: '/Users/tester',
+                flavor: 'claude',
+                claudeSessionId: 'sess-legacy-local',
+            }) as unknown as Parameters<typeof resolveSessionHandoffExportMetadata>[0]['localMetadata'],
+        });
+
+        expect(resolved).toEqual({
+            machineId: 'machine_target',
+            path: '/repo-source-current',
+            homeDir: '/Users/tester',
+            flavor: 'claude',
+        });
+    });
+
     it('prefers live local export metadata when the remote snapshot is still pinned to a different source machine', () => {
         const resolved = resolveSessionHandoffExportMetadata({
             remoteMetadata: {

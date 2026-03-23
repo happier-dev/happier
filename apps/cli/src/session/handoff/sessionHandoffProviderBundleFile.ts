@@ -47,8 +47,18 @@ export async function createSessionHandoffProviderBundlePayloadSource(
 export async function readSessionHandoffProviderBundleFile(
   providerBundleFilePath: string,
 ): Promise<SessionHandoffProviderBundle> {
-  const payload = JSON.parse(await readFile(providerBundleFilePath, 'utf8')) as unknown;
-  const providerBundle = SessionHandoffProviderBundleSchema.parse(payload);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(await readFile(providerBundleFilePath, 'utf8')) as unknown;
+  } catch {
+    throw new Error('Invalid session handoff transfer payload');
+  }
+  let providerBundle: SessionHandoffProviderBundle;
+  try {
+    providerBundle = SessionHandoffProviderBundleSchema.parse(payload);
+  } catch {
+    throw new Error('Invalid session handoff transfer payload');
+  }
   assertCanonicalSessionHandoffProviderBundle(providerBundle);
   return providerBundle;
 }

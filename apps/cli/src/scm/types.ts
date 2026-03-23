@@ -71,7 +71,6 @@ import type {
     ScmSourceControllerWorkspaceTransferRequest,
     ScmSourceControllerWorkspaceTransferResult,
 } from './sourceController/workspaceTransfer';
-import type { ScmSourceControllerWorkspaceExportArtifacts } from './sourceController/workspaceExportArtifacts';
 
 export type ScmRepoDetection = {
     isRepo: boolean;
@@ -163,9 +162,6 @@ export type ScmSourceController = Readonly<{
         input: ScmSourceControllerWorkspaceCheckoutMaterializationInput,
     ) => Promise<ScmSourceControllerWorkspaceCheckoutMaterializationResult | void>;
     resolveWorkspaceTransfer?: (input: ScmSourceControllerWorkspaceTransferInput) => Promise<ScmSourceControllerWorkspaceTransferResult | null>;
-    resolveWorkspaceExportArtifacts?: (
-        input: ScmSourceControllerWorkspaceTransferInput,
-    ) => Promise<ScmSourceControllerWorkspaceExportArtifacts | null>;
     resolveWorkspaceTransferEntries?: (input: ScmSourceControllerWorkspaceTransferInput) => Promise<readonly ScmSourceControllerWorkspaceTransferEntry[] | null>;
     resolveWorkspaceTransferMetadata?: (input: ScmSourceControllerWorkspaceTransferInput) => Promise<ScmSourceControllerWorkspaceTransferMetadata | null>;
     assertPortableWorkspaceEntries?: (input: ScmSourceControllerPortableWorkspaceEntriesInput) => Promise<void>;

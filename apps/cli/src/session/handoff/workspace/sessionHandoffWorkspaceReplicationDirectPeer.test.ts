@@ -99,6 +99,10 @@ describe('session handoff direct-peer workspace replication publication', () => 
       // Manifest + blob packs must be file-backed payload sources (no unbounded whole-buffer assembly).
       expect(result.payloadSources.every(({ payloadSource }) => payloadSource.kind === 'file')).toBe(true);
 
+      // Direct-peer publication must not pre-publish blob-pack transfers (no 1-digest-per-transfer loop).
+      // Blob packs are served on-demand from the manifest transfer's scoped resolver, aligned with
+      // target missing-blob batching.
+      expect(publishedTransfers).toHaveLength(1);
       expect(publishedTransfers.some((entry) => entry.transferId.includes(':workspace-manifest'))).toBe(true);
       // Blob packs are resolved on demand (no pre-published blob-pack transfer ids).
       expect(publishedTransfers.some((entry) => entry.transferId.includes(':workspace-pack-direct:'))).toBe(false);

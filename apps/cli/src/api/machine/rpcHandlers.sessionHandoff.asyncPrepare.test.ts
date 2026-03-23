@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -246,7 +246,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         'lease',
         'lease.json',
       );
-      await (await import('node:fs/promises')).mkdir(join(
+      await mkdir(join(
         activeServerDir,
         'session-handoff',
         'prepare-target-jobs-staging',

@@ -12,7 +12,7 @@ export type SessionHandoffMetadataSplit = Readonly<{
     runtimeLocalMetadata?: SessionHandoffRuntimeLocalMetadata;
 }>;
 
-export type SessionHandoffLocalMetadataSource = SessionHandoffMetadataSplit | MetadataRecord;
+export type SessionHandoffLocalMetadataSource = SessionHandoffMetadataSplit;
 
 function asMetadataRecord(value: unknown): MetadataRecord | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -97,7 +97,6 @@ export function resolveSessionHandoffExportMetadata(input: Readonly<{
     const localSplit = input.localMetadata && isSessionHandoffMetadataSplit(input.localMetadata)
         ? input.localMetadata
         : null;
-    const localMetadataRecord = localSplit ? null : asMetadataRecord(input.localMetadata);
     const preferredLocalExportMachineId = typeof input.preferredLocalExportMachineId === 'string'
         ? input.preferredLocalExportMachineId.trim()
         : '';
@@ -116,14 +115,13 @@ export function resolveSessionHandoffExportMetadata(input: Readonly<{
                 ...cloneMetadataRecord(localSplit!.exportMetadata),
             }
             : input.remoteMetadata
-        : localSplit?.exportMetadata
-        ?? localMetadataRecord;
+        : localSplit?.exportMetadata;
     if (!baseMetadata) {
         return null;
     }
 
     const exportMetadata = cloneMetadataRecord(baseMetadata);
-    const runtimeLocalMetadata = localSplit?.runtimeLocalMetadata ?? pickSessionHandoffRuntimeLocalMetadata(localMetadataRecord);
+    const runtimeLocalMetadata = localSplit?.runtimeLocalMetadata;
 
     if (!runtimeLocalMetadata) {
         return exportMetadata;
