@@ -75,7 +75,6 @@ describe('XtermTerminalView.web', () => {
     let root: ReturnType<typeof createRoot>;
 
     beforeEach(() => {
-        vi.useFakeTimers();
         fitSpy.mockReset();
         focusSpy.mockReset();
         loadAddonSpy.mockReset();
@@ -93,7 +92,6 @@ describe('XtermTerminalView.web', () => {
             root.unmount();
         });
         container.remove();
-        vi.useRealTimers();
     });
 
     it('refocuses the terminal when the web container receives mouse down', async () => {
@@ -112,7 +110,9 @@ describe('XtermTerminalView.web', () => {
         });
 
         await act(async () => {
-            vi.advanceTimersByTime(25);
+            await new Promise((resolve) => {
+                setTimeout(resolve, 40);
+            });
         });
 
         const terminalContainer = container.querySelector('[data-testid="terminal"]');

@@ -30,17 +30,13 @@ describe('MermaidRenderer', () => {
 
     let tree: ReturnType<typeof renderer.create> | undefined;
     try {
-      tree = (await renderScreen(<MermaidRenderer content={'graph TD\\nA-->B'} />)).tree;
+      const screen = await renderScreen(<MermaidRenderer content={'graph TD\\nA-->B'} />);
+      tree = screen.tree;
 
-      const copyButtons =
-        tree?.root.findAll((n) => n.props?.testID === 'mermaid-copy-button') ?? [];
-      expect(copyButtons).toHaveLength(1);
-      expect(typeof copyButtons[0]!.props?.onPress).toBe('function');
+      expect(screen.findByTestId('mermaid-copy-button')).not.toBeNull();
 
       clipboardMocks.setStringAsync.mockClear();
-      await act(async () => {
-        await copyButtons[0]!.props.onPress();
-      });
+      await screen.pressByTestIdAsync('mermaid-copy-button');
 
       expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith('graph TD\\nA-->B');
     } finally {

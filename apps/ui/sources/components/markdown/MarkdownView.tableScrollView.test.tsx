@@ -1,5 +1,4 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -21,10 +20,9 @@ describe('MarkdownView (tables)', () => {
             '| 1 | 2 | 3 |',
         ].join('\n');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<MarkdownView markdown={markdown} />)).tree;
+        const screen = await renderScreen(<MarkdownView markdown={markdown} />);
 
-        const scrollViews = tree!.root.findAllByType('GestureHandlerScrollView' as any);
+        const scrollViews = screen.findAllByType('GestureHandlerScrollView' as any);
         expect(scrollViews).toHaveLength(1);
         expect(scrollViews[0]!.props.horizontal).toBe(true);
         expect(scrollViews[0]!.props.nestedScrollEnabled).toBe(true);
@@ -40,11 +38,10 @@ describe('MarkdownView (tables)', () => {
             '| 1 | 2 |',
         ].join('\n');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<MarkdownView markdown={markdown} />)).tree;
+        const screen = await renderScreen(<MarkdownView markdown={markdown} />);
 
         const findTextNode = (text: string) =>
-            tree!.root.findAll((n) => typeof n.props?.children === 'string' && n.props.children === text)[0]!;
+            screen.findAllByType('Text' as any).find((n) => n.props?.children === text)!;
 
         expect(findTextNode('A').props.selectable).toBe(true);
         expect(findTextNode('1').props.selectable).toBe(true);

@@ -1,6 +1,5 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -35,13 +34,12 @@ describe('MarkdownSpansView (link rel hardening)', () => {
 
     const { MarkdownSpansView } = await import('./MarkdownSpansView');
 
-    let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<MarkdownSpansView
+    const screen = await renderScreen(<MarkdownSpansView
           linkStyle={{ color: 'red' }}
           spans={[{ text: 'example', styles: [], url: 'https://example.com' }] as any}
-        />)).tree;
+        />);
 
-    const link = tree.root.findByType('Link' as any);
+    const link = screen.findByType('Link' as any);
     expect(link.props.target).toBe('_blank');
     expect(link.props.rel).toBe('noopener noreferrer');
     // On web we intentionally avoid `asChild` so Expo Router can forward href attrs to an anchor-like element.
@@ -57,14 +55,13 @@ describe('MarkdownSpansView (link rel hardening)', () => {
 
     const { MarkdownSpansView } = await import('./MarkdownSpansView');
 
-    let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<MarkdownSpansView
+    const screen = await renderScreen(<MarkdownSpansView
           spans={[{ text: 'example', styles: [], url: 'https://example.com' }] as any}
-        />)).tree;
+        />);
 
-    const link = tree.root.findByType('Link' as any);
+    const link = screen.findByType('Link' as any);
     expect(link.props.asChild).toBe(true);
-    const childText = link.findByType('Text' as any);
+    const childText = screen.findByType('Text' as any);
     expect(childText.props.selectable).toBe(true);
   });
 });
