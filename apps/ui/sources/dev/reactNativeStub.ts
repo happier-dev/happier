@@ -87,6 +87,14 @@ export const Animated = {
             cb?.({ finished: true });
         },
     }),
+    parallel: (steps: Array<{ start?: (cb?: (result: { finished: boolean }) => void) => void }>) => ({
+        start: (cb?: (result: { finished: boolean }) => void) => {
+            for (const step of steps) {
+                step?.start?.();
+            }
+            cb?.({ finished: true });
+        },
+    }),
     View: 'Animated.View' as any,
 } as const;
 
