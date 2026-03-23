@@ -80,12 +80,15 @@ async function flushMicrotasks(iterations: number = 5): Promise<void> {
 
 async function loadRequestReview(params: { platformOs: string }) {
     vi.doMock('react-native', async () => {
-        const actual = await vi.importActual<any>('react-native');
-        return {
-            ...actual,
-            Platform: { ...(actual?.Platform ?? {}), OS: params.platformOs },
-        };
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: params.platformOs,
+            },
+        }
+    );
+});
 
     return await import('./requestReview');
 }

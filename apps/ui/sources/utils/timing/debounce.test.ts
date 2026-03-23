@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { flushHookEffects } from '@/dev/testkit';
 import { createCustomDebounce, createAdvancedDebounce } from './debounce';
 
 describe('debounce utilities', () => {
@@ -9,10 +10,6 @@ describe('debounce utilities', () => {
     afterEach(() => {
         vi.useRealTimers();
     });
-
-    const advanceTimers = async (ms: number): Promise<void> => {
-        await vi.advanceTimersByTimeAsync(ms);
-    };
 
     describe('createCustomDebounce', () => {
         describe('immediate execution', () => {
@@ -57,7 +54,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).not.toHaveBeenCalled();
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(1);
                 expect(mockFn).toHaveBeenCalledWith('second');
             });
@@ -87,7 +84,7 @@ describe('debounce utilities', () => {
                 debouncedFn('second');
 
                 expect(mockFn).not.toHaveBeenCalled();
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(1);
                 expect(mockFn).toHaveBeenCalledWith('second');
             });
@@ -105,7 +102,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'fourth');
             });
@@ -122,7 +119,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'debounced3');
             });
@@ -135,13 +132,13 @@ describe('debounce utilities', () => {
                 debouncedFn('immediate2');
                 debouncedFn('debounced1');
                 
-                await advanceTimers(500);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 500 });
                 debouncedFn('debounced2');
                 
-                await advanceTimers(500);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 500 });
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(500);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 500 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'debounced2');
             });
@@ -163,7 +160,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 12); // 3 + 4 + 5
             });
@@ -182,7 +179,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, { a: 3, b: 20 });
             });
@@ -201,7 +198,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, ['c', 'd', 'e']);
             });
@@ -221,7 +218,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 15);
             });
@@ -250,7 +247,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, {
                     query: 'final',
@@ -307,7 +304,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'call-99');
             });
@@ -338,7 +335,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'fourth');
             });
@@ -357,7 +354,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'third');
             });
@@ -375,7 +372,7 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(2, 'second');
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'third');
 
-                await advanceTimers(10);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 10 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
             });
 
@@ -393,7 +390,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 7); // 3 + 4
             });
@@ -412,7 +409,7 @@ describe('debounce utilities', () => {
                 
                 cancel();
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(2);
             });
 
@@ -428,7 +425,7 @@ describe('debounce utilities', () => {
                 
                 debounced('fourth');
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'fourth');
             });
@@ -472,7 +469,7 @@ describe('debounce utilities', () => {
                 
                 reset();
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(2);
             });
 
@@ -529,7 +526,7 @@ describe('debounce utilities', () => {
                 
                 flush();
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
             });
 
@@ -565,7 +562,7 @@ describe('debounce utilities', () => {
                 
                 debounced('fourth');
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(4);
                 expect(mockFn).toHaveBeenNthCalledWith(4, 'fourth');
             });
@@ -587,7 +584,7 @@ describe('debounce utilities', () => {
                 
                 cancel();
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(4);
             });
 
@@ -647,7 +644,7 @@ describe('debounce utilities', () => {
                 // Simulate component unmount
                 cancel();
                 
-                await advanceTimers(500);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 500 });
                 expect(mockSearch).toHaveBeenCalledTimes(1);
             });
 
@@ -687,7 +684,7 @@ describe('debounce utilities', () => {
                 
                 expect(mockSendAnalytics).not.toHaveBeenCalled();
                 
-                await advanceTimers(1000);
+                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockSendAnalytics).toHaveBeenCalledTimes(1);
                 expect(mockSendAnalytics).toHaveBeenCalledWith(['click', 'scroll', 'hover', 'focus', 'blur']);
             });

@@ -13,18 +13,16 @@ describe('deferOnWeb', () => {
 
         const { deferOnWeb } = await import('./deferOnWeb');
         const action = vi.fn();
-        let frameCallback: FrameRequestCallback | undefined;
 
         vi.stubGlobal('requestAnimationFrame', ((callback: FrameRequestCallback) => {
-            frameCallback = callback;
+            queueMicrotask(() => callback(0));
             return 1;
         }) as typeof requestAnimationFrame);
 
         deferOnWeb(action);
 
         expect(action).not.toHaveBeenCalled();
-        expect(frameCallback).toBeTypeOf('function');
-        frameCallback?.(0);
+        await Promise.resolve();
         expect(action).toHaveBeenCalledTimes(1);
     });
 
