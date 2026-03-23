@@ -39,7 +39,7 @@ export const es: TranslationStructure = {
     // Tab navigation labels
     inbox: "Bandeja",
     friends: "Amigos",
-    sessions: "Terminales",
+    sessions: "Sesiones",
     settings: "Configuración",
   },
 
@@ -480,6 +480,8 @@ export const es: TranslationStructure = {
     message: "Mensaje",
     send: "Enviar",
     attach: "Adjuntar",
+    addImage: "Agregar imagen",
+    addFile: "Agregar archivo",
     linkFile: "Vincular archivo",
     files: "Archivos",
     path: "Ruta",
@@ -2833,6 +2835,11 @@ export const es: TranslationStructure = {
       actionsSectionTitle: "Acciones",
       newWorktree: "Nuevo worktree",
       newWorktreeSubtitle: "Crea y usa un nuevo worktree de Git para esta sesión.",
+      existingWorktree: "Worktree existente",
+      existingWorktreeSubtitle: "Elige un worktree Git existente para esta sesión.",
+      existingWorktreeEmptyTitle: "No hay worktrees existentes",
+      existingWorktreeEmptySubtitle:
+        "Crea un worktree de Git primero o elige Nuevo worktree.",
       newWorktreeDetailWorkspace:
         "Crea un nuevo checkout vinculado dentro de este workspace.",
       newWorktreeDetailBranch:
@@ -2958,6 +2965,7 @@ export const es: TranslationStructure = {
     resume: {
       title: "Reanudar sesión",
       optional: "Reanudar: Opcional",
+      chipOptional: ({ agent }: { agent: string }) => `Reanudar sesión de ${agent}`,
       pickerTitle: "Reanudar sesión",
       subtitle: ({ agent }: { agent: string }) =>
         `Pega un ID de sesión de ${agent} para reanudar`,

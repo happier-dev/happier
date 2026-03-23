@@ -41,7 +41,7 @@ export const zhHans: TranslationStructure = {
     // Tab navigation labels
     inbox: "收件箱",
     friends: "好友",
-    sessions: "终端",
+    sessions: "会话",
     settings: "设置",
   },
 
@@ -461,6 +461,8 @@ export const zhHans: TranslationStructure = {
     message: "消息",
     send: "发送",
     attach: "附加",
+    addImage: "添加图片",
+    addFile: "添加文件",
     linkFile: "链接文件",
     files: "文件",
     path: "路径",
@@ -2706,6 +2708,10 @@ export const zhHans: TranslationStructure = {
       actionsSectionTitle: "操作",
       newWorktree: "新建 worktree",
       newWorktreeSubtitle: "为此会话创建并使用一个新的 Git worktree。",
+      existingWorktree: "现有 worktree",
+      existingWorktreeSubtitle: "为此会话选择一个现有的 Git worktree。",
+      existingWorktreeEmptyTitle: "没有现有 worktree",
+      existingWorktreeEmptySubtitle: "请先创建一个 Git worktree，或选择新建 worktree。",
       newWorktreeDetailWorkspace: "在此 workspace 中创建一个新的已链接 checkout。",
       newWorktreeDetailBranch: "从当前仓库状态开始，并选择新的 branch/worktree 名称。",
       branchPickerTitle: "Start From",
@@ -2814,6 +2820,7 @@ export const zhHans: TranslationStructure = {
     resume: {
       title: "恢复会话",
       optional: "恢复：可选",
+      chipOptional: ({ agent }: { agent: string }) => `恢复 ${agent} 会话`,
       pickerTitle: "恢复会话",
       subtitle: ({ agent }: { agent: string }) =>
         `粘贴 ${agent} 会话 ID 以恢复`,

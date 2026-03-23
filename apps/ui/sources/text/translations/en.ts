@@ -39,7 +39,7 @@ export const en = {
         // Tab navigation labels
         inbox: 'Inbox',
         friends: 'Friends',
-        sessions: 'Terminals',
+        sessions: 'Sessions',
         settings: 'Settings',
     },
 
@@ -546,6 +546,8 @@ export const en = {
         message: 'Message',
         send: 'Send',
         attach: 'Attach',
+        addImage: 'Add image',
+        addFile: 'Add file',
         linkFile: 'Link file',
         files: 'Files',
         path: 'Path',
@@ -2701,6 +2703,10 @@ export const en = {
             actionsSectionTitle: 'Actions',
             newWorktree: 'New Worktree',
             newWorktreeSubtitle: 'Create and use a new Git worktree for this session.',
+            existingWorktree: 'Existing Worktree',
+            existingWorktreeSubtitle: 'Pick an existing Git worktree for this session.',
+            existingWorktreeEmptyTitle: 'No existing worktrees',
+            existingWorktreeEmptySubtitle: 'Create a Git worktree first, or choose New Worktree.',
             newWorktreeDetailWorkspace: 'Create a new Git worktree for this repository.',
             newWorktreeDetailBranch: 'Start from the current repository state and choose a new branch/worktree name.',
             branchPickerTitle: 'Start From',
@@ -2804,6 +2810,7 @@ export const en = {
         resume: {
             title: 'Resume session',
             optional: 'Resume: Optional',
+            chipOptional: ({ agent }: { agent: string }) => `Resume ${agent} session`,
             pickerTitle: 'Resume session',
             subtitle: ({ agent }: { agent: string }) => `Paste a ${agent} session ID to resume`,
             placeholder: ({ agent }: { agent: string }) => `Paste ${agent} session ID…`,
@@ -2865,6 +2872,15 @@ export const en = {
         progress: {
             title: 'Handing off session',
             message: 'Preparing the target machine and moving the session state.',
+            timeline: {
+                scanSource: 'Scan source',
+                plan: 'Plan changes',
+                transferBlobs: 'Transfer files',
+                stageTarget: 'Stage target',
+                apply: 'Apply changes',
+                importSession: 'Import session',
+                finalize: 'Finalize',
+            },
         },
         failure: {
             title: 'Session handoff failed',

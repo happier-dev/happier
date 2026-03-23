@@ -24,7 +24,7 @@ export const ja: TranslationStructure = {
     // Tab navigation labels
     inbox: "受信箱",
     friends: "友達",
-    sessions: "ターミナル",
+    sessions: "セッション",
     settings: "設定",
   },
 
@@ -462,6 +462,8 @@ export const ja: TranslationStructure = {
     message: "メッセージ",
     send: "送信",
     attach: "添付",
+    addImage: "画像を追加",
+    addFile: "ファイルを追加",
     linkFile: "ファイルをリンク",
     files: "ファイル",
     path: "パス",
@@ -3107,6 +3109,11 @@ export const ja: TranslationStructure = {
       actionsSectionTitle: "アクション",
       newWorktree: "新しい worktree",
       newWorktreeSubtitle: "このセッション用に新しい Git worktree を作成して使用します。",
+      existingWorktree: "既存の worktree",
+      existingWorktreeSubtitle: "このセッションで既存の Git worktree を選択します。",
+      existingWorktreeEmptyTitle: "既存の worktree はありません",
+      existingWorktreeEmptySubtitle:
+        "先に Git worktree を作成するか、新しい worktree を選択してください。",
       newWorktreeDetailWorkspace:
         "この workspace に新しいリンク済み checkout を作成します。",
       newWorktreeDetailBranch:
@@ -3231,6 +3238,7 @@ export const ja: TranslationStructure = {
     resume: {
       title: "セッションを再開",
       optional: "再開: 任意",
+      chipOptional: ({ agent }: { agent: string }) => `${agent}セッションを再開`,
       pickerTitle: "セッションを再開",
       subtitle: ({ agent }: { agent: string }) =>
         `再開する${agent}セッションIDを貼り付けてください`,

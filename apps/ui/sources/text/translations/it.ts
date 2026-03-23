@@ -39,7 +39,7 @@ export const it: TranslationStructure = {
     // Tab navigation labels
     inbox: "Posta",
     friends: "Amici",
-    sessions: "Terminali",
+    sessions: "Sessioni",
     settings: "Impostazioni",
   },
 
@@ -479,6 +479,8 @@ export const it: TranslationStructure = {
     message: "Messaggio",
     send: "Invia",
     attach: "Allega",
+    addImage: "Aggiungi immagine",
+    addFile: "Aggiungi file",
     linkFile: "Collega file",
     files: "File",
     path: "Percorso",
@@ -3167,6 +3169,12 @@ export const it: TranslationStructure = {
       actionsSectionTitle: "Azioni",
       newWorktree: "Nuovo worktree",
       newWorktreeSubtitle: "Crea e usa un nuovo worktree Git per questa sessione.",
+      existingWorktree: "Worktree esistente",
+      existingWorktreeSubtitle:
+        "Scegli un worktree Git esistente per questa sessione.",
+      existingWorktreeEmptyTitle: "Nessun worktree esistente",
+      existingWorktreeEmptySubtitle:
+        "Crea prima un worktree Git oppure scegli Nuovo worktree.",
       newWorktreeDetailWorkspace:
         "Crea un nuovo checkout collegato in questo workspace.",
       newWorktreeDetailBranch:
@@ -3291,6 +3299,7 @@ export const it: TranslationStructure = {
     resume: {
       title: "Riprendi sessione",
       optional: "Riprendi: Opzionale",
+      chipOptional: ({ agent }: { agent: string }) => `Riprendi sessione ${agent}`,
       pickerTitle: "Riprendi sessione",
       subtitle: ({ agent }: { agent: string }) =>
         `Incolla un ID sessione ${agent} per riprendere`,

@@ -80,7 +80,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         // Tab navigation labels
         inbox: '收件匣',
         friends: '好友',
-        sessions: '終端',
+        sessions: '工作階段',
         settings: '設定',
     },
 
@@ -507,6 +507,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         message: '訊息',
         send: '傳送',
         attach: '附加',
+        addImage: '新增圖片',
+        addFile: '新增檔案',
         linkFile: '連結檔案',
         files: '檔案',
         path: '路徑',
@@ -2175,6 +2177,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             actionsSectionTitle: '動作',
             newWorktree: '新的 worktree',
             newWorktreeSubtitle: '為此工作階段建立並使用新的 Git worktree。',
+            existingWorktree: '現有 worktree',
+            existingWorktreeSubtitle: '為此工作階段選擇現有的 Git worktree。',
+            existingWorktreeEmptyTitle: '沒有現有 worktree',
+            existingWorktreeEmptySubtitle: '請先建立 Git worktree，或選擇新的 worktree。',
             newWorktreeDetailWorkspace: '在此 workspace 中建立新的已連結 checkout。',
             newWorktreeDetailBranch: '從目前儲存庫狀態開始，並選擇新的 branch/worktree 名稱。',
             branchPickerTitle: 'Base Branch',
@@ -2201,7 +2207,20 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             notGitRepo: 'Worktree 需要 git 倉庫',
             failed: ({ error }: { error: string }) => `建立 worktree 失敗：${error}`,
             success: 'Worktree 建立成功',
-        }
+        },
+        resume: {
+            title: '恢復工作階段',
+            optional: '恢復：可選',
+            chipOptional: ({ agent }: { agent: string }) => `恢復 ${agent} 工作階段`,
+            pickerTitle: '恢復工作階段',
+            subtitle: ({ agent }: { agent: string }) => `貼上 ${agent} 工作階段 ID 以恢復`,
+            placeholder: ({ agent }: { agent: string }) => `貼上 ${agent} 工作階段 ID…`,
+            paste: '貼上',
+            save: '儲存',
+            clearAndRemove: '清除',
+            helpText: '你可以在「工作階段資訊」頁面找到工作階段 ID。',
+            cannotApplyBody: '此恢復 ID 目前無法套用。Happier 將改為啟動新的工作階段。',
+        },
     },
 
     sessionHistory: {
