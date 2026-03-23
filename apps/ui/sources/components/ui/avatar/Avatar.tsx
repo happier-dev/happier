@@ -60,7 +60,7 @@ export const Avatar = React.memo((props: AvatarProps) => {
 
     const agentId = resolveAgentIdFromFlavor(flavor);
 
-    const unreadBadgeSize = Math.round(size * 0.5);
+    const unreadBadgeSize = Math.round(size * 0.4);
     const unreadBadgeElement = hasUnreadMessages ? (
         <View style={[styles.unreadBadge, { width: unreadBadgeSize, height: unreadBadgeSize }]} />
     ) : null;
