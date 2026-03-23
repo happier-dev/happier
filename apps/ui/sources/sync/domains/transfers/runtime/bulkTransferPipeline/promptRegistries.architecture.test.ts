@@ -8,10 +8,16 @@ const FORBIDDEN_PROMPT_REGISTRY_TRANSFER_TOKENS = [
     'mergeTransferChunks',
     'chunkTransferClient',
     'apiSocket',
+    'machineRpcWithServerScope',
+    'RPC_METHODS',
+    'DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT',
+    'DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK',
+    'DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE',
 ] as const;
 
 const REQUIRED_PROMPT_REGISTRY_TRANSFER_TOKENS = [
     'bulkTransferPipeline',
+    'daemonPromptRegistries',
 ] as const;
 
 describe('bulkTransferPipeline (architecture)', () => {

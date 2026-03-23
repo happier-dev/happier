@@ -8,10 +8,22 @@ const FORBIDDEN_PROMPT_ASSET_TRANSFER_TOKENS = [
     'mergeTransferChunks',
     'chunkTransferClient',
     'apiSocket',
+    'RPC_METHODS',
+    'machineRpcWithServerScope',
+    'DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT',
+    'DAEMON_PROMPT_ASSETS_DOWNLOAD_CHUNK',
+    'DAEMON_PROMPT_ASSETS_DOWNLOAD_FINALIZE',
+    'DAEMON_PROMPT_ASSETS_UPLOAD_INIT',
+    'DAEMON_PROMPT_ASSETS_UPLOAD_CHUNK',
+    'DAEMON_PROMPT_ASSETS_UPLOAD_FINALIZE',
+    'DAEMON_PROMPT_ASSETS_LIST_TYPES',
+    'DAEMON_PROMPT_ASSETS_DISCOVER',
+    'DAEMON_PROMPT_ASSETS_DELETE',
 ] as const;
 
 const REQUIRED_PROMPT_ASSET_TRANSFER_TOKENS = [
     'bulkTransferPipeline',
+    'daemonPromptAssets',
 ] as const;
 
 describe('bulkTransferPipeline (architecture)', () => {

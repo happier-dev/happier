@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import * as bulkTransferPipeline from './index';
+import * as daemonPromptAssets from './daemonPromptAssets';
+import * as daemonPromptRegistries from './daemonPromptRegistries';
 import * as daemonSessionAttachments from './daemonSessionAttachments';
 import * as daemonSessionFiles from './daemonSessionFiles';
 
@@ -30,5 +32,24 @@ describe('bulkTransferPipeline (public API)', () => {
             'uploadDaemonSessionAttachmentFromReader',
         ]);
     });
-});
 
+    it('freezes the daemonPromptAssets runtime exports', () => {
+        expect(Object.keys(daemonPromptAssets).sort()).toEqual([
+            'deleteDaemonPromptAsset',
+            'discoverDaemonPromptAssets',
+            'downloadDaemonPromptAsset',
+            'listDaemonPromptAssetTypes',
+            'uploadDaemonPromptAsset',
+        ]);
+    });
+
+    it('freezes the daemonPromptRegistries runtime exports', () => {
+        expect(Object.keys(daemonPromptRegistries).sort()).toEqual([
+            'downloadDaemonPromptRegistryItem',
+            'installDaemonPromptRegistryItem',
+            'listDaemonPromptRegistryAdapters',
+            'listDaemonPromptRegistrySources',
+            'scanDaemonPromptRegistrySource',
+        ]);
+    });
+});

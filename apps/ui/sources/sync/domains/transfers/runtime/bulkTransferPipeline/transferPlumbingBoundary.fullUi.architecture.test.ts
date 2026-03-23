@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -29,10 +30,9 @@ async function listFilesRecursively(directory: string): Promise<string[]> {
 }
 
 describe('bulkTransferPipeline (architecture)', () => {
-    it('keeps chunk transfer plumbing scoped to bulkTransferPipeline/**', async () => {
-        const runtimeDirectory = new URL('../', import.meta.url);
-        const runtimePath = runtimeDirectory.pathname;
-        const files = (await listFilesRecursively(runtimePath)).filter((filePath) =>
+    it('keeps chunk transfer plumbing scoped to bulkTransferPipeline/** across the entire UI sources tree', async () => {
+        const sourcesPath = fileURLToPath(new URL('../../../../../', import.meta.url));
+        const files = (await listFilesRecursively(sourcesPath)).filter((filePath) =>
             (filePath.endsWith('.ts') || filePath.endsWith('.tsx'))
             && !filePath.endsWith('.test.ts')
             && !filePath.endsWith('.spec.ts')
@@ -45,9 +45,26 @@ describe('bulkTransferPipeline (architecture)', () => {
                 continue;
             }
             const source = await readFile(filePath, 'utf8');
+            // Prevent bypass via relative imports, dynamic imports, or require().
             assertDoesNotImportModule(source, 'chunkTransferClient', filePath);
             assertDoesNotImportModule(source, 'sessionFileTransferRpcCaller', filePath);
             assertDoesNotImportModule(source, 'mergeTransferChunks', filePath);
+
+            // Prevent legacy helper reintroduction (these were the old feature-facing bulk-byte paths).
+            expect(source).not.toContain('uploadMachineTransferJsonPayload');
+            expect(source).not.toContain('downloadMachineTransferJsonPayload');
+
+            // Feature code must not open-code the session-scoped RPC method family; only the canonical pipeline may.
+            expect(source).not.toContain('RPC_METHODS.DAEMON_SESSION_FILES_');
+            expect(source).not.toContain('RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_');
+
+            // Deletion-proofing: the old FILES_* / ATTACHMENTS_CONFIGURE family must not reappear anywhere.
+            expect(source).not.toContain('RPC_METHODS.FILES_UPLOAD_');
+            expect(source).not.toContain('RPC_METHODS.FILES_DOWNLOAD_');
+            expect(source).not.toContain('RPC_METHODS.ATTACHMENTS_CONFIGURE');
+            expect(source).not.toMatch(/\bFILES_UPLOAD_(INIT|CHUNK|FINALIZE|ABORT)\b/u);
+            expect(source).not.toMatch(/\bFILES_DOWNLOAD_(INIT|CHUNK|FINALIZE|ABORT)\b/u);
+            expect(source).not.toMatch(/\bATTACHMENTS_CONFIGURE\b/u);
         }
     });
 });

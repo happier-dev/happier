@@ -6,6 +6,9 @@ const FORBIDDEN_SESSION_FILE_TRANSFER_TOKENS = [
     'createSessionFileTransferRpcCaller',
     'DAEMON_SESSION_FILES_',
     'mergeTransferChunks',
+    // Feature code should not implement or import fallback routing; policy and route selection
+    // live in the canonical pipeline/runtime layers.
+    'sessionMachineRpcFallback',
 ] as const;
 
 const REQUIRED_SESSION_FILE_TRANSFER_TOKENS = [

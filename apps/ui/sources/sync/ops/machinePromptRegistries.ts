@@ -1,13 +1,4 @@
 import {
-    PromptRegistryFetchItemRequestV1Schema,
-    PromptRegistryFetchedItemV1Schema,
-    PromptRegistryInstallRequestV1Schema,
-    PromptRegistryInstallResponseV1Schema,
-    PromptRegistryListAdaptersResponseV1Schema,
-    PromptRegistryListSourcesRequestV1Schema,
-    PromptRegistryListSourcesResponseV1Schema,
-    PromptRegistryScanSourceRequestV1Schema,
-    PromptRegistryScanSourceResponseV1Schema,
     type PromptRegistryFetchItemRequestV1,
     type PromptRegistryFetchedItemV1,
     type PromptRegistryInstallRequestV1,
@@ -18,36 +9,25 @@ import {
     type PromptRegistryScanSourceRequestV1,
     type PromptRegistryScanSourceResponseV1,
 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { downloadBulkJsonPayload, shouldPreferScopedMachineRpcForBulkTransfer } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
-import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import {
+    downloadDaemonPromptRegistryItem,
+    installDaemonPromptRegistryItem,
+    listDaemonPromptRegistryAdapters,
+    listDaemonPromptRegistrySources,
+    scanDaemonPromptRegistrySource,
+} from '@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonPromptRegistries';
 
 type MachinePromptRegistriesOpts = Readonly<{
     serverId?: string | null;
     timeoutMs?: number | null;
 }>;
 
-function throwUnsupportedResponse(method: string): never {
-    throw new Error(`Unsupported response from machine RPC (${method})`);
-}
-
 export async function machinePromptRegistriesListAdapters(
     machineId: string,
     opts?: MachinePromptRegistriesOpts,
 ): Promise<PromptRegistryListAdaptersResponseV1> {
-    const response = await machineRpcWithServerScope<unknown, undefined>({
-        machineId,
-        serverId: opts?.serverId,
-        timeoutMs: opts?.timeoutMs ?? undefined,
-        method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_ADAPTERS,
-        payload: undefined,
-    });
-    const parsed = PromptRegistryListAdaptersResponseV1Schema.safeParse(response);
-    if (!parsed.success) {
-        throwUnsupportedResponse(RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_ADAPTERS);
-    }
-    return parsed.data;
+    return await listDaemonPromptRegistryAdapters(machineId, opts);
 }
 
 export async function machinePromptRegistriesListSources(
@@ -55,19 +35,7 @@ export async function machinePromptRegistriesListSources(
     input: PromptRegistryListSourcesRequestV1,
     opts?: MachinePromptRegistriesOpts,
 ): Promise<PromptRegistryListSourcesResponseV1> {
-    const payload = PromptRegistryListSourcesRequestV1Schema.parse(input);
-    const response = await machineRpcWithServerScope<unknown, PromptRegistryListSourcesRequestV1>({
-        machineId,
-        serverId: opts?.serverId,
-        timeoutMs: opts?.timeoutMs ?? undefined,
-        method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_SOURCES,
-        payload,
-    });
-    const parsed = PromptRegistryListSourcesResponseV1Schema.safeParse(response);
-    if (!parsed.success) {
-        throwUnsupportedResponse(RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_SOURCES);
-    }
-    return parsed.data;
+    return await listDaemonPromptRegistrySources(machineId, input, opts);
 }
 
 export async function machinePromptRegistriesScanSource(
@@ -75,19 +43,7 @@ export async function machinePromptRegistriesScanSource(
     input: PromptRegistryScanSourceRequestV1,
     opts?: MachinePromptRegistriesOpts,
 ): Promise<PromptRegistryScanSourceResponseV1> {
-    const payload = PromptRegistryScanSourceRequestV1Schema.parse(input);
-    const response = await machineRpcWithServerScope<unknown, PromptRegistryScanSourceRequestV1>({
-        machineId,
-        serverId: opts?.serverId,
-        timeoutMs: opts?.timeoutMs ?? undefined,
-        method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_SCAN_SOURCE,
-        payload,
-    });
-    const parsed = PromptRegistryScanSourceResponseV1Schema.safeParse(response);
-    if (!parsed.success) {
-        throwUnsupportedResponse(RPC_METHODS.DAEMON_PROMPT_REGISTRY_SCAN_SOURCE);
-    }
-    return parsed.data;
+    return await scanDaemonPromptRegistrySource(machineId, input, opts);
 }
 
 export type MachinePromptRegistryDownloadItemResponse =
@@ -105,47 +61,7 @@ export async function machinePromptRegistriesDownloadItem(
     input: PromptRegistryFetchItemRequestV1,
     opts?: MachinePromptRegistriesOpts,
 ): Promise<MachinePromptRegistryDownloadItemResponse> {
-    const payload = PromptRegistryFetchItemRequestV1Schema.parse(input);
-    const preferScoped = shouldPreferScopedMachineRpcForBulkTransfer({
-        serverId: opts?.serverId,
-        machineId,
-    });
-    const result = await downloadBulkJsonPayload<PromptRegistryFetchedItemV1>({
-        init: async (request) =>
-            await machineRpcWithServerScope({
-                machineId,
-                serverId: opts?.serverId,
-                timeoutMs: opts?.timeoutMs ?? undefined,
-                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT,
-                preferScoped,
-                payload: {
-                    ...payload,
-                    recipientPublicKeyBase64: request.recipientPublicKeyBase64,
-                },
-            }),
-        readChunk: async (request) =>
-            await machineRpcWithServerScope({
-                machineId,
-                serverId: opts?.serverId,
-                timeoutMs: opts?.timeoutMs ?? undefined,
-                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK,
-                preferScoped,
-                payload: request,
-            }),
-        finalize: async (request) =>
-            await machineRpcWithServerScope({
-                machineId,
-                serverId: opts?.serverId,
-                timeoutMs: opts?.timeoutMs ?? undefined,
-                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE,
-                preferScoped,
-                payload: request,
-            }),
-        parsePayload: (value) => {
-            const parsed = PromptRegistryFetchedItemV1Schema.safeParse(value);
-            return parsed.success ? parsed.data : null;
-        },
-    });
+    const result = await downloadDaemonPromptRegistryItem(machineId, input, opts);
 
     if (!result.ok) {
         return result;
@@ -153,7 +69,7 @@ export async function machinePromptRegistriesDownloadItem(
 
     return {
         ok: true,
-        item: result.payload,
+        item: result.item,
     };
 }
 
@@ -162,17 +78,5 @@ export async function machinePromptRegistriesInstall(
     input: PromptRegistryInstallRequestV1,
     opts?: MachinePromptRegistriesOpts,
 ): Promise<PromptRegistryInstallResponseV1> {
-    const payload = PromptRegistryInstallRequestV1Schema.parse(input);
-    const response = await machineRpcWithServerScope<unknown, PromptRegistryInstallRequestV1>({
-        machineId,
-        serverId: opts?.serverId,
-        timeoutMs: opts?.timeoutMs ?? undefined,
-        method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL,
-        payload,
-    });
-    const parsed = PromptRegistryInstallResponseV1Schema.safeParse(response);
-    if (!parsed.success) {
-        throwUnsupportedResponse(RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL);
-    }
-    return parsed.data;
+    return await installDaemonPromptRegistryItem(machineId, input, opts);
 }

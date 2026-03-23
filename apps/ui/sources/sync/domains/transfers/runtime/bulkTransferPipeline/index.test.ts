@@ -317,6 +317,115 @@ describe('bulkTransferPipeline', () => {
         }
     });
 
+    it('fails closed when the bulk JSON max bytes env is misconfigured to an unsafe value (hard clamp)', async () => {
+        const previous = process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
+        process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = '1000000000';
+
+        try {
+            let initCalled = 0;
+            let readChunkCalled = 0;
+
+            await expect(downloadBulkJsonPayload({
+                init: async () => {
+                    initCalled += 1;
+                    return {
+                        success: true as const,
+                        downloadId: 'download-json-misconfig',
+                        chunkSizeBytes: 4096,
+                        sizeBytes: 50 * 1024 * 1024,
+                        name: 'misconfig.json',
+                    };
+                },
+                readChunk: async () => {
+                    readChunkCalled += 1;
+                    throw new Error('readChunk should not be called when the payload is rejected by policy');
+                },
+                finalize: async () => ({ success: true as const }),
+                parsePayload: () => null,
+            })).resolves.toEqual({
+                ok: false,
+                error: expect.stringContaining('exceeds'),
+            });
+
+            expect(initCalled).toBe(1);
+            expect(readChunkCalled).toBe(0);
+        } finally {
+            if (previous === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = previous;
+            }
+        }
+    });
+
+    it('fails closed and aborts when the received JSON payload bytes exceed the bulk JSON max bytes (even if init.sizeBytes claims it is within budget)', async () => {
+        const previous = process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
+        process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = '8';
+
+        try {
+            let recipientPublicKeyBase64 = '';
+            const abort = vi.fn(async (_req: { downloadId: string }) => ({ success: true as const }));
+            const finalize = vi.fn(async (_req: { downloadId: string }) => ({ success: true as const }));
+
+            await expect(downloadBulkJsonPayload({
+                init: async (request) => {
+                    recipientPublicKeyBase64 = request.recipientPublicKeyBase64;
+                    return {
+                        success: true as const,
+                        downloadId: 'download-json-overflow',
+                        chunkSizeBytes: 4096,
+                        // Claims 8 bytes, but we will deliver 9 bytes.
+                        sizeBytes: 8,
+                        name: 'overflow.json',
+                    };
+                },
+                readChunk: async (request) => {
+                    if (request.index === 0) {
+                        return {
+                            success: true as const,
+                            ...await createEncryptedTransferChunkEnvelope({
+                                transferId: request.downloadId,
+                                sequence: request.index,
+                                payload: new TextEncoder().encode('{"a":1,'),
+                                recipientPublicKeyBase64,
+                                randomBytes: (length) => new Uint8Array(length).fill(19),
+                            }),
+                            isLast: false,
+                        };
+                    }
+
+                    return {
+                        success: true as const,
+                        ...await createEncryptedTransferChunkEnvelope({
+                            transferId: request.downloadId,
+                            sequence: request.index,
+                            payload: new TextEncoder().encode('"b":2}'),
+                            recipientPublicKeyBase64,
+                            randomBytes: (length) => new Uint8Array(length).fill(23),
+                        }),
+                        isLast: true,
+                    };
+                },
+                finalize,
+                abort,
+                parsePayload: () => null,
+            })).resolves.toEqual({
+                ok: false,
+                error: expect.stringContaining('exceeds'),
+            });
+
+            // When the sink rejects the payload mid-stream, the download must be aborted (fail closed).
+            expect(abort).toHaveBeenCalledWith({ downloadId: 'download-json-overflow' });
+            expect(finalize).not.toHaveBeenCalled();
+        } finally {
+            if (previous === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = previous;
+            }
+        }
+    });
+
     it('fails closed when uploading a JSON payload that exceeds the bulk JSON max bytes', async () => {
         const previous = process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
         process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = '8';
