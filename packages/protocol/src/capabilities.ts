@@ -35,6 +35,7 @@ export type CapabilitiesDetectRequest = {
   checklistId?: string;
   requests?: CapabilityDetectRequest[];
   overrides?: Partial<Record<CapabilityId, { params?: Record<string, unknown> }>>;
+  bypassCache?: boolean;
 };
 
 export type CapabilitiesInvokeRequest = {
@@ -46,4 +47,3 @@ export type CapabilitiesInvokeRequest = {
 export type CapabilitiesInvokeResponse =
   | { ok: true; result: unknown }
   | { ok: false; error: { message: string; code?: string }; logPath?: string };
-

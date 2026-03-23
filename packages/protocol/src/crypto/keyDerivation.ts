@@ -1,5 +1,5 @@
-import { hmac } from '@noble/hashes/hmac.js';
-import { sha512 } from '@noble/hashes/sha512.js';
+import { hmac } from '@noble/hashes/hmac';
+import { sha512 } from '@noble/hashes/sha512';
 
 function encodeUtf8(value: string): Uint8Array {
   return new TextEncoder().encode(value);

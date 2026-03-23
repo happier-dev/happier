@@ -1,5 +1,5 @@
 import tweetnacl from 'tweetnacl';
-import { sha512 } from '@noble/hashes/sha512.js';
+import { sha512 } from '@noble/hashes/sha512';
 
 export const BOX_BUNDLE_PUBLIC_KEY_BYTES = tweetnacl.box.publicKeyLength; // 32
 export const BOX_BUNDLE_NONCE_BYTES = tweetnacl.box.nonceLength; // 24
