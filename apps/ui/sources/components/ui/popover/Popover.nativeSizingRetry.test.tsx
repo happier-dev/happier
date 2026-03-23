@@ -1,20 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-function flushMicrotasks(times: number) {
-    return new Promise<void>((resolve) => {
-        let remaining = times;
-        const step = () => {
-            remaining -= 1;
-            if (remaining <= 0) return resolve();
-            queueMicrotask(step);
-        };
-        queueMicrotask(step);
-    });
-}
 
 vi.mock('@/utils/web/radixCjs', () => {
     const React = require('react');
@@ -77,31 +66,26 @@ describe('Popover (native sizing retries)', () => {
 
         const renders: Array<{ maxHeight: number }> = [];
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(Popover, {
-                    open: true,
-                    anchorRef,
-                    boundaryRef,
-                    placement: 'bottom',
-                    gap: 8,
-                    maxHeightCap: 300,
-                    backdrop: false,
-                    children: (renderProps: any) => {
-                        renders.push({ maxHeight: renderProps.maxHeight });
-                        return React.createElement('PopoverChild');
-                    },
-                }),
-            );
+        const screen = await renderScreen(
+            React.createElement(Popover, {
+                open: true,
+                anchorRef,
+                boundaryRef,
+                placement: 'bottom',
+                gap: 8,
+                maxHeightCap: 300,
+                backdrop: false,
+                children: (renderProps: any) => {
+                    renders.push({ maxHeight: renderProps.maxHeight });
+                    return React.createElement('PopoverChild');
+                },
+            }),
+        );
 
-            // Let the initial + retry measurements settle.
-            await flushMicrotasks(8);
-        });
+        await flushHookEffects({ cycles: 1, turns: 8 });
 
-        expect(tree).toBeTruthy();
+        expect(screen).toBeTruthy();
         expect(boundaryMeasureCalls).toBeGreaterThanOrEqual(2);
         expect(renders.at(-1)?.maxHeight).toBeGreaterThan(0);
     });
 });
-

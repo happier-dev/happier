@@ -1,5 +1,4 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -42,60 +41,43 @@ const SAMPLE_ENTRIES = [
 describe('SummaryCard', () => {
     it('renders label:value pairs', async () => {
         const { SummaryCard } = await import('../SummaryCard');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} />)).tree;
-        const texts = tree.findAllByType('Text' as any);
-        const allText = texts.map((t) => t.children.join('')).join('|');
-        expect(allText).toContain('Theme');
-        expect(allText).toContain('Dark');
-        expect(allText).toContain('Language');
-        expect(allText).toContain('English');
+        const screen = await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} testID="summary-card" />);
+
+        expect(screen.getTextContent()).toContain('Theme : Dark');
+        expect(screen.getTextContent()).toContain('Language : English');
+        expect(screen.getTextContent()).toContain('Font : 16px');
     });
 
     it('wraps in Pressable when onPress is provided', async () => {
         const { SummaryCard } = await import('../SummaryCard');
         const onPress = vi.fn();
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} onPress={onPress} />)).tree;
-        const pressables = tree.findAllByType('Pressable' as any);
-        expect(pressables.length).toBeGreaterThan(0);
+        const screen = await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} onPress={onPress} testID="summary-card" />);
+
+        const card = screen.findByTestId('summary-card');
+        expect(card).toBeTruthy();
+        expect(card?.props.onPress).toBe(onPress);
     });
 
     it('renders as View (not Pressable) when onPress is omitted', async () => {
         const { SummaryCard } = await import('../SummaryCard');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} />)).tree;
-        const pressables = tree.findAllByType('Pressable' as any);
-        expect(pressables).toHaveLength(0);
+        const screen = await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} testID="summary-card" />);
+
+        const card = screen.findByTestId('summary-card');
+        expect(card).toBeTruthy();
+        expect(card?.props.onPress).toBeUndefined();
     });
 
     it('shows chevron when onPress is provided', async () => {
         const { SummaryCard } = await import('../SummaryCard');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} onPress={() => {}} />)).tree;
-        const json = tree.toJSON();
-        const findChevron = (node: any): boolean => {
-            if (!node) return false;
-            if (node.props?.name === 'chevron-forward') return true;
-            if (Array.isArray(node.children)) return node.children.some(findChevron);
-            if (Array.isArray(node)) return node.some(findChevron);
-            return false;
-        };
-        expect(findChevron(json)).toBe(true);
+        const screen = await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} onPress={() => {}} testID="summary-card" />);
+
+        expect(screen.findByProps({ name: 'chevron-forward' })).toBeTruthy();
     });
 
     it('does not show chevron without onPress', async () => {
         const { SummaryCard } = await import('../SummaryCard');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} />)).tree;
-        const json = tree.toJSON();
-        const findChevron = (node: any): boolean => {
-            if (!node) return false;
-            if (node.props?.name === 'chevron-forward') return true;
-            if (Array.isArray(node.children)) return node.children.some(findChevron);
-            if (Array.isArray(node)) return node.some(findChevron);
-            return false;
-        };
-        expect(findChevron(json)).toBe(false);
+        const screen = await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} testID="summary-card" />);
+
+        expect(() => screen.findByProps({ name: 'chevron-forward' })).toThrow();
     });
 });

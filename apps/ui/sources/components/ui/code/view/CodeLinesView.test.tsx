@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findAllByType, findFirstByType, renderScreen } from '@/dev/testkit';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 
@@ -41,24 +41,14 @@ vi.mock('./CodeLineRow', () => ({
     CodeLineRow: (props: any) => React.createElement('CodeLineRow', props),
 }));
 
-type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
-
-async function runWithScrollRetry(
-    element: React.ReactElement,
-    assertions: (screen: RenderedScreen) => Promise<void> | void,
-): Promise<void> {
+beforeEach(() => {
     vi.useFakeTimers();
-    let screen: RenderedScreen | null = null;
+});
 
-    try {
-        screen = await renderScreen(element);
-        await flushHookEffects({ cycles: 1, turns: 1, runOnlyPendingTimers: true });
-        await assertions(screen);
-    } finally {
-        await screen?.unmount();
-        vi.useRealTimers();
-    }
-}
+afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+});
 
 describe('CodeLinesView', () => {
     it('does not render FlatList when virtualized=false', async () => {
@@ -262,8 +252,7 @@ describe('CodeLinesView', () => {
 
         try {
             const { CodeLinesView } = await import('./CodeLinesView');
-
-            await runWithScrollRetry(
+            const screen = await renderScreen(
                 <CodeLinesView
                     scrollToLineId="b"
                     lines={[
@@ -290,12 +279,13 @@ describe('CodeLinesView', () => {
                             selectable: false,
                         },
                     ]}
-                />,
-                async () => {
-                    expect(getElementById).toHaveBeenCalledWith('b');
-                    expect(scrollIntoView).toHaveBeenCalled();
-                },
+                />
             );
+            await flushHookEffects({ runOnlyPendingTimers: true });
+
+            expect(getElementById).toHaveBeenCalledWith('b');
+            expect(scrollIntoView).toHaveBeenCalled();
+            await screen.unmount();
         } finally {
             (globalThis as any).document = previousDocument;
         }
@@ -328,8 +318,7 @@ describe('CodeLinesView', () => {
 
         try {
             const { CodeLinesView } = await import('./CodeLinesView');
-
-            await runWithScrollRetry(
+            const screen = await renderScreen(
                 <CodeLinesView
                     scrollToLineId="b"
                     lines={[
@@ -356,12 +345,13 @@ describe('CodeLinesView', () => {
                             selectable: false,
                         },
                     ]}
-                />,
-                async () => {
-                    // Estimated row height is 22px; index 1 should land at ~22px.
-                    expect(scrollContainer.scrollTop).toBe(22);
-                },
+                />
             );
+            await flushHookEffects({ runOnlyPendingTimers: true });
+
+            // Estimated row height is 22px; index 1 should land at ~22px.
+            expect(scrollContainer.scrollTop).toBe(22);
+            await screen.unmount();
         } finally {
             (globalThis as any).document = previousDocument;
         }

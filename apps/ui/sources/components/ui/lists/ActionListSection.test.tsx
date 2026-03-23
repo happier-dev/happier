@@ -1,29 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            Platform: {
-                OS: 'web',
-                select: (m: any) => m?.web ?? m?.default ?? m?.ios,
-            },
-            AppState: {
-                addEventListener: () => ({ remove: () => {} }),
-            },
-            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-            View: (props: any) => React.createElement('View', props, props.children),
-            Text: (props: any) => React.createElement('Text', props, props.children),
-        }
-    );
-});
+installUiListsCommonModuleMocks();
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),

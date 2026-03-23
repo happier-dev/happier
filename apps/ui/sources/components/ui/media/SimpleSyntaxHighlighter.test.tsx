@@ -43,10 +43,10 @@ describe('SimpleSyntaxHighlighter', () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<SimpleSyntaxHighlighter code={'const x = 1'} language={'typescript'} selectable={true} />)).tree;
 
-        const view = tree.root.findByType('View');
+        const view = tree.findByType('View');
         expect(view.props.style).toEqual(expect.objectContaining({ flexShrink: 0 }));
 
-        const texts = tree.root.findAllByType('Text');
+        const texts = tree.findAllByType('Text');
         const outerText = texts[0];
         const outerStyle = Array.isArray(outerText.props.style) ? Object.assign({}, ...outerText.props.style) : outerText.props.style;
         expect(outerStyle).toEqual(expect.objectContaining({ flexShrink: 0 }));

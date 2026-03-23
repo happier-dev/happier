@@ -12,33 +12,29 @@ describe('MultiPaneHost (overlayDetails)', () => {
         vi.useFakeTimers();
         const onCloseDetails = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<MultiPaneHost
-                    main={<Main />}
-                    rightPane={<Right />}
-                    detailsPane={<Details />}
-                    layout={{ kind: 'twoPane', right: 'docked', details: 'overlay' }}
-                    rightDockWidthPx={360}
-                    detailsDockWidthPx={520}
-                    onCloseRight={() => {}}
-                    onCloseDetails={onCloseDetails}
-                    onCommitRightDockWidthPx={() => {}}
-                    onCommitDetailsDockWidthPx={() => {}}
-                />)).tree;
+        const screen = await renderScreen(<MultiPaneHost
+                main={<Main />}
+                rightPane={<Right />}
+                detailsPane={<Details />}
+                layout={{ kind: 'twoPane', right: 'docked', details: 'overlay' }}
+                rightDockWidthPx={360}
+                detailsDockWidthPx={520}
+                onCloseRight={() => {}}
+                onCloseDetails={onCloseDetails}
+                onCommitRightDockWidthPx={() => {}}
+                onCommitDetailsDockWidthPx={() => {}}
+            />);
 
-        const overlay = tree!.findByProps({ testID: 'multi-pane-details-overlay' });
+        const overlay = screen.tree.findByProps({ testID: 'multi-pane-details-overlay' });
         expect(overlay).toBeTruthy();
 
         const overlayWrapper = overlay.parent;
         expect(readZIndex(overlayWrapper?.props?.style)).toBeGreaterThan(0);
 
-        const scrim = tree!.findByProps({ testID: 'multi-pane-details-scrim' });
-        act(() => {
-            scrim.props.onPress();
-        });
+        await screen.pressByTestIdAsync('multi-pane-details-scrim');
         expect(onCloseDetails).toHaveBeenCalledTimes(0);
-        act(() => {
-            vi.runAllTimers();
+        await act(async () => {
+            await vi.runAllTimersAsync();
         });
         expect(onCloseDetails).toHaveBeenCalledTimes(1);
     });

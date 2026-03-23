@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
@@ -47,10 +46,8 @@ describe('DiffPresentationStyleToggleButton', () => {
         styleSettingValue = 'unified';
         const { DiffPresentationStyleToggleButton } = await import('./DiffPresentationStyleToggleButton');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<DiffPresentationStyleToggleButton />)).tree;
-
-        const pressable = tree.findByProps({ accessibilityRole: 'button' });
+        const screen = await renderScreen(<DiffPresentationStyleToggleButton />);
+        const pressable = screen.findByProps({ accessibilityRole: 'button' });
         await pressTestInstanceAsync(pressable, 'DiffPresentationStyleToggleButton');
 
         expect(setFilesDiffPresentationStyle).toHaveBeenCalledWith('split');
@@ -61,10 +58,8 @@ describe('DiffPresentationStyleToggleButton', () => {
         styleSettingValue = undefined;
         const { DiffPresentationStyleToggleButton } = await import('./DiffPresentationStyleToggleButton');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<DiffPresentationStyleToggleButton />)).tree;
-
-        const pressable = tree.findByProps({ accessibilityRole: 'button' });
+        const screen = await renderScreen(<DiffPresentationStyleToggleButton />);
+        const pressable = screen.findByProps({ accessibilityRole: 'button' });
         await pressTestInstanceAsync(pressable, 'DiffPresentationStyleToggleButton');
 
         expect(setFilesDiffPresentationStyle).toHaveBeenCalledWith('split');

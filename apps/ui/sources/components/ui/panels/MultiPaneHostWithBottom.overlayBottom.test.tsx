@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -13,6 +13,10 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
     const overlayCloseDurationMs = motionTokens.durationMs.base;
     const originalWindow = (globalThis as any).window;
 
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
     afterEach(() => {
         standardCleanup();
         vi.useRealTimers();
@@ -20,7 +24,6 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
     });
 
     it('renders a scrim for overlay bottom and closes on scrim press', async () => {
-        vi.useFakeTimers();
         const onCloseBottom = vi.fn();
 
         const screen = await renderScreen(<MultiPaneHostWithBottom
@@ -51,7 +54,6 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
     });
 
     it('closes overlay bottom on Escape key press and prevents inner pane closures', async () => {
-        vi.useFakeTimers();
         const onCloseBottom = vi.fn();
         const onCloseRight = vi.fn();
 

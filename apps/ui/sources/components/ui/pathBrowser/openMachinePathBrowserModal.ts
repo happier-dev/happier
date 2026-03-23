@@ -7,6 +7,8 @@ export async function openMachinePathBrowserModal(params: Readonly<{
     serverId?: string | null;
     title?: string;
     initialPath?: string | null;
+    includeFiles?: boolean;
+    selectionMode?: 'directory' | 'file';
 }>): Promise<string | null> {
     return await new Promise<string | null>((resolve) => {
         Modal.show({
@@ -16,6 +18,8 @@ export async function openMachinePathBrowserModal(params: Readonly<{
                 serverId: params.serverId ?? null,
                 title: params.title,
                 initialPath: params.initialPath ?? null,
+                includeFiles: params.includeFiles ?? false,
+                selectionMode: params.selectionMode ?? 'directory',
                 onResolve: (value: string | null) => resolve(value),
                 onRequestClose: () => resolve(null),
             },

@@ -128,7 +128,8 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.rightElement ?? null, props.subtitle ?? null),
+    // Render icon + rightElement so tests can locate nested toggle pressables by testID.
+    Item: (props: any) => React.createElement('Item', props, props.icon ?? null, props.rightElement ?? null, props.subtitle ?? null),
 }));
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({

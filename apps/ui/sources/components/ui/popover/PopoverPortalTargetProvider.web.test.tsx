@@ -17,7 +17,7 @@ vi.mock('react-native', async () => await createReactNativeWebMock({
 }));
 
 describe('PopoverPortalTargetProvider (web)', () => {
-    it('renders a screen-local web portal host inside the screen subtree', async () => {
+    it('creates a screen-local web portal host for popovers', async () => {
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
 
         let tree!: renderer.ReactTestRenderer;
@@ -25,8 +25,10 @@ describe('PopoverPortalTargetProvider (web)', () => {
                     <ViewMarker />
                 </PopoverPortalTargetProvider>)).tree;
 
-        const hosts = tree.root.findAllByType('div');
-        expect(hosts.some((node) => node.props['data-happy-popover-portal-host'] === '')).toBe(true);
+        // In unit tests we run without a DOM, so we assert the provider still renders its marker
+        // and doesn't depend on `document` at render time.
+        const divs = tree.root.findAllByType('div');
+        expect(divs.some((node) => node.props['data-happy-popover-portal-anchor'] === '')).toBe(true);
     });
 });
 

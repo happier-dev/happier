@@ -35,6 +35,8 @@ export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     serverId?: string | null;
     title?: string;
     initialPath?: string | null;
+    includeFiles?: boolean;
+    selectionMode?: 'directory' | 'file';
     onResolve: (path: string | null) => void;
     onRequestClose?: () => void;
 }>;
@@ -102,6 +104,18 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 13,
         color: theme.colors.textSecondary,
         ...Typography.default(),
+    },
+    directoryIconWrap: {
+        width: 18,
+        height: 18,
+        position: 'relative',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    directoryToggle: {
+        position: 'absolute',
+        left: -18,
+        top: 1,
     },
 }));
 
@@ -192,6 +206,8 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
     const lastScrolledSelectionRef = React.useRef<string | null>(null);
     const shouldAutoScrollInitialSelectionRef = React.useRef(false);
     const initialPath = React.useMemo(() => normalizeAbsolutePath(props.initialPath ?? null), [props.initialPath]);
+    const includeFiles = props.includeFiles === true || props.selectionMode === 'file';
+    const selectionMode = props.selectionMode ?? 'directory';
     const initialExpandedPaths = React.useMemo(() => buildInitialExpandedPaths(initialPath), [initialPath]);
     const initialSelectionCandidates = React.useMemo(() => buildInitialSelectionCandidates(initialPath), [initialPath]);
     const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
@@ -226,7 +242,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
             machineId: props.machineId,
             serverId: props.serverId,
             directoryPath,
-            includeFiles: false,
+            includeFiles,
         })?.map((entry) => ({
             name: entry.name,
             path: entry.path,
@@ -234,7 +250,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
             sizeBytes: entry.sizeBytes,
             modifiedMs: entry.modifiedMs,
         })) ?? null;
-    }, [initialExpandedPaths, props.machineId, props.serverId]);
+    }, [includeFiles, initialExpandedPaths, props.machineId, props.serverId]);
 
     const getCachedDirectoryMetadata = React.useCallback((directoryPath: string) => {
         if (directoryPath === '') {
@@ -244,9 +260,9 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
             machineId: props.machineId,
             serverId: props.serverId,
             directoryPath,
-            includeFiles: false,
+            includeFiles,
         });
-    }, [props.machineId, props.serverId]);
+    }, [includeFiles, props.machineId, props.serverId]);
 
     const loadDirectoryEntries = React.useCallback(async (directoryPath: string): Promise<LazyDirectoryTreeLoadResult> => {
         if (directoryPath === '') {
@@ -265,7 +281,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
         const result = await listMachineFileBrowserDirectoryEntries({
             machineId: props.machineId,
             directoryPath,
-            includeFiles: false,
+            includeFiles,
             serverId: props.serverId,
         });
         if (!result.ok) return result;
@@ -281,7 +297,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
             })),
             truncated: result.truncated,
         };
-    }, [props.machineId, props.serverId]);
+    }, [includeFiles, props.machineId, props.serverId]);
 
     const warmDirectoryEntries = React.useCallback(async (directoryPath: string): Promise<LazyDirectoryTreeLoadResult> => {
         if (directoryPath === '') {
@@ -300,7 +316,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
         const result = await warmMachineFileBrowserDirectoryCache({
             machineId: props.machineId,
             directoryPath,
-            includeFiles: false,
+            includeFiles,
             serverId: props.serverId,
         });
         if (!result.ok) return result;
@@ -316,7 +332,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
             })),
             truncated: result.truncated,
         };
-    }, [props.machineId, props.serverId]);
+    }, [includeFiles, props.machineId, props.serverId]);
 
     const {
         nodes,
@@ -474,21 +490,29 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
                     listRef={browserListRef}
                     onScrollToIndexFailed={handleScrollToIndexFailed}
                     renderRow={({ node, index, totalCount }) => {
-                        const selected = node.type === 'directory' && selectedPath === node.path;
+                        const selected = selectedPath === node.path && (
+                            selectionMode === 'file' ? node.type === 'file' : node.type === 'directory'
+                        );
                         const handleTogglePress = (event?: GestureResponderEvent) => {
                             stopToggleEventPropagation(event);
                             void toggleDirectory(node.path);
                         };
-                        const rightElement = node.type === 'error' || node.type === 'info'
-                            ? undefined
-                            : (
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                    {selected ? <Ionicons name="checkmark-circle" size={18} color={theme.colors.button.primary.background} /> : null}
+                        const rightElement = selected
+                            ? <Ionicons name="checkmark-circle" size={18} color={theme.colors.button.primary.background} />
+                            : undefined;
+
+                        const icon = node.type === 'directory'
+                            ? (
+                                <View style={styles.directoryIconWrap}>
                                     <Pressable
                                         testID={getPathBrowserToggleTestId(node.path)}
+                                        {...(Platform.OS === 'web'
+                                            ? ({ onMouseDownCapture: stopToggleEventPropagation } as any)
+                                            : {})}
                                         onPressIn={stopToggleEventPropagation}
                                         onPress={handleTogglePress}
-                                        hitSlop={8}
+                                        hitSlop={10}
+                                        style={styles.directoryToggle}
                                     >
                                         <Ionicons
                                             name={node.isExpanded ? 'chevron-down' : 'chevron-forward'}
@@ -496,8 +520,16 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
                                             color={theme.colors.textSecondary}
                                         />
                                     </Pressable>
+                                    <Ionicons
+                                        name={node.isExpanded ? 'folder-open-outline' : 'folder-outline'}
+                                        size={18}
+                                        color={theme.colors.textLink}
+                                    />
                                 </View>
-                            );
+                            )
+                            : node.type === 'file'
+                                ? <Ionicons name="document-outline" size={18} color={theme.colors.textLink} />
+                                : <Ionicons name="folder-outline" size={18} color={theme.colors.textLink} />;
 
                         return (
                             <FilesystemBrowserRow
@@ -510,7 +542,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
                                         : node.name || node.path
                                 }
                                 subtitle={node.type === 'error' ? node.errorMessage : undefined}
-                                icon={<Ionicons name={node.type === 'directory' && node.isExpanded ? 'folder-open-outline' : 'folder-outline'} size={18} color={theme.colors.textLink} />}
+                                icon={icon}
                                 testID={getPathBrowserRowTestId(node.path)}
                                 selected={selected}
                                 rightElement={rightElement}
@@ -523,10 +555,23 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
                                         void retryDirectory(errorNode.parentDirectoryPath);
                                     }
                                 }}
-                                onPress={node.type !== 'directory' ? undefined : () => {
-                                    shouldAutoSelectInitialPathRef.current = false;
-                                    shouldAutoScrollInitialSelectionRef.current = false;
-                                    setSelectedPath(node.path);
+                                onPress={() => {
+                                    if (node.type === 'directory') {
+                                        if (selectionMode === 'file') {
+                                            void toggleDirectory(node.path);
+                                            return;
+                                        }
+                                        shouldAutoSelectInitialPathRef.current = false;
+                                        shouldAutoScrollInitialSelectionRef.current = false;
+                                        setSelectedPath(node.path);
+                                        return;
+                                    }
+                                    if (node.type === 'file') {
+                                        if (selectionMode !== 'file') return;
+                                        shouldAutoSelectInitialPathRef.current = false;
+                                        shouldAutoScrollInitialSelectionRef.current = false;
+                                        setSelectedPath(node.path);
+                                    }
                                 }}
                             />
                         );

@@ -1,5 +1,4 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -60,11 +59,10 @@ describe('CodeBlockView (native)', () => {
 
         const { CodeBlockView } = await import('./CodeBlockView');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(CodeBlockView, { code: 'const x = 1;', language: 'typescript' }))).tree;
+        const screen = await renderScreen(React.createElement(CodeBlockView, { code: 'const x = 1;', language: 'typescript' }));
 
         expect(simpleSpy).toHaveBeenCalledTimes(1);
-        expect(tree.root.findAllByType('SimpleSyntaxHighlighter' as any).length).toBe(1);
+        expect(screen.findAllByType('SimpleSyntaxHighlighter' as any)).toHaveLength(1);
     });
 
     it('falls back to plain Text when code exceeds the byte budget', async () => {
@@ -79,11 +77,10 @@ describe('CodeBlockView (native)', () => {
 
         const { CodeBlockView } = await import('./CodeBlockView');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(CodeBlockView, { code: 'const x = 1;', language: 'typescript' }))).tree;
+        const screen = await renderScreen(React.createElement(CodeBlockView, { code: 'const x = 1;', language: 'typescript' }));
 
         expect(simpleSpy).toHaveBeenCalledTimes(0);
-        const textNodes = tree.root.findAllByType('Text' as any);
+        const textNodes = screen.findAllByType('Text' as any);
         expect(textNodes.some((n) => n.props.children === 'const x = 1;')).toBe(true);
     });
 });

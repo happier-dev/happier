@@ -10,18 +10,9 @@ const clearLayoutCacheOnUpdateSpy = vi.fn();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: 'View',
-            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-            FlatList: (props: any) => React.createElement('FlatList', props),
-            Platform: {
-                OS: 'web',
-                select: (value: any) => value?.web ?? value?.default ?? null,
-            },
-            useWindowDimensions: () => ({ width: 1200, height: 800 }),
-        }
-    );
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: 1200, height: 800 }),
+    });
 });
 
 vi.mock('@shopify/flash-list', () => ({
@@ -45,23 +36,7 @@ vi.mock('@shopify/flash-list', () => ({
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                divider: '#ddd',
-                surfaceHigh: '#fff',
-                surface: '#fff',
-                surfaceHighest: '#fff',
-                text: '#111',
-                textSecondary: '#666',
-                textLink: '#00f',
-                warning: '#f00',
-                accent: { indigo: '#00f' },
-                success: '#0f0',
-                warningCritical: '#f00',
-            },
-        },
-    });
+    return createUnistylesMock();
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -70,7 +45,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+    return createTextModuleMock();
 });
 
 vi.mock('@/components/ui/code/diff/pierre/PierreScrollRootVirtualizerProvider', () => ({

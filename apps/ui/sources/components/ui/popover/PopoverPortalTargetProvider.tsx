@@ -19,15 +19,112 @@ import { PopoverPortalTargetContextProvider } from './PopoverPortalTarget';
 export function PopoverPortalTargetProvider(props: { children: React.ReactNode }) {
     if (Platform.OS === 'web') {
         const [webPortalTarget, setWebPortalTarget] = React.useState<HTMLElement | null>(null);
+        const anchorRef = React.useRef<HTMLElement | null>(null);
+
+        React.useLayoutEffect(() => {
+            if (typeof document === 'undefined') return;
+
+            const resolveDialogContentTarget = (): HTMLElement | null => {
+                const anchor = anchorRef.current;
+                if (anchor && typeof (anchor as any).closest === 'function') {
+                    const dialogContent = anchor.closest('[data-radix-dialog-content]') as HTMLElement | null;
+                    if (dialogContent) return dialogContent;
+                }
+
+                // Fallback: if we are inside a Radix dialog, prefer the most recently-mounted dialog content.
+                // This keeps popovers within the active modal focus/pointer scope (instead of `document.body`).
+                const all = Array.from(document.querySelectorAll('[data-radix-dialog-content]')) as HTMLElement[];
+                return all.length > 0 ? all[all.length - 1] : null;
+            };
+
+            const resolveHostContainer = (): HTMLElement | null => {
+                const anchor = anchorRef.current;
+                const dialogContent = resolveDialogContentTarget();
+
+                if (!anchor || typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') {
+                    return dialogContent ?? document.body;
+                }
+
+                // Find the closest ancestor that clips overflow (common in sheet-like modal cards),
+                // then mount the portal host just outside the *outermost* clipping ancestor while
+                // staying within the dialog subtree. (Many modal cards have multiple nested
+                // overflow:auto/hidden wrappers.)
+                let node: HTMLElement | null = anchor;
+                const stopAt = dialogContent ?? document.body;
+                let outermostClip: HTMLElement | null = null;
+                while (node && node !== stopAt && node !== document.body) {
+                    try {
+                        const style = window.getComputedStyle(node);
+                        const overflow = style.overflow;
+                        const overflowX = style.overflowX;
+                        const overflowY = style.overflowY;
+                        const clips =
+                            (overflow && overflow !== 'visible')
+                            || (overflowX && overflowX !== 'visible')
+                            || (overflowY && overflowY !== 'visible');
+                        if (clips) {
+                            outermostClip = node;
+                        }
+                    } catch {
+                        // Ignore style access failures and keep walking.
+                    }
+                    node = node.parentElement;
+                }
+
+                if (outermostClip) {
+                    const parent = outermostClip.parentElement;
+                    if (parent) {
+                        if (dialogContent && dialogContent.contains(parent)) return parent;
+                        return dialogContent ?? parent;
+                    }
+                }
+
+                return dialogContent ?? document.body;
+            };
+
+            const container = resolveHostContainer();
+            const host = document.createElement('div');
+            host.setAttribute('data-happy-popover-portal-host', '');
+            Object.assign(host.style, {
+                position: 'absolute',
+                top: '0px',
+                left: '0px',
+                width: '0px',
+                height: '0px',
+                overflow: 'visible',
+                pointerEvents: 'none',
+            } satisfies Partial<CSSStyleDeclaration>);
+
+            try {
+                (container ?? document.body).appendChild(host);
+            } catch {
+                // If we can't append (should be extremely rare), fall back to body.
+                try {
+                    document.body.appendChild(host);
+                } catch {
+                    // give up
+                }
+            }
+
+            setWebPortalTarget(host);
+            return () => {
+                setWebPortalTarget(null);
+                try {
+                    host.remove();
+                } catch {
+                    // ignore
+                }
+            };
+        }, []);
 
         return (
             <ModalPortalTargetProvider target={webPortalTarget}>
                 <View style={{ flex: 1 }} pointerEvents="box-none">
                     {props.children}
                     <div
-                        data-happy-popover-portal-host=""
+                        data-happy-popover-portal-anchor=""
                         ref={(node) => {
-                            setWebPortalTarget((prev) => (prev === node ? prev : node));
+                            anchorRef.current = node;
                         }}
                         style={{
                             position: 'absolute',
@@ -35,7 +132,7 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
                             left: 0,
                             width: 0,
                             height: 0,
-                            overflow: 'visible',
+                            overflow: 'hidden',
                             pointerEvents: 'none',
                         }}
                     />

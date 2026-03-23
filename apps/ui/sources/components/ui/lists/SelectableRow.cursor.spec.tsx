@@ -2,26 +2,27 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'web',
-                                        select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
-                                    },
-                                    AppState: {
-                                        addEventListener: () => ({ remove: () => {} }),
-                                    },
-                                    Pressable: 'Pressable',
-                                    Text: 'Text',
-                                    View: 'View',
-                                }
-    );
+installUiListsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            Pressable: 'Pressable',
+            Text: 'Text',
+            View: 'View',
+        });
+    },
 });
 
 vi.mock('@/constants/Typography', () => ({

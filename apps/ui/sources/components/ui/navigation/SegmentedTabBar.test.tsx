@@ -64,6 +64,13 @@ function requireTab(screen: RenderedScreen, testID: string) {
     return tab!;
 }
 
+function requireTabLabel(screen: RenderedScreen, testID: string): string {
+    const tab = requireTab(screen, testID);
+    const labelNode = tab.props.children;
+    expect(React.isValidElement(labelNode)).toBe(true);
+    return labelNode.props.children;
+}
+
 describe('SegmentedTabBar', () => {
     it('renders all tab labels', async () => {
         const { SegmentedTabBar } = await import('./SegmentedTabBar');
@@ -71,9 +78,9 @@ describe('SegmentedTabBar', () => {
             <SegmentedTabBar tabs={TABS} activeTabId="alpha" onSelectTab={() => {}} testIDPrefix="seg" />,
         );
 
-        expect(requireTab(screen, 'seg:alpha').findByType('Text' as never).props.children).toBe('Alpha');
-        expect(requireTab(screen, 'seg:beta').findByType('Text' as never).props.children).toBe('Beta');
-        expect(requireTab(screen, 'seg:gamma').findByType('Text' as never).props.children).toBe('Gamma');
+        expect(requireTabLabel(screen, 'seg:alpha')).toBe('Alpha');
+        expect(requireTabLabel(screen, 'seg:beta')).toBe('Beta');
+        expect(requireTabLabel(screen, 'seg:gamma')).toBe('Gamma');
     });
 
     it('calls onSelectTab with the tab id when a tab is pressed', async () => {
@@ -108,9 +115,8 @@ describe('SegmentedTabBar', () => {
         const { SegmentedTabBar } = await import('./SegmentedTabBar');
         const screen = await renderScreen(<SegmentedTabBar tabs={TABS} activeTabId="alpha" onSelectTab={() => {}} />);
 
-        const pressables = screen.findAllByType('Pressable' as never);
-        for (const pressable of pressables) {
-            expect(pressable.props.testID).toBeUndefined();
+        for (const tabId of ['alpha', 'beta', 'gamma'] as const) {
+            expect(screen.findByTestId(tabId)).toBeNull();
         }
     });
 

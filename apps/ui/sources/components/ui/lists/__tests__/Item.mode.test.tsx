@@ -2,6 +2,7 @@ import React from 'react';
 import type { ReactTestInstance, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, flattenTestStyle, renderScreen } from '@/dev/testkit';
+import { installUiListsCommonModuleMocks } from '../uiListsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -19,25 +20,7 @@ function findHostNodeByTestID(
     return screen.findAllByTestId(testID).find((node) => typeof node.type === 'string');
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'web',
-                                            },
-                                            View: 'View',
-                                            Text: 'Text',
-                                            ActivityIndicator: 'ActivityIndicator',
-                                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
+installUiListsCommonModuleMocks();
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroupSelectionContext: React.createContext(null),
@@ -66,16 +49,6 @@ vi.mock('@/constants/Typography', () => ({
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: (key: string) => {

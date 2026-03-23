@@ -32,49 +32,45 @@ vi.mock('./pierreRuntimeSupport.web', () => ({
 
 describe('usePierreDiffWorkerPoolWarmup (web)', () => {
     it('prewarms both unified and split pools when Pierre renderer is enabled and supported', async () => {
-        vi.useFakeTimers();
-        try {
-            poolSpy.mockClear();
-            delete (globalThis as any)[PREWARM_MARKER];
-            rendererMode = 'pierre';
-            killSwitchEnabled = true;
-            runtimeSupported = true;
+        poolSpy.mockClear();
+        delete (globalThis as any)[PREWARM_MARKER];
+        rendererMode = 'pierre';
+        killSwitchEnabled = true;
+        runtimeSupported = true;
+        vi.stubGlobal('window', {
+            requestIdleCallback: (callback: () => void) => {
+                callback();
+                return 0;
+            },
+        });
 
+        try {
             const { usePierreDiffWorkerPoolWarmup } = await import('./usePierreDiffWorkerPoolWarmup.web');
 
             await renderHook(() => {
                 usePierreDiffWorkerPoolWarmup();
                 return null;
-            }, {
-                flushOptions: { runAllTimers: true },
             });
 
             expect(poolSpy).toHaveBeenCalledWith({ style: 'unified' });
             expect(poolSpy).toHaveBeenCalledWith({ style: 'split' });
         } finally {
-            vi.useRealTimers();
+            vi.unstubAllGlobals();
         }
     });
 
     it('does not prewarm when Pierre renderer is disabled', async () => {
-        vi.useFakeTimers();
-        try {
-            poolSpy.mockClear();
-            delete (globalThis as any)[PREWARM_MARKER];
-            rendererMode = 'happier';
+        poolSpy.mockClear();
+        delete (globalThis as any)[PREWARM_MARKER];
+        rendererMode = 'happier';
 
-            const { usePierreDiffWorkerPoolWarmup } = await import('./usePierreDiffWorkerPoolWarmup.web');
+        const { usePierreDiffWorkerPoolWarmup } = await import('./usePierreDiffWorkerPoolWarmup.web');
 
-            await renderHook(() => {
-                usePierreDiffWorkerPoolWarmup();
-                return null;
-            }, {
-                flushOptions: { runAllTimers: true },
-            });
+        await renderHook(() => {
+            usePierreDiffWorkerPoolWarmup();
+            return null;
+        });
 
-            expect(poolSpy).not.toHaveBeenCalled();
-        } finally {
-            vi.useRealTimers();
-        }
+        expect(poolSpy).not.toHaveBeenCalled();
     });
 });

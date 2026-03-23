@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { MultiPaneHost } from './MultiPaneHost';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -16,6 +16,10 @@ describe('MultiPaneHost (overlayRight)', () => {
     const originalWindow = (globalThis as any).window;
     const originalKeyboardEvent = (globalThis as any).KeyboardEvent;
 
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
     afterEach(() => {
         standardCleanup();
         vi.useRealTimers();
@@ -24,7 +28,6 @@ describe('MultiPaneHost (overlayRight)', () => {
     });
 
     it('renders a scrim for overlay right and closes on scrim press', async () => {
-        vi.useFakeTimers();
         const onCloseRight = vi.fn();
         const tree = (await renderScreen(<MultiPaneHost
                     main={<Main />}
@@ -59,7 +62,6 @@ describe('MultiPaneHost (overlayRight)', () => {
     });
 
     it('closes overlay right on Escape key press (web)', async () => {
-        vi.useFakeTimers();
         const onCloseRight = vi.fn();
         const fakeWindow = new (globalThis as any).EventTarget();
         (globalThis as any).window = fakeWindow;

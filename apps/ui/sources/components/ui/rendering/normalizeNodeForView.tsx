@@ -14,23 +14,6 @@ function normalizeChildrenForView(children: React.ReactNode): React.ReactNode {
     return React.Children.map(children, (child) => normalizeNodeForView(child));
 }
 
-function getReactComponentName(type: unknown): string {
-    if (!type) return '';
-    if (typeof type === 'function') {
-        return String((type as any).displayName ?? (type as any).name ?? '');
-    }
-    if (typeof type === 'object') {
-        const objectType = type as any;
-        return String(
-            objectType.displayName
-            ?? objectType.render?.displayName
-            ?? objectType.render?.name
-            ?? '',
-        );
-    }
-    return '';
-}
-
 function isTextLikeIconElement(node: React.ReactElement): boolean {
     if (typeof node.type === 'string') return false;
 
@@ -40,10 +23,7 @@ function isTextLikeIconElement(node: React.ReactElement): boolean {
         && (typeof props.size === 'number' || typeof props.size === 'string')
         && !('children' in props && props.children != null);
 
-    if (hasIconLikeProps) return true;
-
-    const componentName = getReactComponentName(node.type);
-    return /icon/i.test(componentName);
+    return hasIconLikeProps;
 }
 
 export function normalizeNodeForView(node: React.ReactNode): React.ReactNode {

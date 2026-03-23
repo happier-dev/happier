@@ -112,10 +112,8 @@ describe('ItemRowActions', () => {
         expect(screen.findByTestId('edit')).toBeTruthy();
         expect(screen.findAllByTestId('edit').length).toBeGreaterThan(0);
 
-        act(() => {
-            screen.pressByTestId('edit');
-            vi.runOnlyPendingTimers();
-        });
+        await screen.pressByTestIdAsync('edit');
+        await vi.advanceTimersToNextTimerAsync();
 
         expect(onEdit).toHaveBeenCalledTimes(1);
         expect(screen.findAllByTestId('edit')).toHaveLength(0);
@@ -152,19 +150,21 @@ describe('ItemRowActions', () => {
                     accessibilityState: { expanded: open },
                     onPress: toggle,
                 },
-                React.createElement('CustomTrigger', { open }),
+                React.createElement('CustomTrigger', {
+                    open,
+                    testID: open ? 'custom-trigger-open' : 'custom-trigger-closed',
+                }),
             ),
         }));
 
         const trigger = screen.findByTestId('custom-trigger');
         expect(trigger).toBeTruthy();
         expect(trigger?.props?.accessibilityState).toEqual({ expanded: false });
+        expect(screen.findByTestId('custom-trigger-closed')).toBeTruthy();
 
-        act(() => {
-            screen.pressByTestId('custom-trigger');
-        });
+        await screen.pressByTestIdAsync('custom-trigger');
 
-        const customTrigger = screen.findByType('CustomTrigger' as any);
+        const customTrigger = screen.findByTestId('custom-trigger-open');
         expect(customTrigger?.props?.open).toBe(true);
         expect(screen.findAllByTestId('edit').length).toBeGreaterThan(0);
     });

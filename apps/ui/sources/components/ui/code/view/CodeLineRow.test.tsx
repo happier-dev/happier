@@ -2,7 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -197,9 +197,7 @@ describe('CodeLineRow', () => {
         const buttons = tree!.findAll((node) => (node as any).type === 'Pressable' && (node as any).props.accessibilityRole === 'button');
         expect(buttons).toHaveLength(1);
 
-        act(() => {
-            buttons[0]!.props.onPress();
-        });
+        await pressTestInstanceAsync(buttons[0]!, 'close comment button');
 
         expect(onPressAddComment).toHaveBeenCalledTimes(1);
         expect(onPressAddComment).toHaveBeenCalledWith(line);

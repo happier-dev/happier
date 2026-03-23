@@ -3,7 +3,6 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 
 export type SegmentedTab<T extends string = string> = Readonly<{
     id: T;
@@ -16,6 +15,8 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
     onSelectTab: (tabId: T) => void;
     /** Optional testID prefix – tabs get `${testIDPrefix}:${tab.id}` */
     testIDPrefix?: string;
+    /** Compact mode with reduced padding and smaller font */
+    compact?: boolean;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -23,24 +24,38 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     inner: {
         flexDirection: 'row',
-        backgroundColor: theme.colors.surfaceHigh,
-        borderRadius: 12,
-        overflow: 'hidden',
-        borderWidth: 2,
-        borderColor: theme.colors.surface,
+        backgroundColor: theme.colors.surfaceHighest,
+        borderRadius: 9,
+        padding: 2,
+    },
+    innerCompact: {
+        borderRadius: 7,
     },
     tab: {
         flex: 1,
-        paddingVertical: 8,
+        paddingVertical: 7,
         alignItems: 'center',
         justifyContent: 'center',
+        borderRadius: 7,
+    },
+    tabCompact: {
+        paddingVertical: 4,
+        borderRadius: 5,
     },
     tabActive: {
         backgroundColor: theme.colors.surface,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 2,
+        elevation: 1,
     },
     tabLabel: {
-        fontSize: 13,
+        fontSize: 12,
         color: theme.colors.textSecondary,
+    },
+    tabLabelCompact: {
+        fontSize: 10,
     },
     tabLabelActive: {
         color: theme.colors.text,
@@ -51,10 +66,11 @@ const stylesheet = StyleSheet.create((theme) => ({
 function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) {
     const styles = stylesheet;
     useUnistyles();
+    const compact = props.compact;
 
     return (
         <View style={styles.container}>
-            <View style={styles.inner}>
+            <View style={[styles.inner, compact ? styles.innerCompact : null]}>
                 {props.tabs.map((tab) => {
                     const active = props.activeTabId === tab.id;
                     return (
@@ -62,10 +78,10 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                             key={tab.id}
                             testID={props.testIDPrefix ? `${props.testIDPrefix}:${tab.id}` : undefined}
                             onPress={() => props.onSelectTab(tab.id)}
-                            style={[styles.tab, active ? styles.tabActive : null]}
+                            style={[styles.tab, compact ? styles.tabCompact : null, active ? styles.tabActive : null]}
                             accessibilityRole="button"
                         >
-                            <Text style={[styles.tabLabel, active ? styles.tabLabelActive : null]}>{tab.label}</Text>
+                            <Text style={[styles.tabLabel, compact ? styles.tabLabelCompact : null, active ? styles.tabLabelActive : null]}>{tab.label}</Text>
                         </Pressable>
                     );
                 })}

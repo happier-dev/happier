@@ -85,7 +85,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 function findTab(tree: renderer.ReactTestRenderer, label: string) {
-    return tree.root.find((node) => {
+    return tree.find((node) => {
         if (String(node.type) !== 'Pressable') return false;
         return node.findAll((child) => String(child.type) === 'Text' && child.props.children === label).length > 0;
     });

@@ -1,7 +1,7 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -64,21 +64,8 @@ vi.mock('shiki', () => ({
     createHighlighter: (...args: any[]) => createHighlighterSpy(...args),
 }));
 
-async function flushMicrotasks(): Promise<void> {
-    for (let i = 0; i < 25; i++) {
-        // Allow state updates scheduled by async effects to flush.
-        // eslint-disable-next-line no-await-in-loop
-        await Promise.resolve();
-    }
-}
-
 async function flushReactAsyncWork(): Promise<void> {
-    for (let i = 0; i < 10; i++) {
-        // eslint-disable-next-line no-await-in-loop
-        await renderer.act(async () => {
-            await flushMicrotasks();
-        });
-    }
+    await flushHookEffects({ cycles: 10, turns: 25 });
 }
 
 describe('CodeLinesView (web)', () => {
@@ -124,8 +111,7 @@ describe('CodeLinesView (web)', () => {
             />
         );
 
-        let tree1!: renderer.ReactTestRenderer;
-        tree1 = (await renderScreen(view)).tree;
+        const screen1 = await renderScreen(view);
         await flushReactAsyncWork();
 
         // Uses Happier themes instead of generic GitHub themes.
@@ -135,20 +121,19 @@ describe('CodeLinesView (web)', () => {
         expect(calls1.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0)).toBe(false);
 
         renderer.act(() => {
-            tree1.unmount();
+            screen1.tree.unmount();
         });
 
         rowSpy.mockClear();
 
-        let tree2!: renderer.ReactTestRenderer;
-        tree2 = (await renderScreen(view)).tree;
+        const screen2 = await renderScreen(view);
         await flushReactAsyncWork();
 
         const calls2 = rowSpy.mock.calls.map((c) => c[0]);
         expect(calls2.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0)).toBe(true);
         expect(createHighlighterSpy).toHaveBeenCalledTimes(2);
 
-        expect(tree2.root.findAllByType('CodeLineRow' as any).length).toBe(1);
+        expect(screen2.findAllByType('CodeLineRow' as any).length).toBe(1);
     });
 
     it('computes Shiki tokens when advanced syntax highlighting is enabled', async () => {
@@ -156,8 +141,7 @@ describe('CodeLinesView (web)', () => {
         createHighlighterSpy.mockClear();
         const { CodeLinesView } = await import('./CodeLinesView.web');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<CodeLinesView
+        const screen = await renderScreen(<CodeLinesView
                     lines={[
                         {
                             id: 'f:1',
@@ -178,7 +162,7 @@ describe('CodeLinesView (web)', () => {
                         maxLines: 10_000,
                         maxLineLength: 10_000,
                     }}
-                />)).tree;
+                />);
 
         // The row will be rendered at least once; after async tokenization, it should receive advancedTokens.
         let hasAdvanced = false;
@@ -193,6 +177,6 @@ describe('CodeLinesView (web)', () => {
         expect(hasAdvanced).toBe(true);
 
         // Keep tree referenced to avoid act warnings about unmounted trees.
-        expect(tree.root.findAllByType('CodeLineRow' as any).length).toBe(1);
+        expect(screen.findAllByType('CodeLineRow' as any).length).toBe(1);
     });
 });

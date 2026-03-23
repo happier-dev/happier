@@ -44,8 +44,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     unreadBadge: {
         position: 'absolute',
-        top: -2,
-        right: -2,
+        top: -6,
+        right: -6,
         backgroundColor: theme.colors.textLink,
         borderRadius: 100,
         borderWidth: 1.5,
@@ -60,7 +60,7 @@ export const Avatar = React.memo((props: AvatarProps) => {
 
     const agentId = resolveAgentIdFromFlavor(flavor);
 
-    const unreadBadgeSize = Math.round(size * 0.22);
+    const unreadBadgeSize = Math.round(size * 0.5);
     const unreadBadgeElement = hasUnreadMessages ? (
         <View style={[styles.unreadBadge, { width: unreadBadgeSize, height: unreadBadgeSize }]} />
     ) : null;

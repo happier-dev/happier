@@ -2,15 +2,13 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
+installUiListsCommonModuleMocks();
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',

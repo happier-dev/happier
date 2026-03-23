@@ -48,7 +48,7 @@ describe('PrimaryCircleIconButton', () => {
                 >
                     <span />
                 </PrimaryCircleIconButton>)).tree;
-        const pressable = tree.root.findByType('Pressable' as any);
+        const pressable = tree.findByType('Pressable' as any);
         expect(pressable.props.testID).toBe('circle-button');
     });
 

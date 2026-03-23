@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -52,15 +51,14 @@ describe('DiffReviewCommentsViewer', () => {
         thresholds = { lineThreshold: 50_000, byteThreshold: 120_000 };
         const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<DiffReviewCommentsViewer
+        const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
                     unifiedDiff={'a\nb\n'}
                     reviewCommentsEnabled={true}
                     reviewCommentDrafts={[]}
-                />)).tree;
+                />);
 
-        const view = tree.root.findByType('DiffViewer' as any);
+        const view = screen.findByType('DiffViewer' as any);
         expect(view.props.virtualized).toBe(false);
     });
 
@@ -68,15 +66,14 @@ describe('DiffReviewCommentsViewer', () => {
         thresholds = { lineThreshold: 50_000, byteThreshold: 100 };
         const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<DiffReviewCommentsViewer
+        const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
                     unifiedDiff={'a'.repeat(2_000)}
                     reviewCommentsEnabled={true}
                     reviewCommentDrafts={[]}
-                />)).tree;
+                />);
 
-        const view = tree.root.findByType('DiffViewer' as any);
+        const view = screen.findByType('DiffViewer' as any);
         expect(view.props.virtualized).toBe(true);
     });
 
@@ -84,8 +81,7 @@ describe('DiffReviewCommentsViewer', () => {
         thresholds = { lineThreshold: 50_000, byteThreshold: 120_000 };
         const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<DiffReviewCommentsViewer
+        const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
                     unifiedDiff={'a\nb\n'}
                     reviewCommentsEnabled={true}
@@ -93,9 +89,9 @@ describe('DiffReviewCommentsViewer', () => {
                     wrapLines={false}
                     showLineNumbers={true}
                     showPrefix={true}
-                />)).tree;
+                />);
 
-        const view = tree.root.findByType('DiffViewer' as any);
+        const view = screen.findByType('DiffViewer' as any);
         expect(view.props.wrapLines).toBe(false);
         expect(view.props.showLineNumbers).toBe(true);
         expect(view.props.showPrefix).toBe(true);

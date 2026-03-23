@@ -13,19 +13,12 @@ vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: ({ children, ...props }: any) => React.createElement('View', props, children),
-            Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-            TextInput: ({ children, ...props }: any) => React.createElement('TextInput', props, children),
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-            ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
-            Platform: {
-                OS: 'web',
-                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-            },
-        }
-    );
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'web',
+            select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+        },
+    });
 });
 
 vi.mock('expo-clipboard', () => ({
@@ -43,7 +36,7 @@ vi.mock('@/modal', async () => {
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+    return createTextModuleMock();
 });
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -52,9 +45,7 @@ vi.mock('@/sync/store/hooks', () => ({
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: { colors: { divider: '#ddd', surfaceHigh: '#fff', surfaceHighest: '#f7f7f7', textSecondary: '#666' } },
-    });
+    return createUnistylesMock();
 });
 
 describe('CodeBlockViewFrame', () => {

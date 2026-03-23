@@ -108,18 +108,18 @@ describe('CodeBlockView (web)', () => {
 
         const { CodeBlockView } = await import('./CodeBlockView.web');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<CodeBlockView
+        const screen = await renderScreen(<CodeBlockView
                     code={'const x = 1;'}
                     language={'typescript'}
                     showCopyButton={false}
                     wrap={true}
-                />)).tree;
+                />);
+        const tree = screen.tree;
         let hasRed = false;
         for (let i = 0; i < 10; i++) {
             // eslint-disable-next-line no-await-in-loop
             await flushReactAsyncWork();
-            const redNodes = tree.root.findAll((n) => {
+            const redNodes = screen.findAllByType('Text').filter((n) => {
                 if ((n as any).type !== 'Text') return false;
                 const style = n.props?.style;
                 const flattened = Array.isArray(style) ? style.flat() : [style];
