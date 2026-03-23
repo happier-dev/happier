@@ -2,7 +2,7 @@ import { Platform, Switch as RNSwitch, SwitchProps, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Deferred } from './Deferred';
 
-const COMPACT_SCALE = 0.6;
+const COMPACT_SCALE = 0.78;
 
 export type AppSwitchProps = SwitchProps & {
     compact?: boolean;

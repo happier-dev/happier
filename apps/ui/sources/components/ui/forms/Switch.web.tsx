@@ -8,9 +8,9 @@ const TRACK_HEIGHT = 22;
 const THUMB_SIZE = 18;
 const PADDING = 2;
 
-const COMPACT_TRACK_WIDTH = 28;
-const COMPACT_TRACK_HEIGHT = 16;
-const COMPACT_THUMB_SIZE = 12;
+const COMPACT_TRACK_WIDTH = 32;
+const COMPACT_TRACK_HEIGHT = 18;
+const COMPACT_THUMB_SIZE = 14;
 const COMPACT_PADDING = 2;
 
 const stylesheet = StyleSheet.create(() => ({

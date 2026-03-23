@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, NativeSyntheticEvent, TextInputKeyPressEventData, TextInputSelectionChangeEventData } from 'react-native';
+import { Platform, View, NativeSyntheticEvent, TextInputKeyPressEventData, TextInputSelectionChangeEventData, TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { TextInput } from '@/components/ui/text/Text';
@@ -29,6 +29,7 @@ export interface MultiTextInputHandle {
 }
 
 interface MultiTextInputProps {
+    textStyle?: TextStyle;
     value: string;
     onChangeText: (text: string) => void;
     placeholder?: string;
@@ -187,8 +188,9 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 ref={inputRef}
                 testID={props.testID}
                 style={{
+                    ...props.textStyle,
                     width: '100%',
-                    fontSize: 16,
+                    fontSize: 14,
                     maxHeight,
                     color: theme.colors.input.text,
                     textAlignVertical: 'top',

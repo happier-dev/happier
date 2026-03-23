@@ -45,23 +45,26 @@ describe('SelectionTiles', () => {
         const { SelectionTiles } = await import('./SelectionTiles');
 
         let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SelectionTiles
-                    options={[
-                        { id: 'session_menu', title: 'Session menu' },
-                        { id: 'command_palette', title: 'Command palette' },
-                    ]}
-                    value={null}
-                    onChange={onChange}
-                />)).tree;
+        const screen = await renderScreen(<SelectionTiles
+            options={[
+                { id: 'session_menu', title: 'Session menu' },
+                { id: 'command_palette', title: 'Command palette' },
+            ]}
+            value={null}
+            onChange={onChange}
+            testIdPrefix="single-select"
+        />);
+        tree = screen.tree;
 
-        const pressables = tree.findAllByType('Pressable' as any);
+        const sessionMenu = screen.findByTestId('single-select:session_menu');
+        const commandPalette = screen.findByTestId('single-select:command_palette');
         await act(async () => {
-            await pressTestInstanceAsync(pressables[1]!);
+            await pressTestInstanceAsync(commandPalette, 'single-select:command_palette');
         });
 
-        expect(pressables[0]!.props.accessibilityRole).toBe('radio');
-        expect(pressables[0]!.props.accessibilityState).toEqual({ selected: false, disabled: false });
-        expect(pressables[1]!.props.accessibilityRole).toBe('radio');
+        expect(sessionMenu!.props.accessibilityRole).toBe('radio');
+        expect(sessionMenu!.props.accessibilityState).toEqual({ selected: false, disabled: false });
+        expect(commandPalette!.props.accessibilityRole).toBe('radio');
         expect(onChange).toHaveBeenCalledWith('command_palette');
     });
 
@@ -70,28 +73,31 @@ describe('SelectionTiles', () => {
         const { SelectionTiles } = await import('./SelectionTiles');
 
         let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SelectionTiles
-                    selectionMode="multiple"
-                    options={[
-                        { id: 'voice_panel', title: 'Voice panel' },
-                        { id: 'mcp', title: 'MCP' },
-                    ]}
-                    value={['voice_panel']}
-                    onChange={onChange}
-                />)).tree;
+        const screen = await renderScreen(<SelectionTiles
+            selectionMode="multiple"
+            options={[
+                { id: 'voice_panel', title: 'Voice panel' },
+                { id: 'mcp', title: 'MCP' },
+            ]}
+            value={['voice_panel']}
+            onChange={onChange}
+            testIdPrefix="multi-select"
+        />);
+        tree = screen.tree;
 
-        const pressables = tree.findAllByType('Pressable' as any);
+        const voicePanel = screen.findByTestId('multi-select:voice_panel');
+        const mcp = screen.findByTestId('multi-select:mcp');
         await act(async () => {
-            await pressTestInstanceAsync(pressables[1]!);
+            await pressTestInstanceAsync(mcp, 'multi-select:mcp');
         });
         await act(async () => {
-            await pressTestInstanceAsync(pressables[0]!);
+            await pressTestInstanceAsync(voicePanel, 'multi-select:voice_panel');
         });
 
-        expect(pressables[0]!.props.accessibilityRole).toBe('checkbox');
-        expect(pressables[0]!.props.accessibilityState).toEqual({ checked: true, disabled: false });
-        expect(pressables[1]!.props.accessibilityRole).toBe('checkbox');
-        expect(pressables[1]!.props.accessibilityState).toEqual({ checked: false, disabled: false });
+        expect(voicePanel!.props.accessibilityRole).toBe('checkbox');
+        expect(voicePanel!.props.accessibilityState).toEqual({ checked: true, disabled: false });
+        expect(mcp!.props.accessibilityRole).toBe('checkbox');
+        expect(mcp!.props.accessibilityState).toEqual({ checked: false, disabled: false });
         expect(onChange).toHaveBeenNthCalledWith(1, ['voice_panel', 'mcp']);
         expect(onChange).toHaveBeenNthCalledWith(2, []);
     });
@@ -101,18 +107,19 @@ describe('SelectionTiles', () => {
         const { SelectionTiles } = await import('./SelectionTiles');
 
         let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SelectionTiles
-                    selectionMode="multiple"
-                    options={[
-                        { id: 'voice_tool', title: 'Voice tool', disabled: true, badge: 'Unavailable' },
-                    ]}
-                    value={[]}
-                    onChange={onChange}
-                />)).tree;
+        const screen = await renderScreen(<SelectionTiles
+            selectionMode="multiple"
+            options={[
+                { id: 'voice_tool', title: 'Voice tool', disabled: true, badge: 'Unavailable' },
+            ]}
+            value={[]}
+            onChange={onChange}
+            testIdPrefix="disabled-select"
+        />);
+        tree = screen.tree;
 
-        const pressables = tree.findAllByType('Pressable' as any);
         await act(async () => {
-            await pressTestInstanceAsync(pressables[0]!);
+            await pressTestInstanceAsync(screen.findByTestId('disabled-select:voice_tool'), 'disabled-select:voice_tool');
         });
 
         expect(onChange).not.toHaveBeenCalled();

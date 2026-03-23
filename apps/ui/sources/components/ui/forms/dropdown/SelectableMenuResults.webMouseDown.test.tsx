@@ -5,28 +5,28 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
+import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                View: React.forwardRef((props: any, ref: any) => {
-                    const { children, testID, ...rest } = props;
-                    return React.createElement('div', {
+installDropdownCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: React.forwardRef((props: any, ref: any) => {
+                const { children, testID, ...rest } = props;
+                return React.createElement(
+                    'div',
+                    {
                         ...rest,
                         ref,
                         'data-testid': testID,
-                    }, children);
-                }),
-            }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+                    },
+                    children,
+                );
+            }),
+        });
+    },
 });
 
 vi.mock('@/constants/Typography', () => ({

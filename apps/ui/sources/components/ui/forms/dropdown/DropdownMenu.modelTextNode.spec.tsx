@@ -4,25 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                View: 'View',
-                Text: 'Text',
-                TextInput: 'TextInput',
-                Pressable: 'Pressable',
-                ActivityIndicator: 'ActivityIndicator',
-                Dimensions: {
-                    get: () => ({ width: 1280, height: 800, scale: 1, fontScale: 1 }),
-                },
-            }
-    );
-});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => <>{'.'}</>,
@@ -32,24 +17,37 @@ vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installDropdownCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            TextInput: 'TextInput',
+            Pressable: 'Pressable',
+            ActivityIndicator: 'ActivityIndicator',
+            Dimensions: {
+                get: () => ({ width: 1280, height: 800, scale: 1, fontScale: 1 }),
+            },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                prompt: vi.fn(async () => null),
+            },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
+    },
 });
 
 vi.mock('@/constants/Typography', () => ({

@@ -38,7 +38,7 @@ describe('MultiTextInput', () => {
                     value=""
                     onChangeText={() => {}}
                 />)).tree;
-        const input = tree.root.findByType('TextInput' as any);
+        const input = tree.findByType('TextInput' as any);
         expect(input.props.testID).toBe('composer-input');
     });
 
@@ -50,7 +50,7 @@ describe('MultiTextInput', () => {
                     value: '',
                     onChangeText: () => {},
                 }))).tree;
-        const input = tree.root.findByType('TextareaAutosize' as any);
+        const input = tree.findByType('TextareaAutosize' as any);
         expect(input.props['data-testid']).toBe('composer-input');
     });
 });

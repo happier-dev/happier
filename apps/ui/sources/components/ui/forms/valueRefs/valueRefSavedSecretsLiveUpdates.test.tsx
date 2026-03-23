@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
+import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -64,48 +65,37 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const { createPassThroughComponent } = await import('@/dev/testkit/mocks/components');
     return createReactNativeWebMock(
         {
-                    Platform: {
-                        OS: 'ios',
-                        select: <T,>(obj: { ios?: T; web?: T; default?: T }) => obj.ios ?? obj.web ?? obj.default,
-                    },
-                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                        React.createElement('Pressable', props, props.children),
-                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                        React.createElement('Text', props, props.children),
-                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                        React.createElement('View', props, props.children),
-                    TextInput: React.forwardRef<{ focus: () => void }, Record<string, unknown>>((props, ref) => {
-                        if (ref && typeof ref === 'object') {
-                            ref.current = { focus: () => {} };
-                        }
-                        return React.createElement('TextInput', props);
-                    }),
+            Platform: {
+                OS: 'ios',
+                select: <T,>(obj: { ios?: T; web?: T; default?: T }) => obj.ios ?? obj.web ?? obj.default,
+            },
+            Pressable: createPassThroughComponent('Pressable'),
+            Text: createPassThroughComponent('Text'),
+            View: createPassThroughComponent('View'),
+            TextInput: React.forwardRef<{ focus: () => void }, Record<string, unknown>>((props, ref) => {
+                if (ref && typeof ref === 'object') {
+                    ref.current = { focus: () => {} };
                 }
+                return React.createElement('TextInput', props);
+            }),
+        }
     );
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) => React.createElement('Text', props, props.children),
-    TextInput: React.forwardRef((props: Record<string, unknown>, ref) => React.createElement('TextInput', { ...props, ref })),
+    ...createPassThroughModule(['Text', 'TextInput']),
 }));
 
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemList', null, children),
-}));
+vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('ItemGroup', props, children),
-}));
+vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
 
-vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: () => null,
-}));
+vi.mock('@/components/ui/lists/ItemRowActions', () => createPassThroughModule(['ItemRowActions']));
 
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: Record<string, unknown>) => React.createElement('Item', props),
-}));
+vi.mock('@/components/ui/lists/Item', () => createPassThroughModule(['Item']));
 
 vi.mock('@/components/ui/forms/InlineAddExpander', () => ({
     InlineAddExpander: ({
@@ -142,16 +132,7 @@ vi.mock('@/components/ui/forms/InlineAddExpander', () => ({
     ),
 }));
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: ({
-        itemTrigger,
-    }: {
-        itemTrigger?: Readonly<{ title?: string; subtitle?: string }>;
-    }) => React.createElement('Item', {
-        title: itemTrigger?.title,
-        subtitle: itemTrigger?.subtitle,
-    }),
-}));
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },

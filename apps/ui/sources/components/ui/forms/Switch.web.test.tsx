@@ -40,7 +40,7 @@ describe('Switch.web', () => {
                     testID="settings-toggle"
                 />)).tree;
 
-        const pressable = tree.root.findByType('Pressable' as any);
+        const pressable = tree.findByType('Pressable' as any);
         expect(pressable.props.accessibilityRole).toBe('switch');
         expect(pressable.props['aria-checked']).toBe(true);
     });
