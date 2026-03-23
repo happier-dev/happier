@@ -564,12 +564,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             selectedMachineId,
             capabilityServerId,
             cwd: selectedPath,
+            probeContext: resolveNewSessionCapabilityProbeContext({ backendTarget, settings }),
         });
     const { configOptions: acpConfigOptions, probe: acpConfigOptionsProbeState } = useNewSessionPreflightConfigOptionsState({
         backendTarget,
         selectedMachineId,
         capabilityServerId,
         cwd: selectedPath,
+        probeContext: resolveNewSessionCapabilityProbeContext({ backendTarget, settings }),
     });
 
     const allProfilesRequirementNames = React.useMemo(() => {
@@ -1266,6 +1268,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         shouldReconcileInitialHydratedCheckoutCreationDraftRef,
         router,
         sessionPrompt,
+        setSessionPrompt,
         handleCreateSession,
         backendTarget,
         agentType,

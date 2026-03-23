@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Pressable, View } from 'react-native';
 
 import type { ActionId, BackendTargetRefV1, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 import type { Router } from 'expo-router';
@@ -19,6 +20,10 @@ import type { NewSessionCheckoutChipModel } from '@/components/sessions/new/modu
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import { t } from '@/text';
+import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
+import { Ionicons } from '@expo/vector-icons';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { Text } from '@/components/ui/text/Text';
 
 type ThemeLike = Readonly<{
     colors: Readonly<{
@@ -48,6 +53,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     shouldReconcileInitialHydratedCheckoutCreationDraftRef: React.MutableRefObject<boolean>;
     router: Router;
     sessionPrompt: string;
+    setSessionPrompt: React.Dispatch<React.SetStateAction<string>>;
     handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (context: Readonly<{ sessionId: string }>) => void | Promise<void> }>) => void;
     backendTarget: BackendTargetRefV1;
     agentType: AgentId;
@@ -95,6 +101,66 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     }, [params.setAutomationDraft]);
 
     const automationSection = null;
+
+    const handleAppendLinkedPath = React.useCallback((path: string) => {
+        params.setSessionPrompt((prev) => {
+            const base = String(prev ?? '');
+            const spacer = base.length === 0 || base.endsWith(' ') || base.endsWith('\n') ? '' : ' ';
+            return `${base}${spacer}@${path} `;
+        });
+    }, [params.setSessionPrompt]);
+
+    const linkFileChip = React.useMemo<AgentInputExtraActionChip>(() => {
+        const isDisabled = !params.selectedMachineId;
+
+        const openPicker = async () => {
+            if (!params.selectedMachineId) return;
+            const picked = await openMachinePathBrowserModal({
+                machineId: params.selectedMachineId,
+                serverId: params.targetServerId ?? null,
+                title: t('common.linkFile'),
+                initialPath: params.selectedPath,
+                includeFiles: true,
+                selectionMode: 'file',
+            });
+            if (picked) {
+                handleAppendLinkedPath(picked);
+            }
+        };
+
+        return {
+            key: 'new-session-link-file',
+            controlId: 'linkedFiles',
+            labelPolicy: 'auto-hide',
+            collapsedAction: ({ tint, dismiss }) => ({
+                id: 'linked-files',
+                label: t('common.linkFile'),
+                icon: normalizeNodeForView(<Ionicons name="document-outline" size={16} color={tint} />),
+                onPress: () => {
+                    dismiss();
+                    void openPicker();
+                },
+            }),
+            render: (ctx) => (
+                <Pressable
+                    ref={ctx.chipAnchorRef}
+                    testID="new-session-link-file-chip"
+                    onPress={() => void openPicker()}
+                    disabled={isDisabled}
+                    style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
+                >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        {normalizeNodeForView(<Ionicons name="document-outline" size={18} color={ctx.iconColor} />)}
+                        {ctx.showLabel ? (
+                            <Text numberOfLines={1} style={ctx.textStyle}>
+                                {t('common.linkFile')}
+                            </Text>
+                        ) : null}
+                    </View>
+                </Pressable>
+            ),
+        } satisfies AgentInputExtraActionChip;
+    }, [handleAppendLinkedPath, params.selectedMachineId, params.selectedPath, params.targetServerId]);
 
     const handleTranscriptStorageChange = React.useCallback((next: 'direct' | 'persisted') => {
         params.hasUserSelectedTranscriptStorageRef.current = true;
@@ -165,6 +231,6 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     return {
         connectionStatus,
         automationSection,
-        agentInputExtraActionChips,
+        agentInputExtraActionChips: [linkFileChip, ...agentInputExtraActionChips],
     };
 }
