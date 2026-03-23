@@ -449,6 +449,107 @@ describe('direct peer machine transfer', () => {
     }
   });
 
+  it('does not accumulate streamed JSON chunks in memory when a peer lies about content-length (bounded growing buffer)', async () => {
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-json-lie-len-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const payload = Buffer.from('payload-with-content-length-lie', 'utf8');
+    let recipientPublicKeyBase64 = '';
+
+    const encoder = new TextEncoder();
+    const streamJson = (value: unknown, chunkSize: number): ReadableStream<Uint8Array> => {
+      const bytes = encoder.encode(JSON.stringify(value));
+      let offset = 0;
+      return new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (offset >= bytes.length) {
+            controller.close();
+            return;
+          }
+          const end = Math.min(bytes.length, offset + chunkSize);
+          controller.enqueue(bytes.slice(offset, end));
+          offset = end;
+        },
+      });
+    };
+
+    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string> | undefined;
+      const url = String(input);
+      if (url.endsWith('/open')) {
+        recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
+        const openBody = {
+          transferId: 'transfer_json_lie_len',
+          manifestHash: createTransferManifestHash(payload),
+          totalChunks: 1,
+        };
+        return new Response(streamJson(openBody, 1), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            // Intentionally lie (too small) to force the mismatch branch.
+            'content-length': '1',
+          },
+        });
+      }
+      if (url.endsWith('/chunks/0')) {
+        const chunkBody = {
+          transferId: 'transfer_json_lie_len',
+          kind: 'chunk',
+          sequence: 0,
+          ...createEncryptedTransferChunkEnvelope({
+            transferId: 'transfer_json_lie_len',
+            sequence: 0,
+            payload,
+            recipientPublicKeyBase64,
+            randomBytes: (length) => new Uint8Array(length).fill(9),
+          }),
+        };
+        return new Response(streamJson(chunkBody, 1), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            // Intentionally lie (too small) to force the mismatch branch.
+            'content-length': '1',
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+
+    const originalPush = Array.prototype.push;
+    Array.prototype.push = function (...args: unknown[]) {
+      const stack = new Error().stack ?? '';
+      if (stack.includes('readJsonResponseWithBodyLimit') && stack.includes('directPeerTransport.ts')) {
+        throw new Error('readJsonResponseWithBodyLimit should not push streamed chunks when content-length is incorrect');
+      }
+      return originalPush.apply(this, args as any);
+    };
+
+    try {
+      await requestDirectPeerTransferToFile({
+        transferId: 'transfer_json_lie_len',
+        endpointCandidates: [{
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_json_lie_len',
+          authorizationToken: 'test-token',
+          expiresAt: 10_000,
+        }],
+        fetchFn,
+        now: () => 5_000,
+        destinationPath,
+      });
+
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
+    } finally {
+      Array.prototype.push = originalPush;
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('does not accumulate streamed JSON chunks in memory when content-length is omitted (bounded growing buffer)', async () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
     const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');

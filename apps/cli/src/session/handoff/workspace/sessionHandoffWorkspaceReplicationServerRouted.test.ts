@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 import { disposeTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
+import { configuration } from '@/configuration';
 
 describe('sessionHandoffWorkspaceReplicationServerRouted', () => {
   const envSnapshot = { ...process.env };
@@ -27,6 +28,21 @@ describe('sessionHandoffWorkspaceReplicationServerRouted', () => {
     const encodedDigests = Buffer.from(JSON.stringify(digests), 'utf8').toString('base64url');
 
     // This is attacker-controlled input in server-routed transfers. Reject rather than buffering a huge JSON list.
+    expect(parseSessionHandoffWorkspaceBlobPackTransferId(
+      `session-handoff:handoff_1:workspace-pack:pack_1:${encodedDigests}`,
+    )).toBeNull();
+  });
+
+  it('fails closed on oversized encoded digests before attempting base64 decode', async () => {
+    process.env.HAPPIER_FILES_READ_MAX_BYTES = '16';
+
+    const { parseSessionHandoffWorkspaceBlobPackTransferId } = await import(
+      './sessionHandoffWorkspaceReplicationServerRouted'
+    );
+
+    // Server-routed transfer ids are attacker-controlled. Ensure we reject obviously oversized payloads even if they
+    // are not valid base64url (the size check should run first).
+    const encodedDigests = 'a'.repeat(512);
     expect(parseSessionHandoffWorkspaceBlobPackTransferId(
       `session-handoff:handoff_1:workspace-pack:pack_1:${encodedDigests}`,
     )).toBeNull();
@@ -54,9 +70,10 @@ describe('sessionHandoffWorkspaceReplicationServerRouted', () => {
       '@/workspaces/replication/transport/workspaceReplicationPackId'
     );
 
-    // Default config is currently 256 max blobs per pack; exceed it here to ensure we fail closed
-    // rather than allowing attacker-controlled transfer IDs to trigger huge CAS seeding loops.
-    const digests = Array.from({ length: 257 }, (_, index) => `sha256:${index.toString(16).padStart(64, '0')}`);
+    const tooMany = configuration.workspaceReplicationBlobPackMaxBlobs + 1;
+    // Exceed the max blobs per pack to ensure we fail closed rather than allowing attacker-controlled transfer IDs
+    // to trigger huge CAS seeding loops.
+    const digests = Array.from({ length: tooMany }, (_, index) => `sha256:${index.toString(16).padStart(64, '0')}`);
     const packId = createWorkspaceReplicationPackIdForDigests(digests);
     const encodedDigests = Buffer.from(JSON.stringify(digests), 'utf8').toString('base64url');
 
@@ -73,7 +90,8 @@ describe('sessionHandoffWorkspaceReplicationServerRouted', () => {
       '@/workspaces/replication/transport/workspaceReplicationPackId'
     );
 
-    const digests = Array.from({ length: 257 }, (_, index) => `sha256:${index.toString(16).padStart(64, '0')}`);
+    const tooMany = configuration.workspaceReplicationBlobPackMaxBlobs + 1;
+    const digests = Array.from({ length: tooMany }, (_, index) => `sha256:${index.toString(16).padStart(64, '0')}`);
     const packId = createWorkspaceReplicationPackIdForDigests(digests);
 
     expect(() => buildSessionHandoffWorkspaceBlobPackTransferId({

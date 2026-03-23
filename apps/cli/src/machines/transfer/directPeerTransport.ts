@@ -92,16 +92,6 @@ function formatCandidateHost(host: string): string {
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }
 
-function concatUint8Arrays(chunks: readonly Uint8Array[], totalLength: number): Uint8Array {
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
-}
-
 function estimateJsonStringUtf8BytesBounded(value: string, maxBytes: number): number {
   // Quotes.
   let bytes = 2;
@@ -321,12 +311,11 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
     }
   };
 
-  let bytes: Uint8Array;
+  let bytes: Uint8Array | null = null;
   if (expectedBytes != null) {
     // Avoid buffering an extra array of chunks when the peer provides a valid content-length.
     const buffer = new Uint8Array(expectedBytes);
     let offset = 0;
-    let fallbackBytes: Uint8Array | null = null;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -344,26 +333,49 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
         continue;
       }
 
-      // If the peer lies about content-length, fall back to chunk buffering while still enforcing the hard max.
-      const fallbackChunks: Uint8Array[] = [buffer.subarray(0, offset), value];
-      let receivedBytes = nextOffset;
+      // If the peer lies about content-length, switch to the same bounded growing-buffer strategy
+      // we use when content-length is omitted.
+      let grown = buffer;
+      let grownOffset = offset;
+      const ensureCapacity = (needed: number) => {
+        if (needed <= grown.byteLength) return;
+        const minCapacity = grown.byteLength > 0 ? grown.byteLength : Math.min(16 * 1024, params.maxBodyBytes);
+        let nextCapacity = Math.max(1, minCapacity);
+        while (nextCapacity < needed) {
+          nextCapacity *= 2;
+        }
+        nextCapacity = Math.min(nextCapacity, params.maxBodyBytes);
+        if (nextCapacity < needed) nextCapacity = needed;
+        const nextBuffer = new Uint8Array(nextCapacity);
+        nextBuffer.set(grown.subarray(0, grownOffset), 0);
+        grown = nextBuffer;
+      };
+
+      ensureCapacity(nextOffset);
+      grown.set(value, grownOffset);
+      grownOffset = nextOffset;
+
       while (true) {
         const res = await reader.read();
         if (res.done) break;
         if (!res.value) continue;
-        receivedBytes += res.value.byteLength;
-        if (receivedBytes > params.maxBodyBytes) {
+        const next = grownOffset + res.value.byteLength;
+        if (next > params.maxBodyBytes) {
           await cancelBestEffort();
           throw params.onOverLimit();
         }
-        fallbackChunks.push(res.value);
+        ensureCapacity(next);
+        grown.set(res.value, grownOffset);
+        grownOffset = next;
       }
-      fallbackBytes = concatUint8Arrays(fallbackChunks, receivedBytes);
+
+      bytes = grown.subarray(0, grownOffset);
+      offset = grownOffset;
       break;
     }
 
     // If we never triggered the mismatch fallback, use the filled prefix (may be shorter than content-length).
-    bytes = fallbackBytes ?? buffer.subarray(0, offset);
+    if (!bytes) bytes = buffer.subarray(0, offset);
   } else {
     // When the peer doesn't provide content-length, we still want to avoid buffering an extra
     // array of chunks. Use a bounded growing buffer instead.
@@ -402,6 +414,9 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
     bytes = buffer.subarray(0, offset);
   }
 
+  if (!bytes) {
+    throw params.onInvalidJson();
+  }
   const text = decoder.decode(bytes);
   try {
     return JSON.parse(text) as unknown;

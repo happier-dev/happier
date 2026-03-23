@@ -629,6 +629,31 @@ describe('claudeLocal --continue handling', () => {
         expect(promptIndex).toBeGreaterThan(settingsIndex + 1);
         expect(promptIndex).toBeGreaterThan(modelIndex + 1);
     });
+
+    it('treats --effort as a flag with a value (so the effort value is not mis-parsed as the prompt)', async () => {
+        mockClaudeFindLastSession.mockReturnValue(null);
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            hookSettingsPath: '/tmp/settings.json',
+            claudeArgs: ['--effort', 'high', 'fix the bug in main.ts'],
+        });
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+
+        const effortIndex = spawnArgs.indexOf('--effort');
+        const effortValueIndex = effortIndex === -1 ? -1 : effortIndex + 1;
+        expect(effortIndex).toBeGreaterThan(-1);
+        expect(spawnArgs[effortValueIndex]).toBe('high');
+
+        const promptIndex = spawnArgs.indexOf('fix the bug in main.ts');
+        expect(promptIndex).toBeGreaterThan(-1);
+        expect(promptIndex).toBeGreaterThan(effortValueIndex);
+    });
 });
 
 describe('claudeLocal launcher selection', () => {
