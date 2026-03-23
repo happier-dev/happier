@@ -1,14 +1,20 @@
-import { createPartialStorageModuleMock, flushHookEffects } from '@/dev/testkit';
+import {
+    createPartialStorageModuleMock,
+    flushHookEffects,
+} from '@/dev/testkit';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installSkillBundleCommonModuleMocks,
+    skillBundleRouterBackSpy,
+    skillBundleRouterPushSpy,
+    skillBundleRouterReplaceSpy,
+} from './skillBundleScreenTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerBackSpy = vi.fn();
-const routerReplaceSpy = vi.fn();
-const routerPushSpy = vi.fn();
 const createSkillPromptBundleSpy = vi.fn(async () => 'new-bundle');
 const updateSkillPromptBundleSpy = vi.fn(async () => {});
 const setPromptFoldersSpy = vi.fn();
@@ -65,37 +71,35 @@ const artifactBodiesState = vi.hoisted(() => ({
     } as Record<string, unknown>,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                View: 'View',
-                TextInput: 'TextInput',
-                ScrollView: 'ScrollView',
-                Platform: {
-                    OS: 'web',
-                    select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+installSkillBundleCommonModuleMocks({
+    storage: async (importOriginal) =>
+        createPartialStorageModuleMock(importOriginal, {
+            useAllMachines: () => ([
+                {
+                    id: 'machine-1',
+                    metadata: {
+                        displayName: 'Laptop',
+                        host: 'laptop.local',
+                    },
                 },
-            }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: {
-            back: routerBackSpy,
-            replace: routerReplaceSpy,
-            push: routerPushSpy,
-        },
-        navigation: { canGoBack: () => false },
-    });
-    return routerMock.module;
+            ]),
+            useSetting: (key: string) => {
+                if (key === 'promptExternalLinksV1') return promptExternalLinksState.value;
+                return null;
+            },
+            useSettingMutable: (key: string) => {
+                if (key === 'promptFoldersV1') {
+                    return [promptFoldersState.value, setPromptFoldersSpy];
+                }
+                return [null, vi.fn()];
+            },
+            storage: {
+                getState: () => ({
+                    artifacts: artifactBodiesState.value,
+                    updateArtifact: vi.fn(),
+                }),
+            },
+        }),
 });
 
 vi.mock('@react-navigation/native', () => ({
@@ -106,11 +110,6 @@ vi.mock('@react-navigation/native', () => ({
         }, [callback]);
     },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
@@ -144,11 +143,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/components/ui/settingsSurface/SettingsActionFooter', () => ({
     SettingsActionFooter: (props: any) => React.createElement('SettingsActionFooter', props),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -184,34 +178,6 @@ description: Describe when this skill should be used.
     updateSkillPromptBundle: updateSkillPromptBundleSpy,
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-    useAllMachines: () => ([
-        {
-            id: 'machine-1',
-            metadata: {
-                displayName: 'Laptop',
-                host: 'laptop.local',
-            },
-        },
-    ]),
-    useSetting: (key: string) => {
-        if (key === 'promptExternalLinksV1') return promptExternalLinksState.value;
-        return null;
-    },
-    useSettingMutable: (key: string) => {
-        if (key === 'promptFoldersV1') {
-            return [promptFoldersState.value, setPromptFoldersSpy];
-        }
-        return [null, vi.fn()];
-    },
-    storage: {
-        getState: () => ({
-            artifacts: artifactBodiesState.value,
-            updateArtifact: vi.fn(),
-        }),
-    },
-}));
-
 async function renderSkillBundleEditor(artifactId: string | null) {
     const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
     return renderScreen(React.createElement(SkillBundleEditorScreen, { artifactId }));
@@ -219,9 +185,9 @@ async function renderSkillBundleEditor(artifactId: string | null) {
 
 describe('SkillBundleEditorScreen', () => {
     beforeEach(() => {
-        routerBackSpy.mockReset();
-        routerReplaceSpy.mockReset();
-        routerPushSpy.mockReset();
+        skillBundleRouterBackSpy.mockReset();
+        skillBundleRouterReplaceSpy.mockReset();
+        skillBundleRouterPushSpy.mockReset();
         createSkillPromptBundleSpy.mockClear();
         updateSkillPromptBundleSpy.mockClear();
         fetchArtifactWithBodySpy.mockClear();
@@ -267,8 +233,8 @@ describe('SkillBundleEditorScreen', () => {
             folderId: 'folder-1',
             tags: ['alpha'],
         });
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/prompts/skills');
-        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(skillBundleRouterReplaceSpy).toHaveBeenCalledWith('/settings/prompts/skills');
+        expect(skillBundleRouterBackSpy).not.toHaveBeenCalled();
     });
 
     it('navigates to the external export screen for an existing skill bundle', async () => {
@@ -276,7 +242,7 @@ describe('SkillBundleEditorScreen', () => {
 
         await screen.pressByTestIdAsync('skillBundle.manageExternalAssets');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1/export');
+        expect(skillBundleRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1/export');
     });
 
     it('starts new skills with starter markdown and saves it when only the title changes', async () => {
@@ -302,7 +268,7 @@ describe('SkillBundleEditorScreen', () => {
             folderId: null,
             tags: [],
         });
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/prompts/skills');
+        expect(skillBundleRouterReplaceSpy).toHaveBeenCalledWith('/settings/prompts/skills');
     });
 
     it('keeps existing skill editors locked when the requested artifact body does not load', async () => {

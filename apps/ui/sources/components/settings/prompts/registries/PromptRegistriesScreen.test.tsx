@@ -3,12 +3,16 @@ import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PromptRegistryListAdaptersResponseV1, PromptRegistryScanSourceResponseV1 } from '@happier-dev/protocol';
 import type { PromptRegistrySkillImportResult } from '@/sync/ops/promptLibrary/promptRegistrySkillImports';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { changeTextTestInstance, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
-
+import {
+    installPromptRegistriesCommonModuleMocks,
+    promptRegistriesRouterPushSpy,
+} from './promptRegistriesScreenTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerPushSpy = vi.fn();
 const setRegistrySourcesMock = vi.fn();
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const machinePromptRegistriesListSourcesMock = vi.hoisted(() => vi.fn(async () => ({
@@ -90,6 +94,27 @@ const machinesState = vi.hoisted(() => ({
     }>,
 }));
 
+installPromptRegistriesCommonModuleMocks({
+    modal: async () => createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+            confirm: vi.fn(async () => true),
+        },
+    }).module,
+    storage: async () => createStorageModuleStub({
+        useAllMachines: () => machinesState.value,
+        useSettingMutable: (key: string) => {
+            if (key === 'promptRegistrySourcesV1') {
+                return [{ v: 1, sources: [] }, setRegistrySourcesMock];
+            }
+            if (key === 'contextSelectionsV1') {
+                return [contextSelectionsState.value, setContextSelectionsMock];
+            }
+            return [null, vi.fn()];
+        },
+    }),
+});
+
 function createDeferred<T>() {
     let resolve!: (value: T) => void;
     let reject!: (reason?: unknown) => void;
@@ -100,37 +125,9 @@ function createDeferred<T>() {
     return { promise, resolve, reject };
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: 'View',
-                                            ScrollView: 'ScrollView',
-                                            TextInput: 'TextInput',
-                                            Platform: {
-                                                OS: 'web',
-                                                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
-                                            },
-                                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -175,35 +172,9 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     }, [action])],
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-            confirm: vi.fn(async () => true),
-        },
-    }).module;
-});
-
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'registry-source-1',
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useAllMachines: () => machinesState.value,
-    useSettingMutable: (key: string) => {
-        if (key === 'promptRegistrySourcesV1') {
-            return [{ v: 1, sources: [] }, setRegistrySourcesMock];
-        }
-        if (key === 'contextSelectionsV1') {
-            return [contextSelectionsState.value, setContextSelectionsMock];
-        }
-        return [null, vi.fn()];
-    },
-});
-});
 
 vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
     usePrimaryMachineFromActiveSelection: () => machinesState.value[0]?.id ?? null,
@@ -219,15 +190,10 @@ vi.mock('@/sync/ops/promptLibrary/promptRegistrySkillImports', () => ({
     importPromptRegistrySkillItem: importPromptRegistrySkillItemMock,
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 describe('PromptRegistriesScreen', () => {
     beforeEach(() => {
         vi.resetModules();
-        routerPushSpy.mockReset();
+        promptRegistriesRouterPushSpy.mockReset();
         setRegistrySourcesMock.mockReset();
         machinePromptRegistriesListSourcesMock.mockReset();
         machinePromptRegistriesListSourcesMock.mockResolvedValue({
@@ -380,10 +346,10 @@ describe('PromptRegistriesScreen', () => {
             await pressTestInstanceAsync(registryItem);
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith(expect.stringContaining('/(app)/settings/prompts/registries/item?'));
-        expect(routerPushSpy).toHaveBeenCalledWith(expect.stringContaining('machineId=machine-1'));
-        expect(routerPushSpy).toHaveBeenCalledWith(expect.stringContaining('sourceId=git%3Alocal-skills'));
-        expect(routerPushSpy).toHaveBeenCalledWith(expect.stringContaining('itemId=git%3Alocal-skills%3Areviewer'));
+        expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('/(app)/settings/prompts/registries/item?'));
+        expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('machineId=machine-1'));
+        expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('sourceId=git%3Alocal-skills'));
+        expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('itemId=git%3Alocal-skills%3Areviewer'));
 
         const rowActions = registryItem?.props?.rightElement;
         expect(rowActions).toBeTruthy();
@@ -399,7 +365,7 @@ describe('PromptRegistriesScreen', () => {
             sourceId: 'git:local-skills',
             itemId: 'git:local-skills:reviewer',
         }));
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
+        expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
     });
 
     it('passes the search query through when rescanning the selected source', async () => {
@@ -647,7 +613,7 @@ describe('PromptRegistriesScreen', () => {
         });
 
         expect(importPromptRegistrySkillItemMock).toHaveBeenCalled();
-        expect(routerPushSpy).not.toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
+        expect(promptRegistriesRouterPushSpy).not.toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'promptLibrary.externalAssetsUnsupportedImport');
     });
 

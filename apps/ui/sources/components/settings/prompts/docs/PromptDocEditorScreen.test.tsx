@@ -2,13 +2,16 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installPromptLibrarySettingsCommonModuleMocks,
+    promptLibrarySettingsRouterBackSpy,
+    promptLibrarySettingsRouterPushSpy,
+    promptLibrarySettingsRouterReplaceSpy,
+} from '../promptLibrarySettingsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerBackSpy = vi.fn();
-const routerReplaceSpy = vi.fn();
-const routerPushSpy = vi.fn();
 const updatePromptDocSpy = vi.fn(async () => {});
 const setPromptFoldersSpy = vi.fn();
 const promptExternalLinksState = vi.hoisted(() => ({
@@ -29,42 +32,81 @@ const promptExternalLinksState = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: 'View',
-                                            TextInput: 'TextInput',
-                                            ScrollView: 'ScrollView',
-                                            Platform: {
-                                                OS: 'web',
-                                                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
-                                            },
-                                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: {
-        back: routerBackSpy,
-        replace: routerReplaceSpy,
-        push: routerPushSpy,
+installPromptLibrarySettingsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            TextInput: 'TextInput',
+            ScrollView: 'ScrollView',
+            Platform: {
+                OS: 'web',
+                select: ({ web, default: defaultValue }: { web?: unknown; default?: unknown }) =>
+                    web ?? defaultValue,
+            },
+        });
     },
-        navigation: { canGoBack: () => false },
-    });
-    return routerMock.module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: {
+                back: promptLibrarySettingsRouterBackSpy,
+                replace: promptLibrarySettingsRouterReplaceSpy,
+                push: promptLibrarySettingsRouterPushSpy,
+            },
+            navigation: { canGoBack: () => false },
+        });
+        return routerMock.module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useAllMachines: () => [
+                {
+                    id: 'machine-1',
+                    metadata: {
+                        displayName: 'Laptop',
+                        host: 'laptop.local',
+                    },
+                },
+            ],
+            useSetting: (key: string) => {
+                if (key === 'promptExternalLinksV1') return promptExternalLinksState.value;
+                return null;
+            },
+            useSettingMutable: (key: string) => {
+                if (key === 'promptFoldersV1') {
+                    return [
+                        {
+                            v: 1,
+                            folders: [
+                                { id: 'folder-1', name: 'Ops', parentId: null },
+                            ],
+                        },
+                        setPromptFoldersSpy,
+                    ];
+                }
+                return [null, vi.fn()];
+            },
+            storage: {
+                getState: () => ({
+                    artifacts: {
+                        'doc-1': {
+                            id: 'doc-1',
+                            header: { title: 'Doc title', folderId: 'folder-1', tags: ['alpha', 'beta'] },
+                            body: JSON.stringify({
+                                v: 1,
+                                markdown: 'existing markdown',
+                                createdAtMs: 1,
+                                updatedAtMs: 2,
+                            }),
+                        },
+                    },
+                    updateArtifact: vi.fn(),
+                }),
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/layout/layout', () => ({
@@ -100,11 +142,6 @@ vi.mock('@/components/ui/settingsSurface/SettingsActionFooter', () => ({
     SettingsActionFooter: (props: any) => React.createElement('SettingsActionFooter', props),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
 vi.mock('@/sync/sync', () => ({
     sync: {
         getCredentials: () => ({ ok: true }),
@@ -117,58 +154,11 @@ vi.mock('@/sync/ops/promptLibrary/promptDocs', () => ({
     updatePromptDoc: updatePromptDocSpy,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useAllMachines: () => ([
-        {
-            id: 'machine-1',
-            metadata: {
-                displayName: 'Laptop',
-                host: 'laptop.local',
-            },
-        },
-    ]),
-    useSetting: (key: string) => {
-        if (key === 'promptExternalLinksV1') return promptExternalLinksState.value;
-        return null;
-    },
-    useSettingMutable: (key: string) => {
-        if (key === 'promptFoldersV1') {
-            return [{
-                v: 1,
-                folders: [
-                    { id: 'folder-1', name: 'Ops', parentId: null },
-                ],
-            }, setPromptFoldersSpy];
-        }
-        return [null, vi.fn()];
-    },
-    storage: {
-        getState: () => ({
-            artifacts: {
-                'doc-1': {
-                    id: 'doc-1',
-                    header: { title: 'Doc title', folderId: 'folder-1', tags: ['alpha', 'beta'] },
-                    body: JSON.stringify({
-                        v: 1,
-                        markdown: 'existing markdown',
-                        createdAtMs: 1,
-                        updatedAtMs: 2,
-                    }),
-                },
-            },
-            updateArtifact: vi.fn(),
-        }),
-    },
-});
-});
-
 describe('PromptDocEditorScreen', () => {
     beforeEach(() => {
-        routerBackSpy.mockReset();
-        routerReplaceSpy.mockReset();
-        routerPushSpy.mockReset();
+        promptLibrarySettingsRouterBackSpy.mockReset();
+        promptLibrarySettingsRouterReplaceSpy.mockReset();
+        promptLibrarySettingsRouterPushSpy.mockReset();
         updatePromptDocSpy.mockClear();
         setPromptFoldersSpy.mockClear();
     });
@@ -189,8 +179,8 @@ describe('PromptDocEditorScreen', () => {
             folderId: 'folder-1',
             tags: ['alpha', 'beta'],
         });
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/prompts/docs');
-        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(promptLibrarySettingsRouterReplaceSpy).toHaveBeenCalledWith('/settings/prompts/docs');
+        expect(promptLibrarySettingsRouterBackSpy).not.toHaveBeenCalled();
     });
 
     it('navigates to the external export screen for an existing prompt doc', async () => {
@@ -199,7 +189,7 @@ describe('PromptDocEditorScreen', () => {
 
         await screen.pressByTestIdAsync('promptDoc.manageExternalAssets');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1/export');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1/export');
     });
 
     it('renders linked exports and a settings footer for existing docs', async () => {

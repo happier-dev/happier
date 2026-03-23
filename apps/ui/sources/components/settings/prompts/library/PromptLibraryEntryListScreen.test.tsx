@@ -2,6 +2,11 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installPromptLibrarySettingsCommonModuleMocks,
+    promptLibrarySettingsRouterBackSpy,
+    promptLibrarySettingsRouterPushSpy,
+} from '../promptLibrarySettingsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,8 +16,6 @@ const modalConfirmMock = vi.hoisted(() => vi.fn(async () => true));
 const duplicatePromptDocMock = vi.hoisted(() => vi.fn(async () => 'doc-1-copy'));
 const duplicatePromptBundleMock = vi.hoisted(() => vi.fn(async () => 'bundle-1-copy'));
 const modalAlertMock = vi.hoisted(() => vi.fn());
-const routerPushSpy = vi.fn();
-const routerBackSpy = vi.fn();
 const setPromptInvocationsMock = vi.fn();
 const setPromptStacksMock = vi.fn();
 const setPromptExternalLinksMock = vi.fn();
@@ -31,41 +34,92 @@ const useArtifactsMock = vi.hoisted(() => vi.fn(() => [
     },
 ]));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: 'View',
-                                            Platform: {
-                                                OS: 'web',
-                                                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
-                                            },
-                                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                groupped: { background: 'white' },
-                textSecondary: '#999',
-                input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
-                deleteAction: '#f00',
-                button: { secondary: { tint: '#777' } },
+installPromptLibrarySettingsCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                confirm: modalConfirmMock,
+                alert: modalAlertMock,
             },
-        },
-    });
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy, back: routerBackSpy },
-    });
-    return routerMock.module;
+        }).module;
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    groupped: { background: 'white' },
+                    textSecondary: '#999',
+                    input: { background: '#fff', text: '#111', placeholder: '#666' },
+                    accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
+                    deleteAction: '#f00',
+                    button: { secondary: { tint: '#777' } },
+                },
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: {
+                push: promptLibrarySettingsRouterPushSpy,
+                back: promptLibrarySettingsRouterBackSpy,
+            },
+        });
+        return routerMock.module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useArtifacts: () => useArtifactsMock(),
+            useAllMachines: () => [],
+            useSettingMutable: (key: string) => {
+                if (key === 'promptInvocationsV1') return [{ v: 1, entries: [{ id: 'template-1', target: { kind: 'doc', artifactId: 'doc-1' } }] }, setPromptInvocationsMock];
+                if (key === 'promptStacksV1') {
+                    return [{
+                        v: 1,
+                        surfaces: {
+                            coding: [{ id: 'stack-1', ref: { kind: 'doc', artifactId: 'doc-1' }, enabled: true, placement: 'system_append', editPolicy: 'user_only' }],
+                            voice: [],
+                            profilesById: {},
+                        },
+                    }, setPromptStacksMock];
+                }
+                if (key === 'promptExternalLinksV1') {
+                    return [{
+                        v: 1,
+                        links: [
+                            {
+                                id: 'link-1',
+                                artifactId: 'doc-1',
+                                assetTypeId: 'claude.command',
+                                machineId: 'machine-1',
+                                scope: 'user',
+                                workspacePath: null,
+                                externalRef: { relativePath: 'qa.md' },
+                                lastExternalDigest: 'digest-1',
+                            },
+                        ],
+                    }, setPromptExternalLinksMock];
+                }
+                if (key === 'promptFoldersV1') {
+                    return [{
+                        v: 1,
+                        folders: [
+                            { id: 'folder-1', name: 'Ops', parentId: null },
+                        ],
+                    }, setPromptFoldersMock];
+                }
+                return [null, vi.fn()];
+            },
+            storage: {
+                getState: () => ({
+                    deleteArtifact: vi.fn(),
+                }),
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -95,68 +149,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/components/ui/forms/settingsTextInputMetrics', () => ({
     SETTINGS_TEXT_INPUT_METRICS: {},
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: modalConfirmMock,
-            alert: modalAlertMock,
-        },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useArtifacts: () => useArtifactsMock(),
-    useAllMachines: () => [],
-    useSettingMutable: (key: string) => {
-        if (key === 'promptInvocationsV1') return [{ v: 1, entries: [{ id: 'template-1', target: { kind: 'doc', artifactId: 'doc-1' } }] }, setPromptInvocationsMock];
-        if (key === 'promptStacksV1') {
-            return [{
-                v: 1,
-                surfaces: {
-                    coding: [{ id: 'stack-1', ref: { kind: 'doc', artifactId: 'doc-1' }, enabled: true, placement: 'system_append', editPolicy: 'user_only' }],
-                    voice: [],
-                    profilesById: {},
-                },
-            }, setPromptStacksMock];
-        }
-        if (key === 'promptExternalLinksV1') {
-            return [{
-                v: 1,
-                links: [
-                    {
-                        id: 'link-1',
-                        artifactId: 'doc-1',
-                        assetTypeId: 'claude.command',
-                        machineId: 'machine-1',
-                        scope: 'user',
-                        workspacePath: null,
-                        externalRef: { relativePath: 'qa.md' },
-                        lastExternalDigest: 'digest-1',
-                    },
-                ],
-            }, setPromptExternalLinksMock];
-        }
-        if (key === 'promptFoldersV1') {
-            return [{
-                v: 1,
-                folders: [
-                    { id: 'folder-1', name: 'Ops', parentId: null },
-                ],
-            }, setPromptFoldersMock];
-        }
-        return [null, vi.fn()];
-    },
-    storage: {
-        getState: () => ({
-            deleteArtifact: vi.fn(),
-        }),
-    },
-});
-});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -188,17 +180,12 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 describe('PromptLibraryEntryListScreen', () => {
     beforeEach(() => {
         deleteArtifactMock.mockClear();
         modalConfirmMock.mockClear();
-        routerPushSpy.mockClear();
-        routerBackSpy.mockClear();
+        promptLibrarySettingsRouterPushSpy.mockClear();
+        promptLibrarySettingsRouterBackSpy.mockClear();
         setPromptInvocationsMock.mockClear();
         setPromptStacksMock.mockClear();
         setPromptExternalLinksMock.mockClear();
@@ -283,7 +270,7 @@ describe('PromptLibraryEntryListScreen', () => {
         });
 
         expect(duplicatePromptDocMock).toHaveBeenCalledWith('doc-1');
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1-copy');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1-copy');
     });
 
     it('keeps local references unchanged when deleting a prompt artifact fails', async () => {
@@ -318,7 +305,7 @@ describe('PromptLibraryEntryListScreen', () => {
             await duplicateAction?.onPress?.();
         });
 
-        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(promptLibrarySettingsRouterPushSpy).not.toHaveBeenCalled();
         expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'errors.unknownError');
     });
 });

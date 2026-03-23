@@ -3,11 +3,14 @@ import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PromptRegistryFetchItemResponseV1 } from '@happier-dev/protocol';
 import { invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import {
+  installPromptRegistriesCommonModuleMocks,
+  promptRegistriesRouterPushSpy,
+} from './promptRegistriesScreenTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerPushSpy = vi.fn();
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const machinePromptRegistriesDownloadItemMock = vi.hoisted(() => vi.fn<() => Promise<PromptRegistryFetchItemResponseV1>>(async () => ({
@@ -84,47 +87,54 @@ const machinePromptAssetsListTypesMock = vi.hoisted(() => vi.fn(async () => ({
     },
   ],
 })));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
+installPromptRegistriesCommonModuleMocks({
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+      spies: {
+        alert: modalAlertSpy,
+        confirm: modalConfirmSpy,
+      },
+    }).module;
+  },
+  storage: async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+      useAllMachines: () => [
         {
-                                            View: 'View',
-                                            ScrollView: 'ScrollView',
-                                            Platform: {
-                                                OS: 'web',
-                                                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
-                                            },
-                                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
+          id: 'machine-1',
+          metadata: {
+            displayName: 'Laptop',
+            host: 'laptop.local',
+          },
+        },
+      ],
+      useSettingMutable: (key: string) => {
+        if (key === 'promptRegistrySourcesV1') return [{ v: 1, sources: [] }, vi.fn()];
+        if (key === 'promptExternalLinksV1') return [{ v: 1, links: [] }, vi.fn()];
+        return [undefined, vi.fn()];
+      },
+    });
+  },
+  unistyles: async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock({
-        theme: {
-      colors: {
-        groupped: { background: 'white' },
-        textSecondary: '#999',
-        divider: '#ddd',
-        input: { background: '#fff', text: '#111', placeholder: '#666' },
-        accent: { indigo: '#60f', purple: '#90f', blue: '#00f' },
+      theme: {
+        colors: {
+          groupped: { background: 'white' },
+          textSecondary: '#999',
+          divider: '#ddd',
+          input: { background: '#fff', text: '#111', placeholder: '#666' },
+          accent: { indigo: '#60f', purple: '#90f', blue: '#00f' },
+        },
       },
-    },
     });
+  },
 });
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
 
 vi.mock('@/components/ui/layout/layout', () => ({
   layout: { maxWidth: 1000 },
@@ -174,16 +184,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
   }, [action])],
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-            confirm: modalConfirmSpy,
-        },
-    }).module;
-});
-
 vi.mock('@/sync/ops/machinePromptRegistries', () => ({
   machinePromptRegistriesDownloadItem: machinePromptRegistriesDownloadItemMock,
 }));
@@ -200,34 +200,9 @@ vi.mock('@/sync/ops/promptLibrary/installPromptRegistryItem', () => ({
   installPromptRegistryItem: installPromptRegistryItemMock,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useAllMachines: () => [
-    {
-      id: 'machine-1',
-      metadata: {
-        displayName: 'Laptop',
-        host: 'laptop.local',
-      },
-    },
-  ],
-    useSettingMutable: (key: string) => {
-    if (key === 'promptRegistrySourcesV1') return [{ v: 1, sources: [] }, vi.fn()];
-    if (key === 'promptExternalLinksV1') return [{ v: 1, links: [] }, vi.fn()];
-    return [undefined, vi.fn()];
-  },
-});
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 describe('PromptRegistryItemDetailsScreen', () => {
   beforeEach(() => {
-    routerPushSpy.mockReset();
+    promptRegistriesRouterPushSpy.mockReset();
     modalAlertSpy.mockReset();
     modalConfirmSpy.mockReset();
     machinePromptRegistriesDownloadItemMock.mockClear();
@@ -266,7 +241,7 @@ describe('PromptRegistryItemDetailsScreen', () => {
     expect(createPromptRegistrySkillArtifactFromFetchedItemMock).toHaveBeenCalledWith(expect.objectContaining({
       title: 'frontend-design',
     }));
-    expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
+    expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
   });
 
   it('installs the fetched registry item to an external skill target', async () => {
@@ -308,7 +283,7 @@ describe('PromptRegistryItemDetailsScreen', () => {
     expect(installPromptRegistryItemMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
       previewOnly: false,
     }));
-    expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-2');
+    expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-2');
   });
 
   it('selects a scope-compatible install target before exporting', async () => {

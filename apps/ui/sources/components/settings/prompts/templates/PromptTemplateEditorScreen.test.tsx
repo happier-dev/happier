@@ -1,50 +1,68 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installPromptTemplatesCommonModuleMocks,
+    promptTemplatesRouterBackSpy,
+    promptTemplatesRouterPushSpy,
+} from './promptTemplatesScreenTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerPushSpy = vi.fn();
-const routerBackSpy = vi.fn();
 const setInvocationsMock = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                    ScrollView: 'ScrollView',
-                                                    View: 'View',
-                                                    Switch: 'Switch',
-                                                    Platform: {
-                                                        OS: 'web',
-                                                        select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
-                                                    },
-                                                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                groupped: { background: 'white' },
-                input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f', indigo: '#60f' },
-                textSecondary: '#999',
-                textDestructive: '#f00',
+installPromptTemplatesCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            ScrollView: 'ScrollView',
+            View: 'View',
+            Switch: 'Switch',
+            Platform: {
+                OS: 'web',
+                select: ({ web, default: defaultValue }: { web?: unknown; default?: unknown }) =>
+                    web ?? defaultValue,
             },
-        },
-    });
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy, back: routerBackSpy },
-    });
-    return routerMock.module;
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    groupped: { background: 'white' },
+                    input: { background: '#fff', text: '#111', placeholder: '#666' },
+                    accent: { blue: '#00f', indigo: '#60f' },
+                    textSecondary: '#999',
+                    textDestructive: '#f00',
+                },
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: promptTemplatesRouterPushSpy, back: promptTemplatesRouterBackSpy },
+        });
+        return routerMock.module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useArtifacts: () => [
+                { id: 'doc-1', title: 'Prompt One', header: { kind: 'prompt_doc.v2', title: 'Prompt One' } },
+                { id: 'doc-2', title: 'Prompt Two', header: { kind: 'prompt_doc.v2', title: 'Prompt Two' } },
+            ],
+            useSettingMutable: () => [
+                {
+                    v: 1,
+                    entries: [],
+                },
+                setInvocationsMock,
+            ],
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -86,38 +104,14 @@ vi.mock('@/components/ui/settingsSurface/SettingsActionFooter', () => ({
     }),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useArtifacts: () => ([
-        { id: 'doc-1', title: 'Prompt One', header: { kind: 'prompt_doc.v2', title: 'Prompt One' } },
-        { id: 'doc-2', title: 'Prompt Two', header: { kind: 'prompt_doc.v2', title: 'Prompt Two' } },
-    ]),
-    useSettingMutable: () => [{
-        v: 1,
-        entries: [],
-    }, setInvocationsMock],
-});
-});
-
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'template-1',
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 describe('PromptTemplateEditorScreen', () => {
     beforeEach(() => {
-        routerPushSpy.mockClear();
-        routerBackSpy.mockClear();
+        promptTemplatesRouterPushSpy.mockClear();
+        promptTemplatesRouterBackSpy.mockClear();
         setInvocationsMock.mockClear();
     });
 

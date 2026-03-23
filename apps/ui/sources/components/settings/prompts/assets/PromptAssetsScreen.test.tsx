@@ -7,11 +7,13 @@ import type {
     PromptAssetReadResponseV1,
 } from '@happier-dev/protocol';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
-
+import {
+    installPromptAssetsCommonModuleMocks,
+    promptAssetsRouterPushSpy,
+} from './promptAssetsScreenTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerPushSpy = vi.fn();
 const machinePromptAssetsListTypesMock = vi.hoisted(() => vi.fn<() => Promise<PromptAssetListTypesResponseV1>>(async () => ({
     ok: true,
     types: [
@@ -124,36 +126,9 @@ const machinesState = vi.hoisted(() => ({
     }>,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                    View: 'View',
-                                                    ScrollView: 'ScrollView',
-                                                    Platform: {
-                                                        OS: 'web',
-                                                        select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
-                                                    },
-                                                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -194,41 +169,44 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     }, [action])],
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => true),
-        },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useArtifacts: () => ([
-        { id: 'bundle-1', title: 'Refactor', header: { kind: 'prompt_bundle.v2', title: 'Refactor' } },
-        { id: 'doc-1', title: 'review/code', header: { kind: 'prompt_doc.v2', title: 'review/code' } },
-    ]),
-    useAllMachines: () => machinesState.value,
-    useMachineListByServerId: () => ({}),
-    useMachineListStatusByServerId: () => ({}),
-    useSetting: (key: string) => {
-        if (key === 'serverSelectionGroups') return [];
-        if (key === 'promptExternalLinksV1') return promptExternalLinksState.value;
-        return null;
+installPromptAssetsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            ScrollView: 'ScrollView',
+            Platform: {
+                OS: 'web',
+                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+            },
+        });
     },
-    useSettingMutable: (key: string) => {
-        if (key === 'contextSelectionsV1') {
-            return [contextSelectionsState.value, setContextSelectionsMock];
-        }
-        if (key === 'promptExternalLinksV1') {
-            return [promptExternalLinksState.value, setPromptExternalLinksMock];
-        }
-        return [null, vi.fn()];
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useArtifacts: () => ([
+                { id: 'bundle-1', title: 'Refactor', header: { kind: 'prompt_bundle.v2', title: 'Refactor' } },
+                { id: 'doc-1', title: 'review/code', header: { kind: 'prompt_doc.v2', title: 'review/code' } },
+            ]),
+            useAllMachines: () => machinesState.value,
+            useMachineListByServerId: () => ({}),
+            useMachineListStatusByServerId: () => ({}),
+            useSetting: (key: string) => {
+                if (key === 'serverSelectionGroups') return [];
+                if (key === 'promptExternalLinksV1') return promptExternalLinksState.value;
+                return null;
+            },
+            useSettingMutable: (key: string) => {
+                if (key === 'contextSelectionsV1') {
+                    return [contextSelectionsState.value, setContextSelectionsMock];
+                }
+                if (key === 'promptExternalLinksV1') {
+                    return [promptExternalLinksState.value, setPromptExternalLinksMock];
+                }
+                return [null, vi.fn()];
+            },
+        });
     },
-});
 });
 
 vi.mock('@/sync/ops/machinePromptAssets', () => ({
@@ -266,7 +244,7 @@ vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection
 describe('PromptAssetsScreen', () => {
     beforeEach(() => {
         vi.resetModules();
-        routerPushSpy.mockReset();
+        promptAssetsRouterPushSpy.mockReset();
         machinePromptAssetsListTypesMock.mockClear();
         machinePromptAssetsDiscoverMock.mockClear();
         machinePromptAssetsDownloadMock.mockClear();
@@ -355,7 +333,7 @@ describe('PromptAssetsScreen', () => {
                 }),
             ],
         }));
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
+        expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
     });
 
     it('clears project-scoped discovery after the selected machine changes until a workspace path is chosen again', async () => {
@@ -498,7 +476,7 @@ describe('PromptAssetsScreen', () => {
                 }),
             ],
         }));
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1');
+        expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1');
     });
 
     it('uses the persisted context selection when refreshing external assets', async () => {

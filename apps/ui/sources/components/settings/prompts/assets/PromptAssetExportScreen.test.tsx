@@ -2,6 +2,7 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { renderScreen } from '@/dev/testkit';
+import { installPromptAssetsCommonModuleMocks } from './promptAssetsScreenTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -172,55 +173,92 @@ async function renderPromptAssetExportScreen(artifactId: string) {
   return renderScreen(React.createElement(PromptAssetExportScreen, { artifactId }));
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                    View: 'View',
-                                                    ScrollView: 'ScrollView',
-                                                    TextInput: 'TextInput',
-                                                    Platform: {
-                                                        OS: 'web',
-                                                        select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
-                                                    },
-                                                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-      colors: {
-        textSecondary: '#999',
-        input: { placeholder: '#666' },
-        accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
-        deleteAction: '#f33',
-        button: { primary: { tint: '#fff' } },
-      },
-    },
-    });
-});
-
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installPromptAssetsCommonModuleMocks({
+  unistyles: async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+      theme: {
+        colors: {
+          textSecondary: '#999',
+          input: { placeholder: '#666' },
+          accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
+          deleteAction: '#f33',
+          button: { primary: { tint: '#fff' } },
+        },
+      },
+    });
+  },
+  storage: async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+      useAllMachines: () => [
+        {
+          id: 'machine-1',
+          metadata: {
+            displayName: 'Laptop',
+            host: 'laptop.local',
+            homeDir: '/Users/test',
+          },
+        },
+      ],
+      useSettingMutable: (key: string) => {
+        if (key === 'promptExternalLinksV1') {
+          return [promptExternalLinksState.value, setPromptExternalLinksMock];
+        }
+        if (key === 'contextSelectionsV1') {
+          return [contextSelectionsState.value, setContextSelectionsMock];
+        }
+        return [null, vi.fn()];
+      },
+      getState: () => ({
+        artifacts: {
+          'doc-1': {
+            id: 'doc-1',
+            header: { title: 'review/code', kind: 'prompt_doc.v2' },
+            body: JSON.stringify({
+              v: 1,
+              markdown: '# Review code\n\nUse $ARGUMENTS',
+              createdAtMs: 1,
+              updatedAtMs: 2,
+            }),
+          },
+          'bundle-1': {
+            id: 'bundle-1',
+            header: { title: 'reviewer', kind: 'prompt_bundle.v2' },
+            body: JSON.stringify({
+              v: 1,
+              entries: [
+                {
+                  path: 'SKILL.md',
+                  contentBase64: Buffer.from('# Reviewer\n', 'utf8').toString('base64'),
+                  contentKind: 'utf8',
+                },
+              ],
+              createdAtMs: 1,
+              updatedAtMs: 2,
+            }),
+          },
+          'broken-1': {
+            id: 'broken-1',
+            header: { title: 'broken artifact', kind: 'prompt_doc.v2' },
+            body: '{not-json',
+          },
+        },
+        updateArtifact: vi.fn(),
+      }),
+    });
+  },
 });
 
 vi.mock('@/components/ui/layout/layout', () => ({
   layout: { maxWidth: 960 },
 }));
 
-vi.mock('@/components/contextBar/ContextBar', () => createPassThroughModule(['ContextBar']));
+vi.mock('@/components/settings/contextBar/ContextBar', () => createPassThroughModule(['ContextBar']));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
 
@@ -230,80 +268,7 @@ vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemG
 
 vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
 
-vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text']));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => true),
-        },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-  useAllMachines: () => [
-    {
-      id: 'machine-1',
-      metadata: {
-        displayName: 'Laptop',
-        host: 'laptop.local',
-        homeDir: '/Users/test',
-      },
-    },
-  ],
-  useSettingMutable: (key: string) => {
-    if (key === 'promptExternalLinksV1') {
-      return [promptExternalLinksState.value, setPromptExternalLinksMock];
-    }
-    if (key === 'contextSelectionsV1') {
-      return [contextSelectionsState.value, setContextSelectionsMock];
-    }
-    return [null, vi.fn()];
-  },
-  storage: {
-    getState: () => ({
-      artifacts: {
-        'doc-1': {
-          id: 'doc-1',
-          header: { title: 'review/code', kind: 'prompt_doc.v2' },
-          body: JSON.stringify({
-            v: 1,
-            markdown: '# Review code\n\nUse $ARGUMENTS',
-            createdAtMs: 1,
-            updatedAtMs: 2,
-          }),
-        },
-        'bundle-1': {
-          id: 'bundle-1',
-          header: { title: 'reviewer', kind: 'prompt_bundle.v2' },
-          body: JSON.stringify({
-            v: 1,
-            entries: [
-              {
-                path: 'SKILL.md',
-                contentBase64: Buffer.from('# Reviewer\n', 'utf8').toString('base64'),
-                contentKind: 'utf8',
-              },
-            ],
-            createdAtMs: 1,
-            updatedAtMs: 2,
-          }),
-        },
-        'broken-1': {
-          id: 'broken-1',
-          header: { title: 'broken artifact', kind: 'prompt_doc.v2' },
-          body: '{not-json',
-        },
-      },
-      updateArtifact: vi.fn(),
-    }),
-  },
-});
-});
+vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
 
 vi.mock('@/sync/sync', () => ({
   sync: {
