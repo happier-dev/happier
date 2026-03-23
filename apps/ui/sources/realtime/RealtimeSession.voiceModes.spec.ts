@@ -189,17 +189,10 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function advanceFakeTimersAndFlush(ms: number): Promise<void> {
-  await vi.advanceTimersByTimeAsync(ms);
-}
-
-async function withFakeTimers(testFn: () => Promise<void>): Promise<void> {
-  vi.useFakeTimers();
-  try {
-    await testFn();
-  } finally {
-    vi.useRealTimers();
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 describe('Realtime voice modes', () => {
@@ -273,44 +266,45 @@ describe('Realtime voice modes', () => {
 
   describe('happier voice lifecycle', () => {
     it('records the session limit and announces when the server-minted lease is near expiry', async () => {
-      await withFakeTimers(async () => {
-        fetchHappierVoiceToken.mockResolvedValueOnce({
-          allowed: true,
-          token: 'conv_token',
-          leaseId: 'lease_1',
-          expiresAtMs: Date.now() + 30_000,
-        });
-
-        const { registerVoiceSession, startRealtimeSession, stopRealtimeSession } = await import('./RealtimeSession');
-        const { session } = makeVoiceSession('conv_0');
-        registerVoiceSession(session);
-
-        await startRealtimeSession('s1', 'BASE_CTX');
-
-        expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
-          expect.objectContaining({
-            conversationSessionId: 'voice-conversation-1',
-            text: 'errors.voiceSessionLimitStarted',
-          }),
-        );
-        expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
-          expect.objectContaining({
-            conversationSessionId: 'voice-conversation-1',
-            text: 'errors.voiceSessionLimitExpiring',
-          }),
-        );
-
-        await advanceFakeTimersAndFlush(30_000);
-
-        expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
-          expect.objectContaining({
-            conversationSessionId: 'voice-conversation-1',
-            text: 'errors.voiceSessionLimitExpired',
-          }),
-        );
-
-        await stopRealtimeSession();
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 40,
       });
+
+      const { registerVoiceSession, startRealtimeSession, stopRealtimeSession } = await import('./RealtimeSession');
+      const { session } = makeVoiceSession('conv_0');
+      registerVoiceSession(session);
+
+      await startRealtimeSession('s1', 'BASE_CTX');
+
+      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationSessionId: 'voice-conversation-1',
+          text: 'errors.voiceSessionLimitStarted',
+        }),
+      );
+
+      await sleep(20);
+
+      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationSessionId: 'voice-conversation-1',
+          text: 'errors.voiceSessionLimitExpiring',
+        }),
+      );
+
+      await sleep(50);
+
+      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationSessionId: 'voice-conversation-1',
+          text: 'errors.voiceSessionLimitExpired',
+        }),
+      );
+
+      await stopRealtimeSession();
     });
 
     it('appends welcome instructions to the initial context when enabled (immediate)', async () => {
@@ -472,31 +466,29 @@ describe('Realtime voice modes', () => {
     });
 
     it('retries after paywall purchase without deadlocking', async () => {
-      await withFakeTimers(async () => {
-        fetchHappierVoiceToken
-          .mockResolvedValueOnce({ allowed: false, reason: 'subscription_required' })
-          .mockResolvedValueOnce({
-            allowed: true,
-            token: 'conv_token',
-            leaseId: 'lease_1',
-            expiresAtMs: Date.now() + 60_000,
-          });
+      fetchHappierVoiceToken
+        .mockResolvedValueOnce({ allowed: false, reason: 'subscription_required' })
+        .mockResolvedValueOnce({
+          allowed: true,
+          token: 'conv_token',
+          leaseId: 'lease_1',
+          expiresAtMs: Date.now() + 40,
+        });
 
-        const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
-        const { session, startSession } = makeVoiceSession('conv_1');
-        registerVoiceSession(session);
+      const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
+      const { session, startSession } = makeVoiceSession('conv_1');
+      registerVoiceSession(session);
 
-        const startPromise = startRealtimeSession('s1', 'hi');
-        const race = Promise.race([
-          startPromise.then(() => 'resolved' as const),
-          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1)),
-        ]);
-        await advanceFakeTimersAndFlush(1);
+      const startPromise = startRealtimeSession('s1', 'hi');
+      const race = Promise.race([
+        startPromise.then(() => 'resolved' as const),
+        sleep(50).then(() => 'timeout' as const),
+      ]);
 
-        expect(await race).toBe('resolved');
-        expect(presentPaywall).toHaveBeenCalledTimes(1);
-        expect(startSession).toHaveBeenCalledTimes(1);
-      });
+      expect(await race).toBe('resolved');
+      await startPromise;
+      expect(presentPaywall).toHaveBeenCalledTimes(1);
+      expect(startSession).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -564,39 +556,37 @@ describe('Realtime voice modes', () => {
     });
 
     it('stop does not hang when a start attempt is stuck in token minting', async () => {
-      await withFakeTimers(async () => {
-        const fetchStarted = createDeferred<void>();
-        fetchHappierVoiceToken.mockImplementationOnce(async (_credentials, options) => {
-          fetchStarted.resolve();
-          return new Promise((_, reject) => {
-            const signal = options?.signal;
-            if (!signal) return;
-            signal.addEventListener(
-              'abort',
-              () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
-              { once: true },
-            );
-          });
+      const fetchStarted = createDeferred<void>();
+      fetchHappierVoiceToken.mockImplementationOnce(async (_credentials, options) => {
+        fetchStarted.resolve();
+        return new Promise((_, reject) => {
+          const signal = options?.signal;
+          if (!signal) return;
+          signal.addEventListener(
+            'abort',
+            () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
+            { once: true },
+          );
         });
-
-        const { registerVoiceSession, startRealtimeSession, stopRealtimeSession } = await import('./RealtimeSession');
-        const { session, startSession, endSession } = makeVoiceSession('conv_1');
-        registerVoiceSession(session);
-
-        void startRealtimeSession('s1', 'hi');
-        await fetchStarted.promise;
-
-        const stopPromise = stopRealtimeSession();
-        const race = Promise.race([
-          stopPromise.then(() => 'stopped' as const),
-          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1_000)),
-        ]);
-        await advanceFakeTimersAndFlush(1_000);
-
-        expect(await race).toBe('stopped');
-        expect(endSession).toHaveBeenCalledTimes(1);
-        expect(startSession).not.toHaveBeenCalled();
       });
+
+      const { registerVoiceSession, startRealtimeSession, stopRealtimeSession } = await import('./RealtimeSession');
+      const { session, startSession, endSession } = makeVoiceSession('conv_1');
+      registerVoiceSession(session);
+
+      void startRealtimeSession('s1', 'hi');
+      await fetchStarted.promise;
+
+      const stopPromise = stopRealtimeSession();
+      const race = Promise.race([
+        stopPromise.then(() => 'stopped' as const),
+        sleep(100).then(() => 'timeout' as const),
+      ]);
+
+      expect(await race).toBe('stopped');
+      await stopPromise;
+      expect(endSession).toHaveBeenCalledTimes(1);
+      expect(startSession).not.toHaveBeenCalled();
     });
   });
 });

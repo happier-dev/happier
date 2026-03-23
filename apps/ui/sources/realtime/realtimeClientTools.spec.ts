@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { installRealtimeCommonModuleMocks } from './realtimeTestHelpers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 const trackPermissionResponse = vi.fn();
@@ -18,13 +20,13 @@ const state: any = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-    getState: () => state,
-  },
-});
+installRealtimeCommonModuleMocks({
+  storage: () =>
+    createStorageModuleStub({
+      storage: {
+        getState: () => state,
+      },
+    }),
 });
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({

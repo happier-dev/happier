@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installRealtimeCommonModuleMocks } from './realtimeTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -37,6 +38,31 @@ const languagePreferences = {
   adapter: null as string | null,
 };
 
+installRealtimeCommonModuleMocks({
+  storage: async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+      storage: {
+        getState: () => ({
+          settings: {
+            voice: {
+              assistantLanguage: languagePreferences.global,
+              adapters: {
+                realtime_elevenlabs: {
+                  assistantLanguage: languagePreferences.adapter,
+                },
+              },
+            },
+          },
+          setRealtimeStatus,
+          setRealtimeMode,
+          clearRealtimeModeDebounce,
+        }),
+      },
+    });
+  },
+});
+
 vi.mock('@elevenlabs/react', () => ({
   useConversation: (opts: any) => {
     lastConversationOptions = opts;
@@ -51,36 +77,9 @@ vi.mock('@elevenlabs/react', () => ({
   },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-    getState: () => ({
-      settings: {
-        voice: {
-          assistantLanguage: languagePreferences.global,
-          adapters: {
-            realtime_elevenlabs: {
-              assistantLanguage: languagePreferences.adapter,
-            },
-          },
-        },
-      },
-      setRealtimeStatus,
-      setRealtimeMode,
-      clearRealtimeModeDebounce,
-    }),
-  },
-});
-});
-
 vi.mock('@/constants/Languages', () => ({
   getElevenLabsCodeFromPreference,
 }));
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 vi.mock('./realtimeClientTools', () => ({
   realtimeClientTools: {},
 }));

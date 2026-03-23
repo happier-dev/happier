@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installRealtimeCommonModuleMocks } from './realtimeTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,22 +12,6 @@ const modalAlert = vi.fn();
 const appendRealtimeVoiceTranscriptEvent = vi.fn();
 const getBindingByControlSessionId = vi.fn((_controlSessionId: string) => null as any);
 const ensureVoiceBinding = vi.fn(async (_params: any) => null);
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: (...args: any[]) => modalAlert(...args),
-            confirm: vi.fn(async () => false),
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 vi.mock('@/utils/platform/microphonePermissions', () => ({
   requestMicrophonePermission: vi.fn(async () => ({ granted: true, canAskAgain: true })),
@@ -85,12 +70,25 @@ const state: any = {
   clearRealtimeModeDebounce: vi.fn(),
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: { getState: () => state },
+installRealtimeCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: (...args: any[]) => modalAlert(...args),
+                confirm: vi.fn(async () => false),
+                prompt: vi.fn(async () => null),
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: { getState: () => state },
+        });
+    },
 });
-});
+
 vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
   resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
     getBindingByControlSessionId(params.controlSessionId),
