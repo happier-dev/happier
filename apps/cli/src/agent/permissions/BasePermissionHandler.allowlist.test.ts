@@ -183,6 +183,42 @@ describe('BasePermissionHandler allowlist', () => {
     );
   });
 
+  it('ignores stale permission responses that do not match any agentState request (no allowlist updates, no auto-approvals)', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+
+    const pendingInput = { command: ['bash', '-lc', 'find . -maxdepth 1 -type f | head -n 5'] };
+    const pendingPromise = handler.request('perm-2', 'Bash', pendingInput);
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+
+    // Response id does not exist in pendingRequests AND does not exist in agentState.requests.
+    // We must fail closed: don't update allowlists and don't auto-approve unrelated prompts.
+    await rpc!({
+      id: 'perm-stale',
+      approved: true,
+      updatedPermissions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'session',
+          rules: [{ toolName: 'Bash', ruleContent: 'find:*' }],
+        },
+      ],
+    });
+
+    expect(handler.isAllowed('Bash', pendingInput)).toBe(false);
+    expect(session.agentState.completedRequests['perm-stale']).toBeUndefined();
+
+    const raced = await Promise.race([
+      pendingPromise.then(() => 'resolved' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 20)),
+    ]);
+    expect(raced).toBe('timeout');
+    expect(session.agentState.requests['perm-2']).toBeTruthy();
+  });
+
   it('returns structured answers for AskUserQuestion responses', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);
@@ -244,6 +280,45 @@ describe('BasePermissionHandler allowlist', () => {
     const result = await promise;
     expect(result.decision).toBe('abort');
     expect(aborted).toBe(false);
+  });
+
+  it('does not auto-approve other pending requests when user responds with abort', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+
+    // Seed a session-wide allow rule so a later pending request would be eligible for auto-approval.
+    const seed = handler.request('perm-seed', 'Bash', { command: ['bash', '-lc', 'find . -maxdepth 1 -type f | head -n 5'] });
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({
+      id: 'perm-seed',
+      approved: true,
+      updatedPermissions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'session',
+          rules: [{ toolName: 'Bash', ruleContent: 'find:*' }],
+        },
+      ],
+    });
+    await seed;
+
+    const input1 = { command: ['bash', '-lc', 'find . -maxdepth 1 -type f | head -n 5'] };
+    const input2 = { command: ['bash', '-lc', 'find . -maxdepth 1 -type f | head -n 5'] };
+
+    const p1 = handler.request('perm-1', 'Bash', input1);
+    const p2 = handler.request('perm-2', 'Bash', input2);
+
+    await rpc!({ id: 'perm-1', approved: false, decision: 'abort' });
+    await expect(p1).resolves.toEqual(expect.objectContaining({ decision: 'abort' }));
+
+    const raced = await Promise.race([
+      p2.then(() => 'resolved' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 20)),
+    ]);
+    expect(raced).toBe('timeout');
+    expect(session.agentState.requests['perm-2']).toBeDefined();
   });
 
   it('clears the allowlist when the session reference is updated', async () => {
