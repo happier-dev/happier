@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { getAgentModelConfig, getProviderCliInstallGuideUrl } from '@happier-dev/agents';
+import { AGENT_IDS as SHARED_AGENT_IDS, getAgentModelConfig, getProviderCliInstallGuideUrl } from '@happier-dev/agents';
 
 import {
     resolveAgentIdFromCliDetectKey,
@@ -15,6 +15,7 @@ describe('agents/registryCore', () => {
     it('exposes a stable list of agent ids', () => {
         expect(Array.isArray(AGENT_IDS)).toBe(true);
         expect(AGENT_IDS.length).toBeGreaterThan(0);
+        expect([...AGENT_IDS].sort()).toEqual([...SHARED_AGENT_IDS].sort());
     });
 
     it('exports only agent ids that have a UI core config', () => {
