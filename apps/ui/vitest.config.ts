@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
 
 const maxForksEnv = Number.parseInt(process.env.VITEST_UI_MAX_FORKS ?? '', 10);
-const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0 ? maxForksEnv : 4;
+const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0 ? maxForksEnv : 1;
 
 function resolveExpoNodeModuleStub(id: string): string | null {
     if (id === 'expo-modules-core' || /(?:^|[\\/])node_modules[\\/](?:@[^\\/]+[\\/])?expo-modules-core[\\/]src[\\/]index\.ts$/.test(id) || /expo-modules-core[\\/]src[\\/]index\.ts$/.test(id)) {

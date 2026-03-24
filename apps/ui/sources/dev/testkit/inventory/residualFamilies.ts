@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { collectInlineMockFamilyStats, type InlineMockFamilyName } from '../../../../tools/migrations/inlineMockClassifier';
+
 export type ResidualInventoryEntry = Readonly<{
     path: string;
     text: string;
@@ -37,6 +39,11 @@ export type ResidualFileSummary = Readonly<{
     family: string;
     area: string;
     counts: ResidualCounterBucket;
+    inlineMockShapes: Readonly<{
+        total: number;
+        canonical: number;
+        adHoc: number;
+    }>;
     hotspotScore: number;
     codemodEligible: boolean;
     codemodBlockers: readonly ResidualCodemodBlocker[];
@@ -76,6 +83,22 @@ function createBucket(): ResidualCounterBucket {
             storage: 0,
         },
     };
+}
+
+function collectInlineMockShapeCounts(text: string, filePath: string) {
+    const familyStats = collectInlineMockFamilyStats(text, { filePath });
+    return (Object.keys(familyStats) as InlineMockFamilyName[]).reduce(
+        (summary, family) => ({
+            total: summary.total + familyStats[family].total,
+            canonical: summary.canonical + familyStats[family].canonical,
+            adHoc: summary.adHoc + familyStats[family].adHoc,
+        }),
+        {
+            total: 0,
+            canonical: 0,
+            adHoc: 0,
+        },
+    );
 }
 
 function detectArea(filePath: string): string {
@@ -209,6 +232,7 @@ export function collectResidualFileCounts(entries: readonly ResidualInventoryEnt
     return entries
         .map((entry) => {
             const counts = collectCountsForText(entry.text);
+            const inlineMockShapes = collectInlineMockShapeCounts(entry.text, entry.path);
             const { directory, family } = describeInventoryFile(entry.path);
             const codemodBlockers = collectCodemodBlockers(counts);
             return {
@@ -217,19 +241,15 @@ export function collectResidualFileCounts(entries: readonly ResidualInventoryEnt
                 family,
                 area: detectArea(entry.path),
                 counts,
+                inlineMockShapes,
                 hotspotScore: calculateHotspotScore(counts),
-                codemodEligible: codemodBlockers.length === 0 && (
-                    counts.inlineMocks.reactNative +
-                    counts.inlineMocks.unistyles +
-                    counts.inlineMocks.text +
-                    counts.inlineMocks.modal +
-                    counts.inlineMocks.router +
-                    counts.inlineMocks.storage
-                ) > 0,
+                codemodEligible: codemodBlockers.length === 0 && inlineMockShapes.adHoc > 0,
                 codemodBlockers,
             } satisfies ResidualFileSummary;
         })
         .sort((left, right) => (
+            Number(right.codemodEligible) - Number(left.codemodEligible) ||
+            right.inlineMockShapes.adHoc - left.inlineMockShapes.adHoc ||
             right.hotspotScore - left.hotspotScore ||
             right.counts.rendererCreate - left.counts.rendererCreate ||
             right.counts.requestAnimationFrame - left.counts.requestAnimationFrame ||
@@ -306,6 +326,9 @@ export function formatResidualFileHotspots(
         lines.push(`    hotspotScore=${summary.hotspotScore}`);
         lines.push(`    codemodEligible=${summary.codemodEligible}`);
         lines.push(`    codemodBlockers=${summary.codemodBlockers.length > 0 ? summary.codemodBlockers.join(',') : 'none'}`);
+        lines.push(`    inlineMockShapes.total=${summary.inlineMockShapes.total}`);
+        lines.push(`    inlineMockShapes.canonical=${summary.inlineMockShapes.canonical}`);
+        lines.push(`    inlineMockShapes.adHoc=${summary.inlineMockShapes.adHoc}`);
         lines.push(`    rendererCreate=${summary.counts.rendererCreate}`);
         lines.push(`    useFakeTimers=${summary.counts.useFakeTimers}`);
         lines.push(`    advanceTimers=${summary.counts.advanceTimers}`);

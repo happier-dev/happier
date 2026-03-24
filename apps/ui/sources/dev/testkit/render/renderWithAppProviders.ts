@@ -7,6 +7,7 @@ import { flushHookEffects, type FlushHookEffectsOptions } from '../hooks/flushHo
 export type RenderWithAppProvidersOptions = Readonly<{
     wrapper?: React.ComponentType<React.PropsWithChildren>;
     flushOptions?: FlushHookEffectsOptions;
+    createNodeMock?: renderer.TestRendererOptions['createNodeMock'];
 }>;
 
 export type RenderWithAppProvidersResult = Readonly<{
@@ -28,9 +29,12 @@ export async function renderWithAppProviders(
     options: RenderWithAppProvidersOptions = {},
 ): Promise<RenderWithAppProvidersResult> {
     let tree!: renderer.ReactTestRenderer;
+    const rendererOptions = options.createNodeMock
+        ? { createNodeMock: options.createNodeMock }
+        : undefined;
 
     await act(async () => {
-        tree = renderer.create(applyWrapper(element, options.wrapper));
+        tree = renderer.create(applyWrapper(element, options.wrapper), rendererOptions);
     });
     registerStandardCleanupTarget(tree);
     await flushHookEffects(options.flushOptions);

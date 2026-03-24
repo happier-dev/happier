@@ -25,16 +25,13 @@ function renderListComponent(
     props: any,
     options: Pick<CreateCapturingListMockOptions, 'componentName' | 'itemWrapperName' | 'renderItems'>,
 ) {
-    const header = props.ListHeaderComponent
-        ? typeof props.ListHeaderComponent === 'function'
-            ? props.ListHeaderComponent()
-            : props.ListHeaderComponent
-        : null;
-    const footer = props.ListFooterComponent
-        ? typeof props.ListFooterComponent === 'function'
-            ? props.ListFooterComponent()
-            : props.ListFooterComponent
-        : null;
+    const renderAuxiliaryComponent = (component: any) => {
+        if (!component) return null;
+        if (React.isValidElement(component)) return component;
+        return React.createElement(component);
+    };
+    const header = renderAuxiliaryComponent(props.ListHeaderComponent);
+    const footer = renderAuxiliaryComponent(props.ListFooterComponent);
     const items = options.renderItems === false
         ? []
         : Array.isArray(props.data)

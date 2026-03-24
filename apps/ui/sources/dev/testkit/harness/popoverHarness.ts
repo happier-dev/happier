@@ -6,6 +6,7 @@ type TreeLike = Readonly<{
 }> | ReactTestInstance;
 
 type PopoverWebGlobalsOptions = Readonly<{
+    frameScheduler?: typeof globalThis.requestAnimationFrame;
     requestAnimationFrame?: typeof globalThis.requestAnimationFrame;
     window?: Record<string, unknown>;
 }>;
@@ -35,7 +36,8 @@ function installPopoverWebGlobals(options: PopoverWebGlobalsOptions = {}): () =>
         setTimeout: globalThis.setTimeout.bind(globalThis),
         clearTimeout: globalThis.clearTimeout.bind(globalThis),
     };
-    (globalThis as Record<string, unknown>).requestAnimationFrame = options.requestAnimationFrame
+    (globalThis as Record<string, unknown>).requestAnimationFrame = options.frameScheduler
+        ?? options.requestAnimationFrame
         ?? ((callback: FrameRequestCallback) => {
             callback(0);
             return 0;
