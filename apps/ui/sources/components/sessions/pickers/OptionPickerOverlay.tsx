@@ -212,7 +212,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     const selectedTileValue = customEditorVisible ? null : props.selectedValue;
     return (
         <View testID="model-picker-overlay" style={styles.section}>
-            <View style={styles.row}>
+            <View style={[styles.row, { marginRight: props.headerAccessory ? 30 : 0 }]}>
                 <View style={styles.titleRow}>
                     <Text style={styles.title}>{props.title}</Text>
                     {props.headerAccessory ? (
@@ -429,7 +429,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'space-between',
         paddingHorizontal: 0,
         paddingBottom: 0,
-        marginRight: 28,
     },
     headerAccessory: {
         flexShrink: 0,
@@ -463,7 +462,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 0,
         position: 'absolute',
         top: 0,
-        right: 0,
+        right: -28,
         // Keep the refresh affordance above the effective summary block on web.
         zIndex: 10,
         elevation: 10,
