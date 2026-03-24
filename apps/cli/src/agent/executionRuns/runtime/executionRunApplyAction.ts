@@ -39,8 +39,17 @@ export async function applyExecutionRunAction(args: Readonly<{
   if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
 
   if (run.intent === 'review' && String(args.params.actionId ?? '').trim() === 'review.follow_up') {
-    if (run.retentionPolicy !== 'resumable' || !run.resumeHandle) {
-      return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Follow-up is only supported for resumable review runs' };
+    const canResume = run.retentionPolicy === 'resumable' && Boolean(run.resumeHandle);
+    const canFallback = (() => {
+      const target = run.backendTarget;
+      if (!target) return false;
+      if (target.kind !== 'builtInAgent') return false;
+      // Coderabbit runs are not follow-up capable unless we can resume the original vendor session.
+      if (target.agentId === 'coderabbit') return false;
+      return true;
+    })();
+    if (!canResume && !canFallback) {
+      return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Follow-up is not supported for this run' };
     }
 
     const parsed = ReviewFollowUpInputSchema.safeParse(args.params.input ?? {});

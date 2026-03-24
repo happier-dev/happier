@@ -3,10 +3,16 @@ import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { join, delimiter as PATH_DELIMITER } from 'node:path';
+import { AGENTS } from '@/backends/catalog';
+import type { CatalogAgentId } from '@/backends/types';
 import { getVendorResumeSupport } from '@/backends/catalog';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import { CODEX_PROVIDER_SETTINGS_DEFAULTS } from '@happier-dev/agents';
 import { resolveProviderSpawnExtrasForRuntime } from '@/settings/providerSettings';
+
+const EXECUTION_RUN_INTENTS = ['review', 'plan', 'delegate'] as const;
+const EXECUTION_RUN_VOICE_INTENTS = [...EXECUTION_RUN_INTENTS, 'voice_agent'] as const;
+const CODERABBIT_INTENTS = ['review'] as const;
 
 function isCliAvailable(context: any, agentId: string): boolean {
   const entry = context?.cliSnapshot?.clis?.[agentId];
@@ -65,6 +71,8 @@ export const executionRunsCapability: Capability = {
     const coderabbitOnPath = coderabbitOverride
       ? true
       : Boolean(await resolveCommandOnPath('coderabbit', mergedPath || null));
+    const intents = voiceEnabled ? EXECUTION_RUN_VOICE_INTENTS : EXECUTION_RUN_INTENTS;
+    const catalogBackendIds = Object.keys(AGENTS) as CatalogAgentId[];
 
     const codexDefaultVendorResumeParams = resolveProviderSpawnExtrasForRuntime({
       agentId: 'codex',
@@ -72,95 +80,51 @@ export const executionRunsCapability: Capability = {
       processEnv: process.env,
     });
 
-    const resolveSupportsVendorResume = async (backendId: string): Promise<boolean> => {
+    const resolveSupportsVendorResume = async (backendId: CatalogAgentId): Promise<boolean> => {
       try {
-        const fn = await getVendorResumeSupport(backendId as any);
+        const fn = await getVendorResumeSupport(backendId);
         return backendId === 'codex' ? fn(codexDefaultVendorResumeParams) : fn({});
       } catch {
         return false;
       }
     };
-    const supportsVendorResumeByBackend = Object.fromEntries(
-      await Promise.all(
-        ['claude', 'codex', 'gemini', 'opencode', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'customAcp', 'pi', 'copilot'].map(async (id) => [
-          id,
-          await resolveSupportsVendorResume(id),
-        ]),
-      ),
-    ) as Record<string, boolean>;
+    const supportEntries = await Promise.all(
+      catalogBackendIds.map(async (backendId) => [
+        backendId,
+        await resolveSupportsVendorResume(backendId),
+      ] as const),
+    );
+    const supportsVendorResumeByBackend = Object.fromEntries(supportEntries) as Record<string, boolean>;
+    const backends = Object.fromEntries(
+      [
+        ...catalogBackendIds.map((backendId) => {
+          const available = backendId === 'claude' || backendId === 'customAcp' ? true : isCliAvailable(context, backendId);
+          return [
+            backendId,
+            {
+              available,
+              intents,
+              supportsVendorResume: supportsVendorResumeByBackend[backendId] === true,
+            },
+          ] as const;
+        }),
+        [
+          'coderabbit',
+          {
+            available: coderabbitOnPath,
+            intents: CODERABBIT_INTENTS,
+            supportsVendorResume: false,
+          },
+        ] as const,
+      ],
+    ) as Record<string, { available: boolean; intents: readonly string[]; supportsVendorResume: boolean }>;
 
     return {
       available: true,
-      intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+      intents,
       // Backend catalog is best-effort and intended for UI affordances (pickers, warnings).
       // Runtime enforcement still happens at execution-run start/send time.
-      backends: {
-        claude: {
-          available: true,
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.claude === true,
-        },
-        codex: {
-          available: isCliAvailable(context, 'codex'),
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.codex === true,
-        },
-        gemini: {
-          available: isCliAvailable(context, 'gemini'),
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.gemini === true,
-        },
-        opencode: {
-          available: isCliAvailable(context, 'opencode'),
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.opencode === true,
-        },
-        auggie: {
-          available: isCliAvailable(context, 'auggie'),
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.auggie === true,
-        },
-        qwen: {
-          available: isCliAvailable(context, 'qwen'),
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.qwen === true,
-        },
-        kimi: {
-          available: isCliAvailable(context, 'kimi'),
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.kimi === true,
-        },
-        kilo: {
-          available: isCliAvailable(context, 'kilo'),
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.kilo === true,
-        },
-        kiro: {
-          available: isCliAvailable(context, 'kiro'),
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.kiro === true,
-        },
-        customAcp: {
-          available: true,
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.customAcp === true,
-        },
-        pi: {
-          available: isCliAvailable(context, 'pi'),
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.pi === true,
-        },
-        copilot: {
-          available: isCliAvailable(context, 'copilot'),
-          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
-          supportsVendorResume: supportsVendorResumeByBackend.copilot === true,
-        },
-        coderabbit: {
-          available: coderabbitOnPath,
-          intents: ['review'],
-          supportsVendorResume: false,
-        },
-      },
+      backends,
     };
   },
 };

@@ -2,31 +2,25 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { AGENTS } from '@/backends/catalog';
 import { executionRunsCapability } from './toolExecutionRuns';
 import type { DetectCliEntry, DetectCliSnapshot } from '../snapshots/cliSnapshot';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { ExecutionRunIntentSchema } from '@happier-dev/protocol';
 
 function makeUnavailableCliEntry(): DetectCliEntry {
   return { available: false };
 }
 
 function makeCliSnapshot(overrides: Partial<DetectCliSnapshot['clis']>, path = ''): DetectCliSnapshot {
+  const baseClis = Object.fromEntries(
+    (Object.keys(AGENTS) as Array<keyof typeof AGENTS>).map((agentId) => [agentId, makeUnavailableCliEntry()] as const),
+  );
   return {
     path,
     clis: {
-      claude: makeUnavailableCliEntry(),
-      codex: makeUnavailableCliEntry(),
-      gemini: makeUnavailableCliEntry(),
-      opencode: makeUnavailableCliEntry(),
-      auggie: makeUnavailableCliEntry(),
-      qwen: makeUnavailableCliEntry(),
-      kimi: makeUnavailableCliEntry(),
-      kilo: makeUnavailableCliEntry(),
-      kiro: makeUnavailableCliEntry(),
-      customAcp: makeUnavailableCliEntry(),
-      pi: makeUnavailableCliEntry(),
-      copilot: makeUnavailableCliEntry(),
+      ...(baseClis as DetectCliSnapshot['clis']),
       ...overrides,
     },
     tmux: { available: false },
@@ -128,5 +122,47 @@ describe('executionRunsCapability', () => {
       available: true,
       supportsVendorResume: false,
     });
+  });
+
+  it('reuses the common intent list for catalog-backed execution runs', async () => {
+    const res = await executionRunsCapability.detect({
+      context: {
+        cliSnapshot: makeCliSnapshot({ claude: { available: true }, codex: { available: true } }),
+      },
+      request: { id: 'tool.executionRuns' },
+    }) as {
+      available: boolean;
+      intents: readonly string[];
+      backends: Record<string, { intents: readonly string[]; available?: boolean; supportsVendorResume?: boolean }>;
+    };
+
+    expect(Object.keys(res.backends).slice().sort()).toEqual([...Object.keys(AGENTS), 'coderabbit'].sort());
+
+    for (const backendId of Object.keys(AGENTS)) {
+      expect(res.backends[backendId]?.intents).toBe(res.intents);
+    }
+
+    expect(res.backends.coderabbit?.intents).toEqual(['review']);
+    expect(res.backends.coderabbit?.intents).not.toBe(res.intents);
+  });
+
+  it('returns only protocol-defined execution-run intents', async () => {
+    const res = await executionRunsCapability.detect({
+      context: {
+        cliSnapshot: makeCliSnapshot({ claude: { available: true }, codex: { available: true } }),
+      },
+      request: { id: 'tool.executionRuns' },
+    }) as {
+      available: boolean;
+      intents: readonly string[];
+      backends: Record<string, { intents: readonly string[] }>;
+    };
+
+    for (const intent of res.intents) {
+      expect(ExecutionRunIntentSchema.safeParse(intent).success).toBe(true);
+    }
+    for (const intent of res.backends.coderabbit?.intents ?? []) {
+      expect(ExecutionRunIntentSchema.safeParse(intent).success).toBe(true);
+    }
   });
 });
