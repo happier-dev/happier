@@ -88,6 +88,7 @@ type SegmentRuntime = {
   startedAtMs: number;
   accumulatedText: string;
   pendingDraftDeltaText: string;
+  pendingDraftFlushAfterCommit: boolean;
   draftFlushTimer: ReturnType<typeof setTimeout> | null;
   didWriteDurable: boolean;
   lastCheckpointAtMs: number;
@@ -109,16 +110,23 @@ export function createStreamedTranscriptWriter(params: {
   const session = params.session;
   const makeLocalId = typeof params.makeLocalId === 'function' ? params.makeLocalId : () => randomUUID();
 
-  const draftFlushIntervalMs = resolveDraftFlushIntervalMs(params.draftFlushIntervalMs);
+  const draftFlushIntervalMs =
+    params.draftFlushIntervalMs === null ? null : resolveDraftFlushIntervalMs(params.draftFlushIntervalMs);
   const checkpointIntervalMs = resolveCheckpointIntervalMs(params.checkpointIntervalMs);
   const checkpointMinChars = resolveCheckpointMinChars(params.checkpointMinChars);
 
   const segments = new Map<SegmentKey, SegmentRuntime>();
 
   const flushDraftBuffer = (segment: SegmentRuntime) => {
+    if (draftFlushIntervalMs === null) return;
     if (segment.draftFlushTimer) {
       clearTimeout(segment.draftFlushTimer);
       segment.draftFlushTimer = null;
+    }
+
+    if (draftFlushIntervalMs !== 0 && (segment.isCommittingDurable || !segment.didWriteDurable)) {
+      segment.pendingDraftFlushAfterCommit = true;
+      return;
     }
     const buffered = segment.pendingDraftDeltaText;
     segment.pendingDraftDeltaText = '';
@@ -133,8 +141,8 @@ export function createStreamedTranscriptWriter(params: {
   };
 
   const enqueueDraftFlush = (segment: SegmentRuntime) => {
+    if (draftFlushIntervalMs === null) return;
     if (!segment.pendingDraftDeltaText) return;
-
     if (draftFlushIntervalMs === 0) {
       flushDraftBuffer(segment);
       return;
@@ -216,6 +224,11 @@ export function createStreamedTranscriptWriter(params: {
           commitDurableSnapshot(segment, pendingCommit);
           return;
         }
+        if (segment.pendingDraftFlushAfterCommit && segment.pendingDraftDeltaText) {
+          segment.pendingDraftFlushAfterCommit = false;
+          flushDraftBuffer(segment);
+        }
+        segment.pendingDraftFlushAfterCommit = false;
         if (segment.idleWaiters.length === 0) return;
         const waiters = segment.idleWaiters.splice(0, segment.idleWaiters.length);
         for (const waiter of waiters) {
@@ -242,6 +255,7 @@ export function createStreamedTranscriptWriter(params: {
       startedAtMs: nowMs,
       accumulatedText: '',
       pendingDraftDeltaText: '',
+      pendingDraftFlushAfterCommit: false,
       draftFlushTimer: null,
       didWriteDurable: false,
       lastCheckpointAtMs: 0,

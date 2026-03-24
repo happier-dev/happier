@@ -96,7 +96,7 @@ describe('createStreamedTranscriptWriter', () => {
       localId: 'l1',
       segmentKind: 'assistant',
       sidechainId: null,
-      deltaText: ' world',
+      deltaText: 'Hello world',
       createdAtMs: 50,
     });
   });
@@ -138,6 +138,47 @@ describe('createStreamedTranscriptWriter', () => {
     });
   });
 
+  it('flushes each draft delta immediately when the flush interval is zero', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, draftCalls } = createSessionStub();
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'codex' as any,
+      session: session as any,
+      makeLocalId: () => 'segment-1',
+      draftFlushIntervalMs: 0,
+      checkpointIntervalMs: 1_000,
+      checkpointMinChars: 1,
+    });
+
+    writer.appendAssistantDelta('Hello');
+    await settleCommittedSnapshot();
+
+    expect(draftCalls).toHaveLength(1);
+    expect(draftCalls[0]).toEqual({
+      provider: 'codex',
+      localId: 'segment-1',
+      segmentKind: 'assistant',
+      sidechainId: null,
+      deltaText: 'Hello',
+      createdAtMs: 0,
+    });
+
+    writer.appendAssistantDelta(' world');
+
+    expect(draftCalls).toHaveLength(2);
+    expect(draftCalls[1]).toEqual({
+      provider: 'codex',
+      localId: 'segment-1',
+      segmentKind: 'assistant',
+      sidechainId: null,
+      deltaText: ' world',
+      createdAtMs: 0,
+    });
+  });
+
   it('flushes and completes segments at a tool-call boundary while keeping the same segment localId', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
@@ -164,7 +205,7 @@ describe('createStreamedTranscriptWriter', () => {
     await settleCommittedSnapshot();
 
     expect(draftCalls).toHaveLength(1);
-    expect(draftCalls[0]!.deltaText).toBe(' world');
+    expect(draftCalls[0]!.deltaText).toBe('Hello world');
     expect(draftCalls[0]!.localId).toBe('segment-1');
 
     expect(durableCalls).toHaveLength(2);
@@ -210,7 +251,7 @@ describe('createStreamedTranscriptWriter', () => {
     expect(draftCalls[0]).toMatchObject({
       sidechainId: 'sc-1',
       segmentKind: 'thinking',
-      deltaText: ' next',
+      deltaText: '... next',
     });
 
     expect(durableCalls.length).toBeGreaterThanOrEqual(2);
@@ -230,7 +271,7 @@ describe('createStreamedTranscriptWriter', () => {
       provider: 'codex' as any,
       session: session as any,
       makeLocalId: () => 'segment-1',
-      draftFlushIntervalMs: 0,
+      draftFlushIntervalMs: null,
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
     });
@@ -379,7 +420,7 @@ describe('createStreamedTranscriptWriter', () => {
     });
   });
 
-  it('does not emit unmatched draft text before the first durable snapshot settles', async () => {
+  it('does not emit draft text before the first durable snapshot settles, but flushes the buffered text after it does', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
@@ -428,7 +469,7 @@ describe('createStreamedTranscriptWriter', () => {
       expect.objectContaining({
         localId: 'segment-1',
         segmentKind: 'assistant',
-        deltaText: 'is ready at /tmp/demo',
+        deltaText: 'The disposable workspace is ready at /tmp/demo',
       }),
     ]);
   });
