@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CodexBackendMode } from '@happier-dev/agents';
 import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { buildOpenCodeAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
 
@@ -25,6 +26,8 @@ vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
 import { ensureDirectSessionLink } from './ensureDirectSessionLink';
 
 describe('ensureDirectSessionLink', () => {
+  const legacyCodexBackendMode = '  mcp_resume  ' as unknown as CodexBackendMode;
+
   beforeEach(() => {
     vi.clearAllMocks();
     fetchSessionsPageMock.mockResolvedValue({ sessions: [], hasNext: false, nextCursor: null });
@@ -153,6 +156,40 @@ describe('ensureDirectSessionLink', () => {
           kind: 'codexHome',
           home: 'connectedService',
           connectedServiceId: 'openai-codex',
+        },
+      },
+    });
+  });
+
+  it('normalizes legacy codex backend aliases when linking direct sessions without a runtime descriptor', async () => {
+    getOrCreateSessionByTagMock.mockResolvedValueOnce({
+      session: {
+        id: 'sess_direct_alias',
+        metadata: {},
+      },
+    });
+
+    await ensureDirectSessionLink({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      machineId: 'machine_1',
+      providerId: 'codex',
+      remoteSessionId: 'thread_alias',
+      codexBackendMode: legacyCodexBackendMode,
+      source: { kind: 'codexHome', home: 'user' },
+      titleHint: 'Codex linked session',
+      directoryHint: '/repo',
+      nowMs: () => 123,
+    });
+
+    const createdMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
+    expect(createdMetadata).toMatchObject({
+      codexSessionId: 'thread_alias',
+      codexBackendMode: 'acp',
+      agentRuntimeDescriptorV1: {
+        providerId: 'codex',
+        provider: {
+          backendMode: 'acp',
+          vendorSessionId: 'thread_alias',
         },
       },
     });

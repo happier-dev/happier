@@ -11,16 +11,18 @@ function extractVendorSessionIdFromMarkerMetadata(params: Readonly<{
   const expectedFlavor = typeof rec.flavor === 'string' ? rec.flavor.trim() : '';
   if (expectedFlavor && expectedFlavor !== params.providerId) return null;
 
-  const raw = (() => {
-    switch (params.providerId) {
-      case 'codex':
-        return rec.codexSessionId;
-      case 'claude':
-        return rec.claudeSessionId;
-      case 'opencode':
-        return rec.opencodeSessionId;
-    }
-  })();
+      const raw = (() => {
+        switch (params.providerId) {
+          case 'codex':
+            return rec.codexSessionId;
+          case 'claude':
+            return rec.claudeSessionId;
+          case 'opencode':
+            return rec.opencodeSessionId;
+          default:
+            return null;
+        }
+      })();
 
   const normalized = typeof raw === 'string' ? raw.trim() : '';
   return normalized.length > 0 ? normalized : null;

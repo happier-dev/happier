@@ -94,5 +94,8 @@ export function validateDirectMachineSource(params: Readonly<{
           : source,
       };
     }
+    default: {
+      return err('unsupported direct session provider');
+    }
   }
 }

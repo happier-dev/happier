@@ -4,6 +4,7 @@ import os from 'node:os';
 import {
   buildCodexAgentRuntimeDescriptor,
   buildOpenCodeAgentRuntimeDescriptor,
+  normalizeCodexBackendMode,
   type CodexBackendMode,
 } from '@happier-dev/agents';
 import {
@@ -152,10 +153,6 @@ function resolveSourceKey(providerId: DirectSessionsProviderId, source: DirectSe
     default:
       return 'unknown';
   }
-}
-
-function normalizeCodexBackendMode(value: unknown): CodexBackendMode | null {
-  return value === 'mcp' || value === 'acp' || value === 'appServer' ? value : null;
 }
 
 function resolveCodexRuntimeSourceAffinity(source: DirectSessionsSource): Readonly<{
