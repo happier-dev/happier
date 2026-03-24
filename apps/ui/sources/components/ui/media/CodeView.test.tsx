@@ -2,6 +2,8 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { installMediaCommonModuleMocks } from './mediaTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,11 +22,10 @@ const useSettingSpy = vi.fn((key: string): number | null => {
     return null;
 });
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => useSettingSpy(key),
-});
+installMediaCommonModuleMocks({
+    storage: async () => createStorageModuleStub({
+        useSetting: (key: string) => useSettingSpy(key),
+    }),
 });
 
 describe('CodeView', () => {
