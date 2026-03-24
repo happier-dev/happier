@@ -6,7 +6,9 @@ import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/
 
 const HEAP_LIMIT_REGEX = /(^|\s)--max-old-space-size(=|\s)\d+(\s|$)/;
 const BASELINE_MAX_OLD_SPACE_SIZE_MB = 8192;
-const HIGH_MEMORY_MAX_OLD_SPACE_SIZE_MB = 12_288;
+// UI unit tests can legitimately use a lot of memory (large React trees + module graphs).
+// Keep the default heuristic proportional to total memory, but cap it high enough for large machines.
+const HIGH_MEMORY_MAX_OLD_SPACE_SIZE_MB = 49_152;
 
 export function hasMaxOldSpaceSize(nodeOptions) {
   return HEAP_LIMIT_REGEX.test(String(nodeOptions ?? ''));
@@ -28,7 +30,7 @@ function resolveRecommendedMaxOldSpaceSizeMb(totalMemoryBytes) {
 
   return Math.min(
     HIGH_MEMORY_MAX_OLD_SPACE_SIZE_MB,
-    Math.max(BASELINE_MAX_OLD_SPACE_SIZE_MB, Math.floor(totalMemoryMb / 4)),
+    Math.max(BASELINE_MAX_OLD_SPACE_SIZE_MB, Math.floor(totalMemoryMb / 3)),
   );
 }
 
