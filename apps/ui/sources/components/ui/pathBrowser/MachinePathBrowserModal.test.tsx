@@ -60,43 +60,37 @@ const flatListScrollToIndexMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: 'View',
-            Pressable: 'Pressable',
-            ActivityIndicator: 'ActivityIndicator',
-            useWindowDimensions: () => ({
-                width: 1280,
-                height: 900,
-                scale: 1,
-                fontScale: 1,
-            }),
-            FlatList: React.forwardRef(({ data, renderItem, ListHeaderComponent, contentContainerStyle, onScrollToIndexFailed }: any, ref) => {
-                React.useImperativeHandle(ref, () => ({
-                    scrollToIndex: flatListScrollToIndexMock,
-                    scrollToOffset: vi.fn(),
-                }));
-                return React.createElement(
-                    'FlatList',
-                    { contentContainerStyle, onScrollToIndexFailed },
-                    [
-                        React.createElement(React.Fragment, { key: 'header' }, ListHeaderComponent ?? null),
-                        ...(data ?? []).map((item: any, index: number) => React.createElement(React.Fragment, { key: `${item.type}:${item.path}:${index}` }, renderItem({ item, index }))),
-                    ],
-                );
-            }),
-            Platform: {
-                OS: 'web',
-                select: (options: { web?: unknown; default?: unknown }) => options.web ?? options.default,
-            },
-        }
-    );
+    return createReactNativeWebMock({
+        View: 'View',
+        Pressable: 'Pressable',
+        ActivityIndicator: 'ActivityIndicator',
+        useWindowDimensions: () => ({
+            width: 1280,
+            height: 900,
+            scale: 1,
+            fontScale: 1,
+        }),
+        FlatList: React.forwardRef(({ data, renderItem, ListHeaderComponent, contentContainerStyle, onScrollToIndexFailed }: any, ref) => {
+            React.useImperativeHandle(ref, () => ({
+                scrollToIndex: flatListScrollToIndexMock,
+                scrollToOffset: vi.fn(),
+            }));
+            return React.createElement(
+                'FlatList',
+                { contentContainerStyle, onScrollToIndexFailed },
+                [
+                    React.createElement(React.Fragment, { key: 'header' }, ListHeaderComponent ?? null),
+                    ...(data ?? []).map((item: any, index: number) =>
+                        React.createElement(React.Fragment, { key: `${item.type}:${item.path}:${index}` }, renderItem({ item, index }))),
+                ],
+            );
+        }),
+        Platform: {
+            OS: 'web',
+            select: (options: { web?: unknown; default?: unknown }) => options.web ?? options.default,
+        },
+    });
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -122,6 +116,11 @@ vi.mock('@/text', async () => {
         translate: (key: string, vars?: Record<string, unknown>) => typeof vars?.count === 'number' ? `${key}:${vars.count}` : key,
     });
 });
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+    Octicons: 'Octicons',
+}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -164,6 +163,7 @@ describe('MachinePathBrowserModal', () => {
                     onClose={onClose}
                 />);
 
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
         await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
 
         const usersRow = await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
@@ -194,6 +194,7 @@ describe('MachinePathBrowserModal', () => {
                     onClose={vi.fn()}
                 />);
 
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
         await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
 
         await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
@@ -221,6 +222,7 @@ describe('MachinePathBrowserModal', () => {
                     onClose={vi.fn()}
                 />);
 
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
         const stopPropagation = vi.fn();
         await act(async () => {
             const rootToggle = screen.findByTestId(getPathBrowserToggleTestId('/'));
@@ -356,6 +358,7 @@ describe('MachinePathBrowserModal', () => {
                     onClose={vi.fn()}
                 />);
 
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
         await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
 
         await waitForTestId(screen, getPathBrowserRowTestId('/#truncated'));
