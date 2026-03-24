@@ -2,24 +2,15 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { findTestInstanceByTypeWithProps, pressTestInstance, renderScreen } from '@/dev/testkit';
+import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+installDropdownCommonModuleMocks();
+
 const useSelectableMenuSpy = vi.fn();
 let uiItemDensitySetting: 'comfortable' | 'cozy' | 'compact' = 'comfortable';
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                Text: (props: any) => React.createElement('Text', props, props.children),
-                TextInput: (props: any) => React.createElement('TextInput', props, props.children),
-                View: (props: any) => React.createElement('View', props, props.children),
-                Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-            }
-    );
-});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: any) => {
@@ -27,11 +18,6 @@ vi.mock('@expo/vector-icons', () => ({
         return React.createElement('Ionicons', props);
     },
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@/components/ui/popover', () => ({
     Popover: (props: any) => {
@@ -75,11 +61,6 @@ vi.mock('@/components/ui/forms/dropdown/SelectableMenuResults', () => ({
         return React.createElement('SelectableMenuResults', props);
     },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: (key: string) => {

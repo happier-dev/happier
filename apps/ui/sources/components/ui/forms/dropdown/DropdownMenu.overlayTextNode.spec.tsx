@@ -7,29 +7,35 @@ import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const createDropdownOverlayReactNativeModuleMock = async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+
+    return createReactNativeWebMock({
+        View: 'View',
+        Text: 'Text',
+        TextInput: 'TextInput',
+        Pressable: 'Pressable',
+        ActivityIndicator: 'ActivityIndicator',
+        Dimensions: {
+            get: () => ({ width: 1280, height: 800, scale: 1, fontScale: 1 }),
+        },
+    });
+};
+
+const createDropdownOverlayModalModuleMock = async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            prompt: vi.fn(async () => null),
+        },
+    }).module;
+};
+
 installDropdownCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: 'View',
-            Text: 'Text',
-            TextInput: 'TextInput',
-            Pressable: 'Pressable',
-            ActivityIndicator: 'ActivityIndicator',
-            Dimensions: {
-                get: () => ({ width: 1280, height: 800, scale: 1, fontScale: 1 }),
-            },
-        });
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            spies: {
-                alert: vi.fn(),
-                prompt: vi.fn(async () => null),
-            },
-        }).module;
-    },
+    reactNative: createDropdownOverlayReactNativeModuleMock,
+    modal: createDropdownOverlayModalModuleMock,
 });
 
 vi.mock('@expo/vector-icons', () => ({
