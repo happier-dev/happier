@@ -184,8 +184,25 @@ async function getRecoveryKeyReminderDismissedKey(): Promise<string> {
     return (await getServerScopedKeys(RECOVERY_KEY_REMINDER_DISMISSED_KEY)).primary;
 }
 
+function getRecoveryKeyReminderDismissedKeySync(): string | null {
+    const normalizedUrl = normalizeUrl(getActiveServerUrl());
+    if (!normalizedUrl) return null;
+
+    const activeServerId = normalizeServerId(getActiveServerId());
+    const resolvedServerId = resolveServerIdForUrl(normalizedUrl, activeServerId);
+    const profiles = listServerProfiles();
+    const activeServerUrl = activeServerId
+        ? normalizeUrl(profiles.find((profile) => profile.id === activeServerId)?.serverUrl ?? '')
+        : '';
+    const serverId = resolvedServerId ?? (activeServerUrl && activeServerUrl === normalizedUrl ? activeServerId : null);
+    if (!serverId) return null;
+
+    return makeScopedKey(RECOVERY_KEY_REMINDER_DISMISSED_KEY, sanitizeScopeToken(serverId));
+}
+
 // Cache for synchronous access
 const credentialsCacheByKey = new Map<string, string>();
+const recoveryKeyReminderDismissedCacheByKey = new Map<string, string>();
 
 export type AuthCredentials =
     | Readonly<{
@@ -360,6 +377,12 @@ function parseCredentialsRaw(raw: string | null): AuthCredentials | null {
     }
 }
 
+function parseRecoveryKeyReminderDismissedRaw(raw: string | null): boolean {
+    if (!raw) return false;
+    const value = raw.trim().toLowerCase();
+    return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
 async function readCredentialRawByKey(key: string): Promise<string | null> {
     if (Platform.OS === 'web') {
         try {
@@ -519,15 +542,11 @@ export const TokenStorage = {
 
     async getRecoveryKeyReminderDismissed(): Promise<boolean> {
         const key = await getRecoveryKeyReminderDismissedKey();
-        const parse = (raw: string | null): boolean => {
-            if (!raw) return false;
-            const v = raw.trim().toLowerCase();
-            return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-        };
 
         if (Platform.OS === 'web') {
             try {
-                return parse(localStorage.getItem(key));
+                const raw = localStorage.getItem(key);
+                return parseRecoveryKeyReminderDismissedRaw(raw);
             } catch {
                 return false;
             }
@@ -535,10 +554,27 @@ export const TokenStorage = {
 
         try {
             const stored = await SecureStore.getItemAsync(key);
-            return parse(stored);
+            recoveryKeyReminderDismissedCacheByKey.set(key, stored ?? '0');
+            return parseRecoveryKeyReminderDismissedRaw(stored);
         } catch {
             return false;
         }
+    },
+
+    getCachedRecoveryKeyReminderDismissed(): boolean | null {
+        const key = getRecoveryKeyReminderDismissedKeySync();
+        if (!key) return null;
+
+        if (Platform.OS === 'web') {
+            try {
+                return parseRecoveryKeyReminderDismissedRaw(localStorage.getItem(key));
+            } catch {
+                return null;
+            }
+        }
+
+        if (!recoveryKeyReminderDismissedCacheByKey.has(key)) return null;
+        return parseRecoveryKeyReminderDismissedRaw(recoveryKeyReminderDismissedCacheByKey.get(key) ?? null);
     },
 
     async setRecoveryKeyReminderDismissed(value: boolean): Promise<boolean> {
@@ -548,6 +584,7 @@ export const TokenStorage = {
         if (Platform.OS === 'web') {
             try {
                 localStorage.setItem(key, raw);
+                recoveryKeyReminderDismissedCacheByKey.set(key, raw);
                 return true;
             } catch {
                 return false;
@@ -556,6 +593,7 @@ export const TokenStorage = {
 
         try {
             await SecureStore.setItemAsync(key, raw);
+            recoveryKeyReminderDismissedCacheByKey.set(key, raw);
             return true;
         } catch {
             return false;

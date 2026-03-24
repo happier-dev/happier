@@ -86,16 +86,32 @@ const getServerFeatures = vi.fn(async () => ({
         },
     },
 }));
+const getCachedServerFeatures = vi.fn<
+    () => {
+        features: {
+            auth: {
+                ui: {
+                    recoveryKeyReminder: {
+                        enabled: boolean;
+                    };
+                };
+            };
+        };
+    } | null
+>(() => null);
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: () => getServerFeatures(),
+    getCachedReadyServerFeatures: () => getCachedServerFeatures(),
 }));
 
 const getRecoveryKeyReminderDismissed = vi.fn(async () => false);
 const setRecoveryKeyReminderDismissed = vi.fn(async () => true);
+const getCachedRecoveryKeyReminderDismissed = vi.fn<() => boolean | null>(() => null);
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getRecoveryKeyReminderDismissed,
         setRecoveryKeyReminderDismissed,
+        getCachedRecoveryKeyReminderDismissed,
     },
     // RecoveryKeyReminderBanner gates on legacy credentials; include this export to
     // keep the mock aligned with the real module surface.
@@ -206,12 +222,35 @@ describe('RecoveryKeyReminderBanner', () => {
         show.mockClear();
         push.mockClear();
         getServerFeatures.mockRejectedValueOnce(new Error('network'));
+        getCachedServerFeatures.mockReturnValue(null);
         getRecoveryKeyReminderDismissed.mockResolvedValue(false);
+        getCachedRecoveryKeyReminderDismissed.mockReturnValue(null);
 
         const tree = await renderBanner();
         const itemNodes = tree.findAllByTestId('recovery-key-item');
 
         expect(itemNodes).toHaveLength(0);
         expect(show).not.toHaveBeenCalled();
+    });
+
+    it('renders immediately when cached banner visibility state is already available', async () => {
+        vi.resetModules();
+        show.mockClear();
+        push.mockClear();
+        getCachedServerFeatures.mockReturnValue({
+            features: {
+                auth: {
+                    ui: { recoveryKeyReminder: { enabled: true } },
+                },
+            },
+        });
+        getCachedRecoveryKeyReminderDismissed.mockReturnValue(false);
+        getServerFeatures.mockImplementation(() => new Promise(() => {}));
+        getRecoveryKeyReminderDismissed.mockImplementation(() => new Promise(() => {}));
+
+        const { RecoveryKeyReminderBanner } = await import('./RecoveryKeyReminderBanner');
+        const screen = await renderScreen(<RecoveryKeyReminderBanner />, { flushOptions: { cycles: 0 } });
+
+        expect(screen.findAllByTestId('recovery-key-item')).toHaveLength(1);
     });
 });

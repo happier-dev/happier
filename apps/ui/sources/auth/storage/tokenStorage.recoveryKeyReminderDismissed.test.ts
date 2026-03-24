@@ -30,4 +30,16 @@ describe('TokenStorage recovery key reminder dismissed (web)', () => {
         await expect(TokenStorage.setRecoveryKeyReminderDismissed(false)).resolves.toBe(true);
         await expect(TokenStorage.getRecoveryKeyReminderDismissed()).resolves.toBe(false);
     });
+
+    it('exposes the dismissed state through the synchronous cache path on web', async () => {
+        const { TokenStorage } = await import('./tokenStorage');
+
+        expect(TokenStorage.getCachedRecoveryKeyReminderDismissed()).toBe(false);
+
+        await expect(TokenStorage.setRecoveryKeyReminderDismissed(true)).resolves.toBe(true);
+        expect(TokenStorage.getCachedRecoveryKeyReminderDismissed()).toBe(true);
+
+        await expect(TokenStorage.setRecoveryKeyReminderDismissed(false)).resolves.toBe(true);
+        expect(TokenStorage.getCachedRecoveryKeyReminderDismissed()).toBe(false);
+    });
 });
