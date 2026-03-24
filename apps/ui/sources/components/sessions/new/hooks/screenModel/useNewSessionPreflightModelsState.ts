@@ -29,7 +29,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     probe: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
         refreshedAt: number | null;
-        onRefresh: () => void;
+        onRefresh?: () => void;
     }>;
 }> {
     const [preflightModels, setPreflightModels] = React.useState<PreflightModelList | null>(null);
@@ -58,6 +58,11 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     const agentType = React.useMemo<AgentId>(() => {
         return resolveProviderAgentIdForBackendTarget(backendTarget);
     }, [backendTarget]);
+
+    const dynamicProbeEnabled = React.useMemo(() => {
+        const core = getAgentCore(agentType);
+        return core.model.dynamicProbe !== 'static-only';
+    }, [agentType]);
 
     const backendTargetKey = React.useMemo(() => buildBackendTargetKey(backendTarget), [backendTarget]);
 
@@ -99,6 +104,23 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             setProbePhase('idle');
             setRefreshedAt(null);
             lastScopeKeyRef.current = probeScopeKey;
+            return;
+        }
+
+        const core = getAgentCore(agentType);
+        if (core.model.dynamicProbe === 'static-only') {
+            // This provider intentionally does not support dynamic model probing; rely on catalog-only models.
+            // Clear any previously cached dynamic list for this scope so we don't render stale/unknown models.
+            lastScopeKeyRef.current = probeScopeKey;
+            if (preflightModelsRef.current !== null) {
+                setPreflightModels(null);
+                preflightModelsRef.current = null;
+            }
+            if (refreshedAtRef.current !== null) {
+                setRefreshedAt(null);
+                refreshedAtRef.current = null;
+            }
+            setProbePhase('idle');
             return;
         }
 
@@ -242,7 +264,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         probe: {
             phase: probePhase,
             refreshedAt,
-            onRefresh,
+            ...(dynamicProbeEnabled ? { onRefresh } : {}),
         },
     };
 }

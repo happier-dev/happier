@@ -28,19 +28,6 @@ const profileState = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                Pressable: 'Pressable',
-                Platform: {
-                    OS: 'web',
-                    select: (spec: Record<string, unknown>) => spec.web ?? spec.default,
-                },
-            }
-    );
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));

@@ -18,6 +18,34 @@ type DeferredModelProbeResult = {
 };
 
 describe('useNewSessionPreflightModelsState (refresh)', () => {
+    it('does not probe models for static-only providers (uses catalog list only)', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        machineCapabilitiesInvokeMock.mockRejectedValue(new Error('unexpected probe call'));
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            () => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            }),
+        );
+
+        expect(machineCapabilitiesInvokeMock).not.toHaveBeenCalled();
+        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'claude-opus-4-6')).toBe(true);
+        expect(hook.getCurrent().probe.phase).toBe('idle');
+        expect(hook.getCurrent().probe.onRefresh).toBeUndefined();
+
+        await hook.unmount();
+    });
+
     it('forces a refresh probe without clearing existing options', async () => {
         vi.resetModules();
         machineCapabilitiesInvokeMock.mockReset();
