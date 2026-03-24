@@ -1,51 +1,24 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { installSessionExecutionRunListCommonModuleMocks } from './sessionExecutionRunListTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: 'View',
-            Text: 'Text',
-            Platform: {
-                OS: 'web',
-                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null,
-            },
-            AppState: {
-                addEventListener: () => ({ remove: () => {} }),
-            },
-        }
-    );
-});
+installSessionExecutionRunListCommonModuleMocks({
+    text: async () => ({
+        ...createTextModuleMock({
+            translate: (key: string, params?: { groupId?: string }) => {
+                if (key === 'runs.groupLabel') {
+                    return `Group ${String(params?.groupId ?? '')}`.trim();
+                }
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-      colors: {
-        surface: '#fff',
-        divider: '#ddd',
-        shadow: { color: '#000', opacity: 0.2 },
-        textSecondary: '#aaa',
-      },
-    },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key, params) => {
-            if (key === 'runs.groupLabel') {
-                return `Group ${String(params?.groupId ?? '')}`.trim();
-            }
-            return key;
-        },
-    });
+                return key;
+            },
+        }),
+    }),
 });
 
 vi.mock('./ExecutionRunRow', () => ({
