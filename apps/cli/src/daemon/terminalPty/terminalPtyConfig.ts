@@ -1,3 +1,4 @@
+import { parseBooleanEnv } from '@happier-dev/protocol';
 import type { TerminalPtySessionManagerConfig } from './terminalPtySessionManager';
 
 export type DaemonTerminalPtyConfig = Readonly<{
@@ -8,12 +9,6 @@ export type DaemonTerminalPtyConfig = Readonly<{
     maxEvents: number;
   }>;
 }>;
-
-function parseBooleanEnv(raw: unknown, fallback: boolean): boolean {
-  const value = String(raw ?? '').trim().toLowerCase();
-  if (!value) return fallback;
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
-}
 
 function parseIntEnv(raw: unknown, fallback: number, bounds: Readonly<{ min: number; max: number }>): number {
   const value = String(raw ?? '').trim();
