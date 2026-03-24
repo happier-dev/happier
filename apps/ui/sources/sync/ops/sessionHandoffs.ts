@@ -112,12 +112,60 @@ function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
 }
 
+function resolveTargetPreparePathForCrossPlatformHandoff(params: Readonly<{
+    sourceMachineId: string;
+    targetMachineId: string;
+    sourcePath: string;
+}>): string {
+    if (params.sourceMachineId === params.targetMachineId) return params.sourcePath;
+
+    const sourcePath = params.sourcePath.trim();
+
+    const normalizeHomeDir = (raw: unknown): string => {
+        const home = String(raw ?? '').trim();
+        if (!home.startsWith('/')) return '';
+        return home.replace(/\/+$/u, '');
+    };
+
+    const state = storage.getState();
+    const sourceHomeDir = normalizeHomeDir(state.machines?.[params.sourceMachineId]?.metadata?.homeDir);
+    const targetHomeDir = normalizeHomeDir(state.machines?.[params.targetMachineId]?.metadata?.homeDir);
+    if (!targetHomeDir) {
+        // Fail closed: without a known target home directory, rewriting can accidentally redirect a
+        // user-selected absolute path into an unrelated location.
+        return sourcePath;
+    }
+
+    const homePrefixMatches = [
+        sourceHomeDir,
+        sourcePath.match(/^\/Users\/[^/]+/u)?.[0] ?? '',
+        sourcePath.match(/^\/home\/[^/]+/u)?.[0] ?? '',
+    ].filter(Boolean);
+
+    const homePrefix = homePrefixMatches.find((prefix) => sourcePath === prefix || sourcePath.startsWith(`${prefix}/`)) ?? '';
+    if (!homePrefix) return sourcePath;
+
+    const relativeCandidate =
+        sourcePath === homePrefix
+            ? 'workspace'
+            : sourcePath.slice(homePrefix.length + 1).trim();
+
+    const relative =
+        relativeCandidate
+        && !relativeCandidate.split('/').some((segment) => segment === '..')
+            ? relativeCandidate
+            : (sourcePath.split('/').filter(Boolean).slice(-1)[0] ?? 'workspace');
+
+    return `${targetHomeDir.replace(/\/+$/u, '')}/${relative}`;
+}
+
 const DEFAULT_TARGET_PREPARE_RETRY_TIMEOUT_MS = 15_000;
 const DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS = 300_000;
 const DEFAULT_TARGET_PREPARE_RETRY_INTERVAL_MS = 500;
 const DEFAULT_SOURCE_START_RETRY_TIMEOUT_MS = 15_000;
 const DEFAULT_SOURCE_START_RETRY_INTERVAL_MS = 500;
 const DEFAULT_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS = 90_000;
+const DEFAULT_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS = 10_000;
 const DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_TIMEOUT_MS = 5_000;
 const DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABILIZATION_INTERVAL_MS = 250;
 const DEFAULT_SESSION_HANDOFF_POST_COMMIT_BINDING_STABLE_POLLS = 2;
@@ -132,6 +180,14 @@ function readSessionHandoffMachineRpcTimeoutMs(): number {
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed)) return DEFAULT_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS;
     return Math.max(5_000, Math.min(300_000, parsed));
+}
+
+function readSessionHandoffMachineRpcPollTimeoutMs(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS ?? '').trim();
+    if (!raw) return DEFAULT_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return DEFAULT_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS;
+    return Math.max(1_000, Math.min(60_000, parsed));
 }
 
 function readSessionHandoffTargetPreparePollTimeoutMs(): number {
@@ -415,6 +471,19 @@ async function prepareTargetSessionHandoffWithMachineRpcTimeout(
     params: Parameters<typeof prepareTargetSessionHandoff>[0],
     machineRpcTimeoutMs: number,
 ): Promise<Awaited<ReturnType<typeof prepareTargetSessionHandoff>>> {
+    // Canonical V2: cross-machine prepare requires `handoffMetadataV2` so the target can fetch
+    // provider/workspace publications (no inline/legacy fallback), regardless of transport.
+    if (
+        params.sourceMachineId !== params.targetMachineId
+        && !params.handoffMetadataV2
+    ) {
+        return {
+            ok: false,
+            errorCode: 'missing_handoff_metadata_v2',
+            errorMessage: 'handoffMetadataV2 is required to prepare the target',
+        };
+    }
+
     try {
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId: params.targetMachineId,
@@ -500,6 +569,10 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
     let lastProgressAtMs = params.now();
     let lastStatusKey = '';
     const serverId = normalizeId(params.serverId) || null;
+    const pollMachineRpcTimeoutMs = Math.min(
+        readSessionHandoffMachineRpcTimeoutMs(),
+        readSessionHandoffMachineRpcPollTimeoutMs(),
+    );
 
     const buildStatusKey = (status: SessionHandoffStatus): string => {
         const progress = status.progress;
@@ -534,7 +607,7 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
                     handoffId: params.handoffId,
                 },
                 serverId,
-                timeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
+                timeoutMs: pollMachineRpcTimeoutMs,
                 preferScoped: true,
             });
             const resultError = readRawSessionHandoffError(rawResult);
@@ -572,7 +645,7 @@ async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
                     handoffId: params.handoffId,
                 },
                 serverId,
-                timeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
+                timeoutMs: pollMachineRpcTimeoutMs,
                 preferScoped: true,
             });
             const statusError = readRawSessionHandoffError(rawStatus);
@@ -679,18 +752,28 @@ export async function prepareTargetSessionHandoffWithRetry(
 }
 
 async function commitSessionHandoff(params: Readonly<{
-    sourceMachineId: string;
+    machineId: string;
     handoffId: string;
+    mode: 'target' | 'source_cleanup';
     serverId?: string | null;
+    workspaceReplicationReverseSourceRootPath?: string | null;
+    workspaceReplicationReverseTargetRootPath?: string | null;
 }>): Promise<
     | Readonly<{ ok: true; response: SessionHandoffCommitResponse }>
     | Readonly<{ ok: false; errorCode: string; errorMessage: string }>
 > {
     try {
+        const reverseSourceRootPath = normalizeId(params.workspaceReplicationReverseSourceRootPath);
+        const reverseTargetRootPath = normalizeId(params.workspaceReplicationReverseTargetRootPath);
+        const payload: Record<string, unknown> = { handoffId: params.handoffId, mode: params.mode };
+        if (reverseSourceRootPath && reverseTargetRootPath) {
+            payload.workspaceReplicationReverseSourceRootPath = reverseSourceRootPath;
+            payload.workspaceReplicationReverseTargetRootPath = reverseTargetRootPath;
+        }
         const raw = await machineRpcWithServerScope<unknown, unknown>({
-            machineId: params.sourceMachineId,
+            machineId: params.machineId,
             method: RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT,
-            payload: { handoffId: params.handoffId },
+            payload,
             serverId: normalizeId(params.serverId) || null,
             timeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
         });
@@ -794,11 +877,43 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         serverId: options.serverId,
     });
     let sourceRecovery: SessionHandoffRecoveryPlan | undefined;
+    let lastReportedStatus: SessionHandoffStatus | null = null;
     const reportStatus = (status: SessionHandoffStatus) => {
+        lastReportedStatus = status;
         publishSessionHandoffProgress({
             sessionId: options.sessionId,
             targetMachineId: options.targetMachineId,
             status,
+        });
+    };
+
+    const reportUiProgressCheckpoint = (input: Readonly<{
+        status: SessionHandoffStatus['status'];
+        phase: SessionHandoffStatus['phase'];
+        phaseDetail: string;
+    }>) => {
+        const base = lastReportedStatus;
+        if (!base) {
+            return;
+        }
+        const baseProgress = base.progress;
+        const checkpoint = baseProgress?.checkpoint ?? 'import_session';
+        reportStatus({
+            ...base,
+            status: input.status,
+            phase: input.phase,
+            progress: {
+                updatedAtMs: Date.now(),
+                checkpoint,
+                planned: baseProgress?.planned ?? {},
+                transferred: baseProgress?.transferred ?? {},
+                current: {
+                    ...(baseProgress?.current ?? {}),
+                    phaseDetail: input.phaseDetail,
+                },
+                resumable: false,
+                ...(baseProgress?.warnings ? { warnings: baseProgress.warnings } : {}),
+            },
         });
     };
 
@@ -821,16 +936,21 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     sourceRecovery = buildSourceRecovery(started.response.handoffId) ?? undefined;
     reportStatus(started.response.status);
 
+    const directPeerEndpointCandidates =
+        started.response.handoffMetadataV2?.providerBundleTransferPublication?.endpointCandidates
+        ?? started.response.endpointCandidates;
     const directPeerRouteInput = {
         serverId,
         remoteMachineId: started.sourceMachineId,
-        endpointCandidates: started.response.endpointCandidates,
+        endpointCandidates: directPeerEndpointCandidates,
     } as const;
     const prepareTransportStrategy =
         transport.negotiatedTransportStrategy === 'direct_peer'
         && transport.allowServerRoutedFallback
-        && started.response.endpointCandidates.length > 0
-        && readCachedDirectPeerRoute(directPeerRouteInput).status === 'unavailable'
+        && (
+            directPeerEndpointCandidates.length === 0
+            || readCachedDirectPeerRoute(directPeerRouteInput).status === 'unavailable'
+        )
             ? 'server_routed_stream'
             : transport.negotiatedTransportStrategy;
 
@@ -838,7 +958,45 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         handoffId: started.response.handoffId,
         sourceMachineId: started.sourceMachineId,
         targetMachineId: options.targetMachineId,
-        targetPath: started.response.targetPath,
+        targetPath: (() => {
+            const normalizeWorkspaceRootPath = (raw: unknown): string | null => {
+                const candidate = typeof raw === 'string' ? raw.trim() : '';
+                if (!candidate.startsWith('/')) return null;
+                if (candidate.includes('\0')) return null;
+                const segments = candidate.split('/').filter(Boolean);
+                if (segments.length === 0) return null;
+                if (segments.some((segment) => segment === '..')) return null;
+                return `/${segments.join('/')}`;
+            };
+
+            // When handing back to the previous source machine with `sync_changes`, we must target
+            // the original source workspace root so one-way-safe baseline checks don't treat the
+            // entire tree as diverged (a cross-platform rewrite would create a fresh sibling path).
+            const priorHandoff = (options.sourceMetadata as { handoffV1?: Record<string, unknown> } | null)?.handoffV1 ?? null;
+            const priorSourceMachineId = normalizeId(priorHandoff?.sourceMachineId);
+            const priorTargetMachineId = normalizeId(priorHandoff?.targetMachineId);
+            const requestedTargetMachineId = normalizeId(options.targetMachineId);
+            const currentSourceMachineId = normalizeId(started.sourceMachineId);
+            const priorSourceWorkspaceRootPath = normalizeWorkspaceRootPath(priorHandoff?.sourceWorkspaceRootPath);
+
+            if (
+                options.workspaceTransfer?.enabled === true
+                && options.workspaceTransfer.strategy === 'sync_changes'
+                && priorSourceMachineId
+                && priorTargetMachineId
+                && priorSourceMachineId === requestedTargetMachineId
+                && priorTargetMachineId === currentSourceMachineId
+                && priorSourceWorkspaceRootPath
+            ) {
+                return priorSourceWorkspaceRootPath;
+            }
+
+            return resolveTargetPreparePathForCrossPlatformHandoff({
+                sourceMachineId: started.sourceMachineId,
+                targetMachineId: options.targetMachineId,
+                sourcePath: started.response.targetPath,
+            });
+        })(),
         ...(started.response.handoffMetadataV2 ? { handoffMetadataV2: started.response.handoffMetadataV2 } : {}),
         negotiatedTransportStrategy: prepareTransportStrategy,
         sourceSessionStorageMode: options.sessionStorageMode,
@@ -848,14 +1006,14 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         serverId: options.serverId,
         onStatus: reportStatus,
     }, options.targetPrepareRetry);
-    if (!prepared.ok) {
-        if (
-            transport.negotiatedTransportStrategy === 'direct_peer'
-            && started.response.endpointCandidates.length > 0
-            && prepared.errorCode === 'direct_peer_transfer_unavailable'
-        ) {
-            recordCachedDirectPeerRouteUnavailable(directPeerRouteInput, prepared.errorCode);
-        }
+        if (!prepared.ok) {
+            if (
+                transport.negotiatedTransportStrategy === 'direct_peer'
+                && directPeerEndpointCandidates.length > 0
+                && prepared.errorCode === 'direct_peer_transfer_unavailable'
+            ) {
+                recordCachedDirectPeerRouteUnavailable(directPeerRouteInput, prepared.errorCode);
+            }
         await abortSessionHandoff({
             sourceMachineId: started.sourceMachineId,
             targetMachineId: options.targetMachineId,
@@ -868,13 +1026,22 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
             ...(sourceRecovery ? { recovery: sourceRecovery } : {}),
         };
     }
-    if (prepareTransportStrategy === 'direct_peer' && started.response.endpointCandidates.length > 0) {
+    if (prepareTransportStrategy === 'direct_peer' && directPeerEndpointCandidates.length > 0) {
         recordCachedDirectPeerRouteViable(directPeerRouteInput);
     }
     if (!hasPrepareTargetReadyPayload(prepared.response)) {
         return unsupportedError('Target handoff prepare did not return a ready session payload');
     }
     const preparedResponse = prepared.response;
+
+    // From this point onward, the handoff orchestration is primarily UI-driven (resume/wait/commit).
+    // Publish a checkpoint-aligned status update so the progress modal doesn't remain stuck on
+    // `ready_for_cutover` while the UI is still working.
+    reportUiProgressCheckpoint({
+        status: 'in_progress',
+        phase: 'resuming',
+        phaseDetail: 'resuming_target_session',
+    });
 
     const preparedAgentRuntimeDescriptor = isAgentRuntimeDescriptorV1(preparedResponse.agentRuntimeDescriptorV1)
         ? preparedResponse.agentRuntimeDescriptorV1
@@ -935,8 +1102,10 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         metadata: buildNextMetadata(currentSessionMetadata),
     });
     const publishTargetMetadata = async () => {
-        await sync.patchSessionMetadataWithRetry(options.sessionId, (metadata) =>
-            buildNextMetadata((metadata ?? options.sourceMetadata) as MetadataRecord),
+        await sync.patchSessionMetadataWithRetry(
+            options.sessionId,
+            (metadata) => buildNextMetadata((metadata ?? options.sourceMetadata) as MetadataRecord),
+            { serverId },
         );
     };
     const reapplyOptimisticBinding = () => {
@@ -996,13 +1165,30 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     reapplyOptimisticBinding();
 
     const committed = await commitSessionHandoff({
-        sourceMachineId: started.sourceMachineId,
+        machineId: options.targetMachineId,
         handoffId: started.response.handoffId,
+        mode: 'target',
         serverId: options.serverId,
     });
     if (!committed.ok) return committed;
     reportStatus(committed.response.status);
     reapplyOptimisticBinding();
+
+    // Source-side cleanup must complete before we declare the handoff "done". If the source keeps
+    // running, it can still publish metadata updates (including machine binding) that overwrite the
+    // target-side cutover, making handoff-back planning and QA validation unreliable.
+    const sourceCleanup = await commitSessionHandoff({
+        machineId: started.sourceMachineId,
+        handoffId: started.response.handoffId,
+        mode: 'source_cleanup',
+        serverId: options.serverId,
+        workspaceReplicationReverseSourceRootPath: preparedResponse.resume.directory,
+        // For handoff-back planning, the reverse direction must target the original source
+        // workspace root, not a cross-platform rewrite of the target machine's prepare path.
+        workspaceReplicationReverseTargetRootPath: started.response.targetPath,
+    });
+    if (!sourceCleanup.ok) return sourceCleanup;
+
     const stabilizedBinding = await stabilizeSessionHandoffTargetBinding({
         readSession: () => readSessionHandoffSessionActivity(options.sessionId),
         readTargetMachineId: () => readMachineTargetForSession(options.sessionId)?.machineId ?? null,

@@ -6,6 +6,33 @@ import { buildSessionHandoffMetadataPatch } from './buildSessionHandoffMetadataP
 describe('buildSessionHandoffMetadataPatch', () => {
     const legacyCodexBackendMode = '  mcp_resume  ' as unknown as CodexBackendMode;
 
+    it('stores source/target workspace roots in handoffV1 for handoff-back planning', () => {
+        const updated = buildSessionHandoffMetadataPatch({
+            metadata: {
+                flavor: 'claude',
+                path: '/Users/leeroy/wsrepl-large',
+                host: 'source-host',
+                machineId: 'machine_source',
+                claudeSessionId: 'claude_old',
+            },
+            providerId: 'claude',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageBefore: 'persisted',
+            sessionStorageAfter: 'persisted',
+            targetPath: '/home/guest/wsrepl-large-replication-9',
+            transportStrategy: 'server_routed_stream',
+            completedAtMs: 123,
+            targetRemoteSessionId: 'claude_new',
+            targetDirectSource: { kind: 'claudeConfig', configDir: null, projectId: null },
+        });
+
+        expect(updated.handoffV1).toMatchObject({
+            sourceWorkspaceRootPath: '/Users/leeroy/wsrepl-large',
+            targetWorkspaceRootPath: '/home/guest/wsrepl-large-replication-9',
+        });
+    });
+
     it('rebuilds codex runtime descriptor metadata after handoff', () => {
         const updated = buildSessionHandoffMetadataPatch({
             metadata: {

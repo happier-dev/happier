@@ -1,6 +1,7 @@
 import {
     buildCodexAgentRuntimeDescriptor,
     buildOpenCodeAgentRuntimeDescriptor,
+    normalizeCodexBackendMode,
 } from '@happier-dev/agents';
 import type { AgentRuntimeDescriptorV1, DirectSessionsSource } from '@happier-dev/protocol';
 import {
@@ -25,10 +26,6 @@ function normalizeTrimmedString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed || null;
-}
-
-function normalizeCodexBackendMode(value: unknown): 'mcp' | 'acp' | 'appServer' | null {
-    return value === 'mcp' || value === 'acp' || value === 'appServer' ? value : null;
 }
 
 function normalizeOpenCodeBackendMode(value: unknown): 'server' | 'acp' | null {
@@ -163,6 +160,19 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
     targetDirectSource: DirectSessionsSource | Record<string, unknown>;
     targetRuntimeDescriptor?: AgentRuntimeDescriptorV1;
 }>): MetadataRecord {
+    const normalizeWorkspaceRootPath = (raw: unknown): string | null => {
+        const candidate = typeof raw === 'string' ? raw.trim() : '';
+        if (!candidate.startsWith('/')) return null;
+        if (candidate.includes('\0')) return null;
+        const segments = candidate.split('/').filter(Boolean);
+        if (segments.length === 0) return null;
+        if (segments.some((segment) => segment === '..')) return null;
+        return `/${segments.join('/')}`;
+    };
+
+    const sourceWorkspaceRootPath = normalizeWorkspaceRootPath(input.metadata.path);
+    const targetWorkspaceRootPath = normalizeWorkspaceRootPath(input.targetPath);
+
     const next: MetadataRecord = writeAgentVendorResumeIdToMetadata({
         ...input.metadata,
         machineId: input.targetMachineId,
@@ -243,6 +253,12 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
         sessionStorageAfter: input.sessionStorageAfter,
         transportStrategy: input.transportStrategy,
         completedAtMs: input.completedAtMs,
+        ...(sourceWorkspaceRootPath && targetWorkspaceRootPath
+            ? {
+                sourceWorkspaceRootPath,
+                targetWorkspaceRootPath,
+            }
+            : {}),
     };
 
     return next;

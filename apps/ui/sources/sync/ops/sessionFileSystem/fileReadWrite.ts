@@ -7,7 +7,7 @@ import {
     callDaemonSessionWriteFileRpc,
     downloadDaemonSessionFileToBase64,
     uploadDaemonSessionFileFromReader,
-} from '@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionFiles';
+} from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
 
 import { readRpcErrorCode } from '../../runtime/rpcErrors';
 

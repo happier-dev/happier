@@ -21,6 +21,7 @@ vi.mock('../../sync', () => ({
 
 import { sessionAbort } from '../../ops';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 
@@ -72,17 +73,15 @@ describe('sessionAbort', () => {
   });
 
   it('does not throw when RPC method is unavailable (errorCode)', async () => {
-    const err: any = new Error('RPC method not available');
-    err.rpcErrorCode = RPC_ERROR_CODES.METHOD_NOT_AVAILABLE;
-    mockSessionRpcWithPreferredSessionScope.mockRejectedValue(err);
+    mockSessionRpcWithPreferredSessionScope.mockRejectedValue(new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE));
 
     await expect(sessionAbort('sid-1')).resolves.toBeUndefined();
   });
 
-  it('keeps backward compatibility by not throwing on the legacy error message', async () => {
+  it('does not treat legacy message-only errors as method-not-available', async () => {
     mockSessionRpcWithPreferredSessionScope.mockRejectedValue(new Error('RPC method not available'));
 
-    await expect(sessionAbort('sid-2')).resolves.toBeUndefined();
+    await expect(sessionAbort('sid-2')).rejects.toThrow('RPC method not available');
   });
 
   it('rethrows non-RPC-method-unavailable failures', async () => {

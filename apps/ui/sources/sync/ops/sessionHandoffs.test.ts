@@ -75,6 +75,21 @@ describe('sessionHandoffs ops', () => {
     beforeEach(() => {
         vi.resetModules();
         machineRpcWithServerScopeMock.mockReset();
+        machineRpcWithServerScopeMock.mockImplementation(async (input: any) => {
+            if (input?.method === 'daemon.sessionHandoff.commit') {
+                const handoffId = typeof input?.payload?.handoffId === 'string' ? input.payload.handoffId : 'handoff_unknown';
+                return {
+                    handoffId,
+                    status: {
+                        handoffId,
+                        status: 'completed',
+                        phase: 'finalizing',
+                        recoveryActions: [],
+                    },
+                };
+            }
+            throw new Error(`Unexpected machineRpcWithServerScope call: ${String(input?.method ?? '')}`);
+        });
         readMachineTargetForSessionMock.mockReset();
         getServerFeaturesSnapshotMock.mockReset();
         resumeSessionMock.mockReset();
@@ -445,6 +460,161 @@ describe('sessionHandoffs ops', () => {
         }));
     });
 
+    it('uses the previous source workspace root when handing back to the prior source machine (sync_changes target path override)', async () => {
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+            status: 'ready',
+            features: {
+                features: {
+                    sessions: {
+                        enabled: true,
+                        handoff: {
+                            enabled: true,
+                            serverRoutedTransfer: { enabled: true },
+                        },
+                    },
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: { enabled: true },
+                            serverRouted: { enabled: true },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        });
+
+        storageGetStateMock.mockReturnValue({
+            sessions: {},
+            machines: {
+                machine_source: {
+                    id: 'machine_source',
+                    seq: 1,
+                    createdAt: 0,
+                    updatedAt: 0,
+                    active: true,
+                    activeAt: 0,
+                    metadataVersion: 1,
+                    metadata: {
+                        host: 'source-host',
+                        platform: 'darwin',
+                        happyCliVersion: '0.0.0',
+                        happyHomeDir: '/Users/leeroy/.happy-dev',
+                        homeDir: '/Users/leeroy',
+                    },
+                    daemonState: null,
+                    daemonStateVersion: 1,
+                },
+                machine_target: {
+                    id: 'machine_target',
+                    seq: 1,
+                    createdAt: 0,
+                    updatedAt: 0,
+                    active: true,
+                    activeAt: 0,
+                    metadataVersion: 1,
+                    metadata: {
+                        host: 'target-host',
+                        platform: 'linux',
+                        happyCliVersion: '0.0.0',
+                        happyHomeDir: '/home/guest/.happy-dev',
+                        homeDir: '/home/guest',
+                    },
+                    daemonState: null,
+                    daemonStateVersion: 1,
+                },
+            },
+            applySessions: (...args: unknown[]) => storageApplySessionsMock(...args),
+        });
+
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_back',
+                status: { handoffId: 'handoff_back', status: 'pending', phase: 'preparing', recoveryActions: [] },
+                endpointCandidates: [],
+                handoffMetadataV2: {},
+                targetPath: '/home/guest/wsrepl-large-replication-9',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_back',
+                status: {
+                    handoffId: 'handoff_back',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'remote_session_back',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: '/Users/leeroy/wsrepl-large',
+                    agent: 'claude',
+                    resume: 'remote_session_back',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_back',
+                status: {
+                    handoffId: 'handoff_back',
+                    status: 'completed',
+                    phase: 'finalizing',
+                    recoveryActions: [],
+                },
+            });
+
+        resumeSessionMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_back' });
+        patchSessionMetadataWithRetryMock.mockResolvedValueOnce(undefined);
+
+        const { completeSessionHandoff } = await import('./sessionHandoffs');
+        await completeSessionHandoff({
+            sessionId: 'sess_back',
+            sourceMachineId: 'machine_target',
+            targetMachineId: 'machine_source',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+            workspaceTransfer: {
+                enabled: true,
+                strategy: 'sync_changes',
+                conflictPolicy: 'create_sibling_copy',
+                includeIgnoredMode: 'exclude',
+                ignoredIncludeGlobs: [],
+            },
+            sourceMetadata: {
+                flavor: 'claude',
+                path: '/home/guest/wsrepl-large-replication-9',
+                host: 'target-host',
+                machineId: 'machine_target',
+                claudeSessionId: 'claude_session_back',
+                handoffV1: {
+                    v: 1,
+                    sourceMachineId: 'machine_source',
+                    targetMachineId: 'machine_target',
+                    providerId: 'claude',
+                    sessionStorageBefore: 'persisted',
+                    sessionStorageAfter: 'persisted',
+                    transportStrategy: 'server_routed_stream',
+                    completedAtMs: 1,
+                    sourceWorkspaceRootPath: '/Users/leeroy/wsrepl-large',
+                    targetWorkspaceRootPath: '/home/guest/wsrepl-large-replication-9',
+                },
+            },
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            machineId: 'machine_source',
+            method: 'daemon.sessionHandoff.prepareTarget',
+            payload: expect.objectContaining({
+                targetPath: '/Users/leeroy/wsrepl-large',
+            }),
+        }));
+    });
+
     it('publishes handoff progress updates while target prepare is pending and when the handoff completes', async () => {
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({
             status: 'ready',
@@ -607,7 +777,8 @@ describe('sessionHandoffs ops', () => {
         const seenStatuses: string[] = [];
         const unsubscribe = subscribeSessionHandoffProgress((update) => {
             if (update.sessionId === 'sess_progress' && update.targetMachineId === 'machine_target') {
-                seenStatuses.push(`${update.status.phase}:${update.status.status}`);
+                const checkpoint = update.status.progress?.checkpoint ?? 'none';
+                seenStatuses.push(`${update.status.phase}:${update.status.status}:${checkpoint}`);
             }
         });
 
@@ -643,11 +814,12 @@ describe('sessionHandoffs ops', () => {
         }
 
         expect(seenStatuses).toEqual([
-            'preparing:pending',
-            'staging_target:pending',
-            'staging_target:ready_for_cutover',
-            'resuming:in_progress',
-            'finalizing:completed',
+            'preparing:pending:none',
+            'staging_target:pending:transfer_blobs',
+            'staging_target:ready_for_cutover:apply',
+            // UI-driven progress must not invent a new checkpoint; keep the daemon-emitted checkpoint.
+            'resuming:in_progress:apply',
+            'finalizing:completed:none',
         ]);
     });
 
@@ -881,7 +1053,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_1', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {},
-                targetPath: '/repo',
+                targetPath: '/Users/leeroy/wsrepl-large',
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_1',
@@ -899,7 +1071,7 @@ describe('sessionHandoffs ops', () => {
                     projectId: null,
                 },
                 resume: {
-                    directory: '/repo',
+                    directory: '/home/guest/wsrepl-large-replication-9',
                     agent: 'claude',
                     resume: 'claude_session_1',
                     transcriptStorage: 'persisted',
@@ -949,7 +1121,7 @@ describe('sessionHandoffs ops', () => {
             });
             expect(updated).toMatchObject({
                 machineId: 'machine_target',
-                path: '/repo',
+                path: '/home/guest/wsrepl-large-replication-9',
                 claudeSessionId: 'claude_session_1',
                 handoffV1: {
                     sourceMachineId: 'machine_source',
@@ -1012,7 +1184,7 @@ describe('sessionHandoffs ops', () => {
         expect(resumeSessionMock).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_1',
             machineId: 'machine_target',
-            directory: '/repo',
+            directory: '/home/guest/wsrepl-large-replication-9',
             backendTarget: {
                 kind: 'builtInAgent',
                 agentId: 'claude',
@@ -1043,8 +1215,8 @@ describe('sessionHandoffs ops', () => {
             payload: expect.objectContaining({
                 handoffId: 'handoff_1',
                 mode: 'source_cleanup',
-                workspaceReplicationReverseSourceRootPath: '/repo',
-                workspaceReplicationReverseTargetRootPath: '/repo',
+                workspaceReplicationReverseSourceRootPath: '/home/guest/wsrepl-large-replication-9',
+                workspaceReplicationReverseTargetRootPath: '/Users/leeroy/wsrepl-large',
             }),
         }));
     });
@@ -1061,7 +1233,7 @@ describe('sessionHandoffs ops', () => {
                 status: { handoffId: 'handoff_1', status: 'pending', phase: 'preparing', recoveryActions: [] },
                 endpointCandidates: [],
                 handoffMetadataV2: {},
-                targetPath: '/repo',
+                targetPath: '/Users/leeroy/wsrepl-large',
             })
             .mockResolvedValueOnce({
                 handoffId: 'handoff_1',
@@ -1079,7 +1251,7 @@ describe('sessionHandoffs ops', () => {
                     projectId: null,
                 },
                 resume: {
-                    directory: '/repo',
+                    directory: '/home/guest/wsrepl-large-replication-9',
                     agent: 'claude',
                     resume: 'claude_session_1',
                     transcriptStorage: 'persisted',
