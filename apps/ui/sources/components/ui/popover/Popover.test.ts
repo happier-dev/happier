@@ -158,10 +158,10 @@ describe('Popover (web)', () => {
         const { Popover } = await import('./Popover');
 
         const pointerHandlers: any[] = [];
-        const keyHandlers: any[] = [];
-        const addEventListener = vi.fn((type: string, handler: any) => {
+        const keyHandlers: Array<{ handler: any; options: any }> = [];
+        const addEventListener = vi.fn((type: string, handler: any, options?: any) => {
             if (type === 'pointerdown') pointerHandlers.push(handler);
-            if (type === 'keydown') keyHandlers.push(handler);
+            if (type === 'keydown') keyHandlers.push({ handler, options });
         });
         const removeEventListener = vi.fn();
 
@@ -194,6 +194,105 @@ describe('Popover (web)', () => {
         expect(pointerHandlers.length).toBeGreaterThan(0);
         pointerHandlers.at(-1)?.({ target: anchorTarget });
         expect(onRequestClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops event propagation when closing on Escape so underlying modal layers do not also dismiss', async () => {
+        const { Popover } = await import('./Popover');
+
+        const keyHandlers: Array<{ handler: any; options: any }> = [];
+        const addEventListener = vi.fn((type: string, handler: any, options?: any) => {
+            if (type === 'keydown') keyHandlers.push({ handler, options });
+        });
+        const removeEventListener = vi.fn();
+
+        vi.stubGlobal('document', {
+            addEventListener,
+            removeEventListener,
+        });
+
+        const onRequestClose = vi.fn();
+        const anchorRef = {
+            current: {
+                contains: () => false,
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 10, height: 10 }),
+            },
+        } as any;
+
+        await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            onRequestClose,
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
+
+        await act(async () => {});
+
+        expect(keyHandlers.length).toBeGreaterThan(0);
+
+        const stopPropagation = vi.fn();
+        const stopImmediatePropagation = vi.fn();
+        const preventDefault = vi.fn();
+        keyHandlers.at(-1)?.handler({
+            key: 'Escape',
+            stopPropagation,
+            stopImmediatePropagation,
+            preventDefault,
+        });
+
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+        expect(stopImmediatePropagation).toHaveBeenCalledTimes(1);
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
+        expect(keyHandlers.at(-1)?.options).toBe(true);
+    });
+
+    it('stops event propagation when closing on outside clicks so underlying modal layers do not also dismiss', async () => {
+        const { Popover } = await import('./Popover');
+
+        const pointerHandlers: Array<{ handler: any; options: any }> = [];
+        const addEventListener = vi.fn((type: string, handler: any, options?: any) => {
+            if (type === 'pointerdown') pointerHandlers.push({ handler, options });
+        });
+        const removeEventListener = vi.fn();
+
+        vi.stubGlobal('document', {
+            addEventListener,
+            removeEventListener,
+        });
+
+        const onRequestClose = vi.fn();
+        const anchorRef = {
+            current: {
+                contains: () => false,
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 10, height: 10 }),
+            },
+        } as any;
+
+        await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            onRequestClose,
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
+
+        await act(async () => {});
+
+        expect(pointerHandlers.length).toBeGreaterThan(0);
+
+        const stopPropagation = vi.fn();
+        const stopImmediatePropagation = vi.fn();
+        pointerHandlers.at(-1)?.handler({
+            target: {} as any,
+            stopPropagation,
+            stopImmediatePropagation,
+        });
+
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+        expect(stopImmediatePropagation).toHaveBeenCalledTimes(1);
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
+        expect(pointerHandlers.at(-1)?.options).toBe(true);
     });
 
     it('portals to a modal portal host when available (prevents Radix Dialog scroll-lock from swallowing wheel/touch scroll)', async () => {

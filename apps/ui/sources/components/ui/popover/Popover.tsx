@@ -625,9 +625,19 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         if (Platform.OS !== 'web') return;
         if (!open) return;
         if (!onRequestClose) return;
-        if (backdropEnabled && backdropBlocksOutsidePointerEvents) return;
         if (typeof document === 'undefined') return;
 
+        const handleKeyDownCapture = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            // Prevent nested Radix/Vaul layers (e.g. Expo Router modals) from also treating Escape
+            // as "dismiss", which can close the underlying modal when the popover closes.
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            onRequestClose();
+        };
+
+        const shouldAttachPointerDownCapture = !(backdropEnabled && backdropBlocksOutsidePointerEvents);
         const handlePointerDownCapture = (event: Event) => {
             const target = event.target as Node | null;
             if (!target) return;
@@ -640,20 +650,22 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 }
                 return;
             }
+
+            // Prevent nested Radix/Vaul "outside click" logic from also dismissing the underlying modal.
+            event.stopPropagation();
+            event.stopImmediatePropagation();
             onRequestClose();
         };
 
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                onRequestClose();
-            }
-        };
-
-        document.addEventListener('pointerdown', handlePointerDownCapture, true);
-        document.addEventListener('keydown', handleKeyDown);
+        if (shouldAttachPointerDownCapture) {
+            document.addEventListener('pointerdown', handlePointerDownCapture, true);
+        }
+        document.addEventListener('keydown', handleKeyDownCapture, true);
         return () => {
-            document.removeEventListener('pointerdown', handlePointerDownCapture, true);
-            document.removeEventListener('keydown', handleKeyDown);
+            if (shouldAttachPointerDownCapture) {
+                document.removeEventListener('pointerdown', handlePointerDownCapture, true);
+            }
+            document.removeEventListener('keydown', handleKeyDownCapture, true);
         };
     }, [
         anchorRef,
@@ -662,6 +674,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         getDomElementFromNode,
         onRequestClose,
         open,
+        props.closeOnAnchorPress,
     ]);
 
     const content = open ? (
