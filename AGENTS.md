@@ -282,7 +282,11 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
   - `normalizeX.ts` for normalization logic
   - `waitForX.ts` for wait/poll utilities
   - `startX.ts` / `runX.ts` only for true entrypoints
-- Keep backend/provider-specific logic inside that backend folder. Shared cross-backend logic must live in core (`agent/*`) and remain provider-agnostic.
+- Keep backend/provider-specific logic inside that backend/provider folder. Shared cross-provider logic must live in core and remain provider-agnostic.
+- **Provider folder ownership (enforced)**:
+  - `apps/cli` uses `apps/cli/src/backends/<providerId>` for executable provider wiring (CLI historical naming).
+  - Internal workspaces use `src/providers/<providerId>` (e.g. `packages/*/src/providers/<providerId>`).
+  - UI uses `apps/ui/sources/agents/providers/<providerId>`.
 - Avoid compatibility shims for renames/moves by default. When restructuring, update all imports directly so the final structure is canonical.
 - Split crowded folders by domain (for example: `runtime/`, `session/`, `spawn/`, `permission/`) instead of accumulating many cross-cutting files at one level.
 - Keep files single-purpose. If a file starts owning multiple responsibilities, extract cohesive modules with explicit names.
@@ -317,6 +321,11 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
   - executable hook in backend/UI provider entrypoints
   - provider-agnostic orchestration in shared core that calls those hooks
 - For UI, follow the same rule: generic screens/components/sync logic must consume provider behavior through the registry/core abstractions, while provider-only behavior lives in `sources/agents/providers/<provider>/core.ts`, `uiBehavior.ts`, and nearby provider-owned modules.
+- **Internal packages follow the same rule** (no provider policy in core):
+  - `packages/agents`: provider-specific executable logic belongs in `packages/agents/src/providers/<providerId>/**` (not scattered across unrelated modules).
+  - `packages/protocol`: provider-specific *wire/schema* may live in protocol when it is part of the shared API contract, but provider-specific *executable behavior/policy/defaults* must live under `packages/protocol/src/providers/<providerId>/**` (or be moved up to `packages/agents` / server / UI as the owning layer).
+  - `packages/protocol`: use a single `src/providers/<providerId>/**` tree rather than scattering provider-specific folders inside each domain (avoid `src/**/backends/<providerId>/**` and avoid `src/**/providers/<providerId>/**` nesting).
+  - Avoid provider-specific defaults in protocol (e.g. “default backend is claude”); keep protocol provider-agnostic and let higher layers choose defaults via catalogs/profiles.
 
 ### File Size and Complexity Guard (Required)
 - Applies to all implementation code and tests, not tests only.
