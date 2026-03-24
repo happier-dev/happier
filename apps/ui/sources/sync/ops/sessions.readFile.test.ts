@@ -98,7 +98,7 @@ describe('sessionReadFile', () => {
         machineRPCSpy.mockImplementation(async (_machineId: string, method: string) => {
             expect(policyConsulted).toBe(true);
 
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
                 return {
                     success: true,
                     downloadId: 'download-1',
@@ -107,17 +107,17 @@ describe('sessionReadFile', () => {
                     name: 'a.ts',
                 };
             }
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK) {
                 return {
                     success: true,
                     contentBase64: 'aGVsbG8=',
                     isLast: true,
                 };
             }
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
                 return { success: true };
             }
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
                 return { success: true };
             }
 
@@ -141,7 +141,7 @@ describe('sessionReadFile', () => {
         machineRPCSpy.mockImplementation(async (_machineId: string, method: string) => {
             expect(policyConsulted).toBe(true);
 
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
                 return {
                     success: true,
                     downloadId: 'download-1',
@@ -150,13 +150,13 @@ describe('sessionReadFile', () => {
                     name: 'a.ts',
                 };
             }
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
                 return { success: true };
             }
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
                 return { success: true };
             }
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK) {
                 return {
                     success: true,
                     contentBase64: 'aGVsbG8=',
@@ -187,7 +187,7 @@ describe('sessionReadFile', () => {
         machineRPCSpy.mockImplementation(async (_machineId: string, method: string) => {
             expect(policyConsulted).toBe(true);
 
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
                 return {
                     success: true,
                     downloadId: 'download-1',
@@ -196,14 +196,14 @@ describe('sessionReadFile', () => {
                     name: 'a.ts',
                 };
             }
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK) {
                 readChunkCalled += 1;
                 throw new Error('chunk should not be requested when the download is rejected by policy');
             }
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
                 return { success: true };
             }
-            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE) {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
                 return { success: true };
             }
 

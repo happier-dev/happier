@@ -2,51 +2,27 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installVoiceSettingsPanelCommonModuleMocks } from './voiceSettingsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const decryptSecretValueMock = vi.fn((): string | null => null);
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Linking: {
-                        canOpenURL: async () => true,
-                        openURL: async () => {},
-                    },
-                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: (props: any) => {
-    const React = require('react');
-    return React.createElement('Ionicons', props);
-  },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: vi.fn(),
-            confirm: vi.fn(),
-            alert: vi.fn(),
-        },
-    }).module;
+installVoiceSettingsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Linking: {
+                canOpenURL: async () => true,
+                openURL: async () => {},
+            },
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        });
+    },
+    icons: async () => ({
+        Ionicons: (props: any) => React.createElement('Ionicons', props),
+    }),
 });
 
 vi.mock('@/sync/sync', () => ({

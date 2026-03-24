@@ -1,583 +1,396 @@
-import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
+import { createMachineFixture, renderHook } from '@/dev/testkit';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+
 import { useNewSessionMachinePathState } from './useNewSessionMachinePathState';
-import { renderScreen } from '@/dev/testkit';
 
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-type MachineFixture = {
+type MachineFixtureInput = {
     id: string;
-    metadata?: { homeDir?: string | null };
+    metadata?: Partial<NonNullable<Machine['metadata']>> | null;
+    active?: boolean;
+    activeAt?: number;
+    revokedAt?: number | null;
 };
 
-async function flushEffects(turns = 2): Promise<void> {
-    for (let i = 0; i < turns; i += 1) {
-        await Promise.resolve();
-    }
+type HookState = ReturnType<typeof useNewSessionMachinePathState>;
+type HookParams = Parameters<typeof useNewSessionMachinePathState>[0];
+
+function makeMachine({ id, metadata, ...overrides }: MachineFixtureInput): Machine {
+    const base = createMachineFixture({ id, ...overrides });
+    // These tests intentionally model partially hydrated machine metadata.
+    const mergedMetadata = metadata === undefined
+        ? base.metadata
+        : metadata === null
+            ? null
+            : {
+                ...(base.metadata ?? {}),
+                ...metadata,
+            } as NonNullable<Machine['metadata']>;
+    return {
+        ...base,
+        ...overrides,
+        id,
+        metadata: mergedMetadata,
+    };
+}
+
+function toMachines(...machines: MachineFixtureInput[]): HookParams['machines'] {
+    return machines.map(makeMachine);
+}
+
+function getSelection(state: HookState): Readonly<{
+    selectedMachineId: string | null;
+    selectedPath: string;
+}> {
+    return {
+        selectedMachineId: state.selectedMachineId,
+        selectedPath: state.selectedPath,
+    };
+}
+
+function renderMachinePathState(initialProps: HookParams) {
+    return renderHook((props: HookParams) => useNewSessionMachinePathState(props), {
+        initialProps,
+    });
 }
 
 describe('useNewSessionMachinePathState', () => {
     it('prefers an online machine from recent paths over an offline one', async () => {
-        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
         const now = Date.now();
 
-        function Probe(props: Readonly<{
-            machines: Array<MachineFixture & { activeAt?: number; revokedAt?: number | null }>;
-            recentMachinePaths: Array<{ machineId: string; path: string }>;
-        }>) {
-            const state = useNewSessionMachinePathState({
-                machines: props.machines as any,
-                recentMachinePaths: props.recentMachinePaths,
-                machineIdParam: null,
-                pathParam: null,
-            });
+        const hook = await renderMachinePathState({
+            machines: toMachines(
+                { id: 'machine-offline', metadata: { homeDir: '/offline' }, activeAt: now - 3 * 60_000 },
+                { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
+            ),
+            recentMachinePaths: [
+                { machineId: 'machine-offline', path: '/repo/offline' },
+                { machineId: 'machine-online', path: '/repo/online' },
+            ],
+            machineIdParam: null,
+            pathParam: null,
+        });
 
-            React.useEffect(() => {
-                snapshots.push({
-                    selectedMachineId: state.selectedMachineId,
-                    selectedPath: state.selectedPath,
-                });
-            }, [state.selectedMachineId, state.selectedPath]);
-
-            return null;
-        }
-
-        const machines = [
-            { id: 'machine-offline', metadata: { homeDir: '/offline' }, activeAt: now - 3 * 60_000 },
-            { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
-        ];
-
-        await renderScreen(React.createElement(Probe, {
-                    machines,
-                    recentMachinePaths: [
-                        { machineId: 'machine-offline', path: '/repo/offline' },
-                        { machineId: 'machine-online', path: '/repo/online' },
-                    ],
-                }));
-
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-online',
             selectedPath: '/repo/online',
         });
+
+        await hook.unmount();
     });
 
     it('preserves the requested route machine when it is offline but still available', async () => {
-        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
         const now = Date.now();
 
-        function Probe(props: Readonly<{
-            machines: Array<MachineFixture & { activeAt?: number; revokedAt?: number | null }>;
-            machineIdParam: string | null;
-        }>) {
-            const state = useNewSessionMachinePathState({
-                machines: props.machines as any,
-                recentMachinePaths: [],
-                machineIdParam: props.machineIdParam,
-                pathParam: null,
-            });
+        const hook = await renderMachinePathState({
+            machines: toMachines(
+                { id: 'machine-offline', metadata: { homeDir: '/offline' }, activeAt: now - 3 * 60_000 },
+                { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
+            ),
+            recentMachinePaths: [],
+            machineIdParam: 'machine-offline',
+            pathParam: null,
+        });
 
-            React.useEffect(() => {
-                snapshots.push({
-                    selectedMachineId: state.selectedMachineId,
-                    selectedPath: state.selectedPath,
-                });
-            }, [state.selectedMachineId, state.selectedPath]);
-
-            return null;
-        }
-
-        const machines = [
-            { id: 'machine-offline', metadata: { homeDir: '/offline' }, activeAt: now - 3 * 60_000 },
-            { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
-        ];
-
-        await renderScreen(React.createElement(Probe, {
-                    machines,
-                    machineIdParam: 'machine-offline',
-                }));
-
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-offline',
             selectedPath: '/offline',
         });
+
+        await hook.unmount();
     });
 
     it('reselects a valid machine when the currently selected machine disappears', async () => {
-        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
-
-        function Probe(props: Readonly<{
-            machines: MachineFixture[];
-            recentMachinePaths: Array<{ machineId: string; path: string }>;
-        }>) {
-            const state = useNewSessionMachinePathState({
-                machines: props.machines as any,
-                recentMachinePaths: props.recentMachinePaths,
-                machineIdParam: null,
-                pathParam: null,
-            });
-
-            React.useEffect(() => {
-                snapshots.push({
-                    selectedMachineId: state.selectedMachineId,
-                    selectedPath: state.selectedPath,
-                });
-            }, [state.selectedMachineId, state.selectedPath]);
-
-            return null;
-        }
-
-        const initialMachines: MachineFixture[] = [
+        const initialMachines: MachineFixtureInput[] = [
             { id: 'machine-old', metadata: { homeDir: '/Users/leeroy' } },
         ];
-        const replacementMachines: MachineFixture[] = [
+        const replacementMachines: MachineFixtureInput[] = [
             { id: 'machine-new', metadata: { homeDir: '/Users/leeroy/new-home' } },
         ];
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Probe, {
-                    machines: initialMachines,
-                    recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
-                }))).tree;
+        const hook = await renderMachinePathState({
+            machines: toMachines(...initialMachines),
+            recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
+            machineIdParam: null,
+            pathParam: null,
+        });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-old',
             selectedPath: '/repo/old',
         });
 
-        await act(async () => {
-            tree?.update(
-                React.createElement(Probe, {
-                    machines: replacementMachines,
-                    recentMachinePaths: [{ machineId: 'machine-new', path: '/repo/new' }],
-                }),
-            );
-            await flushEffects(4);
+        await hook.rerender({
+            machines: toMachines(...replacementMachines),
+            recentMachinePaths: [{ machineId: 'machine-new', path: '/repo/new' }],
+            machineIdParam: null,
+            pathParam: null,
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-new',
             selectedPath: '/repo/new',
         });
 
-        await act(async () => {
-            tree?.unmount();
-            await flushEffects(2);
-        });
+        await hook.unmount();
     });
 
     it('preserves the current selection when it becomes offline but still exists', async () => {
-        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
         const now = Date.now();
-
-        function Probe(props: Readonly<{
-            machines: Array<MachineFixture & { activeAt?: number; revokedAt?: number | null }>;
-            recentMachinePaths: Array<{ machineId: string; path: string }>;
-        }>) {
-            const state = useNewSessionMachinePathState({
-                machines: props.machines as any,
-                recentMachinePaths: props.recentMachinePaths,
-                machineIdParam: null,
-                pathParam: null,
-            });
-
-            React.useEffect(() => {
-                snapshots.push({
-                    selectedMachineId: state.selectedMachineId,
-                    selectedPath: state.selectedPath,
-                });
-            }, [state.selectedMachineId, state.selectedPath]);
-
-            return null;
-        }
-
-        const initialMachines = [
+        const initialMachines = toMachines(
             { id: 'machine-old', metadata: { homeDir: '/Users/leeroy' }, activeAt: now - 5_000 },
             { id: 'machine-new', metadata: { homeDir: '/Users/leeroy/new-home' }, activeAt: now - 10_000 },
-        ];
-        const updatedMachines = [
+        );
+        const updatedMachines = toMachines(
             { id: 'machine-old', metadata: { homeDir: '/Users/leeroy' }, activeAt: now - 5 * 60_000 },
             { id: 'machine-new', metadata: { homeDir: '/Users/leeroy/new-home' }, activeAt: now - 10_000 },
-        ];
+        );
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Probe, {
-                    machines: initialMachines,
-                    recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
-                }))).tree;
+        const hook = await renderMachinePathState({
+            machines: initialMachines,
+            recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
+            machineIdParam: null,
+            pathParam: null,
+        });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-old',
             selectedPath: '/repo/old',
         });
 
-        await act(async () => {
-            tree?.update(
-                React.createElement(Probe, {
-                    machines: updatedMachines,
-                    recentMachinePaths: [
-                        { machineId: 'machine-old', path: '/repo/old' },
-                        { machineId: 'machine-new', path: '/repo/new' },
-                    ],
-                }),
-            );
-            await flushEffects(4);
+        await hook.rerender({
+            machines: updatedMachines,
+            recentMachinePaths: [
+                { machineId: 'machine-old', path: '/repo/old' },
+                { machineId: 'machine-new', path: '/repo/new' },
+            ],
+            machineIdParam: null,
+            pathParam: null,
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-old',
             selectedPath: '/repo/old',
         });
 
-        await act(async () => {
-            tree?.unmount();
-            await flushEffects(2);
-        });
+        await hook.unmount();
     });
 
     it('does not reapply a stale route path after the user switches to another linked worktree path', async () => {
-        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
-        const stateRef: { current: ReturnType<typeof useNewSessionMachinePathState> | null } = { current: null };
+        const hook = await renderMachinePathState({
+            machines: toMachines({ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }),
+            recentMachinePaths: [{ machineId: 'machine-1', path: '/repo/custom' }],
+            machineIdParam: 'machine-1',
+            pathParam: '/repo/custom',
+        });
 
-        function Probe(props: Readonly<{
-            pathParam: string | null;
-        }>) {
-            const state = useNewSessionMachinePathState({
-                machines: [{ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }] as any,
-                recentMachinePaths: [{ machineId: 'machine-1', path: '/repo/custom' }],
-                machineIdParam: 'machine-1',
-                pathParam: props.pathParam,
-            });
-
-            stateRef.current = state;
-
-            React.useEffect(() => {
-                snapshots.push({
-                    selectedMachineId: state.selectedMachineId,
-                    selectedPath: state.selectedPath,
-                });
-            }, [state.selectedMachineId, state.selectedPath]);
-
-            return null;
-        }
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Probe, {
-                pathParam: '/repo/custom',
-            }))).tree;
-
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '/repo/custom',
         });
-        expect(typeof stateRef.current?.setSelectedPath).toBe('function');
+        expect(typeof hook.getCurrent().setSelectedPath).toBe('function');
 
         await act(async () => {
-            stateRef.current?.setSelectedPath('/repo/release');
-            await flushEffects(4);
+            hook.getCurrent().setSelectedPath('/repo/release');
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '/repo/release',
         });
 
-        await act(async () => {
-            tree?.update(React.createElement(Probe, {
-                pathParam: '/repo/custom',
-            }));
-            await flushEffects(4);
+        await hook.rerender({
+            machines: toMachines({ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }),
+            recentMachinePaths: [{ machineId: 'machine-1', path: '/repo/custom' }],
+            machineIdParam: 'machine-1',
+            pathParam: '/repo/custom',
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '/repo/release',
         });
 
-        await act(async () => {
-            tree?.update(React.createElement(Probe, {
-                pathParam: '/repo/hotfix',
-            }));
-            await flushEffects(4);
+        await hook.rerender({
+            machines: toMachines({ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }),
+            recentMachinePaths: [{ machineId: 'machine-1', path: '/repo/custom' }],
+            machineIdParam: 'machine-1',
+            pathParam: '/repo/hotfix',
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '/repo/hotfix',
         });
 
-        await act(async () => {
-            tree?.unmount();
-            await flushEffects(2);
-        });
+        await hook.unmount();
     });
 
     it('accepts string-array machine and path route params from expo-router search state', async () => {
-        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
+        const hook = await renderMachinePathState({
+            machines: toMachines({ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }),
+            recentMachinePaths: [{ machineId: 'machine-1', path: '/repo/recent' }],
+            machineIdParam: ['machine-1'],
+            pathParam: ['/repo/custom'],
+        });
 
-        function Probe() {
-            const state = useNewSessionMachinePathState({
-                machines: [{ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }] as any,
-                recentMachinePaths: [{ machineId: 'machine-1', path: '/repo/recent' }],
-                machineIdParam: ['machine-1'],
-                pathParam: ['/repo/custom'],
-            });
-
-            React.useEffect(() => {
-                snapshots.push({
-                    selectedMachineId: state.selectedMachineId,
-                    selectedPath: state.selectedPath,
-                });
-            }, [state.selectedMachineId, state.selectedPath]);
-
-            return null;
-        }
-
-        await renderScreen(React.createElement(Probe));
-
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '/repo/custom',
         });
+
+        await hook.unmount();
     });
 
     it('does not reapply an unchanged machine param after the user selects another available machine', async () => {
-        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
-        const stateRef: { current: ReturnType<typeof useNewSessionMachinePathState> | null } = { current: null };
         const now = Date.now();
 
-        function Probe(props: Readonly<{
-            machineIdParam: string | null;
-        }>) {
-            const state = useNewSessionMachinePathState({
-                machines: [
-                    { id: 'machine-offline', metadata: { homeDir: '/offline' }, activeAt: now - 3 * 60_000 },
-                    { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
-                ] as any,
-                recentMachinePaths: [],
-                machineIdParam: props.machineIdParam,
-                pathParam: null,
-            });
-
-            stateRef.current = state;
-
-            React.useEffect(() => {
-                snapshots.push({
-                    selectedMachineId: state.selectedMachineId,
-                    selectedPath: state.selectedPath,
-                });
-            }, [state.selectedMachineId, state.selectedPath]);
-
-            return null;
-        }
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Probe, {
+        const hook = await renderMachinePathState({
+            machines: toMachines(
+                { id: 'machine-offline', metadata: { homeDir: '/offline' }, activeAt: now - 3 * 60_000 },
+                { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
+            ),
+            recentMachinePaths: [],
             machineIdParam: 'machine-offline',
-        }))).tree;
+            pathParam: null,
+        });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-offline',
             selectedPath: '/offline',
         });
 
         await act(async () => {
-            stateRef.current?.setSelectedMachineId('machine-online');
-            await flushEffects(4);
+            hook.getCurrent().setSelectedMachineId('machine-online');
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-online',
             selectedPath: '/offline',
         });
 
-        await act(async () => {
-            tree?.update(React.createElement(Probe, {
-                machineIdParam: 'machine-offline',
-            }));
-            await flushEffects(4);
+        await hook.rerender({
+            machines: toMachines(
+                { id: 'machine-offline', metadata: { homeDir: '/offline' }, activeAt: now - 3 * 60_000 },
+                { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
+            ),
+            recentMachinePaths: [],
+            machineIdParam: 'machine-offline',
+            pathParam: null,
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-online',
             selectedPath: '/offline',
         });
 
-        await act(async () => {
-            tree?.update(React.createElement(Probe, {
-                machineIdParam: 'machine-offline-next',
-            }));
-            await flushEffects(4);
+        await hook.rerender({
+            machines: toMachines(
+                { id: 'machine-offline', metadata: { homeDir: '/offline' }, activeAt: now - 3 * 60_000 },
+                { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
+            ),
+            recentMachinePaths: [],
+            machineIdParam: 'machine-offline-next',
+            pathParam: null,
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-online',
             selectedPath: '/offline',
         });
 
-        await act(async () => {
-            tree?.unmount();
-            await flushEffects(2);
-        });
+        await hook.unmount();
     });
 
     it('backfills an empty seeded path once the selected machine home directory becomes available', async () => {
-        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
+        const hook = await renderMachinePathState({
+            machines: toMachines({ id: 'machine-1', metadata: { homeDir: undefined } }),
+            recentMachinePaths: [],
+            machineIdParam: 'machine-1',
+            pathParam: null,
+        });
 
-        function Probe(props: Readonly<{
-            machines: MachineFixture[];
-        }>) {
-            const state = useNewSessionMachinePathState({
-                machines: props.machines as any,
-                recentMachinePaths: [],
-                machineIdParam: 'machine-1',
-                pathParam: null,
-            });
-
-            React.useEffect(() => {
-                snapshots.push({
-                    selectedMachineId: state.selectedMachineId,
-                    selectedPath: state.selectedPath,
-                });
-            }, [state.selectedMachineId, state.selectedPath]);
-
-            return null;
-        }
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Probe, {
-                machines: [{ id: 'machine-1', metadata: { homeDir: null } }],
-            }))).tree;
-
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '',
         });
 
-        await act(async () => {
-            tree?.update(React.createElement(Probe, {
-                machines: [{ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }],
-            }));
-            await flushEffects(4);
+        await hook.rerender({
+            machines: toMachines({ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }),
+            recentMachinePaths: [],
+            machineIdParam: 'machine-1',
+            pathParam: null,
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '/Users/leeroy',
         });
+
+        await hook.unmount();
     });
 
     it('does not clobber an explicit user-cleared path when machine metadata refreshes', async () => {
-        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
-        const stateRef: { current: ReturnType<typeof useNewSessionMachinePathState> | null } = { current: null };
+        const hook = await renderMachinePathState({
+            machines: toMachines({ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }),
+            recentMachinePaths: [],
+            machineIdParam: 'machine-1',
+            pathParam: null,
+        });
 
-        function Probe(props: Readonly<{
-            machines: MachineFixture[];
-        }>) {
-            const state = useNewSessionMachinePathState({
-                machines: props.machines as any,
-                recentMachinePaths: [],
-                machineIdParam: 'machine-1',
-                pathParam: null,
-            });
-
-            stateRef.current = state;
-            React.useEffect(() => {
-                snapshots.push({
-                    selectedMachineId: state.selectedMachineId,
-                    selectedPath: state.selectedPath,
-                });
-            }, [state.selectedMachineId, state.selectedPath]);
-
-            return null;
-        }
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Probe, {
-                machines: [{ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }],
-            }))).tree;
-
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '/Users/leeroy',
         });
 
         await act(async () => {
-            stateRef.current?.setSelectedPath('');
-            await flushEffects(4);
+            hook.getCurrent().setSelectedPath('');
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '',
         });
 
-        await act(async () => {
-            tree?.update(React.createElement(Probe, {
-                machines: [{ id: 'machine-1', metadata: { homeDir: '/Users/leeroy/updated' } }],
-            }));
-            await flushEffects(4);
+        await hook.rerender({
+            machines: toMachines({ id: 'machine-1', metadata: { homeDir: '/Users/leeroy/updated' } }),
+            recentMachinePaths: [],
+            machineIdParam: 'machine-1',
+            pathParam: null,
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '',
         });
+
+        await hook.unmount();
     });
 
     it('reapplies the route directory after the requested machine hydrates later', async () => {
-        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
-
-        function Probe(props: Readonly<{
-            machines: MachineFixture[];
-            machineIdParam: string;
-            pathParam: string;
-        }>) {
-            const state = useNewSessionMachinePathState({
-                machines: props.machines as any,
-                recentMachinePaths: [],
-                machineIdParam: props.machineIdParam,
-                pathParam: props.pathParam,
-            });
-
-            React.useEffect(() => {
-                snapshots.push({
-                    selectedMachineId: state.selectedMachineId,
-                    selectedPath: state.selectedPath,
-                });
-            }, [state.selectedMachineId, state.selectedPath]);
-
-            return null;
-        }
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Probe, {
-                    machines: [],
-                    machineIdParam: 'machine-a',
-                    pathParam: '/repo',
-                }))).tree;
-
-        await act(async () => {
-            tree?.update(
-                React.createElement(Probe, {
-                    machines: [{ id: 'machine-a', metadata: { homeDir: '/Users/leeroy' } }],
-                    machineIdParam: 'machine-a',
-                    pathParam: '/repo',
-                }),
-            );
-            await flushEffects(4);
+        const hook = await renderMachinePathState({
+            machines: toMachines(),
+            recentMachinePaths: [],
+            machineIdParam: 'machine-a',
+            pathParam: '/repo',
         });
 
-        expect(snapshots.at(-1)).toEqual({
+        await hook.rerender({
+            machines: toMachines({ id: 'machine-a', metadata: { homeDir: '/Users/leeroy' } }),
+            recentMachinePaths: [],
+            machineIdParam: 'machine-a',
+            pathParam: '/repo',
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-a',
             selectedPath: '/repo',
         });
 
-        await act(async () => {
-            tree?.unmount();
-            await flushEffects(2);
-        });
+        await hook.unmount();
     });
 });

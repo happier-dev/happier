@@ -3,11 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 
 import { resolveToolHeaderTextPresentation } from './resolveToolHeaderTextPresentation';
+import { installToolShellPresentationCommonModuleMocks } from './toolShellPresentationTestHelpers';
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
+installToolShellPresentationCommonModuleMocks();
 
 function makeToolCall(overrides: Partial<ToolCall>): ToolCall {
     const now = 1;
@@ -29,42 +27,42 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
     it('renders Read with Read File title and path subtitle', () => {
         const tool = makeToolCall({ name: 'Read', input: { file_path: '/tmp/example.txt' } });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.title).toBe('tools.names.readFile');
+        expect(model.title).toBe('Read File');
         expect(model.subtitle).toBe('/tmp/example.txt');
     });
 
     it('renders Glob with Search Files title and pattern subtitle', () => {
         const tool = makeToolCall({ name: 'Glob', input: { pattern: '{package.json,go.mod}' } });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.title).toBe('tools.names.searchFiles');
+        expect(model.title).toBe('Search Files');
         expect(model.subtitle).toBe('{package.json,go.mod}');
     });
 
     it('renders Grep with Search Content title and pattern subtitle', () => {
         const tool = makeToolCall({ name: 'Grep', input: { pattern: '\\\\bTODO\\\\b' } });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.title).toBe('tools.names.searchContent');
+        expect(model.title).toBe('Search Content');
         expect(model.subtitle).toBe('\\\\bTODO\\\\b');
     });
 
     it('renders WebFetch with Fetch URL title and host subtitle', () => {
         const tool = makeToolCall({ name: 'WebFetch', input: { url: 'https://example.com/docs' } });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.title).toBe('tools.names.fetchUrl');
+        expect(model.title).toBe('Fetch URL');
         expect(model.subtitle).toBe('example.com');
     });
 
     it('renders WebSearch with Web Search title and query subtitle', () => {
         const tool = makeToolCall({ name: 'WebSearch', input: { query: 'how to test X' } });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.title).toBe('tools.names.webSearch');
+        expect(model.title).toBe('Web Search');
         expect(model.subtitle).toBe('how to test X');
     });
 
     it('renders Task with Sub-agent title and description subtitle', () => {
         const tool = makeToolCall({ name: 'Task', input: { description: 'Summarize third run' } });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.title).toBe('tools.names.subAgent');
+        expect(model.title).toBe('Subagent');
         expect(model.subtitle).toBe('Summarize third run');
     });
 
@@ -75,7 +73,7 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
                 '{"status":"timeout","summary":"Timed out after 120000ms","error":{"code":"execution_run_timeout","message":"Timed out after 120000ms"}}',
         });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.title).toBe('tools.names.subAgent');
+        expect(model.title).toBe('Subagent');
         expect(model.subtitle).toBe('Timed out after 120000ms');
     });
 
@@ -88,7 +86,7 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
             result: null,
         });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.title).toBe('tools.names.subAgent');
+        expect(model.title).toBe('Subagent');
         expect(model.subtitle).toBe('review · codex');
     });
 
@@ -96,7 +94,7 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
         const tool = makeToolCall({ name: 'TaskCreate', input: { description: 'Summarize third run' } });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
         expect(model.normalizedToolName).toBe('SubAgent');
-        expect(model.title).toBe('tools.names.subAgent');
+        expect(model.title).toBe('Subagent');
         expect(model.subtitle).toBe('Summarize third run');
     });
 
@@ -118,7 +116,7 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
             },
         });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.title).toBe('tools.names.question');
+        expect(model.title).toBe('Question');
         expect(model.subtitle).toBe('Next Tool Stress?');
     });
 
@@ -132,7 +130,7 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
             },
         });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.title).toBe('tools.workspaceIndexingPermission.defaultTitle');
+        expect(model.title).toBe('Workspace indexing');
     });
 
     it('capitalizes simple lowercase tool names (skill)', () => {

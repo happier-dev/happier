@@ -45,23 +45,9 @@ vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => true,
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: vi.fn(), back: vi.fn(), setParams: vi.fn() },
-        pathname: '/',
-    });
-    return routerMock.module;
-});
-
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
     AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
@@ -191,21 +177,6 @@ installSessionShellCommonModuleMocks({
         return createReactNativeWebMock({
             useWindowDimensions: () => ({ width: 1200, height: 800 }),
         });
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            spies: {
-                alert: vi.fn(),
-                confirm: vi.fn(),
-                prompt: vi.fn(),
-                show: vi.fn(),
-            },
-        }).module;
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
     },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');

@@ -16,7 +16,7 @@ function flattenStyle(style: any): Record<string, unknown> {
 }
 
 function getActionBarScrollView(tree: renderer.ReactTestRenderer) {
-    const scrollViews = tree.root.findAll(
+    const scrollViews = tree.findAll(
         (node: any) => node?.type === 'ScrollView' && node?.props?.horizontal === true,
     );
     expect(scrollViews).toHaveLength(1);

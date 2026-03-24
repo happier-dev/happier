@@ -2,28 +2,64 @@ import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const connectTerminalSpy = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        Pressable: 'Pressable',
-        Dimensions: {
-            get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-        },
-        useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-        Platform: {
-            OS: 'ios',
-            select: (options: any) => (options && 'default' in options ? options.default : undefined),
-        },
-        Text: 'Text',
-        ActivityIndicator: 'ActivityIndicator',
-    });
+installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Pressable: 'Pressable',
+            Dimensions: {
+                get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+            Platform: {
+                OS: 'ios',
+                select: (options: any) => (options && 'default' in options ? options.default : undefined),
+            },
+            Text: 'Text',
+            ActivityIndicator: 'ActivityIndicator',
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: vi.fn() },
+        });
+        return routerMock.module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: vi.fn(async () => false),
+                prompt: vi.fn(async () => null),
+            },
+        }).module;
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useEntitlement: () => false,
+            useLocalSettingMutable: () => [false, vi.fn()],
+            useSetting: () => null,
+            useAllMachines: () => [],
+            useMachineListByServerId: () => ({}),
+            useMachineListStatusByServerId: () => ({}),
+            useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
+        });
+    },
 });
 
 vi.mock('expo-image', () => ({
@@ -34,14 +70,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: 'StyledText',
     TextInput: 'TextInput',
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: vi.fn() },
-    });
-    return routerMock.module;
-});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -82,19 +110,6 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: null }),
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useEntitlement: () => false,
-        useLocalSettingMutable: () => [false, vi.fn()],
-        useSetting: () => null,
-        useAllMachines: () => [],
-        useMachineListByServerId: () => ({}),
-        useMachineListStatusByServerId: () => ({}),
-        useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
-    });
-});
-
 vi.mock('@/sync/sync', () => ({
     sync: {
         refreshMachinesThrottled: vi.fn(async () => {}),
@@ -107,17 +122,6 @@ vi.mock('@/track', () => ({
     trackPaywallButtonClicked: vi.fn(),
     trackWhatsNewClicked: vi.fn(),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => false),
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
 
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
@@ -152,11 +156,6 @@ vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
     MachineCliGlyphs: 'MachineCliGlyphs',

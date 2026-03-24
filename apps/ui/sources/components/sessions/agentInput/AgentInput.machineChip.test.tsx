@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -48,42 +49,70 @@ function collectBadRawTextNodes(node: any, parentType: string | null = null, out
     return out;
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('View', props, props.children),
-                                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('Text', props, props.children),
-                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('Pressable', props, props.children),
-                                    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('ScrollView', props, props.children),
-                                    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-                                    Platform: {
-                                    OS: 'ios',
-                                    select: (v: any) => v.ios,
-                                },
-                                    AppState: {
-                                    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                                },
-                                    useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
-                                    Dimensions: {
-                                        get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }),
-                                    },
-                                }
-    );
+installAgentInputCommonModuleMocks({
+    icons: () => ({
+        Ionicons: (props: Record<string, unknown>) => (
+            mockEnv.iconsRenderAsText ? <>{'.'}</> : React.createElement('Ionicons', props, null)
+        ),
+        Octicons: (props: Record<string, unknown>) => (
+            mockEnv.iconsRenderAsText ? <>{'.'}</> : React.createElement('Octicons', props, null)
+        ),
+    }),
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Text', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('ScrollView', props, props.children),
+            ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
+            Platform: {
+                OS: 'ios',
+                select: (v: any) => v.ios,
+            },
+            AppState: {
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+            useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
+            Dimensions: {
+                get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }),
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'profiles') return [];
+                if (key === 'agentInputEnterToSend') return true;
+                if (key === 'agentInputActionBarLayout') return 'wrap';
+                if (key === 'agentInputChipDensity') return mockEnv.agentInputChipDensity;
+                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
+                return null;
+            },
+            useSettings: () => ({
+                profiles: [],
+                agentInputEnterToSend: true,
+                agentInputActionBarLayout: 'wrap',
+                agentInputChipDensity: mockEnv.agentInputChipDensity,
+                sessionPermissionModeApplyTiming: 'immediate',
+            }),
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesVersion: () => 0,
+            useSessionMessagesReducerState: () => null,
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: Record<string, unknown>) => (
-        mockEnv.iconsRenderAsText ? <>{'.'}</> : React.createElement('Ionicons', props, null)
-    ),
-    Octicons: (props: Record<string, unknown>) => (
-        mockEnv.iconsRenderAsText ? <>{'.'}</> : React.createElement('Octicons', props, null)
-    ),
-}));
 
 vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
@@ -92,37 +121,6 @@ vi.mock('expo-image', () => ({
 vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'profiles') return [];
-        if (key === 'agentInputEnterToSend') return true;
-        if (key === 'agentInputActionBarLayout') return 'wrap';
-        if (key === 'agentInputChipDensity') return mockEnv.agentInputChipDensity;
-        if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-        return null;
-    },
-    useSettings: () => ({
-        profiles: [],
-        agentInputEnterToSend: true,
-        agentInputActionBarLayout: 'wrap',
-        agentInputChipDensity: mockEnv.agentInputChipDensity,
-        sessionPermissionModeApplyTiming: 'immediate',
-    }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-    useSessionMessagesById: () => ({}),
-    useSessionMessagesVersion: () => 0,
-    useSessionMessagesReducerState: () => null,
-});
-});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),

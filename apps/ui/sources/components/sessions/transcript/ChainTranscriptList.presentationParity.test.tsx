@@ -2,9 +2,12 @@ import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import renderer from 'react-test-renderer';
 
-import { makeToolCall } from '@/dev/testkit';
+import { makeToolCall, renderScreen } from '@/dev/testkit';
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import { renderScreen } from '@/dev/testkit';
+import {
+    installTranscriptCommonModuleMocks,
+    resetTranscriptCommonModuleMockState,
+} from './transcriptTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -31,11 +34,13 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => settings[key] ?? false,
-});
+installTranscriptCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => settings[key] ?? false,
+        });
+    },
 });
 
 vi.mock('@shopify/flash-list', () => ({
@@ -90,6 +95,7 @@ vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
 
 describe('ChainTranscriptList presentation parity', () => {
     beforeEach(() => {
+        resetTranscriptCommonModuleMockState();
         settings.transcriptGroupingMode = 'linear';
         settings.transcriptGroupToolCalls = true;
         settings.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';

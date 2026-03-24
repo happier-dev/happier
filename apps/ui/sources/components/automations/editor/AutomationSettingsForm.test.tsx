@@ -3,42 +3,45 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createPassThroughComponent, createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { renderScreen } from '@/dev/testkit';
-import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
-import { createTextModuleMock } from '@/dev/testkit/mocks/text';
-import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { installAutomationComponentCommonModuleMocks } from '../automationComponentTestHelpers';
 
 
 const popoverBoundaryRefState = vi.hoisted(() => ({
     value: { current: { nodeName: 'BOUNDARY' } } as React.RefObject<any> | null,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: createPassThroughComponent('View'),
-        Platform: {
-            OS: 'web',
-            select: <T,>(value: { web?: T; default?: T; ios?: T }) => value.web ?? value.default ?? value.ios,
-        },
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                input: {
-                    background: '#fff',
-                    placeholder: '#999',
-                },
-                divider: '#ddd',
-                text: '#111',
-                textSecondary: '#777',
+installAutomationComponentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: createPassThroughComponent('View'),
+            Platform: {
+                OS: 'web',
+                select: <T,>(value: { web?: T; default?: T; ios?: T }) => value.web ?? value.default ?? value.ios,
             },
-        },
-    });
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    input: {
+                        background: '#fff',
+                        placeholder: '#999',
+                    },
+                    divider: '#ddd',
+                    text: '#111',
+                    textSecondary: '#777',
+                },
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -55,8 +58,6 @@ vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'Tex
 vi.mock('@/components/ui/popover', () => ({
     usePopoverBoundaryRef: () => popoverBoundaryRefState.value,
 }));
-vi.mock('@/text', () => createTextModuleMock({ translate: (key) => key }));
-
 describe('AutomationSettingsForm', () => {
     it('uses automation-state toggle copy for automation-only flows', async () => {
         const { AutomationSettingsForm } = await import('./AutomationSettingsForm');

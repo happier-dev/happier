@@ -1,6 +1,8 @@
 import * as React from 'react';
+import type { TestRendererOptions } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createDeferred } from '../hooks/createDeferred';
 import { standardCleanup } from '../cleanup/standardCleanup';
 
 afterEach(() => {
@@ -32,9 +34,12 @@ describe('UI testkit render helpers', () => {
         const { renderScreen } = await import('./renderScreen');
 
         const events: string[] = [];
+        const started = createDeferred<void>();
+        const release = createDeferred<void>();
         const onPress = vi.fn(async () => {
             events.push('started');
-            await Promise.resolve();
+            started.resolve(undefined);
+            await release.promise;
             events.push('completed');
         });
         const screen = await renderScreen(
@@ -45,8 +50,16 @@ describe('UI testkit render helpers', () => {
             ),
         );
 
-        await screen.pressByTestIdAsync('settings.async');
+        let settled = false;
+        const pressPromise = screen.pressByTestIdAsync('settings.async').then(() => {
+            settled = true;
+        });
 
+        await started.promise;
+        expect(settled).toBe(false);
+
+        release.resolve(undefined);
+        await pressPromise;
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(events).toEqual(['started', 'completed']);
     });
@@ -242,6 +255,27 @@ describe('UI testkit render helpers', () => {
         const screen = await renderScreen(React.createElement(WrappedLabel));
 
         expect(screen.getTextContent()).toContain('wrapped.title');
+    });
+
+    it('passes createNodeMock through the shared render helper options', async () => {
+        const { renderScreen } = await import('./renderScreen');
+
+        const portalHost = { nodeType: 1 };
+        const ref = React.createRef<{ nodeType: number } | null>();
+        const options: Parameters<typeof renderScreen>[1] & {
+            createNodeMock: NonNullable<TestRendererOptions['createNodeMock']>;
+        } = {
+            createNodeMock: (element) => (
+                (element as { props?: { testID?: string } }).props?.testID === 'settings.portal-host' ? portalHost : null
+            ),
+        };
+
+        await renderScreen(
+            React.createElement('View', { testID: 'settings.portal-host', ref }),
+            options,
+        );
+
+        expect(ref.current).toBe(portalHost);
     });
 
     it('builds a settings view harness with stable row and group helpers', async () => {

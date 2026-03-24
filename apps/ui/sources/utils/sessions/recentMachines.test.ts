@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
+import { installSessionUtilsCommonModuleMocks } from './sessionUtilsTestHelpers';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 
 type StorageState = {
@@ -10,13 +11,15 @@ type StorageState = {
 
 let storageState: StorageState = {};
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => storageState,
+installSessionUtilsCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => storageState,
+            },
+        });
     },
-});
 });
 
 function createMachine(id: string): Machine {

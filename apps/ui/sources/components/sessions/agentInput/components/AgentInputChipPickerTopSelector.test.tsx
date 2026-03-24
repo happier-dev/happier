@@ -2,6 +2,11 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+
+import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -9,35 +14,35 @@ import { renderScreen } from '@/dev/testkit';
 let capturedDropdownMenuProps: Record<string, unknown> | null = null;
 const boundaryRef = { current: { nodeType: 'Boundary' } } as React.RefObject<any>;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                    OS: 'web',
-                                    select: (value: any) => value.web ?? value.default ?? null,
-                                },
-                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('Pressable', props, props.children),
-                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                        React.createElement('View', props, props.children),
-                                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
+installAgentInputCommonModuleMocks({
+    reactNative: () => createReactNativeWebMock({
+        Platform: {
+            OS: 'web',
+            select: (value: any) => value.web ?? value.default ?? null,
+        },
+        Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+            React.createElement('Pressable', props, props.children),
+        View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+            React.createElement('View', props, props.children),
+    }),
+    unistyles: () => createUnistylesMock({
         theme: {
             colors: {
                 textSecondary: '#666',
             },
         },
-    });
+    }),
+    icons: () => ({
+        Ionicons: 'Ionicons',
+    }),
+    text: () => createTextModuleMock({
+        translate: (key: string) => key,
+    }),
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
+vi.mock('@/components/ui/popover', () => ({
+    usePopoverBoundaryRef: () => boundaryRef,
+    usePopoverPortalTarget: () => ({ rootRef: { current: null }, layout: { width: 0, height: 0 } }),
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
@@ -45,11 +50,6 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
         capturedDropdownMenuProps = props;
         return React.createElement('DropdownMenu', props);
     },
-}));
-
-vi.mock('@/components/ui/popover', () => ({
-    usePopoverBoundaryRef: () => boundaryRef,
-    usePopoverPortalTarget: () => ({ rootRef: { current: null }, layout: { width: 0, height: 0 } }),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({

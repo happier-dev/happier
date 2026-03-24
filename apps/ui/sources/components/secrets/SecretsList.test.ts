@@ -43,26 +43,26 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    Platform: {
-                        OS: 'ios',
-                        select: <T,>(obj: { ios?: T; default?: T }) => obj.ios ?? obj.default,
-                    },
-                    AppState: {
-                        addEventListener: () => ({ remove: () => {} }),
-                    },
-                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                        React.createElement('Pressable', props, props.children),
-                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                        React.createElement('Text', props, props.children),
-                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                        React.createElement('View', props, props.children),
-                    TextInput: React.forwardRef<{ focus: () => void }, Record<string, unknown>>((props, ref) => {
-                        if (ref && typeof ref === 'object') {
-                            ref.current = { focus: () => {} };
+                            Platform: {
+                                OS: 'ios',
+                                select: <T,>(obj: { ios?: T; default?: T }) => obj.ios ?? obj.default,
+                            },
+                            AppState: {
+                                addEventListener: () => ({ remove: () => {} }),
+                            },
+                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                React.createElement('Pressable', props, props.children),
+                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                React.createElement('Text', props, props.children),
+                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                React.createElement('View', props, props.children),
+                            TextInput: React.forwardRef<{ focus: () => void }, Record<string, unknown>>((props, ref) => {
+                                if (ref && typeof ref === 'object') {
+                                    ref.current = { focus: () => {} };
+                                }
+                                return React.createElement('TextInput', props);
+                            }),
                         }
-                        return React.createElement('TextInput', props);
-                    }),
-                }
     );
 });
 

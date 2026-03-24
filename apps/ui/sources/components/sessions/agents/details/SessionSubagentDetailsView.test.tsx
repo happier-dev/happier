@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { renderScreen } from '@/dev/testkit';
-import { SessionSubagentDetailsView } from './SessionSubagentDetailsView';
+import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -22,36 +22,31 @@ function createPassthroughComponentMock(typeName: string, spy?: (props: unknown)
     };
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
+installSessionSubagentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: ({ children, ...props }: { children?: React.ReactNode }) =>
+                React.createElement('View', props, children),
             Platform: {
                 OS: 'web',
                 select: (value: { web?: unknown; default?: unknown }) => value.web ?? value.default,
             },
-        }
-    );
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSession: () => sessionState.session,
+            useResolvedSessionMessageRouteId: () => sessionState.resolvedMessageId,
+            useMessage: () => sessionState.message,
+        });
+    },
 });
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Text', props, children),
-}));
 
 vi.mock('@/components/tools/shell/views/ToolFullView', () => ({
     ToolFullView: () => React.createElement('ToolFullView'),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 const sessionState: {
     session: {
@@ -72,15 +67,6 @@ const sessionState: {
     message: null as Message | null,
     resolvedMessageId: 'tool-msg-1',
 };
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSession: () => sessionState.session,
-    useResolvedSessionMessageRouteId: () => sessionState.resolvedMessageId,
-    useMessage: () => sessionState.message,
-});
-});
 
 vi.mock('@/sync/store/hooks', () => ({
     useSessionMessages: () => ({ messages: [] }),
@@ -110,6 +96,7 @@ vi.mock('@/components/sessions/participants/composer/SessionParticipantComposer'
 
 describe('SessionSubagentDetailsView', () => {
     it('renders transcript details for execution-run subagents when a tool transcript exists', async () => {
+        const { SessionSubagentDetailsView } = await import('./SessionSubagentDetailsView');
         subagentsState.subagents = [{
             id: 'execution_run:run_1',
             kind: 'execution_run',
@@ -191,6 +178,7 @@ describe('SessionSubagentDetailsView', () => {
     });
 
     it('falls back to execution-run details when no tool transcript route is available', async () => {
+        const { SessionSubagentDetailsView } = await import('./SessionSubagentDetailsView');
         subagentsState.subagents = [{
             id: 'execution_run:run_1',
             kind: 'execution_run',
@@ -229,6 +217,7 @@ describe('SessionSubagentDetailsView', () => {
     });
 
     it('renders message details for tool-backed subagents', async () => {
+        const { SessionSubagentDetailsView } = await import('./SessionSubagentDetailsView');
         subagentsState.subagents = [{
             id: 'agent_team_member:qa-team:alpha',
             kind: 'agent_team_member',
@@ -306,6 +295,7 @@ describe('SessionSubagentDetailsView', () => {
     });
 
     it('allows sending for owner sessions without an explicit access level', async () => {
+        const { SessionSubagentDetailsView } = await import('./SessionSubagentDetailsView');
         const previousAccessLevel = sessionState.session.accessLevel;
         sessionState.session.accessLevel = undefined;
         subagentsState.subagents = [{

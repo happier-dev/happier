@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,37 +13,52 @@ const screenState = vi.hoisted(() => ({
     windowDimensions: { width: 390, height: 844 },
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-            alertAsync: modalAlertSpy,
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: {
-                        get OS() {
-                            return screenState.platformOS;
-                        },
-                        select: (options: any) => options?.[screenState.platformOS] ?? options?.default ?? options?.ios ?? options?.android,
-                    },
-                    Dimensions: {
-                        get: () => ({ width: screenState.windowDimensions.width, height: screenState.windowDimensions.height, scale: 2, fontScale: 1 }),
-                    },
-                    useWindowDimensions: () => ({ width: screenState.windowDimensions.width, height: screenState.windowDimensions.height, scale: 2, fontScale: 1 }),
-                }
-    );
+installSessionHooksCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+                alertAsync: modalAlertSpy,
+            },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                get OS() {
+                    return screenState.platformOS;
+                },
+                select: (options: any) => options?.[screenState.platformOS] ?? options?.default ?? options?.ios ?? options?.android,
+            },
+            Dimensions: {
+                get: () => ({
+                    width: screenState.windowDimensions.width,
+                    height: screenState.windowDimensions.height,
+                    scale: 2,
+                    fontScale: 1,
+                }),
+            },
+            useWindowDimensions: () => ({
+                width: screenState.windowDimensions.width,
+                height: screenState.windowDimensions.height,
+                scale: 2,
+                fontScale: 1,
+            }),
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { replace: vi.fn(), push: routerPushSpy },
+        });
+        return expoRouterMock.module;
+    },
 });
 
 vi.mock('expo-camera', () => ({
@@ -55,13 +71,6 @@ vi.mock('@/utils/platform/platform', () => ({
 }));
 
 const routerPushSpy = vi.fn();
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { replace: vi.fn(), push: routerPushSpy },
-    });
-    return expoRouterMock.module;
-});
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', encryption: { type: 'dataKey' } }, refreshFromActiveServer: vi.fn(async () => {}) }),

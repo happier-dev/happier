@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
 import { flushHookEffects, pressTestInstance, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -182,23 +183,54 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useSetting: (key: string) => {
-            if (key === 'wrapLinesInDiffs') return wrapLinesInDiffsSetting;
-            if (key === 'showLineNumbers') return showLineNumbersSetting;
-            if (key === 'filesDiffInlineVirtualizationLineThreshold') return inlineVirtualizationLineThresholdSetting;
-            if (key === 'filesDiffInlineVirtualizationByteThreshold') return inlineVirtualizationByteThresholdSetting;
-            if (key === 'scmReviewPrefetchConcurrency') return scmReviewPrefetchConcurrencySetting;
-            if (key === 'scmReviewPrefetchAheadCountWeb') return scmReviewPrefetchAheadCountWebSetting;
-            if (key === 'scmReviewPrefetchBehindCountWeb') return scmReviewPrefetchBehindCountWebSetting;
-            if (key === 'scmReviewPrefetchAheadCountNative') return scmReviewPrefetchAheadCountNativeSetting;
-            if (key === 'scmReviewPrefetchBehindCountNative') return scmReviewPrefetchBehindCountNativeSetting;
-            if (key === 'scmReviewPrefetchDebounceMs') return scmReviewPrefetchDebounceMsSetting;
-            return undefined;
-        },
-    });
+installFilesContentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock(
+            {
+                                        View: 'View',
+                                        Image: 'Image',
+                                        Pressable: 'Pressable',
+                                        FlatList: 'FlatList',
+                                        ScrollView: 'ScrollView',
+                                        ActivityIndicator: 'ActivityIndicator',
+                                        TextInput: 'TextInput',
+                                        Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
+                                        AppState: {
+                                            addEventListener: () => ({ remove: () => {} }),
+                                            currentState: 'active',
+                                        },
+                                        useWindowDimensions: () => ({ width: 1200, height: 800 }),
+                                        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
+                                    }
+        );
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSetting: (key: string) => {
+                if (key === 'wrapLinesInDiffs') return wrapLinesInDiffsSetting;
+                if (key === 'showLineNumbers') return showLineNumbersSetting;
+                if (key === 'filesDiffInlineVirtualizationLineThreshold') return inlineVirtualizationLineThresholdSetting;
+                if (key === 'filesDiffInlineVirtualizationByteThreshold') return inlineVirtualizationByteThresholdSetting;
+                if (key === 'scmReviewPrefetchConcurrency') return scmReviewPrefetchConcurrencySetting;
+                if (key === 'scmReviewPrefetchAheadCountWeb') return scmReviewPrefetchAheadCountWebSetting;
+                if (key === 'scmReviewPrefetchBehindCountWeb') return scmReviewPrefetchBehindCountWebSetting;
+                if (key === 'scmReviewPrefetchAheadCountNative') return scmReviewPrefetchAheadCountNativeSetting;
+                if (key === 'scmReviewPrefetchBehindCountNative') return scmReviewPrefetchBehindCountNativeSetting;
+                if (key === 'scmReviewPrefetchDebounceMs') return scmReviewPrefetchDebounceMsSetting;
+                return undefined;
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return {
+            ...createTextModuleMock(),
+            Text: 'Text',
+            TextInput: 'TextInput',
+        };
+    },
 });
 
 vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
@@ -789,40 +821,9 @@ vi.mock('@/scm/isDirectoryLikeScmFileStatus', () => ({
         }),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        View: 'View',
-                                        Image: 'Image',
-                                        Pressable: 'Pressable',
-                                        FlatList: 'FlatList',
-                                        ScrollView: 'ScrollView',
-                                        ActivityIndicator: 'ActivityIndicator',
-                                        TextInput: 'TextInput',
-                                        Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
-                                        AppState: {
-                                            addEventListener: () => ({ remove: () => {} }),
-                                            currentState: 'active',
-                                        },
-                                        useWindowDimensions: () => ({ width: 1200, height: 800 }),
-                                        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-                                    }
-    );
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
-
-vi.mock('@/components/ui/text/Text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return {
-        ...createTextModuleMock(),
-        Text: 'Text',
-        TextInput: 'TextInput',
-    };
-});
 
 vi.mock('@/components/ui/media/FileIcon', () => ({
     FileIcon: 'FileIcon',
@@ -838,11 +839,6 @@ vi.mock('@/constants/Typography', () => ({
         mono: () => ({}),
     },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
 
 vi.mock('@/sync/ops', async (importOriginal) => {
     const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');

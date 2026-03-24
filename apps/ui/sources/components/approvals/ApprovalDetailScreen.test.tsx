@@ -7,6 +7,7 @@ import {
     createSessionFixture,
     renderScreen,
 } from '@/dev/testkit';
+import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -133,99 +134,87 @@ let currentArtifact: any = createApprovalArtifact();
 let sessionFixtures: Record<string, Session> = createSessionFixtures();
 let machineFixtures: Record<string, Machine> = createMachineFixtures();
 let storageState = createStorageState();
-
-async function createReactNativeWebMockForApprovalDetailScreen() {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        Text: 'Text',
-        ScrollView: 'ScrollView',
-        ActivityIndicator: 'ActivityIndicator',
-        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    });
-}
-
-async function createUnistylesMockForApprovalDetailScreen() {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                groupped: { background: '#111' },
-                text: '#fff',
-                textSecondary: '#999',
-                divider: '#333',
-                surface: '#171717',
-                surfaceHigh: '#1d1d1d',
-                surfaceHighest: '#222',
-                button: { primary: { background: '#444', tint: '#fff' } },
-                deleteAction: '#b00',
-                status: { error: '#f00' },
+installApprovalCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            ScrollView: 'ScrollView',
+            ActivityIndicator: 'ActivityIndicator',
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    groupped: { background: '#111' },
+                    text: '#fff',
+                    textSecondary: '#999',
+                    divider: '#333',
+                    surface: '#171717',
+                    surfaceHigh: '#1d1d1d',
+                    surfaceHighest: '#222',
+                    button: { primary: { background: '#444', tint: '#fff' } },
+                    deleteAction: '#b00',
+                    status: { error: '#f00' },
+                },
             },
-        },
-    });
-}
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { back: backSpy, push: pushSpy },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                confirm: vi.fn(async () => true),
+                alert: vi.fn(),
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useArtifact: () => currentArtifact,
+            useSession: (sessionId: string) => sessionFixtures[sessionId] ?? null,
+            useMachine: (machineId: string) => machineFixtures[machineId] ?? null,
+            storage: {
+                getState: () => storageState,
+            },
+        });
+    },
+});
 
-async function createExpoRouterMockForApprovalDetailScreen() {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { back: backSpy, push: pushSpy },
-    });
-    return expoRouterMock.module;
-}
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['Text']);
+});
 
-async function createTextModuleMockForApprovalDetailScreen() {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-}
+vi.mock('@/components/ui/lists/ItemGroup', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['ItemGroup']);
+});
 
-async function createModalModuleMockForApprovalDetailScreen() {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: vi.fn(async () => true),
-            alert: vi.fn(),
-        },
-    }).module;
-}
+vi.mock('@/components/ui/lists/Item', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['Item']);
+});
 
-async function createStorageModuleStubForApprovalDetailScreen() {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useArtifact: () => currentArtifact,
-        useSession: (sessionId: string) => sessionFixtures[sessionId] ?? null,
-        useMachine: (machineId: string) => machineFixtures[machineId] ?? null,
-        storage: {
-            getState: () => storageState,
-        },
-    });
-}
-
-vi.mock('react-native', async () => createReactNativeWebMockForApprovalDetailScreen());
-
-vi.mock('react-native-unistyles', async () => createUnistylesMockForApprovalDetailScreen());
-
-vi.mock('expo-router', async () => createExpoRouterMockForApprovalDetailScreen());
-
-vi.mock('@/text', async () => createTextModuleMockForApprovalDetailScreen());
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children, title }: any) => React.createElement('ItemGroup', { title }, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ title, detail, subtitle }: any) => React.createElement('Item', { title, detail, subtitle }),
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: ({ title, testID, onPress, disabled }: any) =>
-        React.createElement('RoundButton', { title, testID, onPress, disabled }),
-}));
-
-vi.mock('@/modal', async () => createModalModuleMockForApprovalDetailScreen());
+vi.mock('@/components/ui/buttons/RoundButton', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['RoundButton']);
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -248,8 +237,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionI
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => createStorageModuleStubForApprovalDetailScreen());
 
 describe('ApprovalDetailScreen', () => {
     beforeEach(() => {

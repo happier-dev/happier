@@ -1,7 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit';
+import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,10 +16,10 @@ vi.mock('@/utils/web/radixCjs', () => {
     };
 });
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installPopoverCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             Platform: {
                 OS: 'android',
             },
@@ -33,18 +35,13 @@ vi.mock('react-native', async () => {
             },
             View: (props: any) => React.createElement('View', props, props.children),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        }
-    );
+        });
+    },
 });
 
 describe('Popover (native sizing retries)', () => {
     it('retries measurement when an initial layout would yield maxHeight=0 (avoids 0-height popovers on native)', async () => {
         const { Popover } = await import('./Popover');
-
-        vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
-            cb();
-            return 0 as any;
-        });
 
         let boundaryMeasureCalls = 0;
         const anchorRef = {
@@ -66,26 +63,28 @@ describe('Popover (native sizing retries)', () => {
 
         const renders: Array<{ maxHeight: number }> = [];
 
-        const screen = await renderScreen(
-            React.createElement(Popover, {
-                open: true,
-                anchorRef,
-                boundaryRef,
-                placement: 'bottom',
-                gap: 8,
-                maxHeightCap: 300,
-                backdrop: false,
-                children: (renderProps: any) => {
-                    renders.push({ maxHeight: renderProps.maxHeight });
-                    return React.createElement('PopoverChild');
-                },
-            }),
-        );
+        await withPopoverWebGlobals(async () => {
+            const screen = await renderScreen(
+                React.createElement(Popover, {
+                    open: true,
+                    anchorRef,
+                    boundaryRef,
+                    placement: 'bottom',
+                    gap: 8,
+                    maxHeightCap: 300,
+                    backdrop: false,
+                    children: (renderProps: any) => {
+                        renders.push({ maxHeight: renderProps.maxHeight });
+                        return React.createElement('PopoverChild');
+                    },
+                }),
+            );
 
-        await flushHookEffects({ cycles: 1, turns: 8 });
+            await flushHookEffects({ cycles: 1, turns: 8 });
 
-        expect(screen).toBeTruthy();
-        expect(boundaryMeasureCalls).toBeGreaterThanOrEqual(2);
-        expect(renders.at(-1)?.maxHeight).toBeGreaterThan(0);
+            expect(screen).toBeTruthy();
+            expect(boundaryMeasureCalls).toBeGreaterThanOrEqual(2);
+            expect(renders.at(-1)?.maxHeight).toBeGreaterThan(0);
+        });
     });
 });

@@ -2,7 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 import type { MemoryStatusV1 } from '@happier-dev/protocol';
 
@@ -69,9 +70,7 @@ type MemorySettingsScreen = Awaited<ReturnType<typeof renderMemorySettingsView>>
 
 async function renderSettledMemorySettingsView(): Promise<MemorySettingsScreen> {
     const screen = await renderMemorySettingsView();
-    await act(async () => {
-        await Promise.resolve();
-    });
+    await flushHookEffects({ cycles: 1 });
     return screen;
 }
 
@@ -82,25 +81,38 @@ function findDropdownMenu(
     return screen.findAllByType('DropdownMenu' as any).find((menu) => predicate(menu.props as Record<string, unknown>));
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                View: 'View',
-                AppState: {
-                    addEventListener: () => ({ remove: () => {} }),
-                },
-                Platform: {
-                    OS: 'web',
-                    select: (opt: any) => opt?.default,
-                },
-            }
-    );
+installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            Platform: {
+                OS: 'web',
+                select: (opt: any) => opt?.default,
+            },
+        });
+    },
+    icons: async () => ({
+        Ionicons: 'Ionicons',
+    }),
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: modalPrompt,
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useAllMachines: () => machinesState,
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: (props: any) => React.createElement('ItemList', props, props.children),
@@ -125,32 +137,6 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
             testID: props.testID ?? props.itemTrigger?.itemProps?.testID,
         }),
 }));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: modalPrompt,
-        },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useAllMachines: () => machinesState,
-});
-});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'srv_1', generation: 1 }),

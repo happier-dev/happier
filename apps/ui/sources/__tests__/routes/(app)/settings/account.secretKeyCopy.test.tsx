@@ -1,6 +1,5 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react-test-renderer';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { formatSecretKeyForBackup } from '@/auth/recovery/secretKeyBackup';
@@ -87,9 +86,7 @@ describe('Settings → Account (secret key copy)', () => {
         expect(secretKeyItem).toBeTruthy();
         expect(copyButton).toBeTruthy();
 
-        await act(async () => {
-            await copyButton!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('settings-account-secret-key-copy');
 
         const expected = formatSecretKeyForBackup('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
         expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith(expected);

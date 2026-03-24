@@ -3,52 +3,35 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { installSourceControlStatusCommonModuleMocks } from './sourceControlStatusTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let snapshotMock: any = null;
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    return createPartialStorageModuleMock(importOriginal, {
-        storage: {
-            getState: () => ({
-                settings: {
-                    preferredLanguage: 'en',
-                },
-            }),
-        },
-        useSessionProjectScmSnapshot: () => snapshotMock,
-    });
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string, values?: Record<string, unknown>) => {
-            if (key === 'files.sourceControlStatus.changedFilesLabel') {
-                return `${String(values?.count ?? '')} files`;
-            }
-            return key;
-        },
-    });
+installSourceControlStatusCommonModuleMocks({
+    storage: async (importOriginal) =>
+        createPartialStorageModuleMock(importOriginal, {
+            storage: {
+                getState: () => ({
+                    settings: {
+                        preferredLanguage: 'en',
+                    },
+                }),
+            },
+            useSessionProjectScmSnapshot: () => snapshotMock,
+        }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, values?: Record<string, unknown>) => {
+                if (key === 'files.sourceControlStatus.changedFilesLabel') {
+                    return `${String(values?.count ?? '')} files`;
+                }
+                return key;
+            },
+        });
+    },
 });
 
 describe('SourceControlStatusBadge', () => {

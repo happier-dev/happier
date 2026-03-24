@@ -5,6 +5,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
+import { installRepositoryTreeCommonModuleMocks } from './repositoryTreeTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,35 +17,39 @@ function flattenStyle(style: any): React.CSSProperties | undefined {
     return style;
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'web',
-                                                select: (value: any) => value?.web ?? value?.default ?? null,
-                                            },
-                                            View: React.forwardRef<HTMLDivElement, any>(function View(props, ref) {
-                                                const { children, style, testID, onDragEnter, onDragLeave, onDragOver, onDrop, ...rest } = props;
-                                                void onDragEnter;
-                                                void onDragLeave;
-                                                void onDragOver;
-                                                void onDrop;
-                                                return React.createElement('div', {
-                                                    ...rest,
-                                                    ref,
-                                                    style: flattenStyle(style),
-                                                    'data-testid': testID,
-                                                }, children);
-                                            }),
-                                            StyleSheet: {
-                                                flatten: flattenStyle,
-                                            },
-                                        }
-    );
+installRepositoryTreeCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.web ?? value?.default ?? null,
+            },
+            View: React.forwardRef<HTMLDivElement, any>(function View(props, ref) {
+                const { children, style, testID, onDragEnter, onDragLeave, onDragOver, onDrop, ...rest } = props;
+                void onDragEnter;
+                void onDragLeave;
+                void onDragOver;
+                void onDrop;
+                return React.createElement(
+                    'div',
+                    {
+                        ...rest,
+                        ref,
+                        style: flattenStyle(style),
+                        'data-testid': testID,
+                    },
+                    children,
+                );
+            }),
+            StyleSheet: {
+                flatten: flattenStyle,
+            },
+        });
+    },
 });
 
-import { WebDropTargetView } from './WebDropTargetView';
+const webDropTargetViewModule = import('./WebDropTargetView');
 
 function createFileDragEvent(type: string): Event {
     const event = new Event(type, { bubbles: true, cancelable: true });
@@ -57,6 +62,7 @@ function createFileDragEvent(type: string): Event {
 
 describe('WebDropTargetView.web', () => {
     it('bridges native drag and drop events to callbacks even when View does not forward drag props', async () => {
+        const { WebDropTargetView } = await webDropTargetViewModule;
         const onDragEnter = vi.fn();
         const onDragOver = vi.fn();
         const onDrop = vi.fn();

@@ -1,11 +1,21 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installAuthHookCommonModuleMocks } from './authHookTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useMachineCapabilitiesCacheMock = vi.fn();
+
+installAuthHookCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useMachine: vi.fn(() => ({ id: 'm1', metadata: {}, daemonStateVersion: 42 })),
+        });
+    },
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'kiro'],
@@ -20,13 +30,6 @@ vi.mock('@/agents/catalog/catalog', () => ({
         },
     }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useMachine: vi.fn(() => ({ id: 'm1', metadata: {}, daemonStateVersion: 42 })),
-});
-});
 
 vi.mock('@/utils/sessions/machineUtils', () => {
     return {
@@ -104,9 +107,9 @@ describe('useCLIDetection (hook)', () => {
     });
 
     it('keeps timestamp stable when results have no checkedAt values', async () => {
-        vi.useFakeTimers();
+        const dateNowSpy = vi.spyOn(Date, 'now');
         try {
-            vi.setSystemTime(1000);
+            dateNowSpy.mockReturnValueOnce(1000);
 
             useMachineCapabilitiesCacheMock.mockReturnValueOnce({
                 state: {
@@ -130,7 +133,7 @@ describe('useCLIDetection (hook)', () => {
             const screen = await renderScreen(React.createElement(Test));
             expect(latest?.timestamp).toBe(1000);
 
-            vi.setSystemTime(2000);
+            dateNowSpy.mockReturnValueOnce(2000);
 
             useMachineCapabilitiesCacheMock.mockReturnValueOnce({
                 state: {
@@ -149,7 +152,7 @@ describe('useCLIDetection (hook)', () => {
 
             expect(latest?.timestamp).toBe(1000);
         } finally {
-            vi.useRealTimers();
+            dateNowSpy.mockRestore();
         }
     });
 

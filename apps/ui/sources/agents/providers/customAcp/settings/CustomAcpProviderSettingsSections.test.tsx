@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
 import { renderSettingsView, createUseSettingMock } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { installAcpCatalogSettingsCommonModuleMocks } from '@/components/settings/acpCatalog/acpCatalogSettingsTestHelpers';
 
 const routerPushSpy = vi.fn();
 
@@ -42,86 +43,37 @@ function createAcpCatalogSettingsFixture(): AcpCatalogSettingsV1 {
 
 const acpCatalogSettingsFixture = createAcpCatalogSettingsFixture();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    Pressable: 'Pressable',
-                    Platform: {
-                        OS: 'web',
-                        select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
-                    },
-                    Dimensions: {
-                        get: () => ({ width: 1440, height: 900 }),
-                    },
-                    AppState: {
-                        currentState: 'active',
-                        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                    },
-                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: createPassThroughModule(['Ionicons']).Ionicons,
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                textSecondary: '#999',
-                success: '#0f0',
-                accent: {
-                    indigo: '#00f',
-                    orange: '#f80',
+installAcpCatalogSettingsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Dimensions: {
+                get: () => ({ width: 1440, height: 900 }),
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { push: routerPushSpy },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: createUseSettingMock({
+                values: {
+                    acpCatalogSettingsV1: acpCatalogSettingsFixture,
                 },
+            }),
+            useSettingMutable: (key: string) => {
+                if (key === 'acpCatalogSettingsV1') {
+                    return [acpCatalogSettingsFixture, vi.fn()];
+                }
+                return [null, vi.fn()];
             },
-        },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => false),
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: createUseSettingMock({
-            values: {
-                acpCatalogSettingsV1: acpCatalogSettingsFixture,
-            },
-        }),
-    useSettingMutable: (key: string) => {
-            if (key === 'acpCatalogSettingsV1') {
-                return [acpCatalogSettingsFixture, vi.fn()];
-            }
-            return [null, vi.fn()];
-        },
-});
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));

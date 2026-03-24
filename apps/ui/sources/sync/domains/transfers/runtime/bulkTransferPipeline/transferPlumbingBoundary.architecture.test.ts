@@ -14,6 +14,12 @@ function assertDoesNotImportModule(source: string, moduleToken: string, filePath
     }
 }
 
+function assertDoesNotContainToken(source: string, token: string, filePath: string): void {
+    if (source.includes(token)) {
+        throw new Error(`Forbidden token "${token}" in ${filePath}`);
+    }
+}
+
 async function listFilesRecursively(directory: string): Promise<string[]> {
     const entries = await readdir(directory, { withFileTypes: true });
     const results: string[] = [];
@@ -48,6 +54,7 @@ describe('bulkTransferPipeline (architecture)', () => {
             assertDoesNotImportModule(source, 'chunkTransferClient', filePath);
             assertDoesNotImportModule(source, 'sessionFileTransferRpcCaller', filePath);
             assertDoesNotImportModule(source, 'mergeTransferChunks', filePath);
+            assertDoesNotContainToken(source, 'DAEMON_BULK_TRANSFER_', filePath);
         }
     });
 });

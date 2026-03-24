@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from 'vite
 import type { FeatureDecision } from '@happier-dev/protocol';
 import { createDeferred, flushHookEffects } from '@/dev/testkit';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { installVoiceAgentCommonModuleMocks } from '@/voice/agent/voiceAgentTestHelpers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { voiceSessionBindingStore } from '@/voice/sessionBinding/voiceSessionBindingStore';
 
@@ -228,17 +229,19 @@ const getState = vi.fn((): any => ({
 
 const storageListeners = new Set<() => void>();
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installVoiceAgentCommonModuleMocks({
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-    getState: () => getState(),
-    subscribe: (listener: () => void) => {
-      storageListeners.add(listener);
-      return () => storageListeners.delete(listener);
-    },
+      storage: {
+        getState: () => getState(),
+        subscribe: (listener: () => void) => {
+          storageListeners.add(listener);
+          return () => storageListeners.delete(listener);
+        },
+      },
+    });
   },
-});
 });
 
 vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({

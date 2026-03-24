@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { installCapabilitiesOpsModuleMock } from '@/dev/testkit/mocks/capabilities';
 import {
     resetDynamicSessionModeProbeCacheForTests,
@@ -44,8 +44,8 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
 
         await act(async () => {
             hook.getCurrent().probe.onRefresh();
-            await Promise.resolve();
         });
+        await flushHookEffects();
 
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
         expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode2')).toBe(true);

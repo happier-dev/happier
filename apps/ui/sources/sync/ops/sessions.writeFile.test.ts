@@ -114,6 +114,74 @@ describe('sessionWriteFile', () => {
         expect(getReadyServerFeaturesSpy).toHaveBeenCalled();
     });
 
+    it('uses the bulk transfer pipeline for writes larger than the inline limit (no WRITE_FILE)', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES = '8';
+        const { sessionWriteFile } = await import('./sessionFileSystem');
+
+        const calls: Array<{ method: string; payload: unknown }> = [];
+        const expectedSha256 = '0'.repeat(64);
+
+        machineRPCSpy.mockImplementation(async (_machineId: string, method: string, payload: unknown) => {
+            expect(policyConsulted).toBe(true);
+            calls.push({ method, payload });
+
+            if (method === RPC_METHODS.WRITE_FILE) {
+                throw new Error('WRITE_FILE must not be used when the payload exceeds the inline limit');
+            }
+
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT) {
+                return {
+                    success: true,
+                    uploadId: 'upload-1',
+                    chunkSizeBytes: 4,
+                    // Ops-level tests should not depend on transfer chunk encryption internals.
+                    recipientPublicKeyBase64: Buffer.alloc(32, 9).toString('base64'),
+                };
+            }
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK) {
+                return { success: true };
+            }
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE) {
+                return {
+                    success: true,
+                    path: '/repo/src/a.ts',
+                    sizeBytes: 11,
+                    sha256: expectedSha256,
+                };
+            }
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT) {
+                return { success: true };
+            }
+
+            return { success: false, error: `Unexpected method: ${method}` };
+        });
+
+        const content = 'hello world';
+        const res = await sessionWriteFile('s1', 'src/a.ts', content);
+
+        if (res.success !== true) {
+            throw new Error(`sessionWriteFile failed: ${res.error} calls=${calls.map((call) => call.method).join(',')}`);
+        }
+
+        expect(res).toEqual({ success: true, hash: expectedSha256 });
+        expect(calls.map((call) => call.method)).not.toContain(RPC_METHODS.WRITE_FILE);
+    });
+
+    it('fails closed for guarded writes larger than the inline limit (no bulk upload fallback)', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES = '8';
+        const { sessionWriteFile } = await import('./sessionFileSystem');
+
+        const res = await sessionWriteFile('s1', 'src/a.ts', 'hello world', 'expectedHash');
+
+        expect(res).toEqual({
+            success: false,
+            error: 'File exceeds the inline file write size limit',
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        });
+        expect(machineRPCSpy).not.toHaveBeenCalled();
+        expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
+    });
+
     it('returns a stable errorCode when the RPC method is unavailable', async () => {
         const { sessionWriteFile } = await import('./sessionFileSystem');
 

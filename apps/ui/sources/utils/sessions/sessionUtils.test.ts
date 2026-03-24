@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { installSessionUtilsCommonModuleMocks } from './sessionUtilsTestHelpers';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 type MockStorageState = {
@@ -16,24 +17,25 @@ const mockStorageState: MockStorageState = {
     getProjectForSession: () => null,
 };
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => mockStorageState,
-        setState: (updater: ((state: typeof mockStorageState) => typeof mockStorageState) | typeof mockStorageState) => {
-            const next = typeof updater === 'function' ? updater(mockStorageState) : updater;
-            mockStorageState.sessionMessages = next.sessionMessages;
-        },
+installSessionUtilsCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
     },
-});
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => mockStorageState,
+                setState: (updater: ((state: typeof mockStorageState) => typeof mockStorageState) | typeof mockStorageState) => {
+                    const next = typeof updater === 'function' ? updater(mockStorageState) : updater;
+                    mockStorageState.sessionMessages = next.sessionMessages;
+                },
+            },
+        });
+    },
 });
 
 beforeEach(() => {

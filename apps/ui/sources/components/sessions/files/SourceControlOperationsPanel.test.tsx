@@ -2,73 +2,60 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { findTestInstanceByTypeWithProps, pressTestInstance, renderScreen } from '@/dev/testkit';
+import { installSessionFilesCommonModuleMocks } from './sessionFilesTestHelpers';
 
 
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Text: 'Text',
-                                    Pressable: 'Pressable',
-                                    ActivityIndicator: 'ActivityIndicator',
-                                    Platform: {
-                                        select: (value: any) => value?.default ?? null,
-                                    },
-                                }
-    );
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
+installSessionFilesCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ActivityIndicator: 'ActivityIndicator',
+            Platform: {
+                select: (value: any) => value?.default ?? null,
+            },
+        });
     },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, params?: any) => {
-        if (key === 'files.sourceControlOperations.title') return 'Source control';
-        if (key === 'files.sourceControlOperations.actorThisSession') return 'this session';
-        if (key === 'files.sourceControlOperations.actorSession') return `session ${params?.sessionIdPrefix ?? ''}`;
-        if (key === 'files.sourceControlOperations.running')
-            return `Running: ${params?.operation ?? ''} · ${params?.actor ?? ''}`;
-        if (key === 'files.sourceControlOperations.lockedBy')
-            return `Source control operations are locked by ${params?.actor ?? ''}.`;
-        if (key === 'files.sourceControlOperations.globalLock')
-            return 'Operations are temporarily locked because another session is running a source control command.';
-        if (key === 'files.sourceControlOperations.selection') {
-            const count = Number(params?.count ?? 0);
-            return count === 1 ? '1 file selected for the next commit.' : `${count} files selected for the next commit.`;
-        }
-        if (key === 'files.sourceControlOperations.clear') return 'Clear';
-        if (key === 'files.sourceControlOperations.conflictsDetected')
-            return 'Conflicts detected. Commit, pull, and push are blocked until conflicts are resolved.';
-        if (key === 'files.sourceControlOperations.actions.fetch') return 'Fetch';
-        if (key === 'files.sourceControlOperations.actions.pull') return 'Pull';
-        if (key === 'files.sourceControlOperations.actions.push') return 'Push';
-        if (key === 'files.sourceControlOperations.blockedHints.lock') return 'Lock';
-        if (key === 'files.sourceControlOperations.blockedHints.commitBlocked') return 'Commit blocked';
-        if (key === 'files.sourceControlOperations.blockedHints.pullBlocked') return 'Pull blocked';
-        if (key === 'files.sourceControlOperations.blockedHints.pushBlocked') return 'Push blocked';
-        if (key === 'files.sourceControlOperationsLog.title') return 'Recent operations';
-        if (key === 'files.sourceControlOperationsLog.allSessions') return 'all sessions';
-        if (key === 'files.sourceControlOperationsLog.thisSession') return 'this session';
-        if (key === 'files.sourceControlOperationsLog.emptyThisSession') return 'No recent operations for this session.';
-        return key;
-    } });
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: any) => {
+                if (key === 'files.sourceControlOperations.title') return 'Source control';
+                if (key === 'files.sourceControlOperations.actorThisSession') return 'this session';
+                if (key === 'files.sourceControlOperations.actorSession') return `session ${params?.sessionIdPrefix ?? ''}`;
+                if (key === 'files.sourceControlOperations.running')
+                    return `Running: ${params?.operation ?? ''} · ${params?.actor ?? ''}`;
+                if (key === 'files.sourceControlOperations.lockedBy')
+                    return `Source control operations are locked by ${params?.actor ?? ''}.`;
+                if (key === 'files.sourceControlOperations.globalLock')
+                    return 'Operations are temporarily locked because another session is running a source control command.';
+                if (key === 'files.sourceControlOperations.selection') {
+                    const count = Number(params?.count ?? 0);
+                    return count === 1 ? '1 file selected for the next commit.' : `${count} files selected for the next commit.`;
+                }
+                if (key === 'files.sourceControlOperations.clear') return 'Clear';
+                if (key === 'files.sourceControlOperations.conflictsDetected')
+                    return 'Conflicts detected. Commit, pull, and push are blocked until conflicts are resolved.';
+                if (key === 'files.sourceControlOperations.actions.fetch') return 'Fetch';
+                if (key === 'files.sourceControlOperations.actions.pull') return 'Pull';
+                if (key === 'files.sourceControlOperations.actions.push') return 'Push';
+                if (key === 'files.sourceControlOperations.blockedHints.lock') return 'Lock';
+                if (key === 'files.sourceControlOperations.blockedHints.commitBlocked') return 'Commit blocked';
+                if (key === 'files.sourceControlOperations.blockedHints.pullBlocked') return 'Pull blocked';
+                if (key === 'files.sourceControlOperations.blockedHints.pushBlocked') return 'Push blocked';
+                if (key === 'files.sourceControlOperationsLog.title') return 'Recent operations';
+                if (key === 'files.sourceControlOperationsLog.allSessions') return 'all sessions';
+                if (key === 'files.sourceControlOperationsLog.thisSession') return 'this session';
+                if (key === 'files.sourceControlOperationsLog.emptyThisSession') return 'No recent operations for this session.';
+                return key;
+            },
+        });
+    },
 });
 
 describe('SourceControlOperationsPanel', () => {

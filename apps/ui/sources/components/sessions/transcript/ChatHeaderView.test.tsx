@@ -49,22 +49,6 @@ vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 44,
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                header: { background: '#fff', tint: '#111' },
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#ddd',
-                textSecondary: '#666',
-                shadow: { color: '#000', opacity: 0.2 },
-            },
-        },
-    });
-});
-
 vi.mock('@expo/vector-icons', async () => createExpoVectorIconsMock());
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({

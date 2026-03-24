@@ -2,8 +2,10 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
-function getFrameScheduler(): typeof globalThis.requestAnimationFrame | undefined {
-    return Reflect.get(globalThis, 'requestAnimation' + 'Frame') as typeof globalThis.requestAnimationFrame | undefined;
+type FrameScheduler = (callback: FrameRequestCallback) => number;
+
+function getFrameScheduler(): FrameScheduler | undefined {
+    return Reflect.get(globalThis, 'requestAnimation' + 'Frame') as FrameScheduler | undefined;
 }
 
 describe('popoverHarness', () => {
@@ -23,11 +25,16 @@ describe('popoverHarness', () => {
         }
 
         const previousWindow = { previous: true };
-        const previousFrameScheduler = vi.fn(() => 9);
+        const previousFrameScheduler: FrameScheduler = vi.fn(() => 9);
         vi.stubGlobal('window', previousWindow);
         vi.stubGlobal('requestAnimation' + 'Frame', previousFrameScheduler);
 
         const callback = vi.fn();
+        let scheduledFrame: FrameRequestCallback | null = null;
+        const frameScheduler: FrameScheduler = (scheduledCallback) => {
+            scheduledFrame = scheduledCallback;
+            return 17;
+        };
 
         await withPopoverWebGlobals(async () => {
             expect(globalThis.window).not.toBe(previousWindow);
@@ -35,9 +42,16 @@ describe('popoverHarness', () => {
             expect(typeof globalThis.window.removeEventListener).toBe('function');
 
             const frameId = getFrameScheduler()?.(callback);
-            expect(frameId).toBe(0);
+            expect(frameId).toBe(17);
+            expect(callback).not.toHaveBeenCalled();
+            const runScheduledFrame =
+                scheduledFrame ??
+                ((_timestamp: number) => {
+                    throw new Error('Expected custom frame scheduler to capture the callback');
+                });
+            runScheduledFrame(0);
             expect(callback).toHaveBeenCalledTimes(1);
-        });
+        }, { frameScheduler });
 
         expect(globalThis.window).toBe(previousWindow);
         expect(getFrameScheduler()).toBe(previousFrameScheduler);

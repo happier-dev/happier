@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createExpoRouterMock, createModalModuleMock, renderScreen, type RenderScreenResult } from '@/dev/testkit';
+import { createExpoRouterMock, createModalModuleMock, flushHookEffects, renderScreen, type RenderScreenResult } from '@/dev/testkit';
 
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
@@ -107,12 +107,6 @@ async function loadHome() {
     return mod.default;
 }
 
-async function flushEffects() {
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.allSettled(fireAndForgetPromises.splice(0));
-}
-
 function findActionButton(screen: RenderScreenResult, testID: string) {
     const button = screen.findAllByTestId(testID).find((node) => typeof node.props.action === 'function');
     if (!button) {
@@ -159,14 +153,12 @@ describe('Home external auth start', () => {
         mockGithubAuthFeatures('provision', 'keyed');
 
         const screen = await renderScreen(<Home />);
-        await act(async () => {
-            await flushEffects();
-        });
+        await flushHookEffects({ cycles: 1, turns: 2 });
 
         const signupButton = findActionButton(screen, 'welcome-signup-provider');
         await act(async () => {
             await signupButton.props.action();
-            await flushEffects();
+            await flushHookEffects({ cycles: 1, turns: 2 });
         });
 
         expect(tokenStorageMock.setPendingExternalAuth).toHaveBeenCalledWith(
@@ -196,14 +188,12 @@ describe('Home external auth start', () => {
         mockGithubAuthFeatures('login', 'keyless');
 
         const screen = await renderScreen(<Home />);
-        await act(async () => {
-            await flushEffects();
-        });
+        await flushHookEffects({ cycles: 1, turns: 2 });
 
         const loginButton = findActionButton(screen, 'welcome-create-account');
         await act(async () => {
             await loginButton.props.action();
-            await flushEffects();
+            await flushHookEffects({ cycles: 1, turns: 2 });
         });
 
         expect(tokenStorageMock.setPendingExternalAuth).toHaveBeenCalledWith(

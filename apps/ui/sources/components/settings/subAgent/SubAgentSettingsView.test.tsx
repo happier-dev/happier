@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,29 +13,71 @@ let guidanceMaxCharsState: number | null = null;
 let providerSubagentSectionsState: any[] = [];
 const routerPushSpy = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Platform: {
-                                        OS: 'web',
-                                        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-                                    },
-                                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
+installSettingsViewCommonModuleMocks({
+    icons: () => ({
+        Ionicons: 'Ionicons',
+    }),
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Platform: {
+                OS: 'web',
+                select: (options: any) => (options && 'default' in options ? options.default : undefined),
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: routerPushSpy },
+        });
+        return routerMock.module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSettingMutable: (key: string) => {
+                if (key === 'executionRunsGuidanceEnabled') return [guidanceEnabledState, vi.fn()];
+                if (key === 'executionRunsGuidanceMaxChars') return [guidanceMaxCharsState, vi.fn()];
+                if (key === 'executionRunsGuidanceEntries') return [guidanceEntriesState, vi.fn()];
+                return [null, vi.fn()];
+            },
+            useSetting: () => ({
+                v: 2,
+                backends: [{
+                    id: 'custom-review',
+                    name: 'custom-review',
+                    title: 'Custom Review Bot',
+                    description: 'Custom ACP',
+                    command: 'custom-acp',
+                    args: [],
+                    env: {},
+                    transportProfile: 'generic',
+                    capabilities: {
+                        supportsLoadSession: false,
+                        supportsModes: 'unknown',
+                        supportsModels: 'unknown',
+                        supportsConfigOptions: 'unknown',
+                        promptImageSupport: 'unknown',
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                }],
+            }),
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key, params) => {
+                if (params && typeof params.value === 'string') {
+                    return `${key}: ${params.value}`;
+                }
+                return key;
+            },
+        });
+    },
 });
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -57,50 +100,11 @@ vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: 'Switch',
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         mono: () => ({}),
     },
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSettingMutable: (key: string) => {
-        if (key === 'executionRunsGuidanceEnabled') return [guidanceEnabledState, vi.fn()];
-        if (key === 'executionRunsGuidanceMaxChars') return [guidanceMaxCharsState, vi.fn()];
-        if (key === 'executionRunsGuidanceEntries') return [guidanceEntriesState, vi.fn()];
-        return [null, vi.fn()];
-    },
-    useSetting: () => ({
-        v: 2,
-        backends: [{
-            id: 'custom-review',
-            name: 'custom-review',
-            title: 'Custom Review Bot',
-            description: 'Custom ACP',
-            command: 'custom-acp',
-            args: [],
-            env: {},
-            transportProfile: 'generic',
-            capabilities: {
-                supportsLoadSession: false,
-                supportsModes: 'unknown',
-                supportsModels: 'unknown',
-                supportsConfigOptions: 'unknown',
-                promptImageSupport: 'unknown',
-            },
-            createdAt: 1,
-            updatedAt: 1,
-        }],
-    }),
-});
-});
 
 vi.mock('@/sync/domains/settings/executionRunsGuidance', () => ({
     buildExecutionRunsGuidanceBlock: () => ({ text: '' }),
@@ -125,18 +129,6 @@ vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
     ],
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key, params) => {
-            if (params && typeof params.value === 'string') {
-                return `${key}: ${params.value}`;
-            }
-            return key;
-        },
-    });
-});
-
 vi.mock('./guidance/showSubAgentGuidanceRuleEditorModal', () => ({
     showSubAgentGuidanceRuleEditorModal: vi.fn(async () => null),
 }));
@@ -146,6 +138,8 @@ vi.mock('@/platform/randomUUID', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: ['claude', 'customAcp'],
+    DEFAULT_AGENT_ID: 'customAcp',
     getAgentCore: () => ({ displayNameKey: 'agent.name' }),
     isAgentId: () => false,
 }));

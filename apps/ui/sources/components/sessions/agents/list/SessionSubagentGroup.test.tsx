@@ -2,6 +2,7 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
+import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
@@ -9,36 +10,28 @@ import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 const sendMessageSpy = vi.fn(async () => undefined);
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
-        Pressable: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Pressable', props, children),
-    });
+installSessionSubagentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
+            Pressable: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Pressable', props, children),
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string, values?: Record<string, unknown>) => {
+            if (key === 'session.subagents.panel.groupCount' && typeof values?.count === 'number') {
+                return `${values.count} agents`;
+            }
+            return key;
+        } });
+    },
 });
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Text', props, children),
-}));
 
 vi.mock('@/components/sessions/agents/list/SessionSubagentRow', () => ({
     SessionSubagentRow: (props: { subagent: SessionSubagent }) => React.createElement('SessionSubagentRow', { testID: `row:${props.subagent.id}` }),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, values?: Record<string, unknown>) => {
-        if (key === 'session.subagents.panel.groupCount' && typeof values?.count === 'number') {
-            return `${values.count} agents`;
-        }
-        return key;
-    } });
-});
 
 vi.mock('@/sync/sync', () => ({
     sync: {

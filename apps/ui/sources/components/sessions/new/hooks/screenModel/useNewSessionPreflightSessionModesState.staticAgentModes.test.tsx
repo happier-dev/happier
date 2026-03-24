@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,11 +16,13 @@ vi.mock('@/sync/ops/capabilities', () => ({
   machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translateLoose: (key: string) => `t:${key}`,
-    });
+installNewSessionScreenModelCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translateLoose: (key: string) => `t:${key}`,
+        });
+    },
 });
 
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {

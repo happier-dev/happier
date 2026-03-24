@@ -2,11 +2,28 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
+const settingsViewMultiServerMachinesState = vi.hoisted(() => ({
+    sharedDeviceInventorySettings: { privacy: { shareDeviceInventory: true } },
+    localSettingMutable: [false, vi.fn()] as const,
+    settingMutable: [{ v: 1, actions: {} }, vi.fn()] as const,
+    profile: {
+        id: 'prof_1',
+        timestamp: 0,
+        firstName: null,
+        lastName: null,
+        username: null,
+        avatar: null,
+        linkedProviders: [],
+        connectedServices: [],
+        connectedServicesV2: [],
+    },
+}));
 
 const activeSelectionMachineGroupsState = vi.hoisted(() => ({
     value: {
@@ -39,45 +56,68 @@ const activeSelectionMachineGroupsState = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Pressable: 'Pressable',
-                                    Text: 'Text',
-                                    ActivityIndicator: 'ActivityIndicator',
-                                    Platform: {
-                                        OS: 'web',
-                                        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-                                    },
-                                    Linking: {
-                                        canOpenURL: async () => false,
-                                        openURL: async () => {},
-                                    },
-                                }
-    );
+installSettingsViewCommonModuleMocks({
+    icons: async () => {
+        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+        return createExpoVectorIconsMock();
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: vi.fn(async () => false),
+                prompt: vi.fn(async () => null),
+            },
+        }).module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Pressable: 'Pressable',
+            Text: 'Text',
+            ActivityIndicator: 'ActivityIndicator',
+            Platform: {
+                OS: 'web',
+                select: (options: any) => (options && 'default' in options ? options.default : undefined),
+            },
+            Linking: {
+                canOpenURL: async () => false,
+                openURL: async () => {},
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: routerPushSpy },
+        });
+        return routerMock.module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: () => settingsViewMultiServerMachinesState.sharedDeviceInventorySettings,
+            useSettings: () => settingsViewMultiServerMachinesState.sharedDeviceInventorySettings,
+            useEntitlement: () => false,
+            useProfile: () => settingsViewMultiServerMachinesState.profile,
+            useLocalSettingMutable: () => settingsViewMultiServerMachinesState.localSettingMutable,
+            useSettingMutable: () => settingsViewMultiServerMachinesState.settingMutable,
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
+    },
 });
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'StyledText',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
 }));
 
 vi.mock('@react-navigation/native', () => ({
@@ -141,17 +181,6 @@ vi.mock('@/track', () => ({
     trackWhatsNewClicked: vi.fn(),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => false),
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
-
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
 }));
@@ -175,11 +204,6 @@ vi.mock('@/sync/api/account/apiVendorTokens', () => ({
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
     MachineCliGlyphs: 'MachineCliGlyphs',

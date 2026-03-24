@@ -1,44 +1,27 @@
-import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit';
+import { installSessionMessageCardCommonModuleMocks } from '@/components/sessions/sessionMessageCardTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: 'View',
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-        }
-    );
+installSessionMessageCardCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, _vars?: any) => {
+                if (key === 'session.planOutput.title') return 'Plan';
+                if (key === 'session.planOutput.adoptPlan') return 'Adopt plan';
+                if (key === 'session.planOutput.sending') return 'Sending';
+                if (key === 'session.planOutput.recommendedBackend') return 'Recommended backend';
+                if (key === 'session.planOutput.risks') return 'Risks';
+                if (key === 'session.planOutput.milestones') return 'Milestones';
+                return String(key);
+            },
+        });
+    },
 });
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string, vars?: any) => {
-    if (key === 'session.planOutput.title') return 'Plan';
-    if (key === 'session.planOutput.adoptPlan') return 'Adopt plan';
-    if (key === 'session.planOutput.sending') return 'Sending';
-    if (key === 'session.planOutput.recommendedBackend') return 'Recommended backend';
-    if (key === 'session.planOutput.risks') return 'Risks';
-    if (key === 'session.planOutput.milestones') return 'Milestones';
-    return String(key);
-  },
-    });
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-  Text: (props: any) => React.createElement('Text', props, props.children),
-}));
 
 vi.mock('@/sync/sync', () => ({
   sync: { sendMessage: vi.fn() },

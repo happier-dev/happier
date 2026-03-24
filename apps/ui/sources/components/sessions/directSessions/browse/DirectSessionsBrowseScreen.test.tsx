@@ -2,6 +2,14 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { installNewSessionComponentsCommonModuleMocks } from '../../new/components/newSessionComponentsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -48,22 +56,19 @@ let machinesState = [
     { id: 'machine-2', active: false, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
 ];
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    TextInput: 'TextInput',
-                    ActivityIndicator: 'ActivityIndicator',
-                    Pressable: 'Pressable',
-                    ScrollView: 'ScrollView',
-                }
-    );
+const expoRouterMock = createExpoRouterMock({
+    router: { push: routerPushSpy },
 });
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
+installNewSessionComponentsCommonModuleMocks({
+    reactNative: () => createReactNativeWebMock({
+        View: 'View',
+        TextInput: 'TextInput',
+        ActivityIndicator: 'ActivityIndicator',
+        Pressable: 'Pressable',
+        ScrollView: 'ScrollView',
+    }),
+    unistyles: () => createUnistylesMock({
         theme: {
             colors: {
                 text: '#000',
@@ -81,36 +86,17 @@ vi.mock('react-native-unistyles', async () => {
                 header: { tint: '#000' },
             },
         },
-    });
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
+    }),
+    router: () => expoRouterMock.module,
+    text: () => createTextModuleMock({ translate: (key: string) => key }),
+    modal: () => createModalModuleMock({
         spies: {
             alert: modalAlertSpy,
         },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useAllMachines: () => machinesState,
-});
+    }).module,
+    storage: () => createStorageModuleStub({
+        useAllMachines: () => machinesState,
+    }),
 });
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -119,22 +105,11 @@ vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: (key: string) => key === 'uiItemDensity' ? 'comfortable' : undefined,
 }));
 
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: (props: any) => React.createElement('ItemList', props, props.children),
-}));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.children),
-}));
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props, props.children),
-}));
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    TextInput: (props: any) => React.createElement('TextInput', props, props.children),
-}));
+vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
+vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
+vi.mock('@/components/ui/lists/Item', () => createPassThroughModule(['Item']));
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
+vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));

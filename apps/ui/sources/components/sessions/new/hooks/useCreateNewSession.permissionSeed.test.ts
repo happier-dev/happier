@@ -13,6 +13,9 @@ import {
 } from '@happier-dev/protocol';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 import { renderScreen } from '@/dev/testkit';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+
+import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -152,16 +155,28 @@ async function setupUseCreateNewSessionHarness() {
         exitCode: 0,
     }));
 
-    vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
+    installNewSessionScreenModelCommonModuleMocks({
+        text: () =>
+            createTextModuleMock({
+                translate: (key: string) => key,
+            }),
     });
-});
     vi.doMock('@/modal', () => ({
         Modal: {
             alert: modalAlertSpy,
             confirm: modalConfirmSpy,
+        },
+    }));
+    vi.doMock('@/sync/domains/state/storage', () => ({
+        storage: {
+            getState: () => ({
+                settings: {},
+                machines: { m1: { id: 'm1' } },
+                sessions,
+                updateSessionPermissionMode: vi.fn(),
+                updateSessionModelMode: vi.fn(),
+                updateSessionDraft: updateSessionDraftSpy,
+            }),
         },
     }));
     vi.doMock('@/sync/sync', () => ({
@@ -194,18 +209,6 @@ async function setupUseCreateNewSessionHarness() {
             status: 200,
             json: async () => ({ mode: 'e2ee', updatedAt: 1 }),
         })),
-    }));
-    vi.doMock('@/sync/domains/state/storage', () => ({
-        storage: {
-            getState: () => ({
-                settings: {},
-                machines: { m1: { id: 'm1' } },
-                sessions,
-                updateSessionPermissionMode: vi.fn(),
-                updateSessionModelMode: vi.fn(),
-                updateSessionDraft: updateSessionDraftSpy,
-            }),
-        },
     }));
     vi.doMock('@/sync/domains/state/persistence', () => ({
         clearNewSessionDraft: clearNewSessionDraftSpy,

@@ -1,7 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
-import { collectHostText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -22,10 +21,8 @@ describe('ChangeTitleView', () => {
             result: {},
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(ChangeTitleView, makeToolViewProps(tool)))).tree;
-
-        const renderedText = collectHostText(tree);
+        const screen = await renderScreen(React.createElement(ChangeTitleView, makeToolViewProps(tool)));
+        const renderedText = screen.getTextContent();
         expect(renderedText).toContain('Title');
         expect(renderedText).toContain('Hello');
     });
@@ -40,9 +37,8 @@ describe('ChangeTitleView', () => {
             result: {},
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(ChangeTitleView, makeToolViewProps(tool, { detailLevel: 'title' })))).tree;
+        const screen = await renderScreen(React.createElement(ChangeTitleView, makeToolViewProps(tool, { detailLevel: 'title' })));
 
-        expect(tree.root.findAllByType('Text' as any).length).toBe(0);
+        expect(screen.getTextContent()).toBe('');
     });
 });

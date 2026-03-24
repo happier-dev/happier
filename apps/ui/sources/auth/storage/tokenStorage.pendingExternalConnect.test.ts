@@ -1,17 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installTokenStorageWebPlatformMocks } from './tokenStorage.testHelpers';
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Platform: {
-                                OS: 'web',
-                            },
-                        }
-    );
-});
-
-vi.mock('expo-secure-store', () => ({}));
+installTokenStorageWebPlatformMocks();
 
 function installLocalStorage() {
     const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');

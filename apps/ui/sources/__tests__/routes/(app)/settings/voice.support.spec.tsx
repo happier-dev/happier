@@ -344,7 +344,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
-        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
+        const dropdowns = screen.findAll((node) => String(node.type) === 'DropdownMenu');
         const resumabilityDropdown = dropdowns.find((d: any) => Array.isArray(d.props?.items) && d.props.items.some((i: any) => i?.id === 'provider_resume'));
         expect(resumabilityDropdown).toBeTruthy();
 

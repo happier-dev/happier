@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit';
-import { createExpoVectorIconsMock } from '@/dev/testkit/mocks/icons';
+import { installVoiceSettingsPanelCommonModuleMocks } from '@/voice/settings/panels/voiceSettingsPanelTestHelpers';
 
 type PlatformSelectOptions<T> = {
     web?: T;
@@ -11,12 +11,12 @@ type PlatformSelectOptions<T> = {
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).expo = { EventEmitter: class {} };
 
-vi.mock('react-native-reanimated', () => ({}));
+const modalPrompt = vi.fn(async (..._args: any[]) => null);
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installVoiceSettingsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             Platform: {
                 OS: 'web',
                 select: <T,>(options: PlatformSelectOptions<T>) => options.web ?? options.default,
@@ -25,25 +25,35 @@ vi.mock('react-native', async () => {
                 getEnforcing: () => ({}),
             },
             Pressable: 'Pressable',
-        }
-    );
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: modalPrompt as unknown as (...args: any[]) => Promise<string | null>,
+            },
+        }).module;
+    },
+    icons: async () => {
+        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+        return createExpoVectorIconsMock();
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: { colors: { textSecondary: '#666' } },
+        });
+    },
 });
 
-vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: { colors: { textSecondary: '#666' } },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
+vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@/components/ui/lists/Item', () => ({
   Item: (props: any) => React.createElement('Item', props),
@@ -57,17 +67,6 @@ vi.mock('@/components/ui/forms/Switch', () => ({ Switch: () => null }));
 
 vi.mock('@/voice/settings/panels/localStt/LocalVoiceSttGroup', () => ({ LocalVoiceSttGroup: () => null }));
 vi.mock('@/voice/settings/panels/localTts/LocalVoiceTtsGroup', () => ({ LocalVoiceTtsGroup: () => null }));
-
-const modalPrompt = vi.fn(async (..._args: any[]) => null);
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: modalPrompt as unknown as (...args: any[]) => Promise<string | null>,
-        },
-    }).module;
-});
 
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 

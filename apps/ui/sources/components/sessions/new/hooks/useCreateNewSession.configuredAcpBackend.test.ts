@@ -6,6 +6,7 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,21 +21,37 @@ async function setupHarness() {
     const captured: { value: SpawnPayloadCapture } = { value: null };
     const createdAutomationTemplate: { value: Record<string, unknown> | null } = { value: null };
 
-    vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
-    vi.doMock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => false),
+    installNewSessionScreenModelCommonModuleMocks({
+        text: async () => {
+            const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+            return createTextModuleMock({
+                translate: (key: string) => key,
+            });
         },
-    }).module;
-});
+        modal: async () => {
+            const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+            return createModalModuleMock({
+                spies: {
+                    alert: vi.fn(),
+                    confirm: vi.fn(async () => false),
+                },
+            }).module;
+        },
+        storage: async () => {
+            const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+            return createStorageModuleStub({
+                storage: {
+                    getState: () => ({
+                        settings: {},
+                        machines: { m1: { id: 'm1' } },
+                        updateSessionPermissionMode: vi.fn(),
+                        updateSessionModelMode: vi.fn(),
+                        updateSessionDraft: vi.fn(),
+                    }),
+                },
+            });
+        },
+    });
     vi.doMock('@/sync/sync', () => ({
         sync: {
             getCredentials: vi.fn(() => ({ token: 't' })),
@@ -55,18 +72,6 @@ async function setupHarness() {
     vi.doMock('@/sync/store/settingsWriters', () => ({
         useApplySettings: () => applySettingsMock,
     }));
-    vi.doMock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-            getState: () => ({
-                settings: {},
-                updateSessionPermissionMode: vi.fn(),
-                updateSessionModelMode: vi.fn(),
-            }),
-        },
-});
-});
     vi.doMock('@/sync/domains/state/persistence', () => ({
         loadSettings: () => ({ settings: {}, version: null }),
         loadDeviceAnalyticsId: () => null,

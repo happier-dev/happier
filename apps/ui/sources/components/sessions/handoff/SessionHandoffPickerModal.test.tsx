@@ -2,6 +2,9 @@ import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
+
+const refreshMachinesThrottledMock = vi.fn(async () => {});
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,20 +14,6 @@ let machineListByServerIdState: Record<string, any> = {};
 let allMachinesState: any[] = [];
 let sessionsState: any[] = [];
 let sessionsByIdState: Record<string, any> = {};
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            Pressable: (props: any) => React.createElement('Pressable', props, typeof props.children === 'function' ? props.children({ pressed: false }) : props.children),
-            View: (props: any) => React.createElement('View', props, props.children),
-        }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
 
 vi.mock('@happier-dev/protocol', () => ({
     getActionSpec: () => ({ id: 'session.handoff', title: 'session.handoff.title', description: 'session.handoff.description' }),
@@ -52,46 +41,22 @@ vi.mock('@happier-dev/protocol', () => ({
     },
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#111',
-                shadow: { color: '#000' },
-                divider: '#333',
-                text: '#fff',
-                textSecondary: '#aaa',
-                header: { tint: '#fff' },
-                accent: {
-                    blue: '#00f',
-                    green: '#0f0',
-                    orange: '#f80',
-                    indigo: '#80f',
+installSessionHandoffCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useMachineListByServerId: () => machineListByServerIdState,
+            useMachineRecordValues: () => allMachinesState,
+            useSessions: () => sessionsState,
+            useSession: (id: string) => sessionsByIdState[id] ?? null,
+            useSettingMutable: (key: string) => [
+                settingsState[key],
+                (next: any) => {
+                    settingsState[key] = next;
                 },
-            },
-        },
-    });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
+            ],
+        });
     },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
 });
 
 vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
@@ -122,27 +87,6 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    TextInput: (props: any) => React.createElement('TextInput', props),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useMachineListByServerId: () => machineListByServerIdState,
-    useMachineRecordValues: () => allMachinesState,
-    useSessions: () => sessionsState,
-    useSession: (id: string) => sessionsByIdState[id] ?? null,
-    useSettingMutable: (key: string) => [
-        settingsState[key],
-        (next: any) => {
-            settingsState[key] = next;
-        },
-    ],
-});
-});
-
 vi.mock('@/utils/sessions/recentMachines', () => ({
     getRecentMachinesFromSessions: () => [],
 }));
@@ -151,8 +95,15 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
 }));
 
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        refreshMachinesThrottled: refreshMachinesThrottledMock,
+    },
+}));
+
 describe('SessionHandoffPickerModal', () => {
     beforeEach(() => {
+        refreshMachinesThrottledMock.mockClear();
         machineListByServerIdState = {
             server_a: [
                 { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
@@ -212,6 +163,9 @@ describe('SessionHandoffPickerModal', () => {
                     sourceMachineId="machine_source"
                     serverId="server_a"
                 />)).tree;
+
+        await act(async () => {});
+        expect(refreshMachinesThrottledMock).toHaveBeenCalled();
 
         const machineSelector = tree.findByType('MachineSelector' as any);
         expect(machineSelector.props.testIdPrefix).toBe('session-handoff-machine');

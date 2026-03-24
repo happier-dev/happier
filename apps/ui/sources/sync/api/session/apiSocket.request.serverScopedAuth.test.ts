@@ -127,7 +127,6 @@ describe('apiSocket.request server-scoped credentials', () => {
 
     it('dedupes concurrent GET requests for the same URL', async () => {
         const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
-            await Promise.resolve();
             return new Response(JSON.stringify({ ok: true }), {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' },
@@ -148,7 +147,6 @@ describe('apiSocket.request server-scoped credentials', () => {
 
     it('dedupes concurrent GET requests across module instances', async () => {
         const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
-            await Promise.resolve();
             return new Response(JSON.stringify({ ok: true }), {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' },
@@ -174,7 +172,6 @@ describe('apiSocket.request server-scoped credentials', () => {
 
     it('dedupes concurrent GET requests even when server generation differs, but preserves stale rejection', async () => {
         const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
-            await Promise.resolve();
             return new Response(JSON.stringify({ ok: true }), {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' },

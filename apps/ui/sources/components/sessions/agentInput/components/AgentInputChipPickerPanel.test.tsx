@@ -1,41 +1,12 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#111',
-                textSecondary: '#666',
-                surface: '#fff',
-                surfaceHigh: '#f2f2f2',
-                divider: '#ddd',
-                groupped: {
-                    background: '#f2f2f2',
-                    sectionTitle: '#777',
-                },
-                button: {
-                    primary: { background: '#00f', tint: '#fff' },
-                },
-            },
-        },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
+installAgentInputCommonModuleMocks();
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',

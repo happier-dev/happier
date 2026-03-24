@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installSessionHandoffCommonModuleMocks } from '@/components/sessions/handoff/sessionHandoffTestHelpers';
 
 const modalShowMock = vi.hoisted(() => vi.fn());
 const modalHideMock = vi.hoisted(() => vi.fn());
@@ -9,21 +10,18 @@ const openSessionHandoffProgressModalMock = vi.hoisted(() => vi.fn());
 const openSessionHandoffFailureRecoveryModalMock = vi.hoisted(() => vi.fn());
 const performSessionHandoffRecoveryActionMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: (...args: unknown[]) => modalShowMock(...args),
-            hide: (...args: unknown[]) => modalHideMock(...args),
-            update: (...args: unknown[]) => modalUpdateMock(...args),
-            confirm: (...args: unknown[]) => modalConfirmMock(...args),
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+installSessionHandoffCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                show: (...args: unknown[]) => modalShowMock(...args),
+                hide: (...args: unknown[]) => modalHideMock(...args),
+                update: (...args: unknown[]) => modalUpdateMock(...args),
+                confirm: (...args: unknown[]) => modalConfirmMock(...args),
+            },
+        }).module;
+    },
 });
 
 vi.mock('./executeSessionHandoffAction', () => ({

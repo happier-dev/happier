@@ -1,5 +1,4 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -43,11 +42,10 @@ describe('MarkdownView (span styles)', () => {
             color: 'rgb(120, 120, 120)',
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<MarkdownView markdown={markdown} textStyle={textStyle} />)).tree;
+        const screen = await renderScreen(<MarkdownView markdown={markdown} textStyle={textStyle} />);
 
         const findTextNode = (text: string) =>
-            tree!.root.findAll((n) => typeof n.props?.children === 'string' && n.props.children === text)[0]!;
+            screen.findAll((n) => typeof n.props?.children === 'string' && n.props.children === text)[0]!;
 
         const boldNode = findTextNode('Exploring Reasoning Options');
         const italicNode = findTextNode('Considering tools');

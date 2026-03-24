@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -61,14 +60,13 @@ describe('buildDirectBrowseCandidatePresentation', () => {
         expect(React.isValidElement(subtitle)).toBe(true);
         expect((subtitle as any).type).toBe('Text');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement('View', null, subtitle))).tree;
-        const textNodes = tree.root.findAllByType('Text');
+        const screen = await renderScreen(React.createElement('View', null, subtitle));
+        const textNodes = screen.findAllByType('Text');
         expect(String(textNodes[1]?.props?.children)).toMatch(/\d+y ago/);
         expect(textNodes[1]?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ color: '#666' })]));
         expect(String(textNodes[3]?.props?.children)).toBe('/Users/leeroy/Documents/Development/happier/dev');
         expect(textNodes[3]?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ color: '#999' })]));
-        expect(JSON.stringify(tree.toJSON())).not.toContain('codex-session-1');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('codex-session-1');
     });
 
     it('falls back to the remote session id when there is no meaningful title or path', async () => {
@@ -94,9 +92,8 @@ describe('buildDirectBrowseCandidatePresentation', () => {
             activity: 'idle',
         }, mockTheme, 'compact');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement('View', null, subtitle))).tree;
-        expect(JSON.stringify(tree.toJSON())).toContain('sess_raw_1');
+        const screen = await renderScreen(React.createElement('View', null, subtitle));
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('sess_raw_1');
     });
 
     it('shows running now instead of a stale relative timestamp for running sessions', async () => {
@@ -122,10 +119,9 @@ describe('buildDirectBrowseCandidatePresentation', () => {
             },
         }, mockTheme, 'compact');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement('View', null, subtitle))).tree;
-        expect(JSON.stringify(tree.toJSON())).toContain('directSessions.browseActivityRunningNow');
-        expect(JSON.stringify(tree.toJSON())).toContain('/tmp/happier/dev');
-        expect(JSON.stringify(tree.toJSON())).not.toContain('3y ago');
+        const screen = await renderScreen(React.createElement('View', null, subtitle));
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('directSessions.browseActivityRunningNow');
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('/tmp/happier/dev');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('3y ago');
     });
 });

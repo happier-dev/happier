@@ -1,6 +1,5 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
 
 import { PermissionFooter } from '../permissions/PermissionFooter';
 import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
@@ -55,22 +54,21 @@ vi.mock('@/components/tools/normalization/policy/permissionSummary', () => ({
 
 describe('PermissionFooter summary visibility', () => {
     it('does not repeat the request summary (the tool UI already shows it)', async () => {
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(PermissionFooter, {
-                    permission: { id: 'p1', status: 'pending' },
-                    sessionId: 's1',
-                    toolName: 'Bash',
-                    toolInput: { command: 'pwd' },
-                    metadata: { flavor: 'opencode' },
-                }))).tree;
+        const screen = await renderScreen(React.createElement(PermissionFooter, {
+            permission: { id: 'p1', status: 'pending' },
+            sessionId: 's1',
+            toolName: 'Bash',
+            toolInput: { command: 'pwd' },
+            metadata: { flavor: 'opencode' },
+        }));
 
-        const texts = tree.root.findAllByType('Text' as any);
+        const texts = screen.findAllByType('Text' as any);
         const flattened = texts
             .map((t) => t.props.children)
             .flat()
             .filter((c) => typeof c === 'string') as string[];
 
         expect(flattened).not.toContain('SUMMARY');
-        expect(tree.root.findAllByType('TouchableOpacity')).not.toHaveLength(0);
+        expect(screen.findAllByType('TouchableOpacity')).not.toHaveLength(0);
     });
 });

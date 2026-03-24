@@ -2,6 +2,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { Platform } from 'react-native';
 
 import type { PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
 import { installNewSessionScreenModelCommonModuleMocks } from '@/components/sessions/new/hooks/newSessionScreenModelTestHelpers';
@@ -139,6 +140,55 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         expect(second.getCurrent().agentInputAttachments).toEqual([
             expect.objectContaining({ label: 'note.txt', status: 'pending' }),
         ]);
+    });
+
+    it('triggers the web file picker exactly once when the attachment chip is pressed', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const originalOs = Platform.OS;
+        (Platform as any).OS = 'web';
+
+        try {
+            const handleCreateSession = vi.fn();
+            const hook = await renderHook(() => useNewSessionAttachmentsController({
+                flowId: 'flow-pick-once',
+                isCreating: false,
+                sessionPrompt: '',
+                handleCreateSession,
+                selectedProfileId: null,
+                targetServerId: 'server-a',
+                baseActionChips: [],
+            }));
+
+            const openFiles = vi.fn(() => undefined);
+            const open = vi.fn(() => undefined);
+            const openImages = vi.fn(() => undefined);
+            hook.getCurrent().filePickerRef.current = {
+                openFiles,
+                open,
+                openImages,
+            } as any;
+
+            const attachmentChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'attachments-add');
+            expect(attachmentChip).toBeTruthy();
+
+            const rendered = attachmentChip!.render({
+                chipStyle: () => ({}),
+                showLabel: true,
+                iconColor: '#000',
+                textStyle: {},
+                countTextStyle: {},
+                chipAnchorRef: { current: null },
+                popoverAnchorRef: { current: null },
+                toggleCollapsedPopover: vi.fn(),
+            }) as React.ReactElement<{ onPress?: () => void }>;
+
+            rendered.props.onPress?.();
+
+            expect(openFiles).toHaveBeenCalledTimes(1);
+            expect(open).not.toHaveBeenCalled();
+        } finally {
+            (Platform as any).OS = originalOs;
+        }
     });
 
     it('runs the shared upload and follow-up flow and clears drafts after success', async () => {

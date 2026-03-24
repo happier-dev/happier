@@ -1,6 +1,7 @@
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit';
 import { describe, expect, it, vi } from 'vitest';
+import { installPublicShareViewerCommonModuleMocks } from './publicShareViewerTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,33 +13,19 @@ const transcriptListSpy = vi.fn();
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
 const routerMock = { back: vi.fn(), push: vi.fn(), replace: vi.fn() };
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: routerMock,
-        params: { token: 'tok-1' },
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+installPublicShareViewerCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: routerMock,
+            params: { token: 'tok-1' },
+        }).module;
+    },
 });
 
 vi.mock('@/sync/http/client', () => ({

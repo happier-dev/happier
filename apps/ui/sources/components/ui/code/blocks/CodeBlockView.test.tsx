@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installCodeBlockCommonModuleMocks } from './codeBlockTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -39,11 +40,21 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: { colors: { text: '#111' } },
-    });
+installCodeBlockCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: any) => React.createElement('View', props, props.children),
+            Text: (props: any) => React.createElement('Text', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: { colors: { text: '#111' } },
+        });
+    },
 });
 
 describe('CodeBlockView (native)', () => {

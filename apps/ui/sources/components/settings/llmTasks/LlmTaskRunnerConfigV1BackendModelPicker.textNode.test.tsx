@@ -2,70 +2,91 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            OS: 'web',
-            select: <T,>(values: { default?: T; web?: T; ios?: T; android?: T }) =>
-                values?.default ?? values?.web ?? values?.ios ?? values?.android,
-        },
-        AppState: {
-            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-        },
-    });
+installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: <T,>(values: { default?: T; web?: T; ios?: T; android?: T }) =>
+                    values?.default ?? values?.web ?? values?.ios ?? values?.android,
+            },
+            AppState: {
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                prompt: vi.fn(async () => null),
+            },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: '#fff',
+                    textSecondary: '#999',
+                    surfacePressedOverlay: 'rgba(0,0,0,0.1)',
+                    surfaceSelected: 'rgba(255,255,255,0.1)',
+                    surfaceRipple: 'rgba(0,0,0,0.1)',
+                    surfaceHigh: '#222',
+                    surfaceHighest: '#333',
+                    divider: '#444',
+                    accent: { blue: '#00f', orange: '#f60', indigo: '#66f' },
+                    input: { placeholder: '#666' },
+                    groupped: {
+                        background: '#111',
+                        chevron: '#888',
+                    },
+                },
+            },
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) =>
+                key === 'acpCatalogSettingsV1'
+                    ? {
+                          v: 2,
+                          backends: [
+                              {
+                                  id: 'custom-backend',
+                                  name: 'custom-backend',
+                                  title: 'Custom Backend',
+                                  command: 'custom-backend',
+                                  args: [],
+                                  env: {},
+                                  transportProfile: { kind: 'stdio' },
+                                  capabilities: {},
+                                  createdAt: 1,
+                                  updatedAt: 1,
+                              },
+                          ],
+                      }
+                    : [],
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#fff',
-                textSecondary: '#999',
-                surfacePressedOverlay: 'rgba(0,0,0,0.1)',
-                surfaceSelected: 'rgba(255,255,255,0.1)',
-                surfaceRipple: 'rgba(0,0,0,0.1)',
-                surfaceHigh: '#222',
-                surfaceHighest: '#333',
-                divider: '#444',
-                accent: { blue: '#00f', orange: '#f60', indigo: '#66f' },
-                input: { placeholder: '#666' },
-                groupped: {
-                    background: '#111',
-                    chevron: '#888',
-                },
-            },
-        },
-    });
-});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -128,32 +149,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: unknown) => promise,
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSetting: (key: string) =>
-            key === 'acpCatalogSettingsV1'
-                ? {
-                      v: 2,
-                      backends: [
-                          {
-                              id: 'custom-backend',
-                              name: 'custom-backend',
-                              title: 'Custom Backend',
-                              command: 'custom-backend',
-                              args: [],
-                              env: {},
-                              transportProfile: { kind: 'stdio' },
-                              capabilities: {},
-                              createdAt: 1,
-                              updatedAt: 1,
-                          },
-                      ],
-                  }
-                : [],
-    });
-});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-a' }),

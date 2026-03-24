@@ -98,7 +98,7 @@ describe('pendingQueueV2 decrypt mapping', () => {
         expect(messages[0]?.text).toBe('ok');
     });
 
-    it('skips malformed pending rows and keeps valid queued + discarded rows after mixed decrypt outcomes', async () => {
+    it('skips malformed pending rows and keeps valid rows while retaining decrypt failures explicitly', async () => {
         const sessionId = 's_test_mixed';
         const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 9 });
 
@@ -163,9 +163,66 @@ describe('pendingQueueV2 decrypt mapping', () => {
         });
 
         const pendingState = storage.getState().sessionPending[sessionId];
-        expect(pendingState?.messages.map((message) => message.localId)).toEqual(['queued-valid']);
+        expect(pendingState?.messages.map((message) => message.localId)).toEqual(['queued-valid', 'queued-bad-cipher']);
         expect(pendingState?.messages[0]?.text).toBe('queued');
+        expect((pendingState?.messages[1] as { pendingDecryptFailure?: { kind: string } } | undefined)?.pendingDecryptFailure).toEqual({
+            kind: 'decrypt_failed',
+        });
         expect(pendingState?.discarded.map((message) => message.localId)).toEqual(['discarded-valid']);
         expect(pendingState?.discarded[0]?.discardedReason).toBe('switch_to_local');
+    });
+
+    it('retains queued and discarded rows with an explicit failure state when decrypt fails', async () => {
+        const sessionId = 's_test_decrypt_failures';
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 11 });
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption,
+            request: async () =>
+                new Response(
+                    JSON.stringify({
+                        pending: [
+                            {
+                                localId: 'queued-bad-cipher',
+                                content: { t: 'encrypted', c: 'not-a-valid-ciphertext' },
+                                status: 'queued',
+                                position: 0,
+                                createdAt: 1,
+                                updatedAt: 1,
+                            },
+                            {
+                                localId: 'discarded-bad-cipher',
+                                content: { t: 'encrypted', c: 'not-a-valid-ciphertext' },
+                                status: 'discarded',
+                                position: 1,
+                                createdAt: 2,
+                                updatedAt: 2,
+                                discardedAt: 3,
+                                discardedReason: 'manual',
+                            },
+                        ],
+                    }),
+                    { status: 200 },
+                ),
+        });
+
+        const pendingState = storage.getState().sessionPending[sessionId];
+        expect(pendingState?.messages.map((message) => message.localId)).toEqual(['queued-bad-cipher']);
+        expect(pendingState?.discarded.map((message) => message.localId)).toEqual(['discarded-bad-cipher']);
+
+        const queuedFailure = pendingState?.messages[0] as (typeof pendingState.messages)[number] & {
+            pendingDecryptFailure?: { kind: string };
+        };
+        const discardedFailure = pendingState?.discarded[0] as (typeof pendingState.discarded)[number] & {
+            pendingDecryptFailure?: { kind: string };
+        };
+
+        expect(queuedFailure?.displayText).toBeTruthy();
+        expect(queuedFailure?.text).toBe('');
+        expect(queuedFailure?.pendingDecryptFailure).toEqual({ kind: 'decrypt_failed' });
+        expect(discardedFailure?.displayText).toBeTruthy();
+        expect(discardedFailure?.text).toBe('');
+        expect(discardedFailure?.pendingDecryptFailure).toEqual({ kind: 'decrypt_failed' });
     });
 });

@@ -16,6 +16,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSessionSettingsEntryModuleMocks } from '../sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -89,9 +90,9 @@ let activeServerSnapshot: ActiveServerSnapshot = {
 let activeServerSubscriber: ((snapshot: ActiveServerSnapshot) => void) | null = null;
 const passThrough = (componentName: string) => createPassThroughModule([componentName]);
 
-vi.mock('react-native', async () => {
-    return createReactNativeWebMock(
-        {
+installSessionSettingsEntryModuleMocks({
+    reactNative: () =>
+        createReactNativeWebMock({
             View: 'View',
             TextInput: 'TextInput',
             Easing: {
@@ -102,31 +103,74 @@ vi.mock('react-native', async () => {
                 OS: 'ios',
                 select: (value: any) => (value && typeof value === 'object' ? (value.ios ?? value.default) : value),
             },
-        },
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    return createUnistylesMock();
+        }),
+    unistyles: () => createUnistylesMock(),
+    routerModule: () => {
+        const routerMock = createExpoRouterMock({
+            router: {
+                push: (value) => routerPushSpy(value),
+                back: () => undefined,
+                replace: () => undefined,
+                setParams: vi.fn(),
+            },
+        });
+        return {
+            ...routerMock.module,
+            useLocalSearchParams: () => ({ providerId: mockProviderId }),
+            Redirect: (props: any) => React.createElement('Redirect', props),
+        };
+    },
+    textModule: () => createTextModuleMock({ translate: (key) => key }),
+    storageModule: (importOriginal) =>
+        createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                // Test boundary fixture: this route reads a small subset of the storage contract.
+                useSettings: (() => settingsState) as any,
+                useAllMachines: (() => machinesState) as any,
+                useMachineListByServerId: (() => machineListByServerIdState) as any,
+                useMachineListStatusByServerId: (() => machineListStatusByServerIdState) as any,
+                useLocalSetting: ((key: string) => {
+                    if (key === 'bottomPaneHeightPx') return 320;
+                    if (key === 'bottomPaneHeightBasisPx') return 900;
+                    return undefined;
+                }) as any,
+                useLocalSettingMutable: ((key: string) => {
+                    if (key === 'bottomPaneHeightPx') return [320, vi.fn()] as const;
+                    if (key === 'bottomPaneHeightBasisPx') return [900, vi.fn()] as const;
+                    if (key === 'contextSelectionsV1') {
+                        return [
+                            settingsState.contextSelectionsV1,
+                            (next: any) => {
+                                settingsState.contextSelectionsV1 = next;
+                            },
+                        ] as const;
+                    }
+                    return [undefined, vi.fn()] as const;
+                }) as any,
+                useSettingMutable: ((key: string) => {
+                    if (key === 'contextSelectionsV1') {
+                        return [
+                            settingsState.contextSelectionsV1,
+                            (next: any) => {
+                                settingsState.contextSelectionsV1 = next;
+                            },
+                        ] as const;
+                    }
+                    return [undefined, vi.fn()] as const;
+                }) as any,
+                useSetting: (key: string) => {
+                    if (key === 'serverSelectionGroups') return {};
+                    if (key === 'serverSelectionActiveTargetKind') return 'server';
+                    if (key === 'serverSelectionActiveTargetId') return 'server1';
+                    return undefined;
+                },
+                useMachine: () => null,
+            },
+        }),
 });
 
 vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
-
-vi.mock('expo-router', async () => {
-    const routerMock = createExpoRouterMock({
-        router: {
-            push: (value) => routerPushSpy(value),
-            back: () => undefined,
-            replace: () => undefined,
-            setParams: vi.fn(),
-        },
-    });
-    return {
-        ...routerMock.module,
-        useLocalSearchParams: () => ({ providerId: mockProviderId }),
-        Redirect: (props: any) => React.createElement('Redirect', props),
-    };
-});
 
 vi.mock('@/components/ui/lists/ItemList', () => passThrough('ItemList'));
 
@@ -176,55 +220,6 @@ vi.mock('@/sync/sync', () => ({
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            // Test boundary fixture: this route reads a small subset of the storage contract.
-            useSettings: (() => settingsState) as any,
-            useAllMachines: (() => machinesState) as any,
-            useMachineListByServerId: (() => machineListByServerIdState) as any,
-            useMachineListStatusByServerId: (() => machineListStatusByServerIdState) as any,
-            useLocalSetting: ((key: string) => {
-                if (key === 'bottomPaneHeightPx') return 320;
-                if (key === 'bottomPaneHeightBasisPx') return 900;
-                return undefined;
-            }) as any,
-            useLocalSettingMutable: ((key: string) => {
-                if (key === 'bottomPaneHeightPx') return [320, vi.fn()] as const;
-                if (key === 'bottomPaneHeightBasisPx') return [900, vi.fn()] as const;
-                if (key === 'contextSelectionsV1') {
-                    return [
-                        settingsState.contextSelectionsV1,
-                        (next: any) => {
-                            settingsState.contextSelectionsV1 = next;
-                        },
-                    ] as const;
-                }
-                return [undefined, vi.fn()] as const;
-            }) as any,
-            useSettingMutable: ((key: string) => {
-                if (key === 'contextSelectionsV1') {
-                    return [
-                        settingsState.contextSelectionsV1,
-                        (next: any) => {
-                            settingsState.contextSelectionsV1 = next;
-                        },
-                    ] as const;
-                }
-                return [undefined, vi.fn()] as const;
-            }) as any,
-            useSetting: (key: string) => {
-                if (key === 'serverSelectionGroups') return {};
-                if (key === 'serverSelectionActiveTargetKind') return 'server';
-                if (key === 'serverSelectionActiveTargetId') return 'server1';
-                return undefined;
-            },
-            useMachine: () => null,
-        },
-    });
-});
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => activeServerSnapshot,
@@ -311,10 +306,6 @@ vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
         buildLoginLaunch: () => ({ initialCommand: 'codex login' }),
     }),
 }));
-
-vi.mock('@/text', async () => {
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
     getPermissionModeLabelForAgentType: () => 'Ask',

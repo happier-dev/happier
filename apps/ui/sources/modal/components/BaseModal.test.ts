@@ -1,8 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { renderScreen } from '@/dev/testkit';
+import { installModalComponentCommonModuleMocks } from './modalComponentTestHelpers';
 
 const reactActEnvironment = globalThis as typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -33,19 +34,11 @@ vi.mock('@/utils/web/radixCjs', () => {
     };
 });
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+installModalComponentCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
 });
 
 async function renderBaseModalScreen(
@@ -54,21 +47,6 @@ async function renderBaseModalScreen(
     options?: Parameters<typeof renderScreen>[1],
 ) {
     return renderScreen(React.createElement(BaseModal, { visible: true, children: React.createElement('Child'), ...props }), options);
-}
-
-async function renderBaseModalTree(
-    BaseModal: React.ComponentType<any>,
-    props: Record<string, unknown> = {},
-    options?: renderer.TestRendererOptions,
-) {
-    let tree: renderer.ReactTestRenderer | undefined;
-    await act(async () => {
-        tree = renderer.create(
-            React.createElement(BaseModal, { visible: true, children: React.createElement('Child'), ...props }),
-            options,
-        );
-    });
-    return tree;
 }
 
 describe('BaseModal (web)', () => {
@@ -218,7 +196,7 @@ describe('BaseModal (web)', () => {
         (globalThis as any).MutationObserver = FakeMutationObserver;
 
         try {
-            const tree = await renderBaseModalTree(BaseModal);
+            const screen = await renderBaseModalScreen(BaseModal);
 
             expect(bodyStyle.pointerEvents).toBe('auto');
 
@@ -229,9 +207,7 @@ describe('BaseModal (web)', () => {
             (observerCallback as (records: unknown[], observer: unknown) => void)([], {});
             expect(bodyStyle.pointerEvents).toBe('auto');
 
-            act(() => {
-                tree?.unmount();
-            });
+            await screen.unmount();
 
             expect(bodyStyle.pointerEvents).toBe('none');
         } finally {
@@ -262,7 +238,7 @@ describe('BaseModal (web)', () => {
             return React.createElement('Probe');
         }
 
-        await renderBaseModalTree(
+        await renderBaseModalScreen(
             BaseModal,
             { children: React.createElement(Probe) },
             {

@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 
@@ -94,19 +94,18 @@ describe('CommitScreen native route fallback', () => {
         routerMock.state.params = { id: 'session-1', sha: mockShaParam };
         routerReplaceSpy.mockClear();
         openDetailsTabSpy.mockClear();
-        let tree: renderer.ReactTestRenderer | undefined;
+        const screen = await renderScreen(React.createElement(CommitScreen));
         try {
-            tree = (await renderScreen(React.createElement(CommitScreen))).tree;
             await act(async () => {
                 await new Promise((r) => setTimeout(r, 0));
             });
 
-            expect(tree!.root.findByProps({ testID: 'session-invalid-link' })).toBeTruthy();
+            expect(screen.findByTestId('session-invalid-link')).toBeTruthy();
             expect(routerReplaceSpy).not.toHaveBeenCalled();
             expect(openDetailsTabSpy).not.toHaveBeenCalled();
         } finally {
             act(() => {
-                tree?.unmount();
+                screen.tree.unmount();
             });
         }
     });
@@ -118,10 +117,8 @@ describe('CommitScreen native route fallback', () => {
         routerMock.state.params = { id: 'session-1', sha: mockShaParam };
         routerReplaceSpy.mockClear();
         openDetailsTabSpy.mockClear();
-        let tree: renderer.ReactTestRenderer | undefined;
+        const screen = await renderScreen(React.createElement(CommitScreen));
         try {
-            tree = (await renderScreen(React.createElement(CommitScreen))).tree;
-
             expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
             expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
             expect(routerReplaceSpy).toHaveBeenLastCalledWith({
@@ -133,9 +130,9 @@ describe('CommitScreen native route fallback', () => {
             routerMock.state.params = { id: 'session-1', sha: mockShaParam };
 
             await act(async () => {
-                tree!.update(React.createElement(CommitScreen));
-                await Promise.resolve();
+                screen.tree.update(React.createElement(CommitScreen));
             });
+            await flushHookEffects({ cycles: 1, turns: 1 });
 
             expect(openDetailsTabSpy).toHaveBeenCalledTimes(2);
             expect(routerReplaceSpy).toHaveBeenCalledTimes(2);
@@ -149,7 +146,7 @@ describe('CommitScreen native route fallback', () => {
             });
         } finally {
             act(() => {
-                tree?.unmount();
+                screen.tree.unmount();
             });
         }
     });

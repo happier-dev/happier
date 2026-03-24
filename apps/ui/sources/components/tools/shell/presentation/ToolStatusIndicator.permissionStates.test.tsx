@@ -2,38 +2,34 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installToolShellPresentationCommonModuleMocks } from './toolShellPresentationTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installToolShellPresentationCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
             View: (props: any) => React.createElement('View', props, props.children),
-        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                accent: { blue: '#09f' },
-                success: '#0a0',
-                warning: '#f90',
-                warningCritical: '#c00',
-                textSecondary: '#555',
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    accent: { blue: '#09f' },
+                    success: '#0a0',
+                    warning: '#f90',
+                    warningCritical: '#c00',
+                    textSecondary: '#555',
+                },
             },
-        },
-    });
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: any) => React.createElement('Ionicons', props),
-}));
 
 describe('ToolStatusIndicator (permission states)', () => {
     it('renders lock icon when waiting for permission', async () => {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PreRestartBugReportSnapshotV1 } from '@/utils/system/preRestartBugReportSnapshot';
+import { installBugReportComponentCommonModuleMocks } from './bugReportComponentTestHelpers';
 
 vi.mock('expo-constants', () => ({
   default: {
@@ -8,30 +9,34 @@ vi.mock('expo-constants', () => ({
   },
 }));
 
-vi.mock('react-native', async () => {
+installBugReportComponentCommonModuleMocks({
+  reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'ios',
-                                        Version: '17.0',
-                                    },
-                                }
-    );
+    return createReactNativeWebMock({
+      Platform: {
+        OS: 'ios',
+        Version: '17.0',
+      },
+    });
+  },
+  storage: async () => {
+    return {
+      getStorage: () => ({
+        getState: () => ({
+          sessions: {},
+          sessionMessages: {},
+          sessionPending: {},
+        }),
+      }),
+    };
+  },
 });
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    getStorage: () => ({
-    getState: () => ({
-      sessions: {},
-      sessionMessages: {},
-      sessionPending: {},
-    }),
-  }),
-});
-});
+const bugReportDiagnosticsModulePromise = import('./bugReportDiagnostics');
+type CollectBugReportDiagnosticsArtifacts = typeof import('./bugReportDiagnostics')['collectBugReportDiagnosticsArtifacts'];
+const collectBugReportDiagnosticsArtifacts: CollectBugReportDiagnosticsArtifacts = async (
+  ...args: Parameters<CollectBugReportDiagnosticsArtifacts>
+) => (await bugReportDiagnosticsModulePromise).collectBugReportDiagnosticsArtifacts(...args);
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({
@@ -180,8 +185,6 @@ const { peekPreRestartBugReportSnapshotMock } = vi.hoisted(() => ({
 vi.mock('@/utils/system/preRestartBugReportSnapshot', () => ({
   peekPreRestartBugReportSnapshot: peekPreRestartBugReportSnapshotMock,
 }));
-
-import { collectBugReportDiagnosticsArtifacts } from './bugReportDiagnostics';
 
 describe('collectBugReportDiagnosticsArtifacts', () => {
   beforeEach(() => {

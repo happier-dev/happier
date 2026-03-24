@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installAccountCommonModuleMocks } from './accountTestHelpers';
 
 
 (
@@ -10,53 +11,52 @@ import { renderScreen } from '@/dev/testkit';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    Text: 'Text',
-                    Pressable: 'Pressable',
-                    Platform: {
-                        OS: 'ios',
-                        select: (options: { ios?: unknown; default?: unknown }) => options.ios ?? options.default,
-                    },
-                    AppState: {
-                        addEventListener: () => ({ remove: () => {} }),
-                    },
-                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
-
 const show = vi.fn();
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: show,
-            alert: vi.fn(),
-            prompt: vi.fn(),
-            confirm: vi.fn(),
-        },
-    }).module;
-});
 
 const push = vi.fn();
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push },
-    });
-    return expoRouterMock.module;
+
+vi.mock('react-native-reanimated', () => ({}));
+
+installAccountCommonModuleMocks({
+    icons: () => ({
+        Ionicons: 'Ionicons',
+    }),
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                show: show,
+                alert: vi.fn(),
+                prompt: vi.fn(),
+                confirm: vi.fn(),
+            },
+        }).module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'ios',
+                select: (options: { ios?: unknown; default?: unknown }) => options.ios ?? options.default,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { push },
+        });
+        return expoRouterMock.module;
+    },
 });
+
+vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({

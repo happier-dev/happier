@@ -3,12 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
 import { ConnectedServicesAuthModal } from './ConnectedServicesAuthModal';
-import { renderScreen } from '@/dev/testkit';
 
 
 (
@@ -68,12 +68,6 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
   getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
 }));
-
-async function flushAsyncEffects(turns: number = 3) {
-  for (let index = 0; index < turns; index += 1) {
-    await Promise.resolve();
-  }
-}
 
 describe('ConnectedServicesAuthModal', () => {
   it('renders connected profiles immediately when switching a service to connected mode', async () => {
@@ -186,9 +180,7 @@ describe('ConnectedServicesAuthModal', () => {
           onOpenSettings={() => {}}
         />);
 
-    await act(async () => {
-      await flushAsyncEffects();
-    });
+    await flushHookEffects({ cycles: 1, turns: 3 });
 
     expect(screen.getTextContent()).toContain('Weekly 18%');
   });

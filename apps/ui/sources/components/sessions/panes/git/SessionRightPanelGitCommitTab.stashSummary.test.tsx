@@ -2,37 +2,34 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createSyncOpsModuleMock, renderScreen } from '@/dev/testkit';
+import { installSessionGitPaneCommonModuleMocks } from './sessionGitPaneTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const stashListMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                View: 'View',
-                                FlatList: (props: any) => {
-                                    const header = props.ListHeaderComponent ? React.createElement(React.Fragment, null, props.ListHeaderComponent) : null;
-                                    const items = Array.isArray(props.data)
-                                        ? props.data.map((item: any, index: number) => React.createElement(React.Fragment, { key: `item-${index}` }, props.renderItem?.({ item, index })))
-                                        : null;
+installSessionGitPaneCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            FlatList: (props: any) => {
+                const header = props.ListHeaderComponent ? React.createElement(React.Fragment, null, props.ListHeaderComponent) : null;
+                const items = Array.isArray(props.data)
+                    ? props.data.map((item: any, index: number) => React.createElement(React.Fragment, { key: `item-${index}` }, props.renderItem?.({ item, index })))
+                    : null;
 
-                                    return React.createElement('FlatList', props, header, items);
-                                },
-                                ScrollView: 'ScrollView',
-                                Pressable: 'Pressable',
-                                Platform: {
-                                    select: (value: any) => value?.default ?? null,
-                                    OS: 'web',
-                                },
-                            }
-    );
+                return React.createElement('FlatList', props, header, items);
+            },
+            ScrollView: 'ScrollView',
+            Pressable: 'Pressable',
+            Platform: {
+                select: (value: any) => value?.default ?? null,
+                OS: 'web',
+            },
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
 
 vi.mock('@/components/sessions/files/SourceControlBranchSummary', () => ({
     SourceControlBranchSummary: (props: any) => React.createElement('SourceControlBranchSummary', props),
@@ -45,36 +42,6 @@ vi.mock('@/components/sessions/sourceControl/commitComposer/ScmCommitComposerCar
 vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
 }));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
-    useScrollEdgeFades: () => ({
-        visibility: { top: false, bottom: false, left: false, right: false },
-        onViewportLayout: () => {},
-        onContentSizeChange: () => {},
-        onScroll: () => {},
-    }),
-}));
-
-vi.mock('@/components/ui/scroll/ScrollEdgeFades', () => ({
-    ScrollEdgeFades: (props: any) => React.createElement('ScrollEdgeFades', props),
-}));
-
-vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
-    ScrollEdgeIndicators: (props: any) => React.createElement('ScrollEdgeIndicators', props),
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), mono: () => ({}) },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/sync/ops', async (importOriginal) => {
     return createSyncOpsModuleMock({

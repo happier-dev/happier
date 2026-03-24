@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,68 +57,61 @@ const previewSpy = vi.hoisted(() => vi.fn(async (_machineId: string, _request: u
         sourcePath: '/Users/test/.codex/config.toml',
     }],
 })));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Pressable: 'Pressable',
-                                        ScrollView: 'ScrollView',
-                                        View: 'View',
-                                        Dimensions: {
-                                            get: () => ({ width: 900, height: 800 }),
-                                            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-                                        },
-                                        useWindowDimensions: () => ({ width: 900, height: 800 }),
-                                    }
-    );
+installNewSessionScreenModelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Pressable: 'Pressable',
+            ScrollView: 'ScrollView',
+            View: 'View',
+            Dimensions: {
+                get: () => ({ width: 900, height: 800 }),
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+            useWindowDimensions: () => ({ width: 900, height: 800 }),
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => {
+                if (key === 'newSession.mcpChipLabel') return 'MCP';
+                return key;
+            },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSetting: createUseSettingMock({
+                values: {
+                    mcpServersSettingsV1: {
+                        v: 1,
+                        strictMode: false,
+                        servers: [
+                            {
+                                id: 'server-playwright',
+                                name: 'playwright',
+                                title: 'Playwright',
+                                command: 'playwright',
+                            },
+                        ],
+                        bindings: [],
+                        presets: [],
+                    } as any,
+                },
+            }),
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => {
-            if (key === 'newSession.mcpChipLabel') return 'MCP';
-            return key;
-        },
-    });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'mcp.servers',
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { installPartialStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return await installPartialStorageModuleMock({
-        useSetting: createUseSettingMock({
-            values: {
-                mcpServersSettingsV1: {
-                    v: 1,
-                    strictMode: false,
-                    servers: [
-                        {
-                            id: 'server-playwright',
-                            name: 'playwright',
-                            title: 'Playwright',
-                            command: 'playwright',
-                        },
-                    ],
-                    bindings: [],
-                    presets: [],
-                } as any,
-            },
-        }),
-    })(importOriginal);
-});
 
 vi.mock('@/sync/ops/machineMcpServers', () => ({
     machineMcpServersPreview: (...args: [string, unknown, unknown?]) => previewSpy(...args),

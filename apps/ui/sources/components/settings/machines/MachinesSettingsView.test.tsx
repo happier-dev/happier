@@ -2,6 +2,7 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installMachinesSettingsCommonModuleMocks } from './machinesSettingsTestHelpers';
 
 
 (
@@ -30,49 +31,46 @@ const viewModelState = vi.hoisted(() => ({
     value: null as unknown as MachinesSettingsViewModel,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            View: 'View',
-                                            Pressable: 'Pressable',
-                                            Platform: {
-                                                OS: 'web',
-                                                select: (options: Record<string, unknown>) => options?.web ?? options?.default,
-                                            },
-                                        }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installMachinesSettingsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'web',
+                select: (options: Record<string, unknown>) => options?.web ?? options?.default,
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: routerPushSpy },
+        });
+        return routerMock.module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    accent: { blue: 'blue', orange: 'orange' },
+                    textSecondary: 'gray',
+                    status: { connected: 'green', disconnected: 'red' },
+                },
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                accent: { blue: 'blue', orange: 'orange' },
-                textSecondary: 'gray',
-                status: { connected: 'green', disconnected: 'red' },
-            },
-        },
-    });
-});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemList', null, children),

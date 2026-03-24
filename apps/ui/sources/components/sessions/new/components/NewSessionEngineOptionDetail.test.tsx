@@ -13,11 +13,28 @@ import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+type AgentInputSelectOption = Readonly<{ value: string; name: string }>;
+
+type AgentInputOptionControl = Readonly<{
+    id: string;
+    name: string;
+    type: string;
+    currentValue: string;
+    options?: ReadonlyArray<AgentInputSelectOption>;
+}>;
+
+type ModelOptionEntry = Readonly<{
+    value: string;
+    label: string;
+    description: string;
+    modelOptions?: ReadonlyArray<AgentInputOptionControl>;
+}>;
+
 const modelOptionsState = vi.hoisted(() => ({
     value: [
         { value: 'default', label: 'Preset default', description: 'Uses the backend default.' },
         { value: 'preset-fast', label: 'Preset Fast', description: 'Fast preset model.' },
-    ],
+    ] as ReadonlyArray<ModelOptionEntry>,
 }));
 const preflightModelsState = vi.hoisted(() => ({
     value: { availableModels: [] as Array<{ id: string; name: string }>, supportsFreeform: false },
@@ -34,13 +51,7 @@ const modeOptionsState = vi.hoisted(() => ({
 }));
 
 const configOptionsState = vi.hoisted(() => ({
-    value: [] as Array<{
-        id: string;
-        name: string;
-        type: string;
-        currentValue: string;
-        options?: Array<{ value: string; name: string }>;
-    }>,
+    value: [] as ReadonlyArray<AgentInputOptionControl>,
 }));
 let lastModelPickerOverlayProps: any = null;
 
@@ -376,4 +387,92 @@ describe('NewSessionEngineOptionDetail', () => {
             },
         });
     });
+
+    it('merges multiple model option overrides (e.g. Thinking + Speed) instead of replacing prior selections', async () => {
+        modelOptionsState.value = [
+            {
+                value: 'gpt-5.4',
+                label: 'GPT 5.4',
+                description: 'Frontier agentic coding model.',
+                modelOptions: [
+                    {
+                        id: 'reasoning_effort',
+                        name: 'Thinking',
+                        type: 'select',
+                        currentValue: 'medium',
+                        options: [
+                            { value: 'low', name: 'Low' },
+                            { value: 'medium', name: 'Medium' },
+                            { value: 'high', name: 'High' },
+                        ],
+                    },
+                    {
+                        id: 'service_tier',
+                        name: 'Speed',
+                        type: 'select',
+                        currentValue: 'standard',
+                        options: [
+                            { value: 'standard', name: 'Standard' },
+                            { value: 'fast', name: 'Fast' },
+                        ],
+                    },
+                ],
+            },
+        ];
+
+        let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="gpt-5.4"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            onSelectionChange={(selection) => {
+                latestSelection = selection;
+            }}
+        />);
+
+        expect(typeof lastModelPickerOverlayProps?.onSelectOptionControlValue).toBe('function');
+
+	        act(() => {
+	            lastModelPickerOverlayProps.onSelectOptionControlValue('service_tier', 'fast');
+	        });
+
+	        expect(latestSelection).toEqual(expect.objectContaining({
+	            configOverrides: {
+	                service_tier: 'fast',
+	            },
+	        }));
+
+	        // Simulate the parent re-rendering the detail pane with the new overrides.
+	        await renderScreen(<NewSessionEngineOptionDetail
+	            backendTarget={backendTarget}
+	            selectedMachineId="machine-1"
+	            capabilityServerId="server-1"
+	            cwd="/repo"
+	            selectedModelId="gpt-5.4"
+	            selectedSessionModeId="default"
+	            selectedConfigOverrides={{ service_tier: 'fast' }}
+	            onSelectionChange={(selection) => {
+	                latestSelection = selection;
+	            }}
+	        />);
+
+        expect(typeof lastModelPickerOverlayProps?.onSelectOptionControlValue).toBe('function');
+
+	        act(() => {
+	            lastModelPickerOverlayProps.onSelectOptionControlValue('reasoning_effort', 'high');
+	        });
+
+	        expect(latestSelection).toEqual(expect.objectContaining({
+	            configOverrides: {
+	                reasoning_effort: 'high',
+	                service_tier: 'fast',
+	            },
+	        }));
+	    });
 });

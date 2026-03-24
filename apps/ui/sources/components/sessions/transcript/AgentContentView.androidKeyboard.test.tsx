@@ -2,21 +2,22 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installTranscriptCommonModuleMocks } from './transcriptTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Platform: {
-                                OS: 'android',
-                                select: (v: any) => v.android ?? v.native ?? v.default,
-                            },
-                            View: (props: any) => React.createElement('View', props, props.children),
-                        }
-    );
+installTranscriptCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'android',
+                select: (v: any) => v.android ?? v.native ?? v.default,
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+        });
+    },
 });
 
 vi.mock('@/utils/platform/responsive', () => ({

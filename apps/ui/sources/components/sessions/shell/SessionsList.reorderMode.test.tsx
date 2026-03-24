@@ -1,5 +1,4 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
@@ -148,10 +147,9 @@ describe('SessionsList (inline reorder)', () => {
 
         const { SessionsList } = await import('./SessionsList');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionsList />)).tree;
+        const screen = await renderScreen(<SessionsList />);
 
-        const items = (tree as any).root.findAllByType('SessionItem');
+        const items = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(items.length).toBe(2);
         // reorderHandleGesture is passed from SessionListRow.
         // reorderDragStyle is no longer passed (Animated.View is in SessionListRow).

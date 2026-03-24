@@ -1,9 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { act } from 'react-test-renderer';
 
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
 
 
@@ -135,9 +134,7 @@ describe('PermissionPromptCard (preview)', () => {
         const viewToolButton = screen.findByTestId('permission-prompt-view-tool');
         expect(viewToolButton).toBeTruthy();
 
-        await act(async () => {
-            viewToolButton!.props.onPress();
-        });
+        await pressTestInstanceAsync(viewToolButton, 'permission-prompt-view-tool');
 
         expect(routerPush).toHaveBeenCalledWith('/session/session-1/message/tool%3Acall%3Aparent%2F1?jumpChildId=tool%3Acall%3Achild%2F2');
     });

@@ -142,7 +142,7 @@ describe('AppPaneScopeHost (bottom overlay height)', () => {
         );
 
         const initialBottomDockMaxHeightPx = lastProps.bottomDockMaxHeightPx;
-        const rootView = screen.root.findByType('View');
+        const rootView = screen.findByType('View');
 
         await act(async () => {
             rootView.props.onLayout({ nativeEvent: { layout: { width: 0, height: 500 } } });

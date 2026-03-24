@@ -49,8 +49,7 @@ vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
     recordCachedDirectPeerRouteViable: () => {},
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/domains/transfers/runtime/bulkTransferPipeline')>()),
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/downloadBulkJsonPayload', () => ({
     downloadBulkJsonPayload: downloadBulkJsonPayloadMock,
 }));
 
@@ -199,7 +198,7 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
                 sourceId: 'skills_sh:featured',
                 itemId: 'skills_sh:featured:item-1',
                 configuredSources: [],
-            },
+                },
             { serverId: 'server-a' },
         )).rejects.toThrow('RPC call returned an unsupported response');
     });

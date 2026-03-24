@@ -311,4 +311,49 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         expect(pending[0]?.text).toBe('original');
         expect(pending[0]?.displayText).toBe('Original display');
     });
+
+    it('clears pendingDecryptFailure when the user edits a decrypt-failure row', async () => {
+        const sessionId = 's_update_pending_decrypt_failure';
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 12 });
+
+        storage.setState(
+            {
+                ...storage.getState(),
+                sessions: {
+                    ...storage.getState().sessions,
+                    [sessionId]: {
+                        ...buildSession({ sessionId }),
+                        metadata: { path: '/tmp', host: 'h', flavor: 'claude' },
+                        permissionMode: 'default',
+                        modelMode: 'default',
+                    } as Session,
+                },
+            },
+            true,
+        );
+
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1',
+            localId: 'p1',
+            createdAt: 1,
+            updatedAt: 1,
+            text: '',
+            displayText: 'Failed to decrypt',
+            pendingDecryptFailure: { kind: 'decrypt_failed' },
+            rawRecord: null,
+        });
+
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'new text',
+            encryption,
+            request: async () => new Response('{}', { status: 200 }),
+        });
+
+        const pending = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(pending).toHaveLength(1);
+        expect(pending[0]?.text).toBe('new text');
+        expect(pending[0]?.pendingDecryptFailure).toBeUndefined();
+    });
 });

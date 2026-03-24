@@ -2,16 +2,17 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const rowSpy = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installCodeViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             View: ({ children, ...props }: any) => React.createElement('View', props, children),
             Platform: {
                 OS: 'web',
@@ -29,15 +30,14 @@ vi.mock('react-native', async () => {
                     : null;
                 return React.createElement('FlatList', props, items);
             },
-        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: { dark: false, colors: {} },
-    });
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: { dark: false, colors: {} },
+        });
+    },
 });
 
 vi.mock('./CodeLineRow', () => ({

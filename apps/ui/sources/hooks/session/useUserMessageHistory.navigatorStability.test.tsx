@@ -1,20 +1,9 @@
-import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storageStore';
 
 import { useUserMessageHistory } from './useUserMessageHistory';
-import { renderScreen } from '@/dev/testkit';
-
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-async function flushEffects(turns = 2): Promise<void> {
-  for (let i = 0; i < turns; i += 1) {
-    await Promise.resolve();
-  }
-}
+import { renderHook } from '@/dev/testkit';
 
 describe('useUserMessageHistory', () => {
   it('returns a referentially stable navigator when store state is unchanged', async () => {
@@ -44,38 +33,17 @@ describe('useUserMessageHistory', () => {
         },
       }));
 
-      const seen: any[] = [];
-      let bump: (() => void) | null = null;
+      const hook = await renderHook(() =>
+        useUserMessageHistory({ scope: 'global', sessionId: null, maxEntries: 20 }),
+      );
 
-      function Test() {
-        const [tick, setTick] = React.useState(0);
-        const history = useUserMessageHistory({ scope: 'global', sessionId: null, maxEntries: 20 });
-        React.useEffect(() => {
-          seen.push(history);
-        }, [tick]);
-        bump = () => setTick((t) => t + 1);
-        return null;
-      }
+      const first = hook.getCurrent();
 
-      let tree: renderer.ReactTestRenderer | null = null;
-      tree = (await renderScreen(React.createElement(Test))).tree;
+      await hook.rerender();
 
-      expect(seen.length).toBe(1);
-      const first = seen[0];
+      expect(hook.getCurrent()).toBe(first);
 
-      await act(async () => {
-        bump?.();
-        await flushEffects(4);
-      });
-
-      expect(seen.length).toBe(2);
-      const second = seen[1];
-      expect(second).toBe(first);
-
-      await act(async () => {
-        tree?.unmount();
-        await flushEffects(2);
-      });
+      await hook.unmount();
     } finally {
       storage.setState(previousState);
     }

@@ -7,6 +7,7 @@ import {
     type NotificationsSettingsV1,
 } from '@happier-dev/protocol';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -76,65 +77,47 @@ function requireRowByTitle(screen: NotificationsSettingsScreen, title: string) {
     return row!;
 }
 
-async function createReactNativeWebMockForNotificationsSettingsView() {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-}
-
-async function createTextModuleMockForNotificationsSettingsView() {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-}
-
-async function createModalModuleMockForNotificationsSettingsView() {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: modalPromptMock,
-            confirm: modalConfirmMock,
-            alert: modalAlertMock,
-        },
-    }).module;
-}
-
-async function createStorageModuleStubForNotificationsSettingsView() {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSettings: () => settingsState,
-        useLocalSettings: () => localSettingsState,
-    });
-}
-
 function createPassthroughComponentMock(tag: string) {
     return (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement(tag, props, props.children);
 }
 
-vi.mock('react-native', async () => createReactNativeWebMockForNotificationsSettingsView());
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                accent: { blue: '#00f' },
-                success: '#0f0',
-                textSecondary: '#666',
-                warning: '#f90',
+installSettingsViewCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: modalPromptMock,
+                confirm: modalConfirmMock,
+                alert: modalAlertMock,
             },
-        },
-    });
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSettings: () => settingsState,
+            useLocalSettings: () => localSettingsState,
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    accent: { blue: '#00f' },
+                    success: '#0f0',
+                    textSecondary: '#666',
+                    warning: '#f90',
+                },
+            },
+        });
+    },
 });
-
-vi.mock('@/text', async () => createTextModuleMockForNotificationsSettingsView());
-
-vi.mock('@/modal', async () => createModalModuleMockForNotificationsSettingsView());
-
-vi.mock('@/sync/domains/state/storage', async () => createStorageModuleStubForNotificationsSettingsView());
 
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,

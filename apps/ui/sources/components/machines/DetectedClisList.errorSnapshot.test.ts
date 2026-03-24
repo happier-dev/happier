@@ -4,39 +4,26 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import type { MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { renderScreen } from '@/dev/testkit';
+import { installMachineComponentCommonModuleMocks } from './machineComponentTestHelpers';
 import { DetectedClisList } from './DetectedClisList';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: {
-                        OS: 'ios',
-                        select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
-                    },
-                    AppState: {
-                        addEventListener: () => ({ remove: () => {} }),
-                    },
-                    Text: 'Text',
-                    View: 'View',
-                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installMachineComponentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            Text: 'Text',
+            View: 'View',
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({

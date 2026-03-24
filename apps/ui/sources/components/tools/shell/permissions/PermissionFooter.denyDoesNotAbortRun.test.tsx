@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
 
 
@@ -112,7 +112,7 @@ describe('PermissionFooter deny action', () => {
                     metadata: { flavor },
                 }))).tree;
 
-        const buttons = tree?.root.findAllByType('TouchableOpacity') ?? [];
+        const buttons = tree ? tree.findAllByType('TouchableOpacity') : [];
         const noButton = buttons.find((btn) => {
             const texts = btn
                 .findAllByType('Text')
@@ -123,7 +123,7 @@ describe('PermissionFooter deny action', () => {
         expect(noButton).toBeTruthy();
 
         await act(async () => {
-            await noButton?.props.onPress?.();
+            await pressTestInstanceAsync(noButton, 'common.no');
         });
 
         expect(ops.sessionDeny).toHaveBeenCalledTimes(1);

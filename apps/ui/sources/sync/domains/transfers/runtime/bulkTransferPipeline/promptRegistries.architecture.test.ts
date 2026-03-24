@@ -13,11 +13,11 @@ const FORBIDDEN_PROMPT_REGISTRY_TRANSFER_TOKENS = [
     'DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT',
     'DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK',
     'DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE',
+    'bulkTransferPipeline/daemonPromptRegistries',
 ] as const;
 
 const REQUIRED_PROMPT_REGISTRY_TRANSFER_TOKENS = [
-    'bulkTransferPipeline',
-    'daemonPromptRegistries',
+    "@/sync/domains/transfers/runtime/bulkTransferPipeline",
 ] as const;
 
 describe('bulkTransferPipeline (architecture)', () => {

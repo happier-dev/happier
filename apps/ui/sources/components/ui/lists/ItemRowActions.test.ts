@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 
@@ -81,14 +81,6 @@ vi.mock('@/text', async () => {
 });
 
 describe('ItemRowActions', () => {
-    beforeEach(() => {
-        vi.useFakeTimers();
-    });
-
-    afterEach(() => {
-        vi.useRealTimers();
-    });
-
     it('invokes overflow actions even when InteractionManager does not run callbacks', async () => {
         const { ItemRowActions } = await import('./ItemRowActions');
 
@@ -113,7 +105,9 @@ describe('ItemRowActions', () => {
         expect(screen.findAllByTestId('edit').length).toBeGreaterThan(0);
 
         await screen.pressByTestIdAsync('edit');
-        await vi.advanceTimersToNextTimerAsync();
+        await new Promise((resolve) => {
+            setTimeout(resolve, 0);
+        });
 
         expect(onEdit).toHaveBeenCalledTimes(1);
         expect(screen.findAllByTestId('edit')).toHaveLength(0);

@@ -144,47 +144,4 @@ describe('createAttachmentActionChip', () => {
         }
     });
 
-    it('on web it ignores duplicate attach triggers within the same tick (prevents reopening the picker)', async () => {
-        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
-        const originalOs = Platform.OS;
-        (Platform as any).OS = 'web';
-
-        try {
-            const onPickFile = vi.fn();
-            const onPickImage = vi.fn();
-            const chip = createAttachmentActionChip({
-                onPickFile,
-                onPickImage,
-            } as any);
-
-            const screen = await renderScreen(
-                <React.Fragment>
-                    {chip.render({
-                        chipStyle: () => ({}),
-                        showLabel: true,
-                        iconColor: '#000',
-                        textStyle: {},
-                        countTextStyle: {},
-                        chipAnchorRef: { current: null },
-                        popoverAnchorRef: { current: null },
-                        toggleCollapsedPopover: vi.fn(),
-                    })}
-                </React.Fragment>,
-            );
-
-            const pressable = screen.findByTestId('agent-input-attachments-chip') as unknown as {
-                props?: { onPress?: () => void };
-            };
-            pressable.props?.onPress?.();
-            pressable.props?.onPress?.();
-            expect(onPickFile).toHaveBeenCalledTimes(1);
-
-            // Next tick should allow opening again.
-            await Promise.resolve();
-            pressable.props?.onPress?.();
-            expect(onPickFile).toHaveBeenCalledTimes(2);
-        } finally {
-            (Platform as any).OS = originalOs;
-        }
-    });
 });

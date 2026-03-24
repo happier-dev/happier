@@ -50,7 +50,8 @@ describe('modelOptions', () => {
 
     it('returns basic options for codex (preflight can extend the list)', () => {
         const out = getModelOptionsForAgentType('codex');
-        expect(out.map((o) => o.value)).toEqual(['default']);
+        expect(out[0]?.value).toBe('default');
+        expect(out.length).toBeGreaterThan(1);
     });
 
     it('includes a curated static list for Claude while still allowing freeform models', () => {

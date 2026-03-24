@@ -50,9 +50,11 @@ vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
     recordCachedDirectPeerRouteViable: () => {},
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/domains/transfers/runtime/bulkTransferPipeline')>()),
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/downloadBulkJsonPayload', () => ({
     downloadBulkJsonPayload: downloadBulkJsonPayloadMock,
+}));
+
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/uploadBulkJsonPayload', () => ({
     uploadBulkJsonPayload: uploadBulkJsonPayloadMock,
 }));
 

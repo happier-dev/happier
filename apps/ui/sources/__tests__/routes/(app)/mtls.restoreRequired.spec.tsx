@@ -1,10 +1,8 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
-import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { installRouteRootCommonModuleMocks } from '../routeRootTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -17,8 +15,8 @@ const expoRouterMock = createExpoRouterMock({
     params: () => useLocalSearchParamsMock(),
 });
 
-vi.mock('expo-router', async () => {
-    return expoRouterMock.module;
+installRouteRootCommonModuleMocks({
+    router: () => expoRouterMock.module,
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -27,10 +25,6 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
-vi.mock('@/modal', () => createModalModuleMock().module);
-
-vi.mock('@/text', () => createTextModuleMock({ translate: (key: string) => key }));
-
 describe('/mtls (restore required)', () => {
     it('routes to /restore when the server redirects with error=restore_required', async () => {
         replaceSpy.mockReset();
@@ -38,9 +32,7 @@ describe('/mtls (restore required)', () => {
 
         const { default: MtlsCallbackScreen } = await import('@/app/(app)/mtls');
         await renderScreen(<MtlsCallbackScreen />);
-        await act(async () => {
-            await Promise.resolve();
-        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(replaceSpy).toHaveBeenCalledWith('/restore');
     });

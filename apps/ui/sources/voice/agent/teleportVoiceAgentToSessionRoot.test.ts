@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { installVoiceAgentCommonModuleMocks } from '@/voice/agent/voiceAgentTestHelpers';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
 const ensureBoundSpy = vi.fn(async (_args: any) => ({
@@ -37,11 +38,13 @@ const state: any = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installVoiceAgentCommonModuleMocks({
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: { getState: () => state },
-});
+      storage: { getState: () => state },
+    });
+  },
 });
 
 describe('teleportVoiceAgentToSessionRoot', () => {

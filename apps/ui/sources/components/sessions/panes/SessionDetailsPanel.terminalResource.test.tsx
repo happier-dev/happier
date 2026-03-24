@@ -86,6 +86,6 @@ describe('SessionDetailsPanel (terminal resource)', () => {
         expect(terminalViewSpy).toHaveBeenCalledTimes(1);
         expect(terminalViewSpy.mock.calls[0]?.[0]?.sessionId).toBe('s1');
         expect(terminalViewSpy.mock.calls[0]?.[0]?.currentDockLocation).toBe('details');
-        expect(screen.root.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 });

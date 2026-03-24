@@ -4,14 +4,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Message, ToolCall, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import { renderScreen } from '@/dev/testkit';
+import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+const pushSpy = vi.fn();
+
+installWorkflowRendererCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             Platform: {
                 OS: 'web',
                 select: (v: any) => v.web ?? v.default,
@@ -23,39 +26,22 @@ vi.mock('react-native', async () => {
             View: ({ children, ...props }: any) => React.createElement('View', props, children),
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
             ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/tools/shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement('ToolSectionView', null, children),
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, vars?: any) => (key === 'tools.taskView.moreTools' ? `more:${vars?.count ?? ''}` : key) });
-});
-
-const pushSpy = vi.fn();
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: pushSpy },
-    });
-    return expoRouterMock.module;
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { push: pushSpy },
+        });
+        return expoRouterMock.module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, vars?: any) =>
+                key === 'tools.taskView.moreTools' ? `more:${vars?.count ?? ''}` : key,
+        });
+    },
 });
 
 function makeToolCall(overrides: Partial<ToolCall>): ToolCall {

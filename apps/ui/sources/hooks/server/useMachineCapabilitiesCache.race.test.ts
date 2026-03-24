@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
-import { renderHook } from '@/dev/testkit';
+import { flushHookEffects, renderHook } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,7 +42,7 @@ describe('useMachineCapabilitiesCache (race)', () => {
     const p2 = prefetchMachineCapabilities({ machineId: 'm1', request: request2, timeoutMs: 10_000 });
 
     // Flush queued fetch start (serialized per machine cache key).
-    await Promise.resolve();
+    await flushHookEffects({ cycles: 1, turns: 0 });
 
     // Second request should not start until the first one settles.
     expect(resolvers).toHaveLength(1);
@@ -59,7 +59,7 @@ describe('useMachineCapabilitiesCache (race)', () => {
     await p1;
 
     // Flush queued start of the follow-up request.
-    await Promise.resolve();
+    await flushHookEffects({ cycles: 1, turns: 0 });
     expect(resolvers).toHaveLength(2);
     resolvers[1]!({
       supported: true,

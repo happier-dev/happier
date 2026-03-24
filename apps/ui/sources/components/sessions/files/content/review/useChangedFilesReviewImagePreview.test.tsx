@@ -25,13 +25,6 @@ vi.mock('@/sync/ops', () => ({
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-async function flushAsync(count = 3): Promise<void> {
-    for (let i = 0; i < count; i++) {
-        await Promise.resolve();
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-}
-
 afterEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
@@ -59,14 +52,13 @@ describe('useChangedFilesReviewImagePreview', () => {
         expect(vi.mocked(sessionReadFile)).toHaveBeenCalledTimes(1);
         expect(current.status).toBe('loaded');
 
-        await act(async () => {
+        act(() => {
             tree!.update(<Test enabled={true} />);
-            await flushAsync(4);
         });
 
         expect(vi.mocked(sessionReadFile)).toHaveBeenCalledTimes(1);
         expect(current.status).toBe('loaded');
-        await act(async () => {
+        act(() => {
             tree!.unmount();
         });
     });
@@ -98,7 +90,7 @@ describe('useChangedFilesReviewImagePreview', () => {
         expect(current.uri.startsWith('data:image/svg+xml;base64,')).toBe(true);
         expect(current.svgXml).toBe(svg);
 
-        await act(async () => {
+        act(() => {
             tree!.unmount();
         });
     });

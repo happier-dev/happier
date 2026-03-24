@@ -2,30 +2,53 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastMultiTextInputProps: any = null;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    TurboModuleRegistry: {
-                                            get: () => ({}),
-                                            getEnforcing: () => ({}),
-                                        },
-                                    Platform: {
-                                    OS: 'web',
-                                    select: (x: any) => x?.web ?? x?.default ?? x?.ios ?? x?.android ?? null,
-                                },
-                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
-                                    Dimensions: {
-                                            get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-                                        },
-                                }
-    );
+installAgentInputCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            TurboModuleRegistry: {
+                get: () => ({}),
+                getEnforcing: () => ({}),
+            },
+            Platform: {
+                OS: 'web',
+                select: (x: any) => x?.web ?? x?.default ?? x?.ios ?? x?.android ?? null,
+            },
+            useWindowDimensions: () => ({ width: 800, height: 600 }),
+            Dimensions: {
+                get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'profiles') return [];
+                if (key === 'agentInputEnterToSend') return true;
+                if (key === 'agentInputActionBarLayout') return 'wrap';
+                if (key === 'agentInputChipDensity') return 'labels';
+                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
+                return null;
+            },
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesVersion: () => 0,
+            useSessionMessagesReducerState: () => null,
+        });
+    },
 });
 
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({
@@ -48,11 +71,6 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 const featureEnabledState: Record<string, boolean> = { voice: false };
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -68,24 +86,6 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'profiles') return [];
-        if (key === 'agentInputEnterToSend') return true;
-        if (key === 'agentInputActionBarLayout') return 'wrap';
-        if (key === 'agentInputChipDensity') return 'labels';
-        if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-        return null;
-    },
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-    useSessionMessagesById: () => ({}),
-    useSessionMessagesVersion: () => 0,
-    useSessionMessagesReducerState: () => null,
-});
-});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),

@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -17,25 +16,6 @@ const createDefaultActionExecutorSpy = vi.fn((_: unknown) => ({
 }));
 
 installTranscriptCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-            ActivityIndicator: 'ActivityIndicator',
-            AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-        });
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    textSecondary: '#555',
-                },
-            },
-        });
-    },
     storage: async (importOriginal) => {
         const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleMock({
@@ -57,18 +37,6 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
     resolveServerIdForSessionIdFromLocalCache: (sessionId: string) => `server:${sessionId}`,
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            storage: createStorageStoreMock({
-                updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
-            }),
-        },
-    });
-});
 
 describe('TranscriptRollbackActionButton', () => {
     afterEach(() => {

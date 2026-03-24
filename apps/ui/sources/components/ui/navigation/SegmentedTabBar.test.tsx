@@ -2,19 +2,20 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SegmentedTab } from './SegmentedTabBar';
+import { installNavigationCommonModuleMocks } from './navigationTestHelpers';
 import { renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installNavigationCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             View: 'View',
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-        }
-    );
+        });
+    },
 });
 
 const theme = {
@@ -25,19 +26,6 @@ const theme = {
         textSecondary: '#49454F',
     },
 };
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
 
 const TABS: ReadonlyArray<SegmentedTab<'alpha' | 'beta' | 'gamma'>> = [
     { id: 'alpha', label: 'Alpha' },
@@ -125,6 +113,14 @@ describe('SegmentedTabBar', () => {
         const screen = await renderScreen(
             <SegmentedTabBar tabs={TABS} activeTabId="beta" onSelectTab={() => {}} testIDPrefix="seg" />,
         );
+
+        // Tabs should expose the selected state for accessibility (web: aria-selected).
+        expect(screen.findByTestId('seg:beta')?.props.accessibilityRole).toBe('tab');
+        expect(screen.findByTestId('seg:beta')?.props.accessibilityState).toEqual({ selected: true });
+        expect(screen.findByTestId('seg:alpha')?.props.accessibilityRole).toBe('tab');
+        expect(screen.findByTestId('seg:alpha')?.props.accessibilityState).toEqual({ selected: false });
+        expect(screen.findByTestId('seg:gamma')?.props.accessibilityRole).toBe('tab');
+        expect(screen.findByTestId('seg:gamma')?.props.accessibilityState).toEqual({ selected: false });
 
         // The active tab ("beta") should include the tabActive background color.
         const activeFlat = flattenStyle(screen.findByTestId('seg:beta')?.props.style);

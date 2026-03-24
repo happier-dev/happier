@@ -1,12 +1,10 @@
 import * as React from 'react';
 import { describe, it, expect, vi } from 'vitest';
+import { installToolShellPresentationCommonModuleMocks } from './toolShellPresentationTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+installToolShellPresentationCommonModuleMocks();
 
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {

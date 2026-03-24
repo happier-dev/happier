@@ -1,7 +1,7 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { createPartialStorageModuleMock } from '@/dev/testkit';
+import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 const mockMachine = {
@@ -97,36 +97,34 @@ describe('ProviderAuthenticationTerminalPane', () => {
     });
 
     it('re-sends provider initial input after a reconnect cycle', () => {
-        return providerAuthenticationTerminalPaneModulePromise.then((module) => {
+        return providerAuthenticationTerminalPaneModulePromise.then(async (module) => {
             const { ProviderAuthenticationTerminalPane } = module;
-            let tree: renderer.ReactTestRenderer;
-
-            act(() => {
-                tree = renderer.create(React.createElement(ProviderAuthenticationTerminalPane, createTestProps()));
-            });
+            const screen = await renderScreen(<ProviderAuthenticationTerminalPane {...createTestProps()} />);
 
             expect(onInputMock).not.toHaveBeenCalled();
 
-            act(() => {
+            await act(async () => {
                 mockTerminalStatus = 'connected';
-                tree!.update(React.createElement(ProviderAuthenticationTerminalPane, createTestProps()));
+                screen.tree.update(<ProviderAuthenticationTerminalPane {...createTestProps()} />);
             });
 
             expect(onInputMock).toHaveBeenCalledTimes(1);
             expect(onInputMock).toHaveBeenLastCalledWith('/login\r');
 
-            act(() => {
+            await act(async () => {
                 mockTerminalStatus = 'connecting';
-                tree!.update(React.createElement(ProviderAuthenticationTerminalPane, createTestProps()));
+                screen.tree.update(<ProviderAuthenticationTerminalPane {...createTestProps()} />);
             });
 
-            act(() => {
+            await act(async () => {
                 mockTerminalStatus = 'connected';
-                tree!.update(React.createElement(ProviderAuthenticationTerminalPane, createTestProps()));
+                screen.tree.update(<ProviderAuthenticationTerminalPane {...createTestProps()} />);
             });
 
             expect(onInputMock).toHaveBeenCalledTimes(2);
             expect(onInputMock).toHaveBeenLastCalledWith('/login\r');
+
+            await screen.unmount();
         });
     });
 });

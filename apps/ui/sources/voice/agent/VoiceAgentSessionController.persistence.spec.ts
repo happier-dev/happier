@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const start = vi.fn(async (params?: any) => ({ voiceAgentId: params?.existingRunId ?? 'run_1' }));
@@ -44,16 +46,6 @@ vi.mock('@/voice/agent/openaiCompatVoiceAgentClient', () => ({
   OpenAiCompatVoiceAgentClient: class {},
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: (title?: unknown, message?: unknown, options?: unknown) => modalConfirm(title, message, options),
-            alert: vi.fn(),
-        },
-    }).module;
-});
-
 vi.mock('@/voice/context/buildVoiceInitialContext', () => ({
   buildVoiceInitialContext: () => '',
 }));
@@ -95,13 +87,24 @@ const state: any = {
   sessionMessages: {},
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installVoiceAgentCommonModuleMocks({
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+      spies: {
+        confirm: (title?: unknown, message?: unknown, options?: unknown) => modalConfirm(title, message, options),
+        alert: vi.fn(),
+      },
+    }).module;
+  },
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-    getState: () => state,
+      storage: {
+        getState: () => state,
+      },
+    });
   },
-});
 });
 
 state.applySettingsLocal = (delta: any) => {

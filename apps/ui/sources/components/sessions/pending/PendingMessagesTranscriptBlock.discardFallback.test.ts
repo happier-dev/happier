@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createStorageModuleMock, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,26 +27,69 @@ vi.mock('./PendingMessagesDragReorderList', () => ({
     },
 }));
 
+installPendingMessagesCommonModuleMocks({
+    icons: () => ({
+        Ionicons: 'Ionicons',
+    }),
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                confirm: (...args: any[]) => modalConfirm(...args),
+                alert: (...args: any[]) => modalAlert(...args),
+                prompt: vi.fn(),
+            },
+        }).module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ScrollView: 'ScrollView',
+            ActivityIndicator: 'ActivityIndicator',
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.web ?? value?.default,
+            },
+        });
+    },
+    storage: async (importOriginal) => createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSession: () => null,
+            useSetting: () => undefined,
+        },
+    }),
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: '#000',
+                    textSecondary: '#666',
+                    surface: '#fff',
+                    surfacePressedOverlay: '#eee',
+                    input: { background: '#fff' },
+                    button: { secondary: { background: '#eee', tint: '#000' } },
+                    box: { error: { background: '#fdd', text: '#a00' } },
+                    textDestructive: '#a00',
+                    textLink: '#00f',
+                    userMessageBackground: '#eee',
+                    userMessageText: '#000',
+                },
+            },
+        });
+    },
+});
+
 const sendPendingMessageNow = vi.fn();
 const deletePendingMessage = vi.fn();
 const discardPendingMessage = vi.fn();
 const sessionAbort = vi.fn();
 const modalConfirm = vi.fn();
 const modalAlert = vi.fn();
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => createStorageModuleMock({
-    importOriginal,
-    overrides: {
-        useSession: () => null,
-        useSetting: () => undefined,
-    },
-}));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -62,59 +106,6 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/sync/ops', () => ({
     sessionAbort: (...args: any[]) => sessionAbort(...args),
-}));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: (...args: any[]) => modalConfirm(...args),
-            alert: (...args: any[]) => modalAlert(...args),
-            prompt: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                            Text: 'Text',
-                            Pressable: 'Pressable',
-                            ScrollView: 'ScrollView',
-                            ActivityIndicator: 'ActivityIndicator',
-                            Platform: {
-                                OS: 'web',
-                                select: (value: any) => value?.web ?? value?.default,
-                            },
-                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                surface: '#fff',
-                surfacePressedOverlay: '#eee',
-                input: { background: '#fff' },
-                button: { secondary: { background: '#eee', tint: '#000' } },
-                box: { error: { background: '#fdd', text: '#a00' } },
-                textDestructive: '#a00',
-                textLink: '#00f',
-                userMessageBackground: '#eee',
-                userMessageText: '#000',
-            },
-        },
-    });
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
 }));
 
 vi.mock('@/components/markdown/MarkdownView', () => ({

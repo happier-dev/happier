@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import {
     installRestoreRouteCommonModuleMocks,
     resetRestoreRouteTestState,
@@ -69,17 +69,9 @@ describe('/restore (web phone)', () => {
         vi.resetModules();
         const { default: Screen } = await import('@/app/(app)/restore/index');
 
-        let tree: ReactTestRenderer | null = null;
-        try {
-            act(() => {
-                tree = create(<Screen />);
-            });
-            const scanner = tree!.root.findAllByProps({ 'data-testid': 'RestoreScanComputerQrView' });
-            expect(scanner).toHaveLength(1);
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const screen = await renderScreen(<Screen />);
+        await flushHookEffects();
+        const scanner = screen.findAllByProps({ 'data-testid': 'RestoreScanComputerQrView' });
+        expect(scanner).toHaveLength(1);
     });
 });

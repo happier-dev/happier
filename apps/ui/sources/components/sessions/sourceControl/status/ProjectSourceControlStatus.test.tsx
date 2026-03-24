@@ -1,37 +1,32 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+
+import { installSourceControlStatusCommonModuleMocks } from './sourceControlStatusTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let snapshotMock: any = null;
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useSessionProjectScmSnapshot: () => snapshotMock,
-    });
-});
+installSourceControlStatusCommonModuleMocks({
+    storage: async (importOriginal) =>
+        createPartialStorageModuleMock(importOriginal, {
+            useSessionProjectScmSnapshot: () => snapshotMock,
+        }),
+    text: async () =>
+        createTextModuleMock({
+            translate: (key: string, values?: Record<string, unknown>) => {
+                if (key === 'files.sourceControlStatus.changedFilesLabel') {
+                    return `${String(values?.count ?? '')} files`;
+                }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        Text: 'Text',
-        Platform: {
-            OS: 'web',
-            select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null,
-        },
-        AppState: {
-            addEventListener: () => ({ remove: () => {} }),
-        },
-    });
+                return key;
+            },
+        }),
 });
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
 
 describe('ProjectSourceControlStatus', () => {
     beforeEach(() => {

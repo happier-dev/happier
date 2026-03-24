@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { installSourceControlCommitSelectionCommonModuleMocks } from './sourceControlCommitSelectionTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,32 +17,20 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (p: any) => void p,
 }));
 
-vi.mock('@expo/vector-icons', () => ({
-  Octicons: 'Octicons',
-}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Pressable: 'Pressable',
-                    ActivityIndicator: 'ActivityIndicator',
-                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-  const { createUnistylesMock } = await import('@/dev/testkit');
-  return await createUnistylesMock({
-    theme: {
-      colors: {
-        success: '#0a0',
-        textSecondary: '#666',
-        divider: '#ddd',
-        surface: '#fff',
+installSourceControlCommitSelectionCommonModuleMocks({
+  unistyles: async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+      theme: {
+        colors: {
+          success: '#0a0',
+          textSecondary: '#666',
+          divider: '#ddd',
+          surface: '#fff',
+        },
       },
-    },
-  });
+    });
+  },
 });
 
 describe('ScmCommitSelectionToggleButton', () => {
@@ -64,7 +54,7 @@ describe('ScmCommitSelectionToggleButton', () => {
         />,
     );
 
-    await pressTestInstanceAsync(screen.findByType('Pressable' as any), 'commit selection toggle');
+    await screen.pressByTestIdAsync(`scm-commit-selection-toggle-${toTestIdSafeValue('src/api.ts')}`);
 
     expect(applySpy).toHaveBeenCalledWith(
       expect.objectContaining({

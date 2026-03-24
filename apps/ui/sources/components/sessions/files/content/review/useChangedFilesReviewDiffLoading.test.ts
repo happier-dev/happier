@@ -27,24 +27,12 @@ type HookValue = ReturnType<typeof import('./useChangedFilesReviewDiffLoading')[
 
 const normalizeError = (v: unknown) => String(v);
 
-async function flushMicrotasks(count = 3): Promise<void> {
-    for (let i = 0; i < count; i++) {
-        await Promise.resolve();
-    }
-}
-
-async function flushAsync(count = 3): Promise<void> {
-    await flushMicrotasks(count);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-}
-
-async function waitForCondition(condition: () => boolean, options?: { maxTurns?: number; flushCount?: number }): Promise<void> {
+async function waitForCondition(condition: () => boolean, options?: { maxTurns?: number }): Promise<void> {
     const maxTurns = options?.maxTurns ?? 25;
-    const flushCount = options?.flushCount ?? 6;
     for (let i = 0; i < maxTurns; i++) {
         if (condition()) return;
         await act(async () => {
-            await flushAsync(flushCount);
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
         });
     }
     throw new Error('Timed out waiting for condition');
@@ -112,9 +100,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
             fallbackError: 'failed',
         } as any));
 
-        await act(async () => {
-            await flushAsync(10);
-        });
+        await waitForCondition(() => vi.mocked(sessionScmDiffFile).mock.calls.length === 1);
 
         // Without explicit requestedPaths, we should avoid fetching every diff up front.
         expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(1);
@@ -148,9 +134,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
             fallbackError: 'failed',
         } as any));
 
-        await act(async () => {
-            await flushAsync(12);
-        });
+        await waitForCondition(() => vi.mocked(sessionScmDiffFile).mock.calls.length === 1);
 
         expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(sessionScmDiffFile).mock.calls[0]?.[1]).toEqual({ path: 'b.ts', area: 'pending' });
@@ -199,17 +183,13 @@ describe('useChangedFilesReviewDiffLoading', () => {
             fallbackError: 'failed',
         } as any));
 
-        await act(async () => {
-            await flushMicrotasks(5);
-        });
-
-        // With concurrency, both requests should be in-flight before either resolves.
-        expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(2);
+        await waitForCondition(() => vi.mocked(sessionScmDiffFile).mock.calls.length === 2);
 
         pending.forEach((p) => p.resolve(null));
-        await act(async () => {
-            await flushAsync(8);
-        });
+        await waitForCondition(() =>
+            hook.getCurrent().diffStateSource.getDiffState('a.ts').status === 'loaded'
+            && hook.getCurrent().diffStateSource.getDiffState('b.ts').status === 'loaded',
+        );
 
         expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('loaded');
         expect(hook.getCurrent().diffStateSource.getDiffState('b.ts').status).toBe('loaded');
@@ -239,9 +219,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
             fallbackError: 'failed',
         } as any));
 
-        await act(async () => {
-            await flushAsync(5);
-        });
+        await waitForCondition(() => hook.getCurrent().diffStateSource.getDiffState('a.ts').status === 'loaded');
 
         expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(0);
         expect(hook.getCurrent().diffStateSource.getDiffState('a.ts').status).toBe('loaded');
@@ -285,10 +263,14 @@ describe('useChangedFilesReviewDiffLoading', () => {
         expect(current!.diffStateSource.getDiffState('b.ts').status).toBe('loaded');
 
         requestedPaths = ['b.ts'];
-        await act(async () => {
+        act(() => {
             tree!.update(React.createElement(Test));
-            await flushAsync(3);
         });
+
+        await waitForCondition(() =>
+            current!.diffStateSource.getDiffState('a.ts').status === 'loaded'
+            && current!.diffStateSource.getDiffState('b.ts').status === 'loaded',
+        );
 
         expect(current!.diffStateSource.getDiffState('a.ts').status).toBe('loaded');
         expect(current!.diffStateSource.getDiffState('b.ts').status).toBe('loaded');
@@ -328,12 +310,11 @@ describe('useChangedFilesReviewDiffLoading', () => {
         expect(current!.diffStateSource.getDiffState('b.ts').status).toBe('idle');
 
         requestedPaths = ['b.ts'];
-        await act(async () => {
+        act(() => {
             tree!.update(React.createElement(Test));
-            await flushAsync(16);
         });
 
-        expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(2);
+        await waitForCondition(() => vi.mocked(sessionScmDiffFile).mock.calls.length === 2);
         expect(vi.mocked(sessionScmDiffFile).mock.calls[1]?.[1]).toEqual({ path: 'b.ts', area: 'pending' });
         await waitForCondition(() => current!.diffStateSource.getDiffState('b.ts').status === 'loaded');
 

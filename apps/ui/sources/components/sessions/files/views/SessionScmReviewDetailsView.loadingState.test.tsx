@@ -3,6 +3,7 @@ import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 const mockSession = {
     id: 'session-1',
@@ -20,35 +21,24 @@ const mockSession = {
     presence: 0,
 } satisfies Session;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            Platform: {
-                                                                OS: 'web',
-                                                                select: (_: any) => 1,
-                                                            },
-                                                            View: (props: any) => React.createElement('View', props, props.children),
-                                                            Text: (props: any) => React.createElement('Text', props, props.children),
-                                                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                                            ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, null),
-                                                            AppState: {
-                                                                currentState: 'active',
-                                                                addEventListener: () => ({ remove: () => {} }),
-                                                                removeEventListener: () => {},
-                                                            },
-                                                        }
-    );
+installSessionFilesViewCommonModuleMocks({
+    storage: async (importOriginal) =>
+        createPartialStorageModuleMock(importOriginal, {
+            useSession: (_id: string) => mockSession,
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSessionProjectScmSnapshot: () => null,
+            useSessionProjectScmSnapshotError: () => null,
+            useSessionProjectScmTouchedPaths: () => [],
+            useSessionProjectScmOperationLog: () => [],
+            useProjectForSession: () => null,
+            useProjectSessions: () => [],
+            useSetting: () => 25,
+        }),
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
@@ -83,36 +73,6 @@ vi.mock('@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet', () =>
         latestTurnDiffByPath: null,
         providerDiffByPath: null,
     }),
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    await createPartialStorageModuleMock(importOriginal, {
-        useSession: (_id: string) => mockSession,
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useSessionProjectScmSnapshot: () => null,
-        useSessionProjectScmSnapshotError: () => null,
-        useSessionProjectScmTouchedPaths: () => [],
-        useSessionProjectScmOperationLog: () => [],
-        useProjectForSession: () => null,
-        useProjectSessions: () => [],
-        useSetting: () => 25,
-    }),
-);
-
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    useSession: () => mockSession,
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionProjectScmSnapshot: () => null,
-    useSessionProjectScmSnapshotError: () => null,
-    useSessionProjectScmTouchedPaths: () => [],
-    useSessionProjectScmOperationLog: () => [],
-    useProjectForSession: () => null,
-    useProjectSessions: () => [],
-    useSetting: () => 25,
-    storage: {
-        getState: () => ({}),
-    },
-    getStorage: () => ((selector: any) => selector({ localSettings: {} })),
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({

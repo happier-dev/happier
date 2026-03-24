@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects } from '@/dev/testkit';
-
 type TestState = {
   settings: any;
   machines: Record<string, any>;
@@ -220,42 +218,34 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
   });
 
   it('recovers a late-spawned voice home session after webhook timeout even when metadata hydrates only after ensuring the session is visible', async () => {
-    vi.useFakeTimers();
-    try {
-      machineSpawnNewSession.mockResolvedValue({
-        type: 'error',
-        errorCode: 'SESSION_WEBHOOK_TIMEOUT',
-        errorMessage: 'Session startup timed out',
-      });
-      refreshSessions.mockImplementation(async () => {
-        state.sessions['late-session'] = {
-          id: 'late-session',
-          active: true,
-          updatedAt: 2,
-          metadata: {},
-        };
-      });
-      ensureSessionVisibleForMessageRoute.mockImplementation(async (sessionId: string) => {
-        if (sessionId !== 'late-session') return;
-        state.sessions['late-session'] = {
-          ...state.sessions['late-session'],
-          metadata: {
-            machineId: 'machine-1',
-            path: '/Users/test/.happier/voice-agent',
-          },
-        };
-      });
+    machineSpawnNewSession.mockResolvedValue({
+      type: 'error',
+      errorCode: 'SESSION_WEBHOOK_TIMEOUT',
+      errorMessage: 'Session startup timed out',
+    });
+    refreshSessions.mockImplementation(async () => {
+      state.sessions['late-session'] = {
+        id: 'late-session',
+        active: true,
+        updatedAt: 2,
+        metadata: {},
+      };
+    });
+    ensureSessionVisibleForMessageRoute.mockImplementation(async (sessionId: string) => {
+      if (sessionId !== 'late-session') return;
+      state.sessions['late-session'] = {
+        ...state.sessions['late-session'],
+        metadata: {
+          machineId: 'machine-1',
+          path: '/Users/test/.happier/voice-agent',
+        },
+      };
+    });
 
-      const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
 
-      const pending = ensureVoiceConversationSessionForVoiceHome();
-      await flushHookEffects({ runAllTimers: true, cycles: 1, turns: 0 });
-
-      await expect(pending).resolves.toBe('late-session');
-      expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('late-session', { forceRefresh: true });
-    } finally {
-      vi.useRealTimers();
-    }
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('late-session');
+    expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('late-session', { forceRefresh: true });
   });
 });
 

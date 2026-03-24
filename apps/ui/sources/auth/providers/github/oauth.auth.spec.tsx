@@ -257,23 +257,22 @@ describe('/oauth/[provider] (auth flow)', () => {
             throw new Error(`Unexpected fetch: ${url}`);
         });
 
-        await runWithOAuthScreen(async (tree) => {
-            await flushOAuthEffects();
-            expect(fetchMock).not.toHaveBeenCalled();
+        const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
+        const screen = await renderScreen(React.createElement(Screen));
+        await flushOAuthEffects();
+        expect(fetchMock).not.toHaveBeenCalled();
 
-            const input = tree.root.findByProps({ testID: 'oauth-username-input' });
-            act(() => {
-                input.props.onChangeText('octocat_2');
-            });
-
-            await act(async () => {
-                await tree.root.findByProps({ testID: 'oauth-username-save' }).props.onPress();
-            });
-            await flushOAuthEffects();
-
-            expect(loginSpy).toHaveBeenCalledWith('tok_1', OAUTH_SECRET);
-            expect(replaceSpy).toHaveBeenCalledWith('/');
+        const input = screen.findByTestId('oauth-username-input');
+        expect(input).toBeTruthy();
+        act(() => {
+            input?.props.onChangeText('octocat_2');
         });
+
+        await screen.pressByTestIdAsync('oauth-username-save');
+        await flushOAuthEffects();
+
+        expect(loginSpy).toHaveBeenCalledWith('tok_1', OAUTH_SECRET);
+        expect(replaceSpy).toHaveBeenCalledWith('/');
     });
 
     it('redirects to the pending external auth returnTo after login when provided', async () => {

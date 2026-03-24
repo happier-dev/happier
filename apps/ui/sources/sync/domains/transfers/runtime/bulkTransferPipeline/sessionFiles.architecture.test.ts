@@ -4,15 +4,16 @@ import { describe, expect, it } from 'vitest';
 
 const FORBIDDEN_SESSION_FILE_TRANSFER_TOKENS = [
     'createSessionFileTransferRpcCaller',
-    'DAEMON_SESSION_FILES_',
+    'DAEMON_BULK_TRANSFER_',
     'mergeTransferChunks',
     // Feature code should not implement or import fallback routing; policy and route selection
     // live in the canonical pipeline/runtime layers.
     'sessionMachineRpcFallback',
+    'bulkTransferPipeline/daemonSessionFiles',
 ] as const;
 
 const REQUIRED_SESSION_FILE_TRANSFER_TOKENS = [
-    'bulkTransferPipeline/daemonSessionFiles',
+    "@/sync/domains/transfers/runtime/bulkTransferPipeline",
 ] as const;
 
 describe('bulkTransferPipeline (architecture)', () => {

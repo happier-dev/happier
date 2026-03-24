@@ -1,44 +1,40 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installCodeDiffCommonModuleMocks } from './codeDiffTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setFilesDiffPresentationStyle = vi.fn();
 let styleSettingValue: 'unified' | 'split' | undefined = 'unified';
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+installCodeDiffCommonModuleMocks({
+    storage: async (importOriginal) =>
+        await createPartialStorageModuleMock(importOriginal, {
+            useSettingMutable: (key: string) => {
+                if (key === 'filesDiffPresentationStyle') return [styleSettingValue, setFilesDiffPresentationStyle];
+                return [null, vi.fn()];
+            },
+        }),
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                dark: false,
+                colors: {
+                    divider: '#ddd',
+                    surfaceHigh: '#fff',
+                    surfaceHighest: '#fff',
+                    textSecondary: '#666',
+                },
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit');
-    return await createUnistylesMock({
-        theme: {
-            dark: false,
-            colors: {
-                divider: '#ddd',
-                surfaceHigh: '#fff',
-                surfaceHighest: '#fff',
-                textSecondary: '#666',
-            },
-        },
-    });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    await createPartialStorageModuleMock(importOriginal, {
-        useSettingMutable: (key: string) => {
-            if (key === 'filesDiffPresentationStyle') return [styleSettingValue, setFilesDiffPresentationStyle];
-            return [null, vi.fn()];
-        },
-    }),
-);
 
 describe('DiffPresentationStyleToggleButton', () => {
     it('toggles unified -> split', async () => {

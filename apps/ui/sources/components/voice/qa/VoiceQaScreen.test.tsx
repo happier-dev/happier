@@ -8,7 +8,7 @@ import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import { voiceSessionBindingStore } from '@/voice/sessionBinding/voiceSessionBindingStore';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 
 const voiceQaControllerMocks = {
   start: vi.fn(async () => {}),
@@ -87,15 +87,7 @@ vi.mock('@/voice/qa/voiceQaController', () => ({
 }));
 
 describe('VoiceQaScreen', () => {
-  let mountedTrees: renderer.ReactTestRenderer[] = [];
-
-  const trackTree = (tree: renderer.ReactTestRenderer) => {
-    mountedTrees.push(tree);
-    return tree;
-  };
-
   beforeEach(() => {
-    mountedTrees = [];
     vi.clearAllMocks();
     resetVoiceQaStoreForTests();
     useVoiceActivityStore.setState({ eventsBySessionId: {}, maxEventsPerSession: 200 });
@@ -113,34 +105,23 @@ describe('VoiceQaScreen', () => {
       canStop: false,
     });
     storage.setState({
-      settings: {
-        ...(storage.getState() as any).settings,
-        voice: {
-          providerId: 'local_conversation',
-          adapters: { local_conversation: { conversationMode: 'agent' } },
+        settings: {
+            ...(storage.getState() as any).settings,
+            voice: {
+                providerId: 'local_conversation',
+                adapters: { local_conversation: { conversationMode: 'agent' } },
+            },
         },
-      },
     } as any);
   });
 
-  afterEach(async () => {
-    while (mountedTrees.length > 0) {
-      const tree = mountedTrees.pop();
-      if (!tree) {
-        continue;
-      }
-      await act(async () => {
-        tree.unmount();
-        await Promise.resolve();
-      });
-    }
-  });
+  afterEach(standardCleanup);
 
   it('renders without re-render loops when there is no active QA session yet', async () => {
     const { VoiceQaScreen } = await import('./VoiceQaScreen');
 
     let tree!: renderer.ReactTestRenderer;
-    tree = trackTree((await renderScreen(<VoiceQaScreen />)).tree);
+    tree = (await renderScreen(<VoiceQaScreen />)).tree;
 
     const texts = tree.findAll((node) => String(node.type) === 'Text').map((node: any) => String(node.props.children));
     expect(texts).toContain('devVoiceQa.title');
@@ -152,7 +133,7 @@ describe('VoiceQaScreen', () => {
 
     let tree!: renderer.ReactTestRenderer;
     useVoiceQaStore.getState().begin('local_voice_agent', '__voice_agent__');
-    tree = trackTree((await renderScreen(<VoiceQaScreen />)).tree);
+    tree = (await renderScreen(<VoiceQaScreen />)).tree;
 
     expect(tree.findAll((node) => String(node.props?.testID) === 'voiceQa.openConversation')).toHaveLength(0);
 
@@ -165,8 +146,8 @@ describe('VoiceQaScreen', () => {
         transcriptMode: 'synthetic',
         updatedAt: Date.now(),
       });
-      await Promise.resolve();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     const openConversationNodes = tree.findAll((node) => String(node.props?.testID) === 'voiceQa.openConversation');
     expect(openConversationNodes.length).toBeGreaterThan(0);
@@ -185,7 +166,7 @@ describe('VoiceQaScreen', () => {
         transcriptMode: 'native_session',
         updatedAt: Date.now(),
     });
-    tree = trackTree((await renderScreen(<VoiceQaScreen />)).tree);
+    tree = (await renderScreen(<VoiceQaScreen />)).tree;
 
     const items = tree.findAll((node) => String(node.type) === 'Item');
     const targetItem = items.find((node: any) => node.props.title === 'devVoiceQa.targetSession');
@@ -226,7 +207,7 @@ describe('VoiceQaScreen', () => {
         transcriptMode: 'native_session',
         updatedAt: Date.now(),
     });
-    tree = trackTree((await renderScreen(<VoiceQaScreen />)).tree);
+    tree = (await renderScreen(<VoiceQaScreen />)).tree;
 
     const items = tree.findAll((node) => String(node.type) === 'Item');
     const targetItem = items.find((node: any) => node.props.title === 'devVoiceQa.targetSession');
@@ -264,7 +245,7 @@ describe('VoiceQaScreen', () => {
         mode: 'thinking',
         canStop: true,
     });
-    tree = trackTree((await renderScreen(<VoiceQaScreen />)).tree);
+    tree = (await renderScreen(<VoiceQaScreen />)).tree;
 
     const items = tree.findAll((node) => String(node.type) === 'Item');
     const targetItem = items.find((node: any) => node.props.title === 'devVoiceQa.targetSession');
@@ -285,7 +266,7 @@ describe('VoiceQaScreen', () => {
         targetSessionId: '__voice_agent__',
         status: 'running',
     }));
-    tree = trackTree((await renderScreen(<VoiceQaScreen />)).tree);
+    tree = (await renderScreen(<VoiceQaScreen />)).tree;
 
     const items = tree.findAll((node) => String(node.type) === 'Item');
     const targetItem = items.find((node: any) => node.props.title === 'devVoiceQa.targetSession');
@@ -323,7 +304,7 @@ describe('VoiceQaScreen', () => {
         status: 'running',
     }));
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s_current');
-    tree = trackTree((await renderScreen(<VoiceQaScreen />)).tree);
+    tree = (await renderScreen(<VoiceQaScreen />)).tree;
 
     const items = tree.findAll((node) => String(node.type) === 'Item');
     const targetItem = items.find((node: any) => node.props.title === 'devVoiceQa.targetSession');
@@ -337,7 +318,7 @@ describe('VoiceQaScreen', () => {
     const { VoiceQaScreen } = await import('./VoiceQaScreen');
 
     let tree!: renderer.ReactTestRenderer;
-    tree = trackTree((await renderScreen(<VoiceQaScreen />)).tree);
+    tree = (await renderScreen(<VoiceQaScreen />)).tree;
 
     const sessionInput = tree.find((node) => String(node.props?.testID) === 'voiceQa.sessionIdInput');
     const startButton = tree.find((node) => String(node.props?.testID) === 'voiceQa.start');
@@ -357,7 +338,7 @@ describe('VoiceQaScreen', () => {
     const { VoiceQaScreen } = await import('./VoiceQaScreen');
 
     let tree!: renderer.ReactTestRenderer;
-    tree = trackTree((await renderScreen(<VoiceQaScreen />)).tree);
+    tree = (await renderScreen(<VoiceQaScreen />)).tree;
 
     const sessionInput = tree.find((node) => String(node.props?.testID) === 'voiceQa.sessionIdInput');
     const promptInput = tree.find((node) => String(node.props?.testID) === 'voiceQa.promptInput');

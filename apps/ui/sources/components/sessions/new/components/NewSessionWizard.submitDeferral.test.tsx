@@ -129,6 +129,8 @@ describe('NewSessionWizard submit deferral', () => {
     it('defers web submission by one animation frame before invoking handleCreateSession', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
         const handleCreateSession = vi.fn();
+        const prevRaf = (globalThis as any).requestAnimationFrame;
+        delete (globalThis as any).requestAnimationFrame;
 
         const screen = await renderScreen(<NewSessionWizard
                     layout={{
@@ -230,6 +232,7 @@ describe('NewSessionWizard submit deferral', () => {
 
             expect(handleCreateSession).toHaveBeenCalledTimes(1);
         } finally {
+            (globalThis as any).requestAnimationFrame = prevRaf;
             await screen.unmount();
         }
     });

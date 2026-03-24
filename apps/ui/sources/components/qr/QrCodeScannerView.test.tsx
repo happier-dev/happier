@@ -1,8 +1,6 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
-
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -109,11 +107,9 @@ describe('QrCodeScannerView', () => {
 
         expect(typeof lastCameraProps?.onBarcodeScanned).toBe('function');
 
-        await act(async () => {
-            lastCameraProps.onBarcodeScanned({ data: 'x' });
-            lastCameraProps.onBarcodeScanned({ data: 'x' });
-            await Promise.resolve();
-        });
+        lastCameraProps.onBarcodeScanned({ data: 'x' });
+        lastCameraProps.onBarcodeScanned({ data: 'x' });
+        await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(onScan).toHaveBeenCalledTimes(1);
     });

@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -8,60 +9,52 @@ import { renderScreen } from '@/dev/testkit';
 let capturedSelectionPopoverProps: any = null;
 let capturedPopoverSurfaceProps: any = null;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#111',
-                textSecondary: '#666',
-                surface: '#fff',
-                surfaceHigh: '#f2f2f2',
-                surfaceHighest: '#e9e9e9',
-                surfacePressed: '#ececec',
-                surfacePressedOverlay: '#f4f4f4',
-                surfaceSelected: '#f7f7f7',
-                backgroundSecondary: '#f5f5f5',
-                card: { background: '#f8f8f8' },
-                accent: { blue: '#00f' },
-                status: { connected: '#0f0' },
-                button: {
-                    primary: { background: '#00f', tint: '#fff' },
+installAgentInputCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: '#111',
+                    textSecondary: '#666',
+                    surface: '#fff',
+                    surfaceHigh: '#f2f2f2',
+                    surfaceHighest: '#e9e9e9',
+                    surfacePressed: '#ececec',
+                    surfacePressedOverlay: '#f4f4f4',
+                    surfaceSelected: '#f7f7f7',
+                    backgroundSecondary: '#f5f5f5',
+                    card: { background: '#f8f8f8' },
+                    accent: { blue: '#00f' },
+                    status: { connected: '#0f0' },
+                    button: {
+                        primary: { background: '#00f', tint: '#fff' },
+                    },
+                    groupped: {
+                        background: '#f2f2f2',
+                        border: '#ddd',
+                        separator: '#eee',
+                        sectionTitle: '#777',
+                    },
+                    input: {
+                        background: '#fafafa',
+                    },
+                    modal: {
+                        border: '#ddd',
+                    },
+                    shadow: {
+                        color: '#000',
+                        opacity: 0.2,
+                    },
+                    divider: '#ddd',
                 },
-                groupped: {
-                    background: '#f2f2f2',
-                    border: '#ddd',
-                    separator: '#eee',
-                    sectionTitle: '#777',
-                },
-                input: {
-                    background: '#fafafa',
-                },
-                modal: {
-                    border: '#ddd',
-                },
-                shadow: {
-                    color: '#000',
-                    opacity: 0.2,
-                },
-                divider: '#ddd',
             },
-        },
-    });
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+        });
+    },
 });
 
 vi.mock('@/components/ui/text/Text', () => ({

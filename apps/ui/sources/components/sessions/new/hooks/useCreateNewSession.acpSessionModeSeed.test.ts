@@ -5,14 +5,43 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+type StorageState = {
+  settings: Record<string, unknown>;
+  machines: Record<string, { id: string }>;
+  updateSessionPermissionMode: ReturnType<typeof vi.fn>;
+  updateSessionModelMode: ReturnType<typeof vi.fn>;
+  updateSessionDraft: ReturnType<typeof vi.fn>;
+} & Record<string, unknown>;
+
+let storageState: StorageState = {
+  settings: {},
+  machines: { m1: { id: 'm1' } },
+  updateSessionPermissionMode: vi.fn(),
+  updateSessionModelMode: vi.fn(),
+  updateSessionDraft: vi.fn(),
+};
+
+installNewSessionScreenModelCommonModuleMocks({
+  storage: async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+      storage: {
+        getState: () => storageState,
+      },
+    });
+  },
+});
 
 async function setupHarness(options?: Readonly<{
   storageState?: Record<string, unknown>;
   fetchArtifactWithBodyResult?: Record<string, unknown> | null;
 }>) {
+  const fixedServerNowMs = Date.parse('2026-02-05T00:00:00.000Z');
   const publishModeSpy = vi.fn(async (_params: any) => {});
   const sendMessageSpy = vi.fn(async (
     _sessionId: string,
@@ -32,7 +61,7 @@ async function setupHarness(options?: Readonly<{
 
     await sendMessageSpy(params.sessionId, params.initialMessageText);
   });
-  const storageState = {
+  storageState = {
     settings: {},
     machines: { m1: { id: 'm1' } },
     updateSessionPermissionMode: vi.fn(),
@@ -40,22 +69,6 @@ async function setupHarness(options?: Readonly<{
     updateSessionDraft: vi.fn(),
     ...(options?.storageState ?? {}),
   };
-
-  vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
-  vi.doMock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => false),
-        },
-    }).module;
-});
   vi.doMock('@/sync/sync', () => ({
     sync: {
       applySettings: vi.fn(),
@@ -136,6 +149,9 @@ async function setupHarness(options?: Readonly<{
   vi.doMock('@/sync/domains/features/featureLocalPolicy', () => ({
     resolveLocalFeaturePolicyEnabled: vi.fn((featureId: string, settings: { featureToggles?: Record<string, boolean> }) => settings.featureToggles?.[featureId] === true),
   }));
+  vi.doMock('@/sync/runtime/time', () => ({
+    nowServerMs: vi.fn(() => fixedServerNowMs),
+  }));
   vi.doMock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: vi.fn(async () => ({ token: 'next-token', secret: 'next-secret' })),
   }));
@@ -182,10 +198,6 @@ async function setupHarness(options?: Readonly<{
 describe('useCreateNewSession (ACP mode seeding)', () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.useFakeTimers({
-      now: new Date('2026-02-05T00:00:00.000Z'),
-      toFake: ['Date'],
-    });
   });
 
   afterEach(() => {

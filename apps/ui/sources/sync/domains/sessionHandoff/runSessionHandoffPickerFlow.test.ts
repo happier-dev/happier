@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installSessionHandoffCommonModuleMocks } from '@/components/sessions/handoff/sessionHandoffTestHelpers';
 
 const openSessionHandoffPickerMock = vi.hoisted(() => vi.fn());
 const runSessionHandoffUiFlowMock = vi.hoisted(() => vi.fn());
@@ -26,9 +27,15 @@ vi.mock('./runSessionHandoffUiFlow', () => ({
     runSessionHandoffUiFlow: (...args: unknown[]) => runSessionHandoffUiFlowMock(...args),
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+installSessionHandoffCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                confirm: (...args: unknown[]) => modalConfirmMock(...args),
+            },
+        }).module;
+    },
 });
 
 describe('runSessionHandoffPickerFlow', () => {

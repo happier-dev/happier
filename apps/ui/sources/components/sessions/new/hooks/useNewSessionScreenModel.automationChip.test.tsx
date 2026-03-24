@@ -1,23 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
+import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key, params) => {
-            switch (key) {
-                case 'newSession.automationChip.default':
-                    return 'Automate';
-                case 'newSession.automationChip.interval':
-                    return `Every ${String(params?.minutes ?? '')}m`;
-                case 'newSession.automationChip.cron':
-                    return 'Cron schedule';
-                default:
-                    return key;
-            }
-        },
-    });
+installNewSessionScreenModelCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key, params) => {
+                switch (key) {
+                    case 'newSession.automationChip.default':
+                        return 'Automate';
+                    case 'newSession.automationChip.interval':
+                        return `Every ${String(params?.minutes ?? '')}m`;
+                    case 'newSession.automationChip.cron':
+                        return 'Cron schedule';
+                    default:
+                        return key;
+                }
+            },
+        });
+    },
 });
 
 describe('automation chip label', () => {

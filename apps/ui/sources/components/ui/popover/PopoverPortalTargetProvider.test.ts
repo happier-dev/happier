@@ -4,6 +4,7 @@ import renderer, { act } from 'react-test-renderer';
 
 import { findAllByType, findFirstHostNodeByTestId } from '@/dev/testkit/harness/popoverHarness';
 import { renderScreen } from '@/dev/testkit';
+import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,18 +13,18 @@ vi.mock('@/components/ui/popover', () => ({
     usePopoverBoundaryRef: () => null,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installPopoverCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             Platform: {
                 OS: 'ios',
             },
             useWindowDimensions: () => ({ width: 390, height: 844 }),
             View: (props: any) => React.createElement('View', props, props.children),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        }
-    );
+        });
+    },
 });
 
 function PopoverChild() {
@@ -55,13 +56,12 @@ describe('PopoverPortalTargetProvider (native)', () => {
             );
         }
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        tree = (await renderScreen(React.createElement(Harness))).tree;
+        const screen = await renderScreen(React.createElement(Harness));
 
         // If the provider churns its context value each parent render, the Child effect will
         // re-trigger indefinitely (bump -> parent rerender -> new context value -> bump ...).
         // The stable expected behavior is a single bump (tick=1).
-        expect(tree?.root.findByType('Tick' as any).props.value).toBe(1);
+        expect(screen.findByType('Tick' as any).props.value).toBe(1);
     });
 
     it('renders popovers into a screen-local OverlayPortalHost (avoids coordinate-space mismatch in contained modals)', async () => {

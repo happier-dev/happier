@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
@@ -45,14 +45,13 @@ describe('ItemGroupTitleWithAction', () => {
     it('renders title only when no action is provided', async () => {
         const { ItemGroupTitleWithAction } = await import('./ItemGroupTitleWithAction');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(ItemGroupTitleWithAction, {
+        const screen = await renderScreen(React.createElement(ItemGroupTitleWithAction, {
                 title: 'Detected CLIs',
                 titleStyle: { color: '#000' },
-            }))).tree;
+            }));
 
-        expect(tree!.findAllByType('Pressable' as any).length).toBe(0);
-        expect(tree!.findAllByType('Text' as any).length).toBe(1);
+        expect(screen.findAllByProps({ accessibilityRole: 'button' }).length).toBe(0);
+        expect(screen.findAllByType('Text' as any).length).toBe(1);
     });
 
     it('renders loading indicator instead of icon when action is loading', async () => {

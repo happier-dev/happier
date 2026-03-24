@@ -5,9 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { useChangedFilesReviewDiffLoading } from './useChangedFilesReviewDiffLoading';
 import { renderScreen } from '@/dev/testkit';
+import { installFilesContentCommonModuleMocks } from '../filesContentTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+installFilesContentCommonModuleMocks();
 
 const sessionScmDiffFileSpy = vi.fn(async (..._args: any[]) => ({ success: true, diff: '', error: null }));
 const sessionReadFileSpy = vi.fn(async (..._args: any[]) => ({
@@ -20,11 +23,6 @@ vi.mock('@/sync/ops', () => ({
     sessionScmDiffFile: (...args: any[]) => sessionScmDiffFileSpy(...args),
     sessionReadFile: (...args: any[]) => sessionReadFileSpy(...args),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/scm/utils/filePresentation', () => ({
     isBinaryContent: () => false,

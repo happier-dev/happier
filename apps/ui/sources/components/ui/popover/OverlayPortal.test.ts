@@ -2,18 +2,21 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        StyleSheet: {
-            absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-        },
-        View: (props: any) => React.createElement('View', props, props.children),
-    });
+installPopoverCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            StyleSheet: {
+                absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+        });
+    },
 });
 
 describe('OverlayPortalProvider', () => {

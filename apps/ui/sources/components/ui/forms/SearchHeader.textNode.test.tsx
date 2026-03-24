@@ -2,14 +2,16 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installFormsCommonModuleMocks } from './formsTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installFormsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock(
+            {
             View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
                 React.createElement('View', props, props.children),
             Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -22,35 +24,34 @@ vi.mock('react-native', async () => {
                 get: () => ({ width: 1440, height: 1100 }),
             },
         }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#ffffff',
-                divider: '#e5e7eb',
-                input: {
-                    background: '#f9fafb',
-                    text: '#111827',
-                    placeholder: '#9ca3af',
+        );
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#ffffff',
+                    divider: '#e5e7eb',
+                    input: {
+                        background: '#f9fafb',
+                        text: '#111827',
+                        placeholder: '#9ca3af',
+                    },
+                    textSecondary: '#6b7280',
                 },
-                textSecondary: '#6b7280',
             },
-        },
-    });
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => <>{'.'}</>,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>

@@ -114,8 +114,9 @@ async function startConcurrentCacheAndWaitForReconcile(): Promise<{
 }> {
     const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
     startConcurrentSessionCacheSync();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await Promise.resolve();
+    await vi.waitFor(() => {
+        expect(ioSpy).toHaveBeenCalled();
+    });
     return { stopConcurrentSessionCacheSync };
 }
 
@@ -231,8 +232,9 @@ describe('concurrent session cache supervised sockets', () => {
         expect(fakeSocket.connect).toHaveBeenCalledTimes(1);
 
         stopConcurrentSessionCacheSync();
-        await Promise.resolve();
-        expect(fakeSocket.disconnect).toHaveBeenCalled();
-        expect(fakeSocket.removeAllListeners).toHaveBeenCalled();
+        await vi.waitFor(() => {
+            expect(fakeSocket.disconnect).toHaveBeenCalled();
+            expect(fakeSocket.removeAllListeners).toHaveBeenCalled();
+        });
     });
 });

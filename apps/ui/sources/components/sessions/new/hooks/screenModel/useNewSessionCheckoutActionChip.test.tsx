@@ -2,14 +2,12 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
+installNewSessionScreenModelCommonModuleMocks();
 
 vi.mock('@/components/sessions/new/components/NewSessionWorktreeBranchDetail', () => ({
     NewSessionWorktreeBranchDetail: (props: Record<string, unknown>) => React.createElement('NewSessionWorktreeBranchDetail', props),

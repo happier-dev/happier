@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,14 +11,16 @@ const routerNavigateSpy = vi.fn();
 const setActiveServerAndSwitchSpy = vi.fn(async () => false);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: {
-        navigate: routerNavigateSpy,
+installSessionHooksCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: {
+                navigate: routerNavigateSpy,
+            },
+        });
+        return expoRouterMock.module;
     },
-    });
-    return expoRouterMock.module;
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({

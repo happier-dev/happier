@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { installAccountCommonModuleMocks } from '../../account/accountTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -8,21 +9,7 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 vi.spyOn(globalThis, 'setInterval').mockImplementation(() => 0 as any);
 vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => {});
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    ScrollView: 'ScrollView',
-                                    ActivityIndicator: 'ActivityIndicator',
-                                    Pressable: 'Pressable',
-                                    Platform: {
-                                        OS: 'web',
-                                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-                                    },
-                                }
-    );
-});
+installAccountCommonModuleMocks();
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -41,16 +28,6 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: 'RoundButton',
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(async () => {}),
-            alertAsync: vi.fn(async () => {}),
-        },
-    }).module;
-});
-
 const AUTH_FIXTURE = Object.freeze({
     isAuthenticated: true,
     credentials: Object.freeze({ token: 't', secret: 's' }),
@@ -64,27 +41,6 @@ let featureState: 'enabled' | 'disabled' | 'unknown' = 'enabled';
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({ state: featureState }),
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                accent: { blue: 'blue' },
-                input: { placeholder: '#999' },
-            },
-        },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytes: () => new Uint8Array(32).fill(7),

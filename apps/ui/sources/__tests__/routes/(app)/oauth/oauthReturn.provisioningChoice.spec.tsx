@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 import {
   clearPendingExternalAuthMock,
@@ -8,7 +9,6 @@ import {
   loginWithCredentialsSpy,
   replaceSpy,
   resetOAuthHarness,
-  runWithOAuthScreen,
   setPendingExternalAuthState,
 } from '@/auth/providers/github/test/oauthReturnHarness';
 
@@ -22,6 +22,16 @@ afterEach(() => {
 });
 
 describe('oauth/[provider] return (provisioning choice)', () => {
+  async function renderOAuthReturnScreen() {
+    const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    await act(async () => {
+      screen = await renderScreen(<Screen />);
+    });
+    await flushOAuthEffects();
+    return screen!;
+  }
+
   it('shows the encryption choice on optional servers and finalizes plaintext (keyless) when chosen', async () => {
     replaceSpy.mockReset();
     loginWithCredentialsSpy.mockReset();
@@ -52,13 +62,12 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await runWithOAuthScreen(async (tree) => {
-      await flushOAuthEffects();
-
+    const screen = await renderOAuthReturnScreen();
+    try {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(replaceSpy).not.toHaveBeenCalledWith('/');
 
-      const choice = tree.root.findByProps({ testID: 'oauth-provisioning-choice-plain' });
+      const choice = screen.findByTestId('oauth-provisioning-choice-plain');
       expect(choice).toBeTruthy();
 
       await pressTestInstanceAsync(choice, 'oauth-provisioning-choice-plain');
@@ -68,7 +77,11 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       expect(clearPendingExternalAuthMock).toHaveBeenCalled();
       expect(loginWithCredentialsSpy).toHaveBeenCalled();
       expect(replaceSpy).toHaveBeenCalledWith('/');
-    });
+    } finally {
+      await act(async () => {
+        screen.tree.unmount();
+      });
+    }
 
     vi.stubGlobal('fetch', originalFetch);
   });
@@ -104,7 +117,8 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await runWithOAuthScreen(async (tree) => {
+    const screen = await renderOAuthReturnScreen();
+    try {
       await flushOAuthEffects(8);
 
       expect(fetchMock).toHaveBeenCalled();
@@ -112,8 +126,12 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       expect(loginWithCredentialsSpy).toHaveBeenCalled();
       expect(replaceSpy).toHaveBeenCalledWith('/');
 
-      expect(tree.root.findAllByProps({ testID: 'oauth-provisioning-choice-plain' })).toHaveLength(0);
-    });
+      expect(screen.findAllByTestId('oauth-provisioning-choice-plain')).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        screen.tree.unmount();
+      });
+    }
 
     vi.stubGlobal('fetch', originalFetch);
   });

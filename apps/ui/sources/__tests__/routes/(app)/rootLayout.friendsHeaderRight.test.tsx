@@ -1,12 +1,11 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 import { Stack } from 'expo-router';
 
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
-import { createOkFetchResponse, createRootLayoutFeaturesResponse, renderScreen } from '@/dev/testkit';
+import { createOkFetchResponse, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen } from '@/dev/testkit';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -49,27 +48,10 @@ function stubRootLayoutFeaturesFetch() {
     vi.stubGlobal('fetch', vi.fn(fetchMock));
 }
 
-async function flushMicrotasks(limit = 20) {
-    // Feature probe hooks resolve via async/await chains (no timers), so yielding a few
-    // microtasks is the most deterministic way to let effects settle.
-    for (let i = 0; i < limit; i += 1) {
-        // eslint-disable-next-line no-await-in-loop
-        await Promise.resolve();
-    }
-}
-
-async function flushEffects(): Promise<void> {
-    // Feature probe hooks perform async fetches inside a `useEffect`, which React flushes
-    // on the next tick in these test environments. Matching other hook tests, yield a macrotask.
-    await new Promise((r) => setTimeout(r, 0));
-}
-
 async function renderRootLayout() {
     const { default: RootLayout } = await import('@/app/(app)/_layout');
     const screen = await renderScreen(<RootLayout />);
-    await act(async () => {
-        await flushEffects();
-    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
     return screen;
 }
 
@@ -127,12 +109,6 @@ describe('RootLayout', () => {
 
             const tree = await renderRootLayout();
             try {
-                // Let feature probing fetch + apply server features so the headerRight opacity
-                // reflects the computed friends identity readiness.
-                await act(async () => {
-                    await flushEffects();
-                });
-
                 const friendsManage = getFriendsManageScreen(tree);
                 expect(friendsManage).toBeTruthy();
 

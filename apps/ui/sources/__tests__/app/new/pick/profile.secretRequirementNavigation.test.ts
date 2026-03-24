@@ -6,7 +6,10 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import {
+    createNavigationMock,
+    createRouterMock,
     enableReactActEnvironment,
+    PICKER_THEME_COLORS,
     PICKER_NAV_STATE,
 } from './testHarness';
 import {
@@ -23,136 +26,120 @@ import type { ProfilesListProps } from '@/components/profiles/ProfilesList';
 enableReactActEnvironment();
 
 const missingRequiredSecretScenario = createMissingRequiredSecretScenario();
+const routerMock = createRouterMock();
+const navigationMock = createNavigationMock();
 
-vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+async function installProfileSecretRequirementModuleMocks() {
+    vi.doMock('@expo/vector-icons', async () =>
+        (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
-const { routerMock, navigationMock } = vi.hoisted(() => ({
-    routerMock: {
-        push: vi.fn(),
-        back: vi.fn(),
-        replace: vi.fn(),
-        setParams: vi.fn(),
-    },
-    navigationMock: {
-        dispatch: vi.fn(),
-        getState: () => ({
-            index: 1,
-            routes: [{ key: 'a' }, { key: 'b' }],
-        }),
-        goBack: vi.fn(),
-        setParams: vi.fn(),
-    },
-}));
+    vi.doMock('@/text', async () =>
+        (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+    vi.doMock('react-native', async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+            Platform: { OS: 'ios' },
+        }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: { OS: 'ios' },
-                }
-    );
-});
+    vi.doMock('react-native-unistyles', async () =>
+        (await import('@/dev/testkit')).createUnistylesMock({
+            theme: { colors: PICKER_THEME_COLORS },
+        }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const module = createExpoRouterMock({
-        navigation: navigationMock,
-        params: { selectedId: '', machineId: 'm1' },
-        router: {
-            push: routerMock.push,
-            back: routerMock.back,
-            replace: routerMock.replace,
-            setParams: routerMock.setParams,
-        },
-    }).module;
+    vi.doMock('expo-router', async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const module = createExpoRouterMock({
+            navigation: navigationMock,
+            params: { selectedId: '', machineId: 'm1' },
+            router: {
+                push: routerMock.push,
+                back: routerMock.back,
+                replace: routerMock.replace,
+                setParams: routerMock.setParams,
+            },
+        }).module;
 
-    return {
-        ...module,
-        useNavigation: () => navigationMock,
-    };
-});
+        return {
+            ...module,
+            useNavigation: () => navigationMock,
+            useLocalSearchParams: () => ({ selectedId: '', machineId: 'm1' }),
+        };
+    });
 
-vi.mock('@/modal', async () => {
-    return profileSecretRequirementModalMock.module;
-});
+    vi.doMock('@/modal', async () => profileSecretRequirementModalMock.module);
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
+    vi.doMock('@/sync/domains/state/storage', async () =>
+        (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({
             useSetting: getProfileSecretRequirementSetting,
             useSettingMutable: useProfileSecretRequirementSettingMutable,
-        },
+        }));
+
+    vi.doMock('@/components/ui/lists/ItemGroup', () => ({
+        ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) =>
+            React.createElement(React.Fragment, null, children),
     }));
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
-}));
+    vi.doMock('@/components/ui/lists/Item', () => ({
+        Item: () => null,
+    }));
 
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: () => null,
-}));
-
-vi.mock('@/components/profiles/ProfilesList', async () => {
-    return {
+    vi.doMock('@/components/profiles/ProfilesList', () => ({
         ProfilesList: (props: ProfilesListProps) => {
             captureProfilesListProps({ onPressProfile: props.onPressProfile });
             return null;
         },
-    };
-});
+    }));
 
-vi.mock('@/sync/domains/profiles/profileSecrets', () => ({
-    getRequiredSecretEnvVarNames: () => [...missingRequiredSecretScenario.secretEnvVarNames],
-}));
+    vi.doMock('@/sync/domains/profiles/profileSecrets', () => ({
+        getRequiredSecretEnvVarNames: () => [...missingRequiredSecretScenario.secretEnvVarNames],
+    }));
 
-vi.mock('@/sync/ops', () => ({
-    machinePreviewEnv: vi.fn(async () => ({ supported: false })),
-}));
+    vi.doMock('@/sync/ops', () => ({
+        machinePreviewEnv: vi.fn(async () => ({ supported: false })),
+    }));
 
-vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profileCompatibility')>();
-    return {
-        ...actual,
-        getProfileEnvironmentVariables: () => ({}),
-    };
-});
+    vi.doMock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/sync/domains/profiles/profileCompatibility')>();
+        return {
+            ...actual,
+            getProfileEnvironmentVariables: () => ({}),
+        };
+    });
 
-vi.mock('@/utils/secrets/secretSatisfaction', () => ({
-    getSecretSatisfaction: () => ({
-        isSatisfied: false,
-        items: [
-            {
-                envVarName: missingRequiredSecretScenario.secretEnvVarName,
-                required: true,
-                isSatisfied: false,
-            },
-        ],
-    }),
-}));
+    vi.doMock('@/utils/secrets/secretSatisfaction', () => ({
+        getSecretSatisfaction: () => ({
+            isSatisfied: false,
+            items: [
+                {
+                    envVarName: missingRequiredSecretScenario.secretEnvVarName,
+                    required: true,
+                    isSatisfied: false,
+                },
+            ],
+        }),
+    }));
 
-vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
-    useMachineEnvPresence: () => ({ isLoading: false, isPreviewEnvSupported: false, meta: {} }),
-}));
+    vi.doMock('@/hooks/machine/useMachineEnvPresence', () => ({
+        useMachineEnvPresence: () => ({ isLoading: false, isPreviewEnvSupported: false, meta: {} }),
+    }));
 
-vi.mock('@/utils/sessions/tempDataStore', () => ({
-    storeTempData: () => 'temp',
-    getTempData: () => null,
-}));
+    vi.doMock('@/utils/sessions/tempDataStore', () => ({
+        storeTempData: () => 'temp',
+        getTempData: () => null,
+    }));
 
-vi.mock('@/components/secrets/requirements', () => ({
-    SecretRequirementModal: () => null,
-}));
+    vi.doMock('@/components/secrets/requirements', () => ({
+        SecretRequirementModal: () => null,
+    }));
+}
 
 describe('ProfilePickerScreen (native secret requirement)', () => {
     afterEach(() => {
         standardCleanup();
+        vi.resetModules();
     });
 
     it('navigates to the secret requirement screen when required secrets are missing', async () => {
-        const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
         resetProfileSecretRequirementHarness();
         routerMock.push.mockClear();
         navigationMock.getState = () => ({
@@ -160,6 +147,9 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
             routes: PICKER_NAV_STATE.routes.map((route) => ({ key: route.key })),
         });
 
+        await installProfileSecretRequirementModuleMocks();
+
+        const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
         await renderScreen(React.createElement(ProfilePickerScreen));
 
         const onPressProfile = getCapturedProfilePressHandler();

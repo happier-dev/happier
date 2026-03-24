@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -26,15 +25,14 @@ describe('AgentInputChipLabel', () => {
     it('renders the count in parentheses with tertiary color styling', async () => {
         const { AgentInputChipLabel } = await import('./AgentInputChipLabel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<AgentInputChipLabel
+        const screen = await renderScreen(<AgentInputChipLabel
                     label="MCP"
                     count={3}
                     textStyle={{ color: '#ffffff', fontSize: 13 }}
                     countTextStyle={{ color: '#444444' }}
-                />)).tree;
+                />);
 
-        const textNodes = tree!.root.findAllByType('Text' as any);
+        const textNodes = screen.findAllByType('Text' as any);
         expect(textNodes.map((node: any) => node.props.children).flat().join('')).toContain('MCP');
         expect(textNodes.map((node: any) => node.props.children).flat().join('')).toContain('(3)');
         expect(textNodes.some((node: any) => {

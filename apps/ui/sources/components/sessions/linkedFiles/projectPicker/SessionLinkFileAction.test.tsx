@@ -7,47 +7,27 @@ const platformState = vi.hoisted(() => ({
     os: 'web' as 'web' | 'ios',
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Platform: {
-                                get OS() {
-                                                return platformState.os;
-                                            },
-                                select: (values: any) => values?.web ?? values?.default ?? values?.ios ?? values?.android,
-                            },
-                            View: React.forwardRef((props: any, ref: any) => {
-                                    React.useImperativeHandle(ref, () => ({ nodeType: 'View' }));
-                                    return React.createElement('View', props, props.children);
-                                }),
-                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                        }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: vi.fn(),
-            prompt: vi.fn(),
-            alert: vi.fn(),
+vi.hoisted(async () => {
+    const { installProjectFileLinkPickerCommonModuleMocks } = await import('./projectFileLinkPickerTestHelpers');
+    installProjectFileLinkPickerCommonModuleMocks({
+        reactNative: async () => {
+            const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeWebMock({
+                Platform: {
+                    get OS() {
+                        return platformState.os;
+                    },
+                    select: (values: any) => values?.web ?? values?.default ?? values?.ios ?? values?.android,
+                },
+                View: React.forwardRef((props: any, ref: any) => {
+                    React.useImperativeHandle(ref, () => ({ nodeType: 'View' }));
+                    return React.createElement('View', props, props.children);
+                }),
+                Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            });
         },
-    }).module;
+    });
+    return null;
 });
 
 vi.mock('@/components/ui/popover', () => ({

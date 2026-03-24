@@ -18,11 +18,10 @@ describe('RealtimeProvider.web', () => {
   it('mounts VoiceSessionRuntime so voice adapters are registered on web', async () => {
     const { RealtimeProvider } = await import('./RealtimeProvider.web');
 
-    let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(React.createElement(RealtimeProvider, null, React.createElement('Child', null)))).tree;
+    const screen = await renderScreen(React.createElement(RealtimeProvider, null, React.createElement('Child', null)));
 
     await act(async () => {});
 
-    expect(tree.root.findAllByType('VoiceSessionRuntimeMock' as any).length).toBe(1);
+    expect(screen.findAllByType('VoiceSessionRuntimeMock' as any)).toHaveLength(1);
   });
 });

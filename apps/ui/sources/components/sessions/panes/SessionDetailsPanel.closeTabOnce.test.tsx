@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
@@ -100,15 +99,7 @@ describe('SessionDetailsPanel (close tab)', () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        const closeButtons = screen.root
-            .findAllByProps({ accessibilityLabel: 'session.detailsPanel.closeTabA11y' })
-            // Filter out composite wrapper nodes created by our react-native test doubles.
-            .filter((node) => typeof node.type === 'string');
-        expect(closeButtons.length).toBe(1);
-
-        await act(async () => {
-            closeButtons[0]!.props.onPress({ stopPropagation: () => {} });
-        });
+        await screen.pressByTestIdAsync('session-details-tab-close-file_a');
 
         expect(closeDetailsTabSpy).toHaveBeenCalledTimes(1);
         expect(closeDetailsTabSpy).toHaveBeenCalledWith('file:a');

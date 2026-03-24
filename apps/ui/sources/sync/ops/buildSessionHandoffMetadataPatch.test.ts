@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import type { CodexBackendMode } from '@happier-dev/agents';
 
 import { buildSessionHandoffMetadataPatch } from './buildSessionHandoffMetadataPatch';
 
 describe('buildSessionHandoffMetadataPatch', () => {
+    const legacyCodexBackendMode = '  mcp_resume  ' as unknown as CodexBackendMode;
+
     it('rebuilds codex runtime descriptor metadata after handoff', () => {
         const updated = buildSessionHandoffMetadataPatch({
             metadata: {
@@ -42,6 +45,38 @@ describe('buildSessionHandoffMetadataPatch', () => {
                         vendorSessionId: 'thread_new',
                     },
                 },
+            },
+        });
+    });
+
+    it('normalizes legacy codex backend aliases when rebuilding handoff metadata', () => {
+        const updated = buildSessionHandoffMetadataPatch({
+            metadata: {
+                flavor: 'codex',
+                path: '/repo/source',
+                host: 'source-host',
+                machineId: 'machine_source',
+                codexSessionId: 'thread_old',
+                codexBackendMode: legacyCodexBackendMode,
+            },
+            providerId: 'codex',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageBefore: 'persisted',
+            sessionStorageAfter: 'persisted',
+            targetPath: '/repo/target',
+            transportStrategy: 'server_routed_stream',
+            completedAtMs: 123,
+            targetRemoteSessionId: 'thread_new',
+            targetDirectSource: { kind: 'codexHome', home: 'user' },
+        });
+
+        expect(updated.codexBackendMode).toBe('acp');
+        expect(updated.agentRuntimeDescriptorV1).toMatchObject({
+            providerId: 'codex',
+            provider: {
+                backendMode: 'acp',
+                vendorSessionId: 'thread_new',
             },
         });
     });

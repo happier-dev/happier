@@ -1,7 +1,8 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { createPartialStorageModuleMock, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -37,18 +38,71 @@ const reorderPendingMessages = vi.fn();
 
 let sessionValue: any = null;
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
+installPendingMessagesCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSession: () => sessionValue,
+            useSetting: () => undefined,
+            storage: { getState: () => ({}) },
+        });
     },
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    return createPartialStorageModuleMock(importOriginal, {
-        useSession: () => sessionValue,
-        useSetting: () => undefined,
-        storage: { getState: () => ({}) },
-    });
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                confirm: (...args: any[]) => modalConfirm(...args),
+                alert: (...args: any[]) => modalAlert(...args),
+                prompt: vi.fn(),
+            },
+        }).module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock(
+            {
+                View: 'View',
+                Text: 'Text',
+                Pressable: 'Pressable',
+                ScrollView: 'ScrollView',
+                ActivityIndicator: 'ActivityIndicator',
+                Platform: {
+                    OS: 'web',
+                    select: (value: any) => value?.web ?? value?.default,
+                },
+            }
+        );
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: '#000',
+                    textSecondary: '#666',
+                    surfaceHighest: '#eee',
+                    surface: '#fff',
+                    surfacePressedOverlay: '#eee',
+                    input: { background: '#fff' },
+                    button: {
+                        // Match app theme shape: secondary has tint but no background.
+                        secondary: { tint: '#000' },
+                    },
+                    box: {
+                        // Match app theme shape: error (not danger).
+                        error: { background: '#fdd', text: '#a00' },
+                    },
+                    textDestructive: '#a00',
+                    textLink: '#00f',
+                    userMessageBackground: '#eee',
+                    userMessageText: '#000',
+                },
+            },
+        });
+    },
+    icons: async () => ({
+        Ionicons: 'Ionicons',
+    }),
 });
 
 vi.mock('@/sync/sync', () => ({
@@ -66,66 +120,6 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/sync/ops', () => ({
     sessionAbort: (...args: any[]) => sessionAbort(...args),
-}));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: (...args: any[]) => modalConfirm(...args),
-            alert: (...args: any[]) => modalAlert(...args),
-            prompt: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: 'View',
-            Text: 'Text',
-            Pressable: 'Pressable',
-            ScrollView: 'ScrollView',
-            ActivityIndicator: 'ActivityIndicator',
-            Platform: {
-                OS: 'web',
-                select: (value: any) => value?.web ?? value?.default,
-            },
-        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                surfaceHighest: '#eee',
-                surface: '#fff',
-                surfacePressedOverlay: '#eee',
-                input: { background: '#fff' },
-                button: {
-                    // Match app theme shape: secondary has tint but no background.
-                    secondary: { tint: '#000' },
-                },
-                box: {
-                    // Match app theme shape: error (not danger).
-                    error: { background: '#fdd', text: '#a00' },
-                },
-                textDestructive: '#a00',
-                textLink: '#00f',
-                userMessageBackground: '#eee',
-                userMessageText: '#000',
-            },
-        },
-    });
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
 }));
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
@@ -312,10 +306,10 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(flattenStyle(overlayAfterHover!.props.style).pointerEvents).toBe('auto');
     });
 
-    it('offers steer-now while a steer-capable session is thinking and does not abort the turn', async () => {
-        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
-        sessionValue = {
-            thinking: true,
+	    it('offers steer-now while a steer-capable session is thinking and does not abort the turn', async () => {
+	        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+	        sessionValue = {
+	            thinking: true,
             presence: 'online',
             agentStateVersion: 1,
             agentState: { controlledByUser: false, capabilities: { inFlightSteer: true } },
@@ -340,13 +334,45 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         expect(sessionAbort).toHaveBeenCalledTimes(0);
         expect(sendPendingMessageNow).toHaveBeenCalledTimes(1);
-        expect(sendPendingMessageNow).toHaveBeenCalledWith('s1', expect.objectContaining({ localId: 'p1' }));
-        expect(deletePendingMessage).toHaveBeenCalledTimes(1);
-    });
+	        expect(sendPendingMessageNow).toHaveBeenCalledWith('s1', expect.objectContaining({ localId: 'p1' }));
+	        expect(deletePendingMessage).toHaveBeenCalledTimes(1);
+	    });
 
-    it('renders with app theme shape (no secondary background / no danger box)', async () => {
-        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
-        await expect((async () => {
+	    it('does not offer steer-now or send-now for pending rows that failed to decrypt', async () => {
+	        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+	        sessionValue = {
+	            thinking: true,
+	            presence: 'online',
+	            agentStateVersion: 1,
+	            agentState: { controlledByUser: false, capabilities: { inFlightSteer: true } },
+	        };
+
+	        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+	                sessionId: 's1',
+	                pendingMessages: [{
+	                    id: 'p1',
+	                    text: '',
+	                    displayText: 'Failed to decrypt',
+	                    pendingDecryptFailure: { kind: 'decrypt_failed' },
+	                    createdAt: 0,
+	                    updatedAt: 0,
+	                    localId: 'p1',
+	                    rawRecord: {},
+	                }],
+	                discardedMessages: [],
+	            }));
+
+	        await hoverPendingMessageRow(screen, 'p1');
+
+	        expect(screen.findByTestId('pendingMessages.steerNow:p1')).toBeNull();
+	        expect(screen.findByTestId('pendingMessages.sendNow:p1')).toBeNull();
+	        expect(screen.findByTestId('pendingMessages.edit:p1')).toBeTruthy();
+	        expect(screen.findByTestId('pendingMessages.remove:p1')).toBeTruthy();
+	    });
+
+	    it('renders with app theme shape (no secondary background / no danger box)', async () => {
+	        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+	        await expect((async () => {
             await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                         sessionId: 's1',
                         pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
@@ -468,7 +494,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const reorderHandle = screen.findByTestId('pendingMessages.reorder:p1');
         expect(reorderHandle).toBeTruthy();
-        expect(screen.findAllByType('Pressable').find((node) => node.props.testID === 'pendingMessages.reorder:p1')).toBeFalsy();
+        expect(reorderHandle!.type).not.toBe('Pressable');
         expect((reorderHandle!.props as any).pointerEvents).toBeUndefined();
         expect(flattenStyle((reorderHandle!.props as any).style).pointerEvents).toBe('none');
     });

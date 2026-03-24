@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installModalComponentCommonModuleMocks } from './modalComponentTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -9,10 +10,10 @@ vi.mock('./BaseModal', () => ({
     BaseModal: ({ children }: any) => React.createElement('BaseModal', null, children),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installModalComponentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             View: (props: any) => React.createElement('View', props, props.children),
             Text: (props: any) => React.createElement('Text', props, props.children),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),
@@ -20,18 +21,13 @@ vi.mock('react-native', async () => {
                 OS: 'web',
                 select: (v: any) => v.web ?? v.default ?? null,
             },
-        }
-    );
+        });
+    },
 });
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 function getTextContent(node: any): string {
     const child = node?.findByType?.('Text' as any);

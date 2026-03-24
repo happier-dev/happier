@@ -7,6 +7,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -56,23 +57,27 @@ const theme = {
     dark: false,
 } as const;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        TurboModuleRegistry: { get: () => ({}) },
-                                        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
-                                            const header = ListHeaderComponent
-                                                ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
-                                                : null;
-                                            const items = (data ?? []).map((item: any, index: number) => {
-                                                const key = keyExtractor ? keyExtractor(item, index) : String(item?.path ?? index);
-                                                return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-                                            });
-                                            return React.createElement('FlatList', null, header, ...items);
-                                        },
-                                    }
-    );
+installFilesContentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            TurboModuleRegistry: { get: () => ({}) },
+            FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
+                const header = ListHeaderComponent
+                    ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
+                    : null;
+                const items = (data ?? []).map((item: any, index: number) => {
+                    const key = keyExtractor ? keyExtractor(item, index) : String(item?.path ?? index);
+                    return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+                });
+                return React.createElement('FlatList', null, header, ...items);
+            },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({ theme });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -111,16 +116,6 @@ vi.mock('@/constants/Typography', () => ({
         mono: () => ({}),
     },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 
 vi.mock('@/sync/ops', async (importOriginal) => {
     const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');

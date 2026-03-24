@@ -188,7 +188,7 @@ describe('chatListHarness', () => {
                 React.createElement('MockChatList'),
                 async (screen: any) => {
                     expect((globalThis as any).document.querySelector()).toBe(scroller);
-                    expect(screen.root.findByType('MockChatList')).toBeTruthy();
+                    expect(screen.findByType('MockChatList')).toBeTruthy();
                 },
                 {
                     initialFill: false,

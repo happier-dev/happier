@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects } from '@/dev/testkit';
+import { installVoiceAgentCommonModuleMocks } from '@/voice/agent/voiceAgentTestHelpers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 const spawnSession = vi.fn();
@@ -21,13 +22,15 @@ const state: any = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-    getState: () => state,
-  },
-});
+installVoiceAgentCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => state,
+            },
+        });
+    },
 });
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({

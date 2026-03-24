@@ -4,9 +4,20 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { renderScreen } from '@/dev/testkit';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+
+import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+installNewSessionScreenModelCommonModuleMocks({
+    storage: async () => createStorageModuleStub({
+        storage: {
+            getState: () => ({}),
+        },
+    }),
+});
 
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
@@ -14,15 +25,6 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         ...actual,
         getNewSessionAgentInputExtraActionChips: () => [] as AgentInputExtraActionChip[],
     };
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => ({}),
-    },
-});
 });
 
 vi.mock('@/components/sessions/agentInput/sessionActions/buildNewSessionActionShortcutChips', () => ({

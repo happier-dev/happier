@@ -1,38 +1,48 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useServerRetentionPolicies = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'ios',
-                                    },
-                                }
-    );
+installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key, params) => {
+                if (key === 'server.retention.deleteInactiveSessionsDays' && typeof params?.count === 'number') {
+                    return `Deletes inactive sessions after ${params.count} days.`;
+                }
+                return key;
+            },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    textSecondary: '#999999',
+                },
+            },
+        });
+    },
 });
 
 vi.mock('@/hooks/server/useServerRetentionPolicies', () => ({
     useServerRetentionPolicies,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key, params) => {
-            if (key === 'server.retention.deleteInactiveSessionsDays' && typeof params?.count === 'number') {
-                return `Deletes inactive sessions after ${params.count} days.`;
-            }
-            return key;
-        },
-    });
-});
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children, title }: any) => React.createElement('ItemGroup', { title }, children),
@@ -45,21 +55,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
 vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: any) => React.createElement('Ionicons', props),
-}));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                textSecondary: '#999999',
-            },
-        },
-    });
-});
 
 describe('SavedServersSection retention', () => {
     it('shows finite retention in inactive saved server rows only', async () => {

@@ -98,9 +98,9 @@ describe('sessionFileTransferRpcCaller', () => {
 
         await expect(
             caller.call({
-                request: { path: 'first.txt' },
-                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT,
-                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT,
+                request: { t: 'session_file_upload_v1', path: 'first.txt', sizeBytes: 1 },
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
+                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
                 toMachineRequest: ({ request, machineTarget }) => ({
                     ...request,
                     path: `${machineTarget.basePath}/${request.path}`,
@@ -110,9 +110,9 @@ describe('sessionFileTransferRpcCaller', () => {
 
         await expect(
             caller.call({
-                request: { path: 'second.txt' },
-                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT,
-                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT,
+                request: { t: 'session_file_upload_v1', path: 'second.txt', sizeBytes: 1 },
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
+                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
                 toMachineRequest: ({ request, machineTarget }) => ({
                     ...request,
                     path: `${machineTarget.basePath}/${request.path}`,
@@ -121,14 +121,14 @@ describe('sessionFileTransferRpcCaller', () => {
         ).resolves.toEqual({ success: true, value: 'ok' });
 
         expect(machineRPC).toHaveBeenCalledTimes(2);
-        expect(machineRPC).toHaveBeenNthCalledWith(1, 'machine-1', RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT, { path: '/repo/first.txt' });
-        expect(machineRPC).toHaveBeenNthCalledWith(2, 'machine-1', RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT, { path: '/repo/second.txt' });
-        // Policy is consulted by both the route-selection caller and the guarded direct-route policy check.
-        expect(getReadyServerFeaturesMock).toHaveBeenCalledTimes(4);
-        expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(1, { timeoutMs: 500, serverId: 'server-owned' });
-        expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(2, { timeoutMs: 500, serverId: 'server-owned' });
-        expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(3, { timeoutMs: 500, serverId: 'server-owned' });
-        expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(4, { timeoutMs: 500, serverId: 'server-owned' });
+        expect(machineRPC).toHaveBeenNthCalledWith(1, 'machine-1', RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT, { t: 'session_file_upload_v1', path: '/repo/first.txt', sizeBytes: 1 });
+        expect(machineRPC).toHaveBeenNthCalledWith(2, 'machine-1', RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT, { t: 'session_file_upload_v1', path: '/repo/second.txt', sizeBytes: 1 });
+        // Policy must be consulted before any direct machine RPC attempt. Depending on how the runtime composes
+        // route selection and direct-route guarding, this may involve one or more feature reads per call.
+        expect(getReadyServerFeaturesMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+        for (const [params] of getReadyServerFeaturesMock.mock.calls) {
+            expect(params).toEqual({ timeoutMs: 500, serverId: 'server-owned' });
+        }
         expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 

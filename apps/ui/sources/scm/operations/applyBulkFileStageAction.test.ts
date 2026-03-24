@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
+import { installScmOperationsCommonModuleMocks } from './scmOperationsTestHelpers';
 
 const sessionScmChangeInclude = vi.hoisted(() => vi.fn());
 const sessionScmChangeExclude = vi.hoisted(() => vi.fn());
@@ -30,15 +31,7 @@ vi.mock('@/scm/core/operationPolicy', () => ({
     evaluateScmOperationPreflight,
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
+installScmOperationsCommonModuleMocks();
 
 describe('applyBulkFileStageAction', () => {
     const initialStorageState = storage.getState();

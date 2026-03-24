@@ -5,6 +5,10 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installSessionActionsCommonModuleMocks,
+    resetSessionActionsCommonModuleMockState,
+} from '../../actions/sessionActionsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,16 +20,21 @@ const sessionExecutionRunSendSpy = vi.fn<
 >(async () => ({ ok: true }));
 const isExecutionRunNotRunningSendErrorSpy = vi.fn(() => false);
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installSessionActionsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: (...args: unknown[]) => modalAlertSpy(...args),
+            },
+        }).module;
+    },
 });
 
 vi.mock('@/components/sessions/agentInput', () => ({
@@ -35,22 +44,9 @@ vi.mock('@/components/sessions/agentInput', () => ({
     },
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Text', props, children),
-}));
-
 vi.mock('@/components/autocomplete/suggestions', () => ({
     getSuggestions: vi.fn(async () => []),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: (...args: unknown[]) => modalAlertSpy(...args),
-        },
-    }).module;
-});
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunSend: (...args: Parameters<typeof sessionExecutionRunSendSpy>) => sessionExecutionRunSendSpy(...args),
@@ -67,15 +63,9 @@ vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>) => void promise,
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
-
 describe('SessionParticipantComposer', () => {
     beforeEach(() => {
+        resetSessionActionsCommonModuleMockState();
         agentInputSpy.mockClear();
         modalAlertSpy.mockClear();
         syncSendMessageSpy.mockClear();

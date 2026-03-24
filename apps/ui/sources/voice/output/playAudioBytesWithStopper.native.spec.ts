@@ -8,19 +8,15 @@ const playbackState: {
 };
 
 async function waitForPlaybackStatusListener() {
-  for (let attempt = 0; attempt < 10_000; attempt += 1) {
-    if (playbackState.playbackStatusListener) return;
-    await Promise.resolve();
-  }
-  throw new Error('Timed out waiting for playbackStatusListener registration');
+  await vi.waitFor(() => {
+    expect(playbackState.playbackStatusListener).toBeTruthy();
+  });
 }
 
 async function waitForDeleteAsyncCall() {
-  for (let attempt = 0; attempt < 10_000; attempt += 1) {
-    if (deleteAsync.mock.calls.length > 0) return;
-    await Promise.resolve();
-  }
-  throw new Error('Timed out waiting for deleteAsync call');
+  await vi.waitFor(() => {
+    expect(deleteAsync).toHaveBeenCalled();
+  });
 }
 
 vi.mock('react-native', async () => {
@@ -75,14 +71,16 @@ describe('playAudioBytesWithStopper (native)', () => {
     const notifyPlaybackFinished: (status: any) => void = playbackState.playbackStatusListener ?? (() => {
       throw new Error('Expected playback status listener to be registered');
     });
+    let resolved = false;
+    const observedResolution = promise.then(() => {
+      resolved = true;
+    });
     notifyPlaybackFinished({ didJustFinish: true });
 
-    await expect(
-      Promise.race([
-        promise.then(() => 'resolved'),
-        new Promise((resolve) => setTimeout(() => resolve('timeout'), 0)),
-      ]),
-    ).resolves.toBe('resolved');
+    await vi.waitFor(() => {
+      expect(resolved).toBe(true);
+    });
+    await observedResolution;
 
     await waitForDeleteAsyncCall();
     expect(deleteAsync).toHaveBeenCalledTimes(1);

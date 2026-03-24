@@ -3,6 +3,7 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { installAccountCommonModuleMocks } from './accountTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,28 +14,28 @@ const shared = vi.hoisted(() => ({
     clearPendingExternalConnect: vi.fn(async () => true),
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Linking: {
-                                            canOpenURL: shared.canOpenURL,
-                                            openURL: shared.openURL,
-                                        },
-                                    }
-    );
+installAccountCommonModuleMocks({
+    icons: () => ({
+        Ionicons: 'Ionicons',
+    }),
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Linking: {
+                canOpenURL: shared.canOpenURL,
+                openURL: shared.openURL,
+            },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({ confirmResult: true }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock();
+    },
 });
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
@@ -65,16 +66,6 @@ vi.mock('@/sync/domains/state/storageStore', () => {
         getState: () => ({ profile: profileDefaults }),
     };
     return { storage, getStorage: () => storage };
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ confirmResult: true }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
 });
 
 vi.mock('@/auth/providers/registry', () => ({

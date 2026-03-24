@@ -68,6 +68,22 @@ installRootLayoutRouteCommonModuleMocks({
             },
         }).module;
     },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                storage: createStorageStoreMock({ settings: mockState.mockSettings as any }),
+                // This route only reads a small subset of the profile/local settings storage contract.
+                useProfile: () => ({ linkedProviders: [], username: 'u' } as any),
+                useAllSessions: () => [],
+                useFriendRequests: () => [],
+                useLocalSettings: () => ({ activityBadgesEnabled: false } as any),
+                useSettings: () => mockState.mockSettings as any,
+                useSetting: ((key: keyof typeof mockState.mockSettings) => mockState.mockSettings[key]) as any,
+            },
+        });
+    },
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -89,23 +105,6 @@ vi.mock('@/components/navigation/Header', () => ({
 vi.mock('@/hooks/server/useFriendsAllowUsernameSupport', () => ({
     useFriendsAllowUsernameSupport: () => false,
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            storage: createStorageStoreMock({ settings: mockState.mockSettings as any }),
-            // This route only reads a small subset of the profile/local settings storage contract.
-            useProfile: () => ({ linkedProviders: [], username: 'u' } as any),
-            useAllSessions: () => [],
-            useFriendRequests: () => [],
-            useLocalSettings: () => ({ activityBadgesEnabled: false } as any),
-            useSettings: () => mockState.mockSettings as any,
-            useSetting: ((key: keyof typeof mockState.mockSettings) => mockState.mockSettings[key]) as any,
-        },
-    });
-});
 
 vi.mock('@/sync/domains/state/storageStore', () => {
     const storage = createStorageStoreMock({

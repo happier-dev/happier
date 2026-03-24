@@ -5,6 +5,7 @@ import { buildExistingSessionAutomationAuthoringContext } from '@/components/ses
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import { renderScreen } from '@/dev/testkit';
 import { createCapturingComponent } from '@/dev/testkit/mocks/components';
+import { installAutomationComponentCommonModuleMocks } from '../automationComponentTestHelpers';
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,6 +15,35 @@ type CapturedItemProps = Readonly<{
 }>;
 
 const capturedItems: CapturedItemProps[] = [];
+
+installAutomationComponentCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => {
+                const labels: Record<string, string> = {
+                    'common.details': 'Details',
+                    'common.machine': 'Machine',
+                    'common.path': 'Path',
+                    'profiles.title': 'Profiles',
+                    'settingsSession.replayResume.summaryRunner.backendTitle': 'Backend',
+                    'terminal.encryption': 'Encryption',
+                    'terminal.endToEndEncrypted': 'End-to-end encrypted',
+                    'welcome.chooseEncryptionPlain': 'Continue without encryption',
+                    'settingsSession.transcript.title': 'Transcript',
+                    'sessionsList.storageDirectTab': 'Direct',
+                    'sessionsList.storagePersistedTab': 'Synced',
+                    'settingsActions.targets.mcp.title': 'MCP',
+                    'connectedServices.title': 'Connected services',
+                    'settingsProviders.resumeSupportTitle': 'Resume support',
+                    'settingsProviders.resumeSupportSupported': 'Supported',
+                    'settingsProviders.resumeSupportSupportedExperimental': 'Supported (experimental)',
+                };
+                return labels[key] ?? key;
+            },
+        });
+    },
+});
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
@@ -27,33 +57,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
         });
     }),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => {
-        const labels: Record<string, string> = {
-            'common.details': 'Details',
-            'common.machine': 'Machine',
-            'common.path': 'Path',
-            'profiles.title': 'Profiles',
-            'settingsSession.replayResume.summaryRunner.backendTitle': 'Backend',
-            'terminal.encryption': 'Encryption',
-            'terminal.endToEndEncrypted': 'End-to-end encrypted',
-            'welcome.chooseEncryptionPlain': 'Continue without encryption',
-            'settingsSession.transcript.title': 'Transcript',
-            'sessionsList.storageDirectTab': 'Direct',
-            'sessionsList.storagePersistedTab': 'Synced',
-            'settingsActions.targets.mcp.title': 'MCP',
-            'connectedServices.title': 'Connected services',
-            'settingsProviders.resumeSupportTitle': 'Resume support',
-            'settingsProviders.resumeSupportSupported': 'Supported',
-            'settingsProviders.resumeSupportSupportedExperimental': 'Supported (experimental)',
-        };
-        return labels[key] ?? key;
-    },
-    });
-});
 
 const BASE_DRAFT: SessionAuthoringDraft = {
     targetType: 'existing_session',

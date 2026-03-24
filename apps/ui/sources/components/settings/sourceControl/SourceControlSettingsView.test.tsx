@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,42 +40,44 @@ type FilesDiffPresentationStyleValue = 'split' | 'unified' | undefined;
 
 let filesDiffPresentationStyleValue: FilesDiffPresentationStyleValue = 'split';
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSettingMutable: (name: string) => {
-                if (name === 'scmCommitStrategy') return ['atomic', setScmCommitStrategy];
-                if (name === 'scmGitRepoPreferredBackend') return ['git', setScmGitRepoPreferredBackend];
-                if (name === 'scmRemoteConfirmPolicy') return ['always', setScmRemoteConfirmPolicy];
-                if (name === 'scmPushRejectPolicy') return ['prompt_fetch', setScmPushRejectPolicy];
-                if (name === 'scmDefaultDiffModeByBackend') return [{}, setScmDefaultDiffModeByBackend];
-                if (name === 'filesDiffSyntaxHighlightingMode') return ['off', setFilesDiffSyntaxHighlightingMode];
-                if (name === 'filesDiffRendererMode') return ['pierre', setFilesDiffRendererMode];
-                if (name === 'filesDiffPresentationStyle') return [filesDiffPresentationStyleValue, setFilesDiffPresentationStyle];
-                if (name === 'filesChangedFilesRowDensity') return ['comfortable', setFilesChangedFilesRowDensity];
-                if (name === 'scmCommitMessageGeneratorEnabled') return [true, setScmCommitMessageGeneratorEnabled];
-                if (name === 'scmCommitMessageGeneratorBackendId') return [DEFAULT_AGENT_ID, setScmCommitMessageGeneratorBackendId];
-                if (name === 'scmCommitMessageGeneratorInstructions') return ['', setScmCommitMessageGeneratorInstructions];
-                return [null, vi.fn()];
+installSettingsViewCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: (name: string) => {
+                    if (name === 'scmCommitStrategy') return ['atomic', setScmCommitStrategy];
+                    if (name === 'scmGitRepoPreferredBackend') return ['git', setScmGitRepoPreferredBackend];
+                    if (name === 'scmRemoteConfirmPolicy') return ['always', setScmRemoteConfirmPolicy];
+                    if (name === 'scmPushRejectPolicy') return ['prompt_fetch', setScmPushRejectPolicy];
+                    if (name === 'scmDefaultDiffModeByBackend') return [{}, setScmDefaultDiffModeByBackend];
+                    if (name === 'filesDiffSyntaxHighlightingMode') return ['off', setFilesDiffSyntaxHighlightingMode];
+                    if (name === 'filesDiffRendererMode') return ['pierre', setFilesDiffRendererMode];
+                    if (name === 'filesDiffPresentationStyle') return [filesDiffPresentationStyleValue, setFilesDiffPresentationStyle];
+                    if (name === 'filesChangedFilesRowDensity') return ['comfortable', setFilesChangedFilesRowDensity];
+                    if (name === 'scmCommitMessageGeneratorEnabled') return [true, setScmCommitMessageGeneratorEnabled];
+                    if (name === 'scmCommitMessageGeneratorBackendId') return [DEFAULT_AGENT_ID, setScmCommitMessageGeneratorBackendId];
+                    if (name === 'scmCommitMessageGeneratorInstructions') return ['', setScmCommitMessageGeneratorInstructions];
+                    return [null, vi.fn()];
+                },
             },
-        },
-    });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key, params) => {
+                if (key === 'settingsSourceControl.backends.defaultDiffItemTitle') {
+                    return `settingsSourceControl.backends.defaultDiffItemTitle:${String(params?.backendTitle ?? '')}:${String(params?.diffModeTitle ?? '')}`;
+                }
+                if (key === 'settingsSourceControl.commitMessageGenerator.backendItemTitle') {
+                    return `settingsSourceControl.commitMessageGenerator.backendItemTitle:${String(params?.backendId ?? '')}`;
+                }
+                return key;
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -88,21 +91,6 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key, params) => {
-            if (key === 'settingsSourceControl.backends.defaultDiffItemTitle') {
-                return `settingsSourceControl.backends.defaultDiffItemTitle:${String(params?.backendTitle ?? '')}:${String(params?.diffModeTitle ?? '')}`;
-            }
-            if (key === 'settingsSourceControl.commitMessageGenerator.backendItemTitle') {
-                return `settingsSourceControl.commitMessageGenerator.backendItemTitle:${String(params?.backendId ?? '')}`;
-            }
-            return key;
-        },
-    });
-});
 
 describe('SourceControlSettingsView', () => {
     it('renders commit strategy options and updates setting when selected', async () => {

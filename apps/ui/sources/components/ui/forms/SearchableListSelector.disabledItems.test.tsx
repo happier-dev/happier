@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { SearchableListSelector } from './SearchableListSelector';
+import { installFormsCommonModuleMocks } from './formsTestHelpers';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 
 
@@ -17,10 +17,10 @@ type RenderedAccessoryTree = {
     unmount(): void;
 };
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installFormsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             Platform: {
                 OS: 'web',
                 select: (spec: { web?: unknown; ios?: unknown; default?: unknown }) =>
@@ -32,8 +32,29 @@ vi.mock('react-native', async () => {
             View: 'View',
             Text: 'Text',
             Pressable: 'Pressable',
-        }
-    );
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                dark: false,
+                colors: {
+                    surface: '#fff',
+                    divider: '#ddd',
+                    shadow: { color: '#000', opacity: 0.2 },
+                    textSecondary: '#666',
+                    textLink: '#00f',
+                    button: { primary: { background: '#00f' } },
+                },
+            },
+            rt: { themeName: 'light' },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -41,32 +62,9 @@ vi.mock('@expo/vector-icons', () => ({
         mockEnv.iconsRenderAsText ? React.createElement(React.Fragment, null, '.') : React.createElement('Ionicons', props, null),
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            dark: false,
-            colors: {
-                surface: '#fff',
-                divider: '#ddd',
-                shadow: { color: '#000', opacity: 0.2 },
-                textSecondary: '#666',
-                textLink: '#00f',
-                button: { primary: { background: '#00f' } },
-            },
-        },
-        rt: { themeName: 'light' },
-    });
-});
-
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
@@ -94,6 +92,7 @@ vi.mock('@/components/ui/forms/SearchHeader', () => ({
 
 describe('SearchableListSelector (disabled items)', () => {
     it('marks disabled rows and prevents selection when pressed', async () => {
+        const { SearchableListSelector } = await import('./SearchableListSelector');
         const onSelect = vi.fn();
 
         const items = [
@@ -145,6 +144,7 @@ describe('SearchableListSelector (disabled items)', () => {
     });
 
     it('applies test ids for items when configured', async () => {
+        const { SearchableListSelector } = await import('./SearchableListSelector');
         const onSelect = vi.fn();
 
         const items = [
@@ -183,6 +183,7 @@ describe('SearchableListSelector (disabled items)', () => {
     });
 
     it('does not emit raw text nodes inside row accessories when icons render as text on web', async () => {
+        const { SearchableListSelector } = await import('./SearchableListSelector');
         const items = [{ id: 'a', title: 'A' }] as const;
 
         const config: any = {

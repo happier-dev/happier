@@ -127,10 +127,8 @@ describe('AcpHistoryImportView', () => {
         expect(importButton).toBeTruthy();
         expect(skipButton).toBeTruthy();
 
-        await act(async () => {
-            await importButton!.props.onPress();
-            await pressTestInstanceAsync(skipButton!);
-        });
+        await pressTestInstanceAsync(importButton!);
+        await pressTestInstanceAsync(skipButton!);
 
         expect(sessionAllow).toHaveBeenCalledTimes(0);
         expect(sessionDeny).toHaveBeenCalledTimes(0);

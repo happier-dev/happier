@@ -6,13 +6,14 @@ const FORBIDDEN_SESSION_ATTACHMENT_TRANSFER_TOKENS = [
     'apiSocket',
     'uploadBulkPayloadFromFile',
     'resolveBulkTransferPolicyAndRoute',
-    'daemon.sessionAttachments.upload.',
+    'daemon.bulkTransfer.upload.',
     // Attachment feature code must not own fallback routing.
     'sessionMachineRpcFallback',
+    'bulkTransferPipeline/daemonSessionAttachments',
 ] as const;
 
 const REQUIRED_SESSION_ATTACHMENT_TRANSFER_TOKENS = [
-    'bulkTransferPipeline/daemonSessionAttachments',
+    "@/sync/domains/transfers/runtime/bulkTransferPipeline",
 ] as const;
 
 describe('bulkTransferPipeline (architecture)', () => {

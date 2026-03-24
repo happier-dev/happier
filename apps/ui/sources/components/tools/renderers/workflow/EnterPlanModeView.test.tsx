@@ -55,6 +55,6 @@ describe('EnterPlanModeView', () => {
 
     it('renders nothing when detailLevel=title', async () => {
         const tree = await renderView('title');
-        expect(tree.root.findAllByType('Text' as any).length).toBe(0);
+        expect(tree.findAllByType('Text' as any).length).toBe(0);
     });
 });

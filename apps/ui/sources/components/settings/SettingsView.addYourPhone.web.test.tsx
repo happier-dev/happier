@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { pressTestInstance, renderScreen } from '@/dev/testkit';
+import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { createPassThroughComponent } from '@/dev/testkit/mocks/components';
+import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -8,49 +10,87 @@ import { pressTestInstance, renderScreen } from '@/dev/testkit';
 const routerPushSpy = vi.fn();
 let windowDimensions: { width: number; height: number } = { width: 1600, height: 900 };
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Pressable: 'Pressable',
-                                    Dimensions: {
-                                        get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-                                    },
-                                    useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-                                    Platform: {
-                                        OS: 'web',
-                                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-                                    },
-                                    Linking: {
-                                        canOpenURL: async () => false,
-                                        openURL: async () => {},
-                                    },
-                                    ActivityIndicator: 'ActivityIndicator',
-                                }
-    );
-});
-
 vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
+installSettingsViewCommonModuleMocks({
+    icons: () => ({
+        Ionicons: 'Ionicons',
+    }),
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(),
+                confirm: vi.fn(async () => false),
+                prompt: vi.fn(async () => null),
+            },
+        }).module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Pressable: 'Pressable',
+            Dimensions: {
+                get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+            Platform: {
+                OS: 'web',
+                select: (options: { web?: unknown; default?: unknown; ios?: unknown; android?: unknown }) =>
+                    options.web ?? options.default ?? options.ios ?? options.android,
+            },
+            Linking: {
+                canOpenURL: async () => false,
+                openURL: async () => {},
+            },
+            ActivityIndicator: 'ActivityIndicator',
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: routerPushSpy },
+        });
+        return routerMock.module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useEntitlement: () => false,
+            useLocalSettingMutable: () => [false, vi.fn()],
+            useSetting: () => null,
+            useAllMachines: () => [],
+            useMachineListByServerId: () => ({}),
+            useMachineListStatusByServerId: () => ({}),
+            useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                dark: false,
+                colors: {
+                    accent: { blue: 'blue', indigo: 'indigo', orange: 'orange' },
+                    status: { connected: 'green', disconnected: 'red' },
+                    text: 'black',
+                    textSecondary: 'gray',
+                    surface: 'white',
+                    divider: '#ddd',
+                    groupped: { background: 'white', sectionTitle: 'gray' },
+                    header: { background: 'white', tint: 'black' },
+                },
+            },
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: (cb: () => void) => cb(),
@@ -68,15 +108,15 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
+    ItemList: createPassThroughComponent('ItemList'),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
+    ItemGroup: createPassThroughComponent('ItemGroup'),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
+    Item: createPassThroughComponent('Item'),
 }));
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
@@ -86,19 +126,6 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, credentials: { token: 't', secret: 's' } }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useEntitlement: () => false,
-    useLocalSettingMutable: () => [false, vi.fn()],
-    useSetting: () => null,
-    useAllMachines: () => [],
-    useMachineListByServerId: () => ({}),
-    useMachineListStatusByServerId: () => ({}),
-    useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
-});
-});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -113,39 +140,9 @@ vi.mock('@/track', () => ({
     trackWhatsNewClicked: vi.fn(),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => false),
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
-
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            dark: false,
-            colors: {
-                accent: { blue: 'blue', indigo: 'indigo', orange: 'orange' },
-                status: { connected: 'green', disconnected: 'red' },
-                text: 'black',
-                textSecondary: 'gray',
-                surface: 'white',
-                divider: '#ddd',
-                groupped: { background: 'white', sectionTitle: 'gray' },
-                header: { background: 'white', tint: 'black' },
-            },
-        },
-    });
-});
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1024 },
@@ -160,6 +157,17 @@ vi.mock('@/sync/api/account/apiVendorTokens', () => ({
 }));
 
 vi.mock('@/sync/domains/profiles/profile', () => ({
+    profileDefaults: {
+        id: '',
+        timestamp: 0,
+        firstName: null,
+        lastName: null,
+        username: null,
+        avatar: null,
+        linkedProviders: [],
+        connectedServices: [],
+        connectedServicesV2: [],
+    },
     getDisplayName: () => null,
     getAvatarUrl: () => null,
     getBio: () => null,
@@ -168,11 +176,6 @@ vi.mock('@/sync/domains/profiles/profile', () => ({
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
@@ -229,24 +232,16 @@ describe('SettingsView (web)', () => {
         vi.unstubAllGlobals();
     });
 
-    function findAddYourPhoneItems(screen: Awaited<ReturnType<typeof renderScreen>>) {
-        return screen.findAllByType('Item').filter(
-            (node: any) => node?.props?.title === 'settings.addYourPhone' && typeof node?.props?.onPress === 'function',
-        );
-    }
-
     it('renders an “Add your phone” shortcut that routes to /settings/add-phone', async () => {
         windowDimensions = { width: 1600, height: 900 };
         vi.resetModules();
         routerPushSpy.mockClear();
         const { SettingsView } = await import('./SettingsView');
 
-        const screen = await renderScreen(<SettingsView />);
+        const screen = await renderSettingsView(<SettingsView />);
 
-        const items = findAddYourPhoneItems(screen);
-        expect(items.length).toBeGreaterThan(0);
-
-        pressTestInstance(items[0], 'settings.addYourPhone');
+        expect(screen.findRow('settings-add-your-phone-shortcut')).toBeTruthy();
+        screen.pressRow('settings-add-your-phone-shortcut');
         expect(routerPushSpy).toHaveBeenCalledTimes(1);
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/add-phone');
     });
@@ -259,10 +254,9 @@ describe('SettingsView (web)', () => {
 
         const { SettingsView } = await import('./SettingsView');
 
-        const screen = await renderScreen(<SettingsView />);
+        const screen = await renderSettingsView(<SettingsView />);
 
-        const items = findAddYourPhoneItems(screen);
-        expect(items).toHaveLength(0);
+        expect(screen.findRow('settings-add-your-phone-shortcut')).toBeNull();
     });
 
     it('shows “Add your phone” on desktop web even when the viewport is narrow', async () => {
@@ -274,9 +268,8 @@ describe('SettingsView (web)', () => {
 
         const { SettingsView } = await import('./SettingsView');
 
-        const screen = await renderScreen(<SettingsView />);
+        const screen = await renderSettingsView(<SettingsView />);
 
-        const items = findAddYourPhoneItems(screen);
-        expect(items.length).toBeGreaterThan(0);
+        expect(screen.findRow('settings-add-your-phone-shortcut')).toBeTruthy();
     });
 });

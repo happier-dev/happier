@@ -6,19 +6,22 @@ import { REPOSITORY_TREE_AUTO_EXPAND_DELAY_MS } from '@/components/sessions/file
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
 import { renderScreen } from '@/dev/testkit';
+import { installRepositoryTreeCommonModuleMocks } from './repositoryTreeTestHelpers';
 
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setExpandedPathsSpy = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: createStorageStoreMock({
-            setSessionRepositoryTreeExpandedPaths: setExpandedPathsSpy,
-        }),
-});
+installRepositoryTreeCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: createStorageStoreMock({
+                setSessionRepositoryTreeExpandedPaths: setExpandedPathsSpy,
+            }),
+        });
+    },
 });
 
 describe('useRepositoryTreeWebDropState', () => {

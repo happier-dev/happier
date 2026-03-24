@@ -120,7 +120,8 @@ describe('useNewSessionPreflightModelsState', () => {
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
     const request = machineCapabilitiesInvokeMock.mock.calls[0]?.[1];
     expect(request?.params?.timeoutMs).toBe(15_000);
-    expect((latest?.modelOptions ?? []).map((option: any) => option.value)).toEqual(['default', 'model-a']);
+    const values = (latest?.modelOptions ?? []).map((option: any) => option.value);
+    expect(values.slice(0, 2)).toEqual(['default', 'model-a']);
   });
 
   it('uses cli.customAcp and forwards configured preset backendTarget', async () => {

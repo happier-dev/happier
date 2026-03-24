@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { installToolShellPresentationCommonModuleMocks } from './toolShellPresentationTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,17 +12,28 @@ let wrapLinesSetting: boolean = true;
 let inlineVirtualizationThresholdSetting: number | undefined = undefined;
 let inlineVirtualizationByteThresholdSetting: number | undefined = undefined;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installToolShellPresentationCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             Platform: {
                 OS: 'web',
                 select: ((value: any) => value?.web ?? value?.default ?? null),
             },
             useWindowDimensions: (() => ({ width: 1024, height: 768, scale: 1, fontScale: 1 })),
-        }
-    );
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'wrapLinesInDiffs') return wrapLinesSetting;
+                if (key === 'filesDiffInlineVirtualizationLineThreshold') return inlineVirtualizationThresholdSetting;
+                if (key === 'filesDiffInlineVirtualizationByteThreshold') return inlineVirtualizationByteThresholdSetting;
+                return undefined;
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
@@ -30,18 +42,6 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
         return React.createElement('DiffViewer', props);
     },
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'wrapLinesInDiffs') return wrapLinesSetting;
-        if (key === 'filesDiffInlineVirtualizationLineThreshold') return inlineVirtualizationThresholdSetting;
-        if (key === 'filesDiffInlineVirtualizationByteThreshold') return inlineVirtualizationByteThresholdSetting;
-        return undefined;
-    },
-});
-});
 
 const toolDiffViewModule = import('./ToolDiffView');
 

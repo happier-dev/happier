@@ -1,18 +1,13 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { ScrollView } from 'react-native';
 import { renderScreen } from '@/dev/testkit';
+import { installRouteRootCommonModuleMocks } from './routeRootTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
+installRouteRootCommonModuleMocks();
 
 vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(async () => {}),
@@ -73,6 +68,7 @@ describe('AppCrashRecoveryBoundary', () => {
         </AppCrashRecoveryBoundary>);
     consoleError.mockRestore();
 
+    const { ScrollView } = await import('react-native');
     const scrollView = screen.findByType(ScrollView);
     expect(scrollView.props.style).toEqual(expect.objectContaining({ flex: 1 }));
     expect(scrollView.props.contentContainerStyle).toEqual(expect.objectContaining({ flexGrow: 1 }));

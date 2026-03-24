@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { deriveAccountMachineKeyFromRecoverySecret, openTerminalProvisioningV2Payload } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -23,27 +24,40 @@ let contentPrivateKey = new Uint8Array([7, 7, 7]);
 let contentPublicKey = new Uint8Array([9, 9, 9]);
 let activeServerUrl = 'https://api.happier.dev';
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: {
-                        OS: 'ios',
-                    },
-                    Dimensions: {
-                        get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-                    },
-                    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-                }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { replace: routerReplaceSpy },
-    });
-    return expoRouterMock.module;
+installSessionHooksCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+            Dimensions: {
+                get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { replace: routerReplaceSpy },
+        });
+        return expoRouterMock.module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+                alertAsync: modalAlertAsyncSpy,
+                confirm: modalConfirmSpy,
+            },
+        }).module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
 });
 
 vi.mock('expo-camera', () => ({
@@ -65,22 +79,6 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     },
     isLegacyAuthCredentials: (creds: { secret?: string } | null) => typeof creds?.secret === 'string' && creds.secret.length > 0,
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-            alertAsync: modalAlertAsyncSpy,
-            confirm: modalConfirmSpy,
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,

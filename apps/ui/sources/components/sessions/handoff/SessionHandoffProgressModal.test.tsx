@@ -2,27 +2,11 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
+installSessionHandoffCommonModuleMocks();
 
 describe('SessionHandoffProgressModal', () => {
     it('shows a spinner while the modal is waiting for the first status update', async () => {
@@ -35,6 +19,34 @@ describe('SessionHandoffProgressModal', () => {
         expect(screen.getTextContent()).toContain('sessionHandoff.progress.title');
         expect(screen.getTextContent()).toContain('sessionHandoff.progress.message');
         expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+    });
+
+    it('renders a full checkpoint timeline that matches the protocol checkpoint enum', async () => {
+        const { SessionHandoffProgressCheckpointSchema } = await import('@happier-dev/protocol');
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                status={{
+                    handoffId: 'handoff_checkpoint_parity_1',
+                    status: 'pending',
+                    phase: 'preparing',
+                    progress: {
+                        updatedAtMs: 123,
+                        checkpoint: 'scan_source',
+                        planned: {},
+                        transferred: {},
+                        resumable: true,
+                    },
+                    recoveryActions: [],
+                }}
+            />,
+        );
+
+        for (const checkpoint of SessionHandoffProgressCheckpointSchema.options) {
+            expect(screen.findByTestId(`session-handoff-progress-checkpoint-${checkpoint}`)).toBeTruthy();
+        }
     });
 
     it('renders workspace preflight summary and progress details from handoff status', async () => {
@@ -169,9 +181,13 @@ describe('SessionHandoffProgressModal', () => {
                     phase: 'resuming',
                     progress: {
                         updatedAtMs: 123,
-                        checkpoint: 'stage_target',
-                        planned: {},
-                        transferred: {},
+                        checkpoint: 'transfer_blobs',
+                        planned: {
+                            totalBytes: 1024,
+                        },
+                        transferred: {
+                            bytes: 1024,
+                        },
                         current: {
                             phaseDetail: 'daemon_restart_detected',
                         },
@@ -182,8 +198,43 @@ describe('SessionHandoffProgressModal', () => {
             />,
         );
 
+        expect(screen.getTextContent()).toContain('sessionHandoff.recovery.title');
+        expect(screen.getTextContent()).toContain('sessionHandoff.recovery.messageAfterSourceStop');
         expect(screen.getTextContent()).toContain('daemon_restart_detected');
+        expect(screen.findByTestId('session-handoff-progress-bar')).toBeNull();
+        expect(screen.findByTestId('session-handoff-progress-percent')).toBeNull();
         expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
+    });
+
+    it('does not render a percent/progress bar when the checkpoint is import_session (even if byte counters are present)', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                status={{
+                    handoffId: 'handoff_import_session_1',
+                    status: 'pending',
+                    phase: 'staging_target',
+                    progress: {
+                        updatedAtMs: 123,
+                        checkpoint: 'import_session',
+                        planned: {
+                            totalBytes: 1024,
+                        },
+                        transferred: {
+                            bytes: 1024,
+                        },
+                        resumable: true,
+                    },
+                    recoveryActions: [],
+                }}
+            />,
+        );
+
+        expect(screen.findByTestId('session-handoff-progress-percent')).toBeNull();
+        expect(screen.findByTestId('session-handoff-progress-bar')).toBeNull();
+        expect(screen.getTextContent()).toContain('sessionHandoff.progress.timeline.importSession');
     });
 
     it('renders the current checkpoint label when no current path and no progress fraction are available', async () => {
@@ -274,6 +325,40 @@ describe('SessionHandoffProgressModal', () => {
         expect(currentCheckpointRow?.props.accessibilityState?.selected).toBe(true);
     });
 
+    it('anchors ready_for_cutover to the cutover checkpoint instead of an active transfer checkpoint', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                status={{
+                    handoffId: 'handoff_ready_for_cutover_1',
+                    status: 'ready_for_cutover',
+                    phase: 'cutover',
+                    progress: {
+                        updatedAtMs: 123,
+                        checkpoint: 'transfer_blobs',
+                        planned: {
+                            totalBytes: 1024,
+                        },
+                        transferred: {
+                            bytes: 512,
+                        },
+                        resumable: true,
+                    },
+                    recoveryActions: [],
+                }}
+            />,
+        );
+
+        expect(screen.findByTestId('session-handoff-progress-bar')).toBeNull();
+        expect(screen.findByTestId('session-handoff-progress-percent')).toBeNull();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-stage_target')).toBeTruthy();
+        const stageTargetRow = screen.findByTestId('session-handoff-progress-checkpoint-stage_target');
+        expect(stageTargetRow?.props.accessibilityState?.selected).toBe(true);
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs')).toBeNull();
+    });
+
     it('does not render summary chips when workspace preflight summary is missing', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
 
@@ -310,4 +395,5 @@ describe('SessionHandoffProgressModal', () => {
         expect(textContent).not.toContain('-3');
         expect(textContent).not.toContain('2.0 KB');
     });
+
 });

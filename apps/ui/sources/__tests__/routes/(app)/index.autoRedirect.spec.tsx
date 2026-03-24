@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import {
     flushHookEffects,
     standardCleanup,
@@ -232,7 +233,6 @@ describe('/ (welcome) auto redirect', () => {
 
     it('retries one transient server features failure before surfacing unavailable state', async () => {
         vi.resetModules();
-        vi.useFakeTimers();
         process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = '1';
 
         getServerFeaturesSnapshotMock
@@ -253,13 +253,14 @@ describe('/ (welcome) auto redirect', () => {
             await flushHookEffects();
             expect(shared.openURL).not.toHaveBeenCalled();
 
-            await flushHookEffects({ runOnlyPendingTimers: true });
+            await act(async () => {
+                await new Promise((resolve) => setTimeout(resolve, 25));
+            });
+            await flushHookEffects();
 
             expect(shared.openURL).toHaveBeenCalledWith('https://server.test/v1/auth/mtls/start?returnTo=happier%3A%2F%2F%2Fmtls');
         } finally {
             delete process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS;
-            vi.clearAllTimers();
-            vi.useRealTimers();
         }
     }, testTimeoutMs);
 

@@ -2,32 +2,13 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installActivityNotificationRuntimeCommonModuleMocks } from './activityNotificationRuntimeTestHelpers';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => {
-        switch (key) {
-            case 'notifications.activity.defaultSessionTitle':
-                return 'Session';
-            case 'notifications.activity.readyFallbackBody':
-                return 'Turn finished. Open the session to continue.';
-            case 'notifications.activity.permissionFallbackBody':
-                return 'Approval required.';
-            case 'notifications.activity.userActionFallbackBody':
-                return 'This session needs your input.';
-            default:
-                return key;
-        }
-    },
-    });
-});
 
 const reactNativeRuntime = vi.hoisted(() => ({
     platformOs: 'ios' as 'web' | 'ios' | 'android',
@@ -56,30 +37,48 @@ let sessionsByIdValue: Record<string, unknown> = {
 const sendExpoLocalNotification = vi.hoisted(() => vi.fn(async () => 'notif-1'));
 const sendTauriLocalNotification = vi.hoisted(() => vi.fn(async () => true));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: {
-                        get OS() {
-                            return reactNativeRuntime.platformOs;
-                        },
-                    },
-                }
-    );
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSettings: () => localSettingsValue,
-    storage: {
-        getState: () => ({
-            sessions: sessionsByIdValue,
-            localSettings: localSettingsValue,
-        }),
+installActivityNotificationRuntimeCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                get OS() {
+                    return reactNativeRuntime.platformOs;
+                },
+            },
+        });
     },
-});
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => {
+                switch (key) {
+                    case 'notifications.activity.defaultSessionTitle':
+                        return 'Session';
+                    case 'notifications.activity.readyFallbackBody':
+                        return 'Turn finished. Open the session to continue.';
+                    case 'notifications.activity.permissionFallbackBody':
+                        return 'Approval required.';
+                    case 'notifications.activity.userActionFallbackBody':
+                        return 'This session needs your input.';
+                    default:
+                        return key;
+                }
+            },
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSettings: () => localSettingsValue,
+            storage: {
+                getState: () => ({
+                    sessions: sessionsByIdValue,
+                    localSettings: localSettingsValue,
+                }),
+            },
+        });
+    },
 });
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({

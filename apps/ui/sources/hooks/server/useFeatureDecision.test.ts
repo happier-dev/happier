@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { renderHook } from '@/dev/testkit';
 import { buildServerFeaturesResponse, stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
 import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
 import { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -80,6 +81,29 @@ describe('useFeatureDecision', () => {
         expect(seen.at(-1)?.state).toBe('enabled');
         expect(seen.at(-1)?.blockedBy).toBeNull();
     }, 30_000);
+
+    it('keeps hook order stable when the scope changes between renders', async () => {
+        const { useFeatureDecision } = await import('./useFeatureDecision');
+
+        getStorage().getState().applySettingsLocal({
+            experiments: true,
+            featureToggles: { 'execution.runs': true },
+        });
+
+        const hook = await renderHook(
+            ({ scope }: Readonly<{ scope?: { scopeKind?: 'main_selection' } | { scopeKind: 'runtime' } }>) =>
+                useFeatureDecision('execution.runs', scope),
+            {
+                initialProps: { scope: { scopeKind: 'runtime' } },
+            },
+        );
+
+        expect(hook.getCurrent()?.state).toBe('enabled');
+
+        await expect(hook.rerender({ scope: { scopeKind: 'main_selection' } })).resolves.toMatchObject({
+            state: 'enabled',
+        });
+    });
 
 	    it('returns unsupported when the features endpoint is missing', async () => {
 	        vi.stubGlobal(

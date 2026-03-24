@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { findTestInstanceByTypeWithProps } from '@/dev/testkit/render/renderScreen';
+import type { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import type { ResumeSessionResult } from '@/sync/ops/sessions';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
@@ -32,10 +33,9 @@ const canResumeSessionWithOptionsSpy = vi.hoisted(() =>
     vi.fn((_metadata: unknown, options: { machineId?: string | null } | null | undefined) => options?.machineId === 'm-target'),
 );
 const resumeCapabilityMachineIds = vi.hoisted(() => [] as string[]);
-const modalAlertSpy = vi.hoisted(() => vi.fn());
-const modalConfirmSpy = vi.hoisted(() =>
-    vi.fn(async (_title?: string, _message?: string, _options?: Record<string, unknown>) => true),
-);
+const modalMockState = vi.hoisted(() => ({
+    current: null as ReturnType<typeof createModalModuleMock> | null,
+}));
 const settingsState = vi.hoisted(() => ({
     current: { experiments: true, featureToggles: {}, codexBackendMode: 'acp' } as Record<string, unknown>,
 }));
@@ -169,15 +169,9 @@ installSessionShellCommonModuleMocks({
     }),
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        const modalMock = createModalModuleMock();
-        return {
-            Modal: {
-                ...modalMock.module.Modal,
-                alert: (...args: any[]) => modalAlertSpy(...args),
-                confirm: (title?: string, message?: string, options?: Record<string, unknown>) =>
-                    modalConfirmSpy(title, message, options),
-            },
-        };
+        const modalMock = createModalModuleMock({ confirmResult: true });
+        modalMockState.current = modalMock;
+        return modalMock.module;
     },
     storage: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
@@ -415,18 +409,6 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 vi.mock('@/utils/timing/runAfterInteractionsWithFallback', () => ({
     runAfterInteractionsWithFallback: () => () => {},
 }));
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    return {
-        Modal: {
-            ...modalMock.module.Modal,
-            alert: (...args: any[]) => modalAlertSpy(...args),
-            confirm: (title?: string, message?: string, options?: Record<string, unknown>) =>
-                modalConfirmSpy(title, message, options),
-        },
-    };
-});
 describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
     const AppPaneProviderWrapper = ({ children }: { children?: React.ReactNode }) => (
         <AppPaneProvider>{children ?? null}</AppPaneProvider>
@@ -467,9 +449,9 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             type: 'success',
             sessionId: 's2',
         });
-        modalAlertSpy.mockReset();
-        modalConfirmSpy.mockReset();
-        modalConfirmSpy.mockResolvedValue(true);
+        modalMockState.current?.spies.alert.mockReset();
+        modalMockState.current?.spies.confirm.mockReset();
+        modalMockState.current?.spies.confirm.mockResolvedValue(true);
         resolveSessionComposerSendMock.mockReset();
         pendingFireAndForget.length = 0;
     });
@@ -511,7 +493,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
                 directory: '/tmp/target',
             }),
         );
-        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
         expect(findAgentInput(screen).props.value).toBe('');
         expect(screen.findByTestId('session-pendingQueue-resumeFailed')).toBeTruthy();
 
@@ -547,14 +529,14 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
         expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
         expect(resumeCapabilityMachineIds).toContain('m-target');
-        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
 
         await act(async () => {
             await screen.pressByTestIdAsync('session-pendingQueue-resumeFailed-retry');
         });
 
         expect(resumeSessionSpy).toHaveBeenCalledTimes(2);
-        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
         expect(screen.findAllByTestId('session-pendingQueue-resumeFailed').length).toBe(0);
 
         await screen.unmount();
@@ -579,13 +561,13 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
         expect(resumeCapabilityMachineIds).toContain('m-target');
 
-        modalAlertSpy.mockClear();
+        modalMockState.current?.spies.alert.mockClear();
 
         await act(async () => {
             await screen.pressByTestIdAsync('session-pendingQueue-resumeFailed-retry');
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'Daemon RPC is not available');
+        expect(modalMockState.current?.spies.alert).toHaveBeenCalledWith('common.error', 'Daemon RPC is not available');
 
         await screen.unmount();
     });
@@ -606,8 +588,8 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             type: 'success',
             sessionId: 's-replayed',
         });
-        modalConfirmSpy.mockResolvedValue(true);
-        modalAlertSpy.mockClear();
+        modalMockState.current?.spies.confirm.mockResolvedValue(true);
+        modalMockState.current?.spies.alert.mockClear();
 
         const screen = await renderSessionView();
 
@@ -616,7 +598,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         });
 
         expect(resumeCapabilityMachineIds).toContain('m-target');
-        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
+        expect(modalMockState.current?.spies.confirm).toHaveBeenCalledTimes(1);
         expect(continueSessionWithReplaySpy).toHaveBeenCalledTimes(1);
         expect(continueSessionWithReplaySpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -624,7 +606,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
                 directory: '/tmp/target',
             }),
         );
-        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
 
         await screen.unmount();
     });

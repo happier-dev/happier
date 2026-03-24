@@ -6,6 +6,7 @@ import {
     renderSettingsView,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,38 +55,41 @@ function createSettingsViewStorageOverrides() {
     };
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        ActivityIndicator: 'ActivityIndicator',
-        Dimensions: {
-            get: () => settingsViewWebDimensions,
-        },
-        useWindowDimensions: () => settingsViewWebDimensions,
-        Linking: { canOpenURL: shared.linkingCanOpenURLSpy, openURL: shared.linkingOpenURLSpy },
-    });
+installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            ActivityIndicator: 'ActivityIndicator',
+            Dimensions: {
+                get: () => settingsViewWebDimensions,
+            },
+            useWindowDimensions: () => settingsViewWebDimensions,
+            Linking: { canOpenURL: shared.linkingCanOpenURLSpy, openURL: shared.linkingOpenURLSpy },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: {
+                push: shared.routerPushSpy,
+                back: shared.routerBackSpy,
+                replace: shared.routerReplaceSpy,
+                setParams: vi.fn(),
+            },
+        }).module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: createSettingsViewStorageOverrides(),
+        });
+    },
 });
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'StyledText',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        router: {
-            push: shared.routerPushSpy,
-            back: shared.routerBackSpy,
-            replace: shared.routerReplaceSpy,
-            setParams: vi.fn(),
-        },
-    }).module;
-});
 
 vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
     navigateWithBlurOnWeb: (action: () => void) => shared.navigateWithBlurOnWebSpy(action),
@@ -155,11 +159,6 @@ vi.mock('@/track', () => ({
     trackWhatsNewClicked: vi.fn(),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
 }));
@@ -193,11 +192,6 @@ vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
 
 vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
     MachineCliGlyphs: 'MachineCliGlyphs',

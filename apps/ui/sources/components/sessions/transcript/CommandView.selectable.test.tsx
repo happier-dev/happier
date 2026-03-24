@@ -1,48 +1,16 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { renderScreen } from '@/dev/testkit';
 import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-installTranscriptCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: 'View',
-            Platform: {
-                OS: 'ios',
-                select: (values: any) => values?.ios ?? values?.default,
-            },
-        });
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    success: '#0a0',
-                    text: '#111',
-                    textSecondary: '#555',
-                    warning: '#bb0',
-                    warningCritical: '#a00',
-                    textDestructive: '#a00',
-                },
-            },
-        });
-    },
-});
+installTranscriptCommonModuleMocks();
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-  Text: (props: any) => React.createElement('Text', props, props.children),
-}));
+vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text']));
 
 describe('CommandView (selection)', () => {
     afterEach(resetTranscriptCommonModuleMockState);

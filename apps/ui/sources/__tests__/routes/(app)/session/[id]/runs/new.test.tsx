@@ -9,6 +9,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSessionRouteCommonModuleMocks } from '../sessionRouteTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -127,72 +128,78 @@ function translateText(key: string, params?: Record<string, unknown>) {
     return key;
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                        View: 'View',
-                                                        Text: 'Text',
-                                                        Pressable: 'Pressable',
-                                                        ActivityIndicator: 'ActivityIndicator',
-                                                        TextInput: 'TextInput',
-                                                        AppState: { currentState: 'active', addEventListener: vi.fn(), removeEventListener: vi.fn() },
-                                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#111',
-                text: '#eee',
-                textSecondary: '#aaa',
-                divider: '#333',
+installSessionRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ActivityIndicator: 'ActivityIndicator',
+            TextInput: 'TextInput',
+            AppState: { currentState: 'active', addEventListener: vi.fn(), removeEventListener: vi.fn() },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#111',
+                    text: '#eee',
+                    textSecondary: '#aaa',
+                    divider: '#333',
+                },
             },
-        },
-    });
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            navigation: {
+                canGoBack: navigationCanGoBackSpy,
+            },
+            router: {
+                push: routerPushSpy,
+                back: vi.fn(),
+                replace: routerReplaceSpy,
+                setParams: vi.fn(),
+            },
+        });
+        return {
+            ...routerMock.module,
+            useLocalSearchParams: () => localSearchParamsMock,
+            Stack: { Screen: (props: any) => stackScreenSpy(props) },
+        };
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: translateText });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                show: vi.fn(),
+            },
+        }).module;
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            importOriginal,
+            useSession: () => sessionMock,
+            useSettings: () => settingsMock,
+            storage: { getState: () => ({ sessionListViewDataByServerId: {} }) },
+        });
+    },
 });
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        navigation: {
-            canGoBack: navigationCanGoBackSpy,
-        },
-        router: {
-            push: routerPushSpy,
-            back: vi.fn(),
-            replace: routerReplaceSpy,
-            setParams: vi.fn(),
-        },
-    });
-    return {
-        ...routerMock.module,
-        useLocalSearchParams: () => localSearchParamsMock,
-        Stack: { Screen: (props: any) => stackScreenSpy(props) },
-    };
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: translateText });
-});
 vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: () => hydrateReady,
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSession: () => sessionMock,
-    useSettings: () => settingsMock,
-    storage: { getState: () => ({ sessionListViewDataByServerId: {} }) },
-});
-});
 
 vi.mock('@/sync/store/hooks', async (importOriginal) => {
     const React = await import('react');

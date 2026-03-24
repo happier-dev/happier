@@ -2,25 +2,27 @@ import * as React from 'react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
 import { useNewSessionAgentPickerControls } from './useNewSessionAgentPickerControls';
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
 
 const modalMockState = vi.hoisted(() => ({
     alert: vi.fn(),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    modalMock.spies.alert.mockImplementation((...args: unknown[]) => modalMockState.alert(...args));
-    return modalMock.module;
+installNewSessionScreenModelCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        const modalMock = createModalModuleMock();
+        modalMock.spies.alert.mockImplementation((...args: unknown[]) => modalMockState.alert(...args));
+        return modalMock.module;
+    },
 });
 
 vi.mock('@/components/sessions/new/components/NewSessionEngineOptionDetail', () => ({

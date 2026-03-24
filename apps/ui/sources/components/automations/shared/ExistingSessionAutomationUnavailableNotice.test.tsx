@@ -1,16 +1,32 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installAutomationComponentCommonModuleMocks } from '../automationComponentTestHelpers';
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                warningCritical: '#f00',
+installAutomationComponentCommonModuleMocks({
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    warningCritical: '#f00',
+                },
             },
-        },
-    });
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => {
+                const labels: Record<string, string> = {
+                    'automations.create.unavailableGroupTitle': 'Unavailable',
+                    'automations.create.cannotCreateForSession': 'Cannot create automation for this session',
+                };
+
+                return labels[key] ?? key;
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -24,19 +40,6 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.children),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => {
-        const labels: Record<string, string> = {
-            'automations.create.unavailableGroupTitle': 'Unavailable',
-            'automations.create.cannotCreateForSession': 'Cannot create automation for this session',
-        };
-        return labels[key] ?? key;
-    },
-    });
-});
 
 describe('ExistingSessionAutomationUnavailableNotice', () => {
     it('renders the shared blocked-state item group and reason', async () => {

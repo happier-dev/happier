@@ -1,45 +1,13 @@
 import * as React from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installProjectFileLinkPickerCommonModuleMocks } from './projectFileLinkPickerTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('@expo/vector-icons', () => ({
-  Octicons: 'Octicons',
-}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    Pressable: 'Pressable',
-                    ScrollView: 'ScrollView',
-                    TextInput: 'TextInput',
-                    ActivityIndicator: 'ActivityIndicator',
-                    Platform: {
-                        OS: 'ios',
-                        select: (spec: Record<string, unknown>) =>
-                      spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-                    },
-                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-  Text: 'Text',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-  Typography: { default: () => ({}) },
-}));
+installProjectFileLinkPickerCommonModuleMocks();
 
 vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
   RepositoryTreeList: 'RepositoryTreeList',
@@ -55,14 +23,6 @@ vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', ()
       }),
   ),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) },
-    useSessionRepositoryTreeExpandedPaths: () => [],
-});
-});
 
 describe('ProjectFileLinkPickerModal', () => {
   beforeEach(() => {});

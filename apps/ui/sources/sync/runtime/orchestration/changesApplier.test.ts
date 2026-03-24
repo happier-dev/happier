@@ -102,10 +102,10 @@ describe('changesApplier', () => {
             concurrencyLimit: 1,
         });
 
-        // Let the first task start.
-        await Promise.resolve();
+        await vi.waitFor(() => {
+            expect(firstStarted.value).toBe(true);
+        });
 
-        expect(firstStarted.value).toBe(true);
         expect(secondStarted.value).toBe(false);
 
         resolveFirst();
@@ -144,9 +144,9 @@ describe('changesApplier', () => {
             concurrencyLimit: 2,
         });
 
-        // Let the sessions invalidation task start and block.
-        await Promise.resolve();
-        expect(invalidateSessions).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => {
+            expect(invalidateSessions).toHaveBeenCalledTimes(1);
+        });
         expect(invalidateMessagesForSession).not.toHaveBeenCalled();
 
         resolveSessions();

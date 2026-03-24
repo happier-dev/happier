@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,38 +19,68 @@ const mocks = vi.hoisted(() => ({
   onSend: vi.fn(),
 }));
 
-vi.mock('react-native', async () => {
+installAgentInputCommonModuleMocks({
+  reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                      React.createElement('View', props, props.children),
-                                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                      React.createElement('Text', props, props.children),
-                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                      React.createElement('Pressable', props, props.children),
-                                    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                      React.createElement('ScrollView', props, props.children),
-                                    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-                                    Platform: {
-                                    OS: 'web',
-                                    select: (v: any) => v.web ?? v.default ?? null,
-                                },
-                                    useWindowDimensions: () => ({ width: 900, height: 600 }),
-                                    Dimensions: {
-                                      get: () => ({ width: 900, height: 600, scale: 1, fontScale: 1 }),
-                                    },
-                                }
-    );
+    return createReactNativeWebMock({
+      View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('View', props, props.children),
+      Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('Text', props, props.children),
+      Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('Pressable', props, props.children),
+      ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('ScrollView', props, props.children),
+      ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
+      Platform: {
+        OS: 'web',
+        select: (v: any) => v.web ?? v.default ?? null,
+      },
+      useWindowDimensions: () => ({ width: 900, height: 600 }),
+      Dimensions: {
+        get: () => ({ width: 900, height: 600, scale: 1, fontScale: 1 }),
+      },
+    });
+  },
+  icons: () => ({
+    Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
+    Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),
+  }),
+  text: async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+  },
+  storage: async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+      useSetting: (key: string) => {
+        if (key === 'profiles') return [];
+        if (key === 'agentInputEnterToSend') return true;
+        if (key === 'agentInputActionBarLayout') return 'wrap';
+        if (key === 'agentInputChipDensity') return 'labels';
+        if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
+        if (key === 'agentInputHistoryScope') return 'perSession';
+        return null;
+      },
+      useSettings: () => ({
+        profiles: [],
+        agentInputEnterToSend: true,
+        agentInputActionBarLayout: 'wrap',
+        agentInputChipDensity: 'labels',
+        sessionPermissionModeApplyTiming: 'immediate',
+        agentInputHistoryScope: 'perSession',
+      }),
+      useSessionMessages: () => ({ messages: [], isLoaded: true }),
+      useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+      useSessionMessagesById: () => ({}),
+      useSessionMessagesVersion: () => 0,
+      useSessionMessagesReducerState: () => null,
+    });
+  },
 });
 
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
-  Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),
 }));
 
 vi.mock('expo-image', () => ({
@@ -59,39 +90,6 @@ vi.mock('expo-image', () => ({
 vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-    if (key === 'profiles') return [];
-    if (key === 'agentInputEnterToSend') return true;
-    if (key === 'agentInputActionBarLayout') return 'wrap';
-    if (key === 'agentInputChipDensity') return 'labels';
-    if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-    if (key === 'agentInputHistoryScope') return 'perSession';
-    return null;
-  },
-    useSettings: () => ({
-    profiles: [],
-    agentInputEnterToSend: true,
-    agentInputActionBarLayout: 'wrap',
-    agentInputChipDensity: 'labels',
-    sessionPermissionModeApplyTiming: 'immediate',
-    agentInputHistoryScope: 'perSession',
-  }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-    useSessionMessagesById: () => ({}),
-    useSessionMessagesVersion: () => 0,
-    useSessionMessagesReducerState: () => null,
-});
-});
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
   useUserMessageHistory: () => ({

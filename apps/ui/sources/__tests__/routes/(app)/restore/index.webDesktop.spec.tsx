@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 import { installRestoreRouteCommonModuleMocks, resetRestoreRouteTestState } from './restoreRouteTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -67,16 +68,15 @@ describe('/restore (web desktop)', () => {
         vi.resetModules();
         const { default: Screen } = await import('@/app/(app)/restore/index');
 
-        let tree: ReactTestRenderer | null = null;
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
-            act(() => {
-                tree = create(<Screen />);
-            });
-            const qrView = tree!.root.findAllByProps({ 'data-testid': 'RestoreQrView' });
+            screen = await renderScreen(<Screen />);
+            await act(async () => {});
+            const qrView = screen.findAllByType('div').filter((node) => node.props['data-testid'] === 'RestoreQrView');
             expect(qrView).toHaveLength(1);
         } finally {
-            act(() => {
-                tree?.unmount();
+            await act(async () => {
+                screen?.tree.unmount();
             });
         }
     });

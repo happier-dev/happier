@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS } from '@happier-dev/protocol';
 import type { RenderScreenResult } from '@/dev/testkit';
+import { installRouteRootCommonModuleMocks } from './routeRootTestHelpers';
 
 // Avoid React "act(...) environment" warnings in non-JSDOM test environments.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -54,14 +55,6 @@ vi.mock('@/utils/system/restartBugReportIntent', () => ({
     consumeRestartBugReportIntent: consumeRestartBugReportIntentMock,
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: routerPushMock, back: vi.fn() },
-    });
-    return expoRouterMock.module;
-});
-
 vi.mock('expo-font', () => ({
     loadAsync: loadAsyncMock,
 }));
@@ -89,6 +82,45 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     },
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
+
+installRouteRootCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock(
+            {
+                View: ({ children }: { children?: React.ReactNode }) => React.createElement('View', null, children),
+                Platform: {
+                    get OS() {
+                        return mockedPlatformOS;
+                    },
+                    set OS(value: string) {
+                        mockedPlatformOS = value;
+                    },
+                    select: (options: any) =>
+                        options?.[mockedPlatformOS] ?? options?.default ?? options?.ios ?? options?.android,
+                },
+            },
+        );
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { push: routerPushMock, back: vi.fn() },
+        });
+        return expoRouterMock.module;
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                dark: false,
+                colors: {
+                    groupped: { background: '#fff' },
+                },
+            },
+        });
+    },
+});
 
 vi.mock('@/auth/context/AuthContext', () => {
     const React = require('react');
@@ -149,30 +181,6 @@ vi.mock('@/encryption/libsodium.lib', () => ({
         ready: Promise.resolve(),
     },
 }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: ({ children }: { children?: React.ReactNode }) => React.createElement('View', null, children),
-                            Platform: {
-                                get OS() {
-                                                return mockedPlatformOS;
-                                            },
-                                set OS(value: string) {
-                                                mockedPlatformOS = value;
-                                            },
-                                select: (options: any) =>
-                                        options?.[mockedPlatformOS] ?? options?.default ?? options?.ios ?? options?.android,
-                            },
-                        }
-    );
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 
 vi.mock('posthog-react-native', () => {
     const React = require('react');
@@ -235,18 +243,6 @@ vi.mock('@/components/ui/feedback/DesktopUpdateBanner', () => ({
 vi.mock('@/utils/system/remoteLogger', () => ({
     monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds: vi.fn(),
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            dark: false,
-            colors: {
-                groupped: { background: '#fff' },
-            },
-        },
-    });
-});
 
 describe('app/_layout init resilience', () => {
     const previousSentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN;

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderHook, renderScreen } from '@/dev/testkit';
+import { renderHook, renderScreen, flushHookEffects } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import type { Router } from 'expo-router';
 
@@ -247,7 +247,7 @@ describe('useNewSessionAgentInputPresentation', () => {
         expect(screen.findByTestId('new-session-link-file-chip')).toBeTruthy();
 
         await screen.pressByTestIdAsync('new-session-link-file-chip');
-        await Promise.resolve();
+        await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(openMachinePathBrowserModalSpy).toHaveBeenCalled();
         const updater = setSessionPrompt.mock.calls.at(-1)?.[0];

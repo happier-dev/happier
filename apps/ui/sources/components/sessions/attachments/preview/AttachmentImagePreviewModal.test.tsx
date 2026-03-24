@@ -2,6 +2,8 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { installSessionAttachmentCommonModuleMocks } from '@/components/sessions/attachments/sessionAttachmentTestHelpers';
 
 const actEnvironmentGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
@@ -13,30 +15,15 @@ const previewState = vi.hoisted(() => ({
     value: { status: 'loaded', uri: 'data:image/png;base64,.happier/uploads/messages/m1/file.png', svgXml: null, error: null } as PreviewState,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                useWindowDimensions: () => ({ width: 900, height: 700 }),
-            }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installSessionAttachmentCommonModuleMocks({
+    reactNative: installReactNativeWebMock({
+        useWindowDimensions: () => ({ width: 900, height: 700 }),
+    }),
 });
 
 vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
 
 vi.mock('@/components/sessions/files/content/imagePreview/useSessionImagePreview', () => ({
     useSessionImagePreview: (input: { enabled: boolean; filePath: string }) => {

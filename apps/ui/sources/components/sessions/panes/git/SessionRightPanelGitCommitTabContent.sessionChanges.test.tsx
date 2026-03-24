@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionGitPaneCommonModuleMocks } from './sessionGitPaneTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,14 +30,7 @@ const useDerivedSessionChangeSetSpy = vi.fn((_: unknown) => ({
     providerDiffByPath: null,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                                    View: (props: any) => React.createElement('View', props, props.children),
-                                                                }
-    );
-});
+installSessionGitPaneCommonModuleMocks();
 
 vi.mock('@/components/sessions/panes/git/SessionRightPanelGitCommitTab', () => ({
     SessionRightPanelGitCommitTab: (props: any) => {
@@ -76,21 +70,6 @@ vi.mock('./useSessionRightPanelGitCommitSelection', () => ({
         disableSelectNone: true,
     }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        storage: {
-            getState: () => ({
-                getSessionRepositoryTreeExpandedPaths: () => [],
-                setSessionRepositoryTreeExpandedPaths: vi.fn(),
-            }),
-        },
-        useSession: () => ({ metadata: {} }),
-        useProjectForSession: () => null,
-        useSessionMessages: () => ({ messages: [] }),
-    });
-});
 
 describe('SessionRightPanelGitCommitTabContent', () => {
     it('prefers latest-turn view when a canonical latest-turn change set is available', async () => {

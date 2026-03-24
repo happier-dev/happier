@@ -2,33 +2,12 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findAllByType, findFirstByType, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { installPanelCommonModuleMocks } from './panelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            View: 'View',
-            Pressable: 'Pressable',
-            PanResponder: {
-                create: () => ({ panHandlers: {} }),
-            },
-            Platform: {
-                OS: 'web',
-                select: (value: any) => value?.default ?? null,
-            },
-        }
-    );
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
+installPanelCommonModuleMocks();
 
 describe('ResizableDockedPane (web pointer drag)', () => {
     it('commits width as the user drags (resizeEdge=right)', async () => {

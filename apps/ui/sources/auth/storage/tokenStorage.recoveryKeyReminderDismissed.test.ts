@@ -1,18 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installLocalStorageMock } from './tokenStorage.web.testHelpers';
+import { installTokenStorageWebPlatformMocks } from './tokenStorage.testHelpers';
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Platform: {
-                                OS: 'web',
-                            },
-                        }
-    );
-});
-
-vi.mock('expo-secure-store', () => ({}));
+installTokenStorageWebPlatformMocks();
 
 describe('TokenStorage recovery key reminder dismissed (web)', () => {
     let restoreLocalStorage: (() => void) | null = null;

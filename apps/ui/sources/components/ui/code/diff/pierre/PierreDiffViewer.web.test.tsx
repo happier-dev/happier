@@ -1,7 +1,8 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import { installCodeDiffCommonModuleMocks } from '../codeDiffTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,23 +21,18 @@ function resetSettingValues() {
 
 resetSettingValues();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-    useSetting: (key: string) => {
-        if (Object.prototype.hasOwnProperty.call(settingValues, key)) {
-            return (settingValues as any)[key];
-        }
-        return null;
+installCodeDiffCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSetting: (key: string) => {
+                if (Object.prototype.hasOwnProperty.call(settingValues, key)) {
+                    return (settingValues as any)[key];
+                }
+                return null;
+            },
+        });
     },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
 });
 
 vi.mock('./pierreThemeRegistry.web', () => ({

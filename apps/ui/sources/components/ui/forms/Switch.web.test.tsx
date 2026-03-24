@@ -1,5 +1,4 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -32,15 +31,16 @@ describe('Switch.web', () => {
 
     it('exposes aria-checked for web switch semantics', async () => {
         const { Switch } = await import('./Switch.web');
-        let tree!: renderer.ReactTestRenderer;
-
-        tree = (await renderScreen(<Switch
+        const screen = await renderScreen(<Switch
                     value
                     onValueChange={() => {}}
                     testID="settings-toggle"
-                />)).tree;
+                />);
 
-        const pressable = tree.findByType('Pressable' as any);
+        const pressable = screen.findByTestId('settings-toggle');
+        if (!pressable) {
+            throw new Error('Expected switch pressable to render');
+        }
         expect(pressable.props.accessibilityRole).toBe('switch');
         expect(pressable.props['aria-checked']).toBe(true);
     });

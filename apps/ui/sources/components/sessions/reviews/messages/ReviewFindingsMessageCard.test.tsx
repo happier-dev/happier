@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { changeTextTestInstance, findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installSessionMessageCardCommonModuleMocks } from '@/components/sessions/sessionMessageCardTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,25 +12,81 @@ const sendMessageSpy = vi.fn(async (..._args: any[]) => undefined);
 const useExecutionRunsBackendsForSessionSpy = vi.fn<(...args: any[]) => any>((..._args: any[]) => null);
 const useSessionMessagesSpy = vi.fn<(...args: any[]) => any>((..._args: any[]) => ({ messages: [], isLoaded: true }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-      colors: {
-        surfaceHighest: '#111',
-        divider: '#333',
-        text: '#eee',
-        textSecondary: '#aaa',
-        link: '#06f',
-        shadow: { color: '#000', opacity: 0.1 },
-      },
+installSessionMessageCardCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: Record<string, unknown>) => {
+                switch (key) {
+                    case 'session.reviewFindings.title':
+                        return `Review findings (${String(params?.count ?? 0)})`;
+                    case 'session.reviewFindings.questionsTitle':
+                        return 'Questions from reviewer';
+                    case 'session.reviewFindings.assumptionsTitle':
+                        return 'Assumptions';
+                    case 'session.reviewFindings.findingTitle':
+                        return `[${String(params?.status ?? '')}] [${String(params?.severity ?? '')}/${String(params?.category ?? '')}] ${String(params?.title ?? '')}`;
+                    case 'session.reviewFindings.status.untriaged':
+                        return 'Pending';
+                    case 'session.reviewFindings.status.accept':
+                        return 'Implement fix';
+                    case 'session.reviewFindings.status.reject':
+                        return 'Ignore';
+                    case 'session.reviewFindings.status.defer':
+                        return 'Decide later';
+                    case 'session.reviewFindings.status.needsRefinement':
+                        return 'Ask for clarification';
+                    case 'session.reviewFindings.refinementPlaceholder':
+                        return 'What needs clarification?';
+                    case 'session.reviewFindings.actions.applyTriage':
+                        return 'Apply review actions';
+                    case 'session.reviewFindings.actions.applying':
+                        return 'Applying…';
+                    case 'session.reviewFindings.actions.askReviewer':
+                        return 'Ask reviewer';
+                    case 'session.reviewFindings.actions.answerQuestion':
+                        return 'Answer reviewer';
+                    case 'session.reviewFindings.actions.applyAcceptedFindings':
+                        return 'Implement selected fixes';
+                    case 'session.reviewFindings.actions.sendFollowUp':
+                        return 'Send follow-up';
+                    case 'session.reviewFindings.actions.sending':
+                        return 'Sending…';
+                    case 'session.reviewFindings.errors.applyTriageFailed':
+                        return 'Failed to apply review actions.';
+                    case 'session.reviewFindings.errors.followUpFailed':
+                        return 'Failed to send review follow-up.';
+                    case 'session.reviewFindings.errors.applyAcceptedFailed':
+                        return 'Failed to send selected fixes.';
+                    case 'common.applied':
+                        return 'Applied';
+                    default:
+                        return String(params ? { key, params } : key);
+                }
+            },
+        });
     },
-    });
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surfaceHighest: '#111',
+                    divider: '#333',
+                    text: '#eee',
+                    textSecondary: '#aaa',
+                    link: '#06f',
+                    shadow: { color: '#000', opacity: 0.1 },
+                },
+            },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSessionMessages: (...args: any[]) => useSessionMessagesSpy(...args),
+        });
+    },
 });
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
@@ -47,13 +104,6 @@ vi.mock('@/sync/sync', () => ({
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
   useExecutionRunsBackendsForSession: (...args: any[]) => useExecutionRunsBackendsForSessionSpy(...args),
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-    useSessionMessages: (...args: any[]) => useSessionMessagesSpy(...args),
-});
-});
 
 describe('ReviewFindingsMessageCard', () => {
   it('falls back to disabling follow-up affordances for coderabbit when backend capabilities are unavailable', async () => {

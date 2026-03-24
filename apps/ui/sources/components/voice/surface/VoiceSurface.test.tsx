@@ -5,6 +5,7 @@ import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installVoiceSurfaceCommonModuleMocks } from './voiceSurfaceTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -13,39 +14,64 @@ function createHostComponentMock(type: string) {
     return (props: any) => React.createElement(type, props, props.children);
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        Text: 'Text',
-        Pressable: createHostComponentMock('Pressable'),
-        ScrollView: 'ScrollView',
-        Platform: {
-            OS: 'web',
-            select: (spec: any) => spec?.web ?? spec?.default,
-        },
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                status: {
-                    connecting: '#00f',
-                    connected: '#0f0',
-                    error: '#f00',
-                    default: '#999',
-                },
-                surfaceHighest: '#fff',
-                surface: '#fff',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#555',
+installVoiceSurfaceCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            Pressable: createHostComponentMock('Pressable'),
+            ScrollView: 'ScrollView',
+            Platform: {
+                OS: 'web',
+                select: (spec: any) => spec?.web ?? spec?.default,
             },
-        },
-    });
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: {
+                push: (...args: any[]) => routerPushSpy(...args),
+                navigate: (...args: any[]) => routerPushSpy(...args),
+            },
+            pathname: () => pathnameState.current,
+        });
+        return expoRouterMock.module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: () => voiceSettingState.current,
+            storage: {
+                getState: () => storageState.current,
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    status: {
+                        connecting: '#00f',
+                        connected: '#0f0',
+                        error: '#f00',
+                        default: '#999',
+                    },
+                    surfaceHighest: '#fff',
+                    surface: '#fff',
+                    divider: '#eee',
+                    text: '#000',
+                    textSecondary: '#555',
+                },
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
@@ -65,24 +91,8 @@ vi.mock('@/voice/local/localVoiceEngine', () => ({
     toggleLocalVoiceTurn: (sessionId: string) => toggleLocalVoiceTurnSpy(sessionId),
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 const routerPushSpy = vi.fn();
 const pathnameState: { current: string } = { current: '/' };
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: {
-            push: (...args: any[]) => routerPushSpy(...args),
-            navigate: (...args: any[]) => routerPushSpy(...args),
-        },
-        pathname: () => pathnameState.current,
-    });
-    return expoRouterMock.module;
-});
 
 const hydrateSpy = vi.fn(async () => {});
 const featureEnabledState: Record<string, boolean> = { 'voice.agent': true };
@@ -97,16 +107,6 @@ const voiceSettingState: { current: any } = {
     current: { providerId: 'realtime_elevenlabs', ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' } },
 };
 const storageState: { current: any } = { current: { sessions: {}, sessionListViewDataByServerId: {} } };
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSetting: () => voiceSettingState.current,
-        storage: {
-            getState: () => storageState.current,
-        },
-    });
-});
 
 const allSessionsState: { current: any[] } = { current: [] };
 vi.mock('@/sync/store/hooks', () => ({

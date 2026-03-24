@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -51,8 +50,7 @@ describe('AgentInputSelectionPopover', () => {
             React.createElement('View', { testID: `content:${maxHeight}` })
         ));
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        tree = (await renderScreen(<AgentInputSelectionPopover
+        const screen = await renderScreen(<AgentInputSelectionPopover
                     open
                     anchorRef={anchorRef}
                     onRequestClose={requestClose}
@@ -60,7 +58,7 @@ describe('AgentInputSelectionPopover', () => {
                     maxWidthCap={512}
                 >
                     {renderContent}
-                </AgentInputSelectionPopover>)).tree;
+                </AgentInputSelectionPopover>);
 
         expect(capturedPopoverProps.current?.open).toBe(true);
         expect(capturedPopoverProps.current?.anchorRef).toBe(anchorRef);
@@ -78,10 +76,9 @@ describe('AgentInputSelectionPopover', () => {
         expect(capturedPopoverProps.current?.containerStyle).toEqual({ paddingHorizontal: 0 });
         expect(capturedPopoverProps.current?.backdrop).toEqual({ style: { backgroundColor: 'transparent' } });
         expect(renderContent).toHaveBeenCalledWith({ maxHeight: 312 });
-        expect(tree).toBeTruthy();
-        expect(tree!.root.findByProps({ testID: 'content:312' })).toBeTruthy();
+        expect(screen.findByTestId('content:312')).toBeTruthy();
 
-        const divs = tree!.root.findAllByType('div');
+        const divs = screen.findAllByType('div');
         expect(divs.some((node) => node.props['data-happy-agent-input-popover-portal-target'] === '')).toBe(true);
     });
 });

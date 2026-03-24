@@ -15,6 +15,12 @@ function assertDoesNotImportModule(source: string, moduleToken: string, filePath
     }
 }
 
+function assertDoesNotContainToken(source: string, token: string, filePath: string): void {
+    if (source.includes(token)) {
+        throw new Error(`Forbidden token "${token}" in ${filePath}`);
+    }
+}
+
 async function listFilesRecursively(directory: string): Promise<string[]> {
     const entries = await readdir(directory, { withFileTypes: true });
     const results: string[] = [];
@@ -49,22 +55,12 @@ describe('bulkTransferPipeline (architecture)', () => {
             assertDoesNotImportModule(source, 'chunkTransferClient', filePath);
             assertDoesNotImportModule(source, 'sessionFileTransferRpcCaller', filePath);
             assertDoesNotImportModule(source, 'mergeTransferChunks', filePath);
-
-            // Prevent legacy helper reintroduction (these were the old feature-facing bulk-byte paths).
-            expect(source).not.toContain('uploadMachineTransferJsonPayload');
-            expect(source).not.toContain('downloadMachineTransferJsonPayload');
-
-            // Feature code must not open-code the session-scoped RPC method family; only the canonical pipeline may.
-            expect(source).not.toContain('RPC_METHODS.DAEMON_SESSION_FILES_');
-            expect(source).not.toContain('RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_');
-
-            // Deletion-proofing: the old FILES_* / ATTACHMENTS_CONFIGURE family must not reappear anywhere.
-            expect(source).not.toContain('RPC_METHODS.FILES_UPLOAD_');
-            expect(source).not.toContain('RPC_METHODS.FILES_DOWNLOAD_');
-            expect(source).not.toContain('RPC_METHODS.ATTACHMENTS_CONFIGURE');
-            expect(source).not.toMatch(/\bFILES_UPLOAD_(INIT|CHUNK|FINALIZE|ABORT)\b/u);
-            expect(source).not.toMatch(/\bFILES_DOWNLOAD_(INIT|CHUNK|FINALIZE|ABORT)\b/u);
-            expect(source).not.toMatch(/\bATTACHMENTS_CONFIGURE\b/u);
+            assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonSessionFiles', filePath);
+            assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonSessionAttachments', filePath);
+            assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonPromptAssets', filePath);
+            assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonPromptRegistries', filePath);
+            // Prevent bypass via direct DAEMON_BULK_TRANSFER init/chunk/finalize loops outside the pipeline.
+            assertDoesNotContainToken(source, 'DAEMON_BULK_TRANSFER_', filePath);
         }
     });
 });

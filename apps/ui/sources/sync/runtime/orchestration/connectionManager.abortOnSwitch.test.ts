@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit';
 
 afterEach(() => {
     vi.resetModules();
@@ -83,7 +84,8 @@ describe('switchConnectionToActiveServer', () => {
     it('applies latest server generation after a switch happens during an in-flight switch', async () => {
         let generation = 1;
         const abortSpy = vi.fn();
-        const deferred: { resolve: (() => void) | null } = { resolve: null };
+        const switchStarted = createDeferred<void>();
+        const releaseSwitch = createDeferred<void>();
         let syncCallCount = 0;
         const getCredentialsSpy = vi.fn(async () => null);
         const getCredentialsForServerUrlSpy = vi.fn(async (serverUrl: string) =>
@@ -94,9 +96,8 @@ describe('switchConnectionToActiveServer', () => {
         const syncSwitchServerSpy = vi.fn(async (_credentials: { token: string; secret: string }) => {
             syncCallCount += 1;
             if (syncCallCount > 1) return;
-            await new Promise<void>((resolve) => {
-                deferred.resolve = resolve;
-            });
+            switchStarted.resolve();
+            await releaseSwitch.promise;
         });
 
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
@@ -124,13 +125,8 @@ describe('switchConnectionToActiveServer', () => {
         const first = switchConnectionToActiveServer();
         generation = 2;
         const second = switchConnectionToActiveServer();
-        for (let attempt = 0; attempt < 10 && !deferred.resolve; attempt += 1) {
-            await Promise.resolve();
-        }
-        if (!deferred.resolve) {
-            throw new Error('deferred resolver was not initialized');
-        }
-        deferred.resolve?.();
+        await switchStarted.promise;
+        releaseSwitch.resolve();
         await Promise.all([first, second]);
 
         expect(abortSpy).toHaveBeenCalledTimes(2);

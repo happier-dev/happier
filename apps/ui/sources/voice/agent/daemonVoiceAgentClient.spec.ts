@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
   sessionRpcWithServerScope: vi.fn(),
@@ -25,13 +26,15 @@ const settingsState: { current: any } = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installVoiceAgentCommonModuleMocks({
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-    getState: () => ({ settings: settingsState.current }),
+      storage: {
+        getState: () => ({ settings: settingsState.current }),
+      },
+    });
   },
-});
 });
 
 async function sleep(ms: number): Promise<void> {

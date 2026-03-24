@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,39 +11,19 @@ import { renderScreen } from '@/dev/testkit';
 const stopRunSpy = vi.fn(async () => ({ ok: true }));
 const sendMessageSpy = vi.fn(async () => undefined);
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            OS: 'web',
-        },
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, values?: Record<string, unknown>) => {
-        if (key === 'session.subagents.kind.execution_run') return 'Subagent';
-        if (key === 'session.subagents.kind.agent_team_member') return 'Team agent';
-        if (key === 'session.subagents.intent.review') return 'Review';
-        if (key === 'session.subagents.panel.typeFact' && values?.value) return `Type: ${values.value}`;
-        if (key === 'session.subagents.panel.providerFact' && values?.value) return `Provider: ${values.value}`;
-        if (key === 'session.subagents.panel.intentFact' && values?.value) return `Intent: ${values.value}`;
-        return key;
-    } });
+installSessionSubagentCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string, values?: Record<string, unknown>) => {
+            if (key === 'session.subagents.kind.execution_run') return 'Subagent';
+            if (key === 'session.subagents.kind.agent_team_member') return 'Team agent';
+            if (key === 'session.subagents.intent.review') return 'Review';
+            if (key === 'session.subagents.panel.typeFact' && values?.value) return `Type: ${values.value}`;
+            if (key === 'session.subagents.panel.providerFact' && values?.value) return `Provider: ${values.value}`;
+            if (key === 'session.subagents.panel.intentFact' && values?.value) return `Intent: ${values.value}`;
+            return key;
+        } });
+    },
 });
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
@@ -54,11 +35,6 @@ vi.mock('@/sync/sync', () => ({
         sendMessage: sendMessageSpy,
     },
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>) => void promise,

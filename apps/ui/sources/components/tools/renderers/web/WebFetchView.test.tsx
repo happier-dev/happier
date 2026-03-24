@@ -18,44 +18,43 @@ vi.mock('../../shell/presentation/ToolSectionView', () => ({
 describe('WebFetchView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { WebFetchView } = await import('./WebFetchView');
-        const screen = await renderScreen(React.createElement(
+        return renderScreen(React.createElement(
             WebFetchView,
             makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
         ));
-        return screen.tree;
     }
 
     it('shows HTTP status when present', async () => {
-        const tree = await renderView(
+        const screen = await renderView(
             makeCompletedTool('WebFetch', { url: 'https://example.com' }, { status: 200, text: 'ok' }),
         );
-        const renderedText = normalizedHostText(tree);
+        const renderedText = normalizedHostText(screen.tree);
         expect(renderedText).toContain('HTTP 200');
     });
 
     it('does not truncate content when detailLevel=full', async () => {
         const longText = 'x'.repeat(3000);
-        const tree = await renderView(
+        const screen = await renderView(
             makeCompletedTool('WebFetch', { url: 'https://example.com' }, { status: 200, text: longText }),
             'full',
         );
 
-        const codeNodes = tree.root.findAllByType('CodeView' as any);
+        const codeNodes = screen.findAllByType('CodeView' as any);
         expect(codeNodes).toHaveLength(1);
         expect(codeNodes[0].props.code).toBe(longText);
     });
 
     it('supports plain-string result payloads and returns null when both url and text are missing', async () => {
-        const stringTree = await renderView(
+        const stringScreen = await renderView(
             makeCompletedTool('WebFetch', { url: 'https://example.com' }, 'plain body'),
         );
-        const codeNodes = stringTree.root.findAllByType('CodeView' as any);
+        const codeNodes = stringScreen.findAllByType('CodeView' as any);
         expect(codeNodes).toHaveLength(1);
         expect(codeNodes[0].props.code).toContain('plain body');
 
-        const emptyTree = await renderView(
+        const emptyScreen = await renderView(
             makeCompletedTool('WebFetch', {}, { status: 204 }),
         );
-        expect(emptyTree.root.findAllByType('Text' as any)).toHaveLength(0);
+        expect(emptyScreen.findAllByType('Text' as any)).toHaveLength(0);
     });
 });

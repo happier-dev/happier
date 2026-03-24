@@ -10,16 +10,6 @@ import { Text } from '@/components/ui/text/Text';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installToolShellCommonModuleMocks({
-  reactNative: () => import('@/dev/testkit/mocks/reactNative').then(({ createReactNativeWebMock }) =>
-    createReactNativeWebMock({
-      View: 'View',
-      Text: 'Text',
-      ScrollView: 'ScrollView',
-      Pressable: 'Pressable',
-      Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
-      useWindowDimensions: () => ({ width: 800, height: 600 }),
-    }),
-  ),
 });
 
 vi.mock('@/sync/sync', () => ({
@@ -27,11 +17,6 @@ vi.mock('@/sync/sync', () => ({
     ensureSidechainMessagesLoaded: vi.fn(),
   },
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 

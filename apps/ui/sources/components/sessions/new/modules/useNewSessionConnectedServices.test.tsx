@@ -1,5 +1,6 @@
 import { renderHook } from '@/dev/testkit';
 import { describe, expect, it, vi } from 'vitest';
+import { installNewSessionModulesCommonModuleMocks } from './newSessionModulesTestHelpers';
 import type { NewSessionConnectedServicesResult } from './useNewSessionConnectedServices';
 
 (
@@ -44,20 +45,31 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: (...args: any[]) => modalShowMock(...args),
-        },
-    }).module;
+installNewSessionModulesCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                show: (...args: any[]) => modalShowMock(...args),
+            },
+        }).module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'web',
+                select: (spec: Record<string, unknown>) => spec.web ?? spec.default,
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
 });
 
 vi.mock('@/components/ui/rendering/normalizeNodeForView', () => ({

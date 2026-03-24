@@ -2,6 +2,7 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installCodeBlockCommonModuleMocks } from './codeBlockTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -9,44 +10,35 @@ import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 const setStringAsyncSpy = vi.fn<(text: string) => Promise<void>>(async (_text) => {});
 const alertSpy = vi.fn();
 
-vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            OS: 'web',
-            select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-        },
-    });
+installCodeBlockCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+            },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: (...args: any[]) => alertSpy(...args),
+            },
+        }).module;
+    },
 });
+
+vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('expo-clipboard', () => ({
     setStringAsync: (text: string) => setStringAsyncSpy(text),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: (...args: any[]) => alertSpy(...args),
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 describe('CodeBlockViewFrame', () => {
     it('enables nested horizontal scrolling when wrap is false', async () => {

@@ -96,6 +96,6 @@ describe('PermissionModePicker', () => {
         });
 
         expect(screen.findByTestId('permission-mode-default')).toBeTruthy();
-        expect(screen.tree.root.findAllByProps({ style: radioInnerStyle })).toHaveLength(1);
+        expect(screen.findAll((node) => node.props?.style === radioInnerStyle)).toHaveLength(1);
     });
 });

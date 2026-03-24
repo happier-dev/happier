@@ -28,14 +28,8 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
 
 import { useSessionExecutionRunsSupported } from './useSessionExecutionRunsSupported';
 
-async function flushAsync(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
 async function renderHarness(sessionId = 'session-1'): Promise<{
   getValue: () => boolean;
-  rerender: (nextSessionId: string) => Promise<void>;
   rerenderSync: (nextSessionId: string) => void;
   unmount: () => void;
 }> {
@@ -51,12 +45,6 @@ async function renderHarness(sessionId = 'session-1'): Promise<{
 
   return {
     getValue: () => current,
-    rerender: async (nextSessionId: string) => {
-      await act(async () => {
-        root!.update(React.createElement(Harness, { sessionId: nextSessionId }));
-        await flushAsync();
-      });
-    },
     rerenderSync: (nextSessionId: string) => {
       act(() => {
         root!.update(React.createElement(Harness, { sessionId: nextSessionId }));

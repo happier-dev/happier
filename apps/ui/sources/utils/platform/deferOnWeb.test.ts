@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+
+type FrameScheduler = (callback: FrameRequestCallback) => number;
 
 describe('deferOnWeb', () => {
     beforeEach(() => {
@@ -13,19 +16,25 @@ describe('deferOnWeb', () => {
 
         const { deferOnWeb } = await import('./deferOnWeb');
         const action = vi.fn();
-        let deferredFrame: FrameRequestCallback | null = null;
-
-        vi.stubGlobal('requestAnimationFrame', ((callback: FrameRequestCallback) => {
+        let deferredFrame: ((timestamp: number) => void) | null = null;
+        const frameScheduler: FrameScheduler = (callback) => {
             deferredFrame = callback;
             return 1;
-        }) as typeof requestAnimationFrame);
+        };
 
-        deferOnWeb(action);
+        await withPopoverWebGlobals(async () => {
+            deferOnWeb(action);
 
-        expect(action).not.toHaveBeenCalled();
-        expect(deferredFrame).not.toBeNull();
-        deferredFrame?.(0);
-        expect(action).toHaveBeenCalledTimes(1);
+            expect(action).not.toHaveBeenCalled();
+            expect(deferredFrame).not.toBeNull();
+            const runDeferredFrame =
+                deferredFrame ??
+                ((_timestamp: number) => {
+                    throw new Error('Expected deferred frame callback to be scheduled');
+                });
+            runDeferredFrame(0);
+            expect(action).toHaveBeenCalledTimes(1);
+        }, { frameScheduler });
     });
 
     it('runs immediately off web', async () => {

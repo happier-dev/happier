@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
 
 const settingsState: any = {
   voice: {
@@ -19,15 +20,17 @@ const settingsState: any = {
 };
 const resolveUiVoicePromptStackBlocks = vi.fn(async (_args?: { profileId?: string | null }) => []);
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installVoiceAgentCommonModuleMocks({
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-    getState: () => ({
-      settings: settingsState,
-    }),
+      storage: {
+        getState: () => ({
+          settings: settingsState,
+        }),
+      },
+    });
   },
-});
 });
 
 vi.mock('@/sync/sync', () => ({

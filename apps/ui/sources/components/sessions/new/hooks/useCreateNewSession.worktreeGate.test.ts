@@ -6,6 +6,7 @@ import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibi
 import { settingsDefaults as testSettingsDefaults } from '@/sync/domains/settings/settings';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { renderScreen } from '@/dev/testkit';
+import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 
 const materializeNewSessionCheckoutMock = vi.hoisted(() => vi.fn(async (params?: unknown) => {
@@ -134,6 +135,42 @@ const machineBashMock = vi.hoisted(() => vi.fn(async () => ({
     exitCode: 0,
 })));
 
+installNewSessionScreenModelCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: {
+                push: vi.fn(),
+                replace: vi.fn(),
+                back: vi.fn(),
+                setParams: vi.fn(),
+            },
+            params: {},
+            navigation: {},
+            pathname: '/new',
+        }).module;
+    },
+    storage: async (importOriginal) => {
+        const [
+            { createStorageModuleStub, createStorageStoreMock },
+            { settingsDefaults },
+        ] = await Promise.all([
+            import('@/dev/testkit/mocks/storage'),
+            import('@/sync/domains/settings/settings'),
+        ]);
+
+        return createStorageModuleStub({
+            storage: createStorageStoreMock({
+                settings: settingsDefaults,
+                sessions: storedSessionsState.sessions,
+                updateSessionDraft: updateSessionDraftMock,
+                updateSessionPermissionMode: updateSessionPermissionModeMock,
+                updateSessionModelMode: updateSessionModelModeMock,
+            }),
+        });
+    },
+});
+
 vi.mock('@/sync/ops/workspaces', () => ({
     inspectWorkspaceLocationScm: vi.fn(async () => ({ ok: false })),
     saveWorkspace: saveWorkspaceMock,
@@ -168,21 +205,6 @@ vi.mock('@/utils/system/sentry', () => ({
     captureExceptionIfEnabled: captureExceptionIfEnabledMock,
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(),
-            confirm: vi.fn(async () => false),
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 vi.mock('@/sync/sync', () => ({
     sync: {
         getCredentials: vi.fn(() => ({ token: 't' })),
@@ -204,25 +226,6 @@ vi.mock('@/sync/sync', () => ({
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => vi.fn(),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const [
-        { createStorageModuleStub, createStorageStoreMock },
-        { settingsDefaults },
-    ] = await Promise.all([
-        import('@/dev/testkit/mocks/storage'),
-        import('@/sync/domains/settings/settings'),
-    ]);
-    return createStorageModuleStub({
-        storage: createStorageStoreMock({
-            settings: settingsDefaults,
-            sessions: storedSessionsState.sessions,
-            updateSessionDraft: updateSessionDraftMock,
-            updateSessionPermissionMode: updateSessionPermissionModeMock,
-            updateSessionModelMode: updateSessionModelModeMock,
-        }),
-    });
-});
 
 vi.mock('@/sync/domains/state/persistence', () => ({
     clearNewSessionDraft: clearNewSessionDraftMock,
@@ -321,7 +324,9 @@ afterEach(() => {
     updateSessionPermissionModeMock.mockClear();
     updateSessionModelModeMock.mockClear();
     ensureSessionVisibleForMessageRouteMock.mockClear();
-    storedSessionsState.sessions = {};
+    for (const key of Object.keys(storedSessionsState.sessions)) {
+        delete storedSessionsState.sessions[key];
+    }
     vi.resetModules();
 });
 
@@ -1273,7 +1278,9 @@ describe('useCreateNewSession (worktree gating)', () => {
         const { useCreateNewSession } = await import('./useCreateNewSession');
         const { Modal } = await import('@/modal');
 
-        storedSessionsState.sessions = {};
+        for (const key of Object.keys(storedSessionsState.sessions)) {
+            delete storedSessionsState.sessions[key];
+        }
         ensureSessionVisibleForMessageRouteMock.mockImplementationOnce(async (sessionId?: unknown) => {
             const hydratedSessionId = String(sessionId ?? '').trim();
             if (!hydratedSessionId) {

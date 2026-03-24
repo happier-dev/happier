@@ -134,8 +134,8 @@ describe('sync.create initial awaits', () => {
             resolved = true;
         });
 
-        // Current behavior (pre-fix) hangs forever; expected behavior resolves via awaitQueue timeouts.
-        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 10_000 });
+        // Current behavior (pre-fix) hangs forever; expected behavior resolves via the 2500ms awaitQueue timeout.
+        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
         expect(resolved).toBe(true);
 
         await promise;

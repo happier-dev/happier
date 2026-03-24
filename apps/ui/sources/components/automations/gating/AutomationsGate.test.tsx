@@ -2,6 +2,7 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installAutomationComponentCommonModuleMocks } from '../automationComponentTestHelpers';
 
 
 const useAutomationsSupportMock = vi.fn();
@@ -10,25 +11,27 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => useAutomationsSupportMock(),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            ActivityIndicator: 'ActivityIndicator',
-                            View: 'View',
-                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                textSecondary: '#999',
+installAutomationComponentCommonModuleMocks({
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    textSecondary: '#999',
+                },
             },
-        },
-    });
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => {
+                if (key === 'automations.gate.disabledTitle') return 'Automations are disabled';
+                if (key === 'automations.gate.disabledBody') return 'Enable them from Settings, then turn on Experiments and Automations.';
+                return key;
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -46,17 +49,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => {
-        if (key === 'automations.gate.disabledTitle') return 'Automations are disabled';
-        if (key === 'automations.gate.disabledBody') return 'Enable them from Settings, then turn on Experiments and Automations.';
-        return key;
-    },
-    });
-});
 
 afterEach(() => {
     useAutomationsSupportMock.mockReset();

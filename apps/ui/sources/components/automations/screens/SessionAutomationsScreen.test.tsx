@@ -108,12 +108,6 @@ vi.mock('@/sync/sync', () => ({
     sync: syncSpies,
 }));
 
-async function flushRender(): Promise<void> {
-    await act(async () => {
-        await Promise.resolve();
-    });
-}
-
 describe('SessionAutomationsScreen', () => {
     beforeEach(() => {
         automationsState.list = [];
@@ -184,7 +178,6 @@ describe('SessionAutomationsScreen', () => {
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
         const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
-        await flushRender();
 
         const json = JSON.stringify(screen.tree.toJSON());
         expect(json).toContain('Linked');
@@ -228,7 +221,6 @@ describe('SessionAutomationsScreen', () => {
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
         const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
-        await flushRender();
 
         const add = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Add automation');
         if (!add) {
@@ -258,7 +250,6 @@ describe('SessionAutomationsScreen', () => {
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
         const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
-        await flushRender();
 
         const add = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Add automation');
         if (!add) {

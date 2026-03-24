@@ -2,37 +2,44 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-
+import { installRouteRootCommonModuleMocks } from '../../../routeRootTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const scheduled: Array<() => void> = [];
 const cancelSpy = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                    Platform: {
-                                                        OS: 'ios',
-                                                    },
-                                                    InteractionManager: {
-                                                        runAfterInteractions: (cb: () => void) => {
-                                                                scheduled.push(cb);
-                                                                return { cancel: cancelSpy };
-                                                            },
-                                                    },
-                                                    View: (props: any) => React.createElement('View', props, props.children),
-                                                }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        params: { id: 's1' },
-    });
-    return routerMock.module;
+installRouteRootCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+            InteractionManager: {
+                runAfterInteractions: (cb: () => void) => {
+                    scheduled.push(cb);
+                    return { cancel: cancelSpy };
+                },
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            params: { id: 's1' },
+        }).module;
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                storage: { getState: () => ({ sessions: {} }) } as any,
+            },
+        });
+    },
 });
 
 vi.mock('@/components/sessions/shell/SessionView', () => ({
@@ -46,13 +53,11 @@ vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
 describe('session/[id] route', () => {
     afterEach(() => {
         scheduled.length = 0;
-        vi.useRealTimers();
         vi.resetModules();
         cancelSpy.mockClear();
     });
 
     it('defers mounting SessionView on native to keep navigation snappy', async () => {
-        vi.useFakeTimers();
         const Route = (await import('@/app/(app)/session/[id]')).default;
 
         const screen = await renderScreen(<Route />);

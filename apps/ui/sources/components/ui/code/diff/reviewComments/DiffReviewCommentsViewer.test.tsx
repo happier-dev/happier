@@ -1,16 +1,17 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installCodeDiffCommonModuleMocks } from '../codeDiffTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let thresholds = { lineThreshold: 50_000, byteThreshold: 120_000 };
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installCodeDiffCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             View: 'View',
             Platform: {
                 OS: 'ios',
@@ -19,8 +20,18 @@ vi.mock('react-native', async () => {
             AppState: {
                 addEventListener: () => ({ remove: () => {} }),
             },
-        }
-    );
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'wrapLinesInDiffs') return true;
+                if (key === 'showLineNumbers') return true;
+                return null;
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
@@ -34,17 +45,6 @@ vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () =>
 vi.mock('@/components/sessions/reviews/comments/useCodeLinesReviewComments', () => ({
     useCodeLinesReviewComments: () => null,
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'wrapLinesInDiffs') return true;
-        if (key === 'showLineNumbers') return true;
-        return null;
-    },
-});
-});
 
 describe('DiffReviewCommentsViewer', () => {
     it('keeps non-virtual rendering for small diffs when review comments are enabled', async () => {

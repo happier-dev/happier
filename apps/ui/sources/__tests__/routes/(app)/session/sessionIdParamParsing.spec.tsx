@@ -1,37 +1,31 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { installRouteRootCommonModuleMocks } from '../../routeRootTestHelpers';
 
 
 type SearchParams = { id?: string; jumpSeq?: string };
 let searchParams: SearchParams = {};
 const ensureSessionVisibleSpy = vi.fn((_sessionId: string) => Promise.resolve());
 let hydrateReady = true;
-const routerMock = createSessionRouterMock();
-
-function createSessionRouterMock() {
-    return createExpoRouterMock({
-        params: () => searchParams,
-    });
-}
+const routerMock = createExpoRouterMock({
+    params: () => searchParams,
+});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: {
-                        OS: 'web',
-                    },
-                    View: (props: any) => React.createElement('View', props, props.children),
-                }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    return routerMock.module;
+installRouteRootCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+        });
+    },
+    router: async () => routerMock.module,
 });
 
 vi.mock('@react-navigation/native', () => ({
@@ -71,64 +65,64 @@ async function renderSessionScreen() {
 }
 
 describe('session/[id] param parsing', () => {
-  afterEach(() => {
-    vi.resetModules();
-    ensureSessionVisibleSpy.mockClear();
-    hydrateReady = true;
-  });
+    afterEach(() => {
+        vi.resetModules();
+        ensureSessionVisibleSpy.mockClear();
+        hydrateReady = true;
+    });
 
-  it('renders the session view using expo-router search params', async () => {
+    it('renders the session view using expo-router search params', async () => {
         vi.resetModules();
         searchParams = { id: 'session-123' };
         const { sessionView } = await renderSessionScreen();
         expect(sessionView.props.id).toBe('session-123');
-  });
-
-  it('does not pass jumpToSeq when jumpSeq is missing', async () => {
-    vi.resetModules();
-    searchParams = { id: 'session-123' };
-    const { sessionView } = await renderSessionScreen();
-    expect(sessionView.props.jumpToSeq ?? null).toBeNull();
-  });
-
-  it('does not pass jumpToSeq when jumpSeq is empty or whitespace', async () => {
-    vi.resetModules();
-    searchParams = { id: 'session-123', jumpSeq: '   ' };
-    const { sessionView } = await renderSessionScreen();
-    expect(sessionView.props.jumpToSeq ?? null).toBeNull();
-  });
-
-  it('passes jumpSeq through to SessionView as jumpToSeq', async () => {
-    vi.resetModules();
-    searchParams = { id: 'session-123', jumpSeq: '42' } as any;
-    const { sessionView } = await renderSessionScreen();
-    expect(sessionView.props.jumpToSeq).toBe(42);
-  });
-
-  it('passes pane url params through to SessionView as paneUrlState', async () => {
-    vi.resetModules();
-    searchParams = { id: 'session-123', right: 'files', details: 'file', path: 'src/app.ts' } as any;
-    const { sessionView } = await renderSessionScreen();
-    expect(sessionView.props.paneUrlState).toEqual({
-      rightTabId: 'files',
-      details: { kind: 'file', path: 'src/app.ts' },
     });
-  });
 
-  it('hydrates sessions for deep links by requesting session visibility', async () => {
-    vi.resetModules();
-    searchParams = { id: 'session-123' };
-    await renderSessionScreen();
-    expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('session-123');
-  });
+    it('does not pass jumpToSeq when jumpSeq is missing', async () => {
+        vi.resetModules();
+        searchParams = { id: 'session-123' };
+        const { sessionView } = await renderSessionScreen();
+        expect(sessionView.props.jumpToSeq ?? null).toBeNull();
+    });
 
-  it('still renders SessionView while hydration is pending so deleted-session UI can recover', async () => {
-    vi.resetModules();
-    hydrateReady = false;
-    searchParams = { id: 'session-123' };
-    const { sessionView } = await renderSessionScreen();
-    expect(sessionView.props.id).toBe('session-123');
-  });
+    it('does not pass jumpToSeq when jumpSeq is empty or whitespace', async () => {
+        vi.resetModules();
+        searchParams = { id: 'session-123', jumpSeq: '   ' };
+        const { sessionView } = await renderSessionScreen();
+        expect(sessionView.props.jumpToSeq ?? null).toBeNull();
+    });
+
+    it('passes jumpSeq through to SessionView as jumpToSeq', async () => {
+        vi.resetModules();
+        searchParams = { id: 'session-123', jumpSeq: '42' } as any;
+        const { sessionView } = await renderSessionScreen();
+        expect(sessionView.props.jumpToSeq).toBe(42);
+    });
+
+    it('passes pane url params through to SessionView as paneUrlState', async () => {
+        vi.resetModules();
+        searchParams = { id: 'session-123', right: 'files', details: 'file', path: 'src/app.ts' } as any;
+        const { sessionView } = await renderSessionScreen();
+        expect(sessionView.props.paneUrlState).toEqual({
+            rightTabId: 'files',
+            details: { kind: 'file', path: 'src/app.ts' },
+        });
+    });
+
+    it('hydrates sessions for deep links by requesting session visibility', async () => {
+        vi.resetModules();
+        searchParams = { id: 'session-123' };
+        await renderSessionScreen();
+        expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('session-123');
+    });
+
+    it('still renders SessionView while hydration is pending so deleted-session UI can recover', async () => {
+        vi.resetModules();
+        hydrateReady = false;
+        searchParams = { id: 'session-123' };
+        const { sessionView } = await renderSessionScreen();
+        expect(sessionView.props.id).toBe('session-123');
+    });
 
     it('renders an invalid-link fallback when session id is missing', async () => {
         vi.resetModules();

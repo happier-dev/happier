@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { resetDynamicModelProbeCacheForTests, DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS } from '@/sync/domains/models/dynamicModelProbeCache';
 import { installCapabilitiesOpsModuleMock } from '@/dev/testkit/mocks/capabilities';
 
@@ -54,8 +54,8 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
 
         await act(async () => {
             hook.getCurrent().probe.onRefresh();
-            await Promise.resolve();
         });
+        await flushHookEffects();
 
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
         expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm2')).toBe(true);
@@ -116,9 +116,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
             },
         });
 
-        await act(async () => {
-            await Promise.resolve();
-        });
+        await flushHookEffects();
 
         expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm2')).toBe(true);
         await hook.unmount();

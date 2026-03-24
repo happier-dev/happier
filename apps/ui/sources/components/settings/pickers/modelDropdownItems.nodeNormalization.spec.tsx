@@ -2,69 +2,62 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'web',
-                                    },
-                                }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: () => <>{'.'}</>,
-}));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#fff',
-                textSecondary: '#aaa',
-                textDestructive: '#f44',
-                surfacePressed: '#111',
-                surfacePressedOverlay: '#222',
-                surfaceSelected: '#333',
-                surfaceHigh: '#444',
-                surfaceHighest: '#555',
-                divider: '#666',
-                accent: { blue: '#08f' },
-                input: { placeholder: '#888' },
-                groupped: {
-                    background: '#111',
-                    chevron: '#888',
-                    sectionTitle: '#777',
+installSettingsViewCommonModuleMocks({
+    icons: async () => {
+        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+        return {
+            ...createExpoVectorIconsMock(),
+            Ionicons: () => <>{'.'}</>,
+        };
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: '#fff',
+                    textSecondary: '#aaa',
+                    textDestructive: '#f44',
+                    surfacePressed: '#111',
+                    surfacePressedOverlay: '#222',
+                    surfaceSelected: '#333',
+                    surfaceHigh: '#444',
+                    surfaceHighest: '#555',
+                    divider: '#666',
+                    accent: { blue: '#08f' },
+                    input: { placeholder: '#888' },
+                    groupped: {
+                        background: '#111',
+                        chevron: '#888',
+                        sectionTitle: '#777',
+                    },
                 },
+                dark: false,
             },
-            dark: false,
-        },
-    });
+        });
+    },
 });
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('model dropdown item node normalization', () => {
     it('does not leave raw text nodes under item-row view slots when icon components resolve to primitive text', async () => {

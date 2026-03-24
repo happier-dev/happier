@@ -2,6 +2,10 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { createCapturingComponent, createPassThroughComponent } from '@/dev/testkit/mocks/components';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { installProfilesCommonModuleMocks } from '@/components/profiles/profilesTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -9,7 +13,6 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;
 type ProfileCompatibility = {
     claude: boolean;
     codex: boolean;
@@ -40,21 +43,16 @@ const testProfileRow: ProfileRow = {
     compatibility: testProfileCompatibility,
 };
 
-function createPassthroughHostComponent(name: string) {
-    return ({ children, ...props }: NativeChildrenProps) => React.createElement(name, props, children);
-}
-
-function createLeafHostComponent(name: string) {
-    return () => React.createElement(name);
-}
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
+installProfilesCommonModuleMocks({
+    reactNative: () => createReactNativeWebMock({
         Platform: {
             OS: 'ios',
         },
-    });
+    }),
+    storage: () => createStorageModuleStub({
+        useSetting: () => false,
+        useSettingMutable: () => [[], vi.fn()],
+    }),
 });
 
 const routerMock = vi.hoisted(() => ({
@@ -77,46 +75,19 @@ vi.mock('expo-router', async () => {
     return expoRouterMock.module;
 });
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: () => false,
-            useSettingMutable: () => [[], vi.fn()],
-        },
-    });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
 vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
     promptUnsavedChangesAlert: vi.fn(async () => 'keep'),
 }));
 
 vi.mock('@/components/profiles/edit', () => ({
-    ProfileEditForm: createLeafHostComponent('ProfileEditForm'),
+    ProfileEditForm: createPassThroughComponent('ProfileEditForm'),
 }));
 
 let capturedProfilesListProps: CapturedProfilesListProps | null = null;
 vi.mock('@/components/profiles/ProfilesList', () => ({
-    ProfilesList: (props: CapturedProfilesListProps) => {
-        capturedProfilesListProps = props;
-        return React.createElement('ProfilesList');
-    },
+    ProfilesList: createCapturingComponent('ProfilesList', (props) => {
+        capturedProfilesListProps = props as CapturedProfilesListProps;
+    }),
 }));
 
 vi.mock('@/sync/domains/profiles/profileUtils', () => ({
@@ -132,20 +103,20 @@ vi.mock('@/sync/domains/profiles/profileMutations', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: createPassthroughHostComponent('ItemList'),
+    ItemList: createPassThroughComponent('ItemList'),
 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: createPassthroughHostComponent('ItemGroup'),
+    ItemGroup: createPassThroughComponent('ItemGroup'),
 }));
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: createPassthroughHostComponent('Item'),
+    Item: createPassThroughComponent('Item'),
 }));
 vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: createPassthroughHostComponent('Switch'),
+    Switch: createPassThroughComponent('Switch'),
 }));
 
 vi.mock('@/components/secrets/requirements', () => ({
-    SecretRequirementModal: createLeafHostComponent('SecretRequirementModal'),
+    SecretRequirementModal: createPassThroughComponent('SecretRequirementModal'),
 }));
 
 vi.mock('@/utils/secrets/secretSatisfaction', () => ({

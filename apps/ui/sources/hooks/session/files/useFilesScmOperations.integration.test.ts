@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { act } from 'react-test-renderer';
 
 const {
     mockSessionRPC,
@@ -92,6 +92,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
 import { sessionScmStatusSnapshot } from '@/sync/ops';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { storage } from '@/sync/domains/state/storage';
+import { renderHook } from '@/dev/testkit';
 import { createGitSessionRpcHarness, git, initBareRemote, initRepo } from '@/sync/ops/__tests__/gitRepoHarness';
 import { createSaplingSessionRpcHarness, initSaplingRepo, runSapling } from '@/sync/ops/__tests__/saplingRepoHarness';
 import { normalizeWorkingSnapshotForUi } from '@/scm/scmRepositoryService';
@@ -131,29 +132,9 @@ function createSession(sessionId: string, workspacePath: string) {
 }
 
 function mountHook(props: HookProps) {
-    let current: ReturnType<typeof useFilesScmOperations> | null = null;
-
-    function Probe() {
-        current = useFilesScmOperations(props);
-        return React.createElement('View');
-    }
-
-    let tree: renderer.ReactTestRenderer;
-    act(() => {
-        tree = renderer.create(React.createElement(Probe));
+    return renderHook((hookProps: HookProps) => useFilesScmOperations(hookProps), {
+        initialProps: props,
     });
-
-    return {
-        getCurrent() {
-            if (!current) {
-                throw new Error('Hook state is unavailable');
-            }
-            return current;
-        },
-        unmount() {
-            tree.unmount();
-        },
-    };
 }
 
 describe('useFilesScmOperations integration', () => {
@@ -216,7 +197,7 @@ describe('useFilesScmOperations integration', () => {
         const refreshScmData = vi.fn(async () => {});
         const loadCommitHistory = vi.fn(async () => {});
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -253,9 +234,7 @@ describe('useFilesScmOperations integration', () => {
         expect(operationLog.some((entry) => entry.operation === 'commit' && entry.status === 'success')).toBe(true);
         expect(operationLog.some((entry) => entry.operation === 'push' && entry.status === 'success')).toBe(true);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('creates a commit from an explicit draft message without opening the modal editor', async () => {
@@ -281,7 +260,7 @@ describe('useFilesScmOperations integration', () => {
         const refreshScmData = vi.fn(async () => {});
         const loadCommitHistory = vi.fn(async () => {});
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -304,9 +283,7 @@ describe('useFilesScmOperations integration', () => {
         expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(1);
         expect(loadCommitHistory).toHaveBeenCalledWith({ reset: true });
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('does not auto-run commit message generation when opening commit editor (Generate must be explicit)', async () => {
@@ -339,7 +316,7 @@ describe('useFilesScmOperations integration', () => {
 
         showScmCommitMessageEditorModal.mockResolvedValue('chore: typed commit message');
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -358,9 +335,7 @@ describe('useFilesScmOperations integration', () => {
         expect(mockSessionRPC.mock.calls.some((call) => call[1] === SESSION_RPC_METHODS.EPHEMERAL_TASK_RUN)).toBe(false);
         expect(git(workspace, ['log', '-1', '--pretty=%s'])).toBe('chore: typed commit message');
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('creates an atomic commit from pending changes without touching live index staging', async () => {
@@ -384,7 +359,7 @@ describe('useFilesScmOperations integration', () => {
         const refreshScmData = vi.fn(async () => {});
         const loadCommitHistory = vi.fn(async () => {});
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -407,9 +382,7 @@ describe('useFilesScmOperations integration', () => {
         expect(git(workspace, ['diff', '--name-only'])).toBe('');
         expect(modalAlert).not.toHaveBeenCalled();
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('creates all-pending atomic commit with unstaged, pre-staged, and untracked changes', async () => {
@@ -434,7 +407,7 @@ describe('useFilesScmOperations integration', () => {
             throw new Error('expected git snapshot');
         }
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -462,9 +435,7 @@ describe('useFilesScmOperations integration', () => {
         expect(git(workspace, ['diff', '--name-only'])).toBe('');
         expect(git(workspace, ['diff', '--cached', '--name-only'])).toBe('');
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('creates a path-scoped atomic commit when commit selection paths are present', async () => {
@@ -489,7 +460,7 @@ describe('useFilesScmOperations integration', () => {
 
         storage.getState().markSessionProjectScmCommitSelectionPaths(sessionId, ['a.txt']);
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -511,9 +482,7 @@ describe('useFilesScmOperations integration', () => {
         expect(git(workspace, ['diff', '--name-only'])).toBe('b.txt');
         expect(storage.getState().getSessionProjectScmCommitSelectionPaths(sessionId)).toEqual([]);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('creates path-scoped atomic commit without consuming unrelated pre-staged repository state', async () => {
@@ -539,7 +508,7 @@ describe('useFilesScmOperations integration', () => {
 
         storage.getState().markSessionProjectScmCommitSelectionPaths(sessionId, ['a.txt']);
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -558,9 +527,7 @@ describe('useFilesScmOperations integration', () => {
         expect(git(workspace, ['show', '--pretty=', '--name-only', 'HEAD'])).toBe('a.txt');
         expect(git(workspace, ['diff', '--cached', '--name-only'])).toBe('b.txt');
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('keeps virtual commit selection when post-commit refresh fails', async () => {
@@ -586,7 +553,7 @@ describe('useFilesScmOperations integration', () => {
         storage.getState().markSessionProjectScmCommitSelectionPaths(sessionId, ['a.txt']);
         invalidateFromMutationAndAwait.mockRejectedValueOnce(new Error('refresh failed'));
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -606,9 +573,7 @@ describe('useFilesScmOperations integration', () => {
         expect(storage.getState().getSessionProjectScmCommitSelectionPaths(sessionId)).toEqual(['a.txt']);
         expect(modalAlert).toHaveBeenCalledTimes(1);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('surfaces partial commit success when backend returns commitSha on failure and preserves selection', async () => {
@@ -645,7 +610,7 @@ describe('useFilesScmOperations integration', () => {
 
         storage.getState().markSessionProjectScmCommitSelectionPaths(sessionId, ['a.txt']);
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -671,9 +636,7 @@ describe('useFilesScmOperations integration', () => {
         expect(lastCommitOperation?.status).toBe('failed');
         expect(lastCommitOperation?.detail).toContain(createdCommitSha.slice(0, 12));
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('creates an atomic commit from virtual line-selection patches', async () => {
@@ -708,7 +671,7 @@ describe('useFilesScmOperations integration', () => {
             ].join('\n'),
         });
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -731,9 +694,7 @@ describe('useFilesScmOperations integration', () => {
         expect(git(workspace, ['show', '--pretty=', 'HEAD'])).not.toContain('+line-two');
         expect(storage.getState().getSessionProjectScmCommitSelectionPatches(sessionId)).toEqual([]);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('creates atomic patch commit without consuming unrelated pre-staged repository state', async () => {
@@ -771,7 +732,7 @@ describe('useFilesScmOperations integration', () => {
             ].join('\n'),
         });
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -792,9 +753,7 @@ describe('useFilesScmOperations integration', () => {
         expect(git(workspace, ['show', '--pretty=', 'HEAD'])).not.toContain('+line-two');
         expect(git(workspace, ['diff', '--cached', '--name-only'])).toBe('b.txt');
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('fetches remote updates and refreshes repository data', async () => {
@@ -833,7 +792,7 @@ describe('useFilesScmOperations integration', () => {
         const refreshScmData = vi.fn(async () => {});
         const loadCommitHistory = vi.fn(async () => {});
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -859,9 +818,7 @@ describe('useFilesScmOperations integration', () => {
         const operationLog = storage.getState().getSessionProjectScmOperationLog(sessionId);
         expect(operationLog.some((entry) => entry.operation === 'fetch' && entry.status === 'success')).toBe(true);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('offers fetch after non-fast-forward push rejection', async () => {
@@ -904,7 +861,7 @@ describe('useFilesScmOperations integration', () => {
         const refreshScmData = vi.fn(async () => {});
         const loadCommitHistory = vi.fn(async () => {});
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -930,9 +887,7 @@ describe('useFilesScmOperations integration', () => {
         expect(operationLog.some((entry) => entry.operation === 'push' && entry.status === 'failed')).toBe(true);
         expect(operationLog.some((entry) => entry.operation === 'fetch' && entry.status === 'success')).toBe(true);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('skips pull/push confirmation when remote confirm policy is never', async () => {
@@ -962,7 +917,7 @@ describe('useFilesScmOperations integration', () => {
             throw new Error('expected git snapshot');
         }
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -980,9 +935,7 @@ describe('useFilesScmOperations integration', () => {
 
         expect(modalConfirm).not.toHaveBeenCalled();
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('auto-fetches after push rejection when push reject policy is auto_fetch', async () => {
@@ -1023,7 +976,7 @@ describe('useFilesScmOperations integration', () => {
         }
 
         const refreshScmData = vi.fn(async () => {});
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -1043,9 +996,7 @@ describe('useFilesScmOperations integration', () => {
         expect(refreshScmData).toHaveBeenCalledTimes(1);
         expect(git(workspace, ['rev-parse', `origin/${branch}`])).toBe(remoteHead);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('creates a commit through sapling backend and refreshes commit history', async () => {
@@ -1066,7 +1017,7 @@ describe('useFilesScmOperations integration', () => {
         const refreshScmData = vi.fn(async () => {});
         const loadCommitHistory = vi.fn(async () => {});
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -1091,9 +1042,7 @@ describe('useFilesScmOperations integration', () => {
         const operationLog = storage.getState().getSessionProjectScmOperationLog(sessionId);
         expect(operationLog.some((entry) => entry.operation === 'commit' && entry.status === 'success')).toBe(true);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('creates a path-scoped atomic commit through sapling backend when selection paths exist', async () => {
@@ -1117,7 +1066,7 @@ describe('useFilesScmOperations integration', () => {
 
         storage.getState().markSessionProjectScmCommitSelectionPaths(sessionId, ['a.txt']);
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -1138,9 +1087,7 @@ describe('useFilesScmOperations integration', () => {
         expect(runSapling(workspace, ['status', '--root-relative'])).toContain('M b.txt');
         expect(storage.getState().getSessionProjectScmCommitSelectionPaths(sessionId)).toEqual([]);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('creates a directory-scoped atomic commit through sapling backend when selection paths contain folders', async () => {
@@ -1166,7 +1113,7 @@ describe('useFilesScmOperations integration', () => {
 
         storage.getState().markSessionProjectScmCommitSelectionPaths(sessionId, ['src']);
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -1185,9 +1132,7 @@ describe('useFilesScmOperations integration', () => {
         expect(runSapling(workspace, ['status', '--root-relative'])).toContain('M docs/c.txt');
         expect(storage.getState().getSessionProjectScmCommitSelectionPaths(sessionId)).toEqual([]);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 
     it('does not infer sapling push branch from active commit hash and surfaces upstream-required error', async () => {
@@ -1209,7 +1154,7 @@ describe('useFilesScmOperations integration', () => {
         const refreshScmData = vi.fn(async () => {});
         const loadCommitHistory = vi.fn(async () => {});
 
-        const hook = mountHook({
+        const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
@@ -1234,8 +1179,6 @@ describe('useFilesScmOperations integration', () => {
         const operationLog = storage.getState().getSessionProjectScmOperationLog(sessionId);
         expect(operationLog.some((entry) => entry.operation === 'push')).toBe(false);
 
-        act(() => {
-            hook.unmount();
-        });
+        await hook.unmount();
     });
 });

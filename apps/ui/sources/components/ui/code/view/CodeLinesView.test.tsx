@@ -1,15 +1,15 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { findAllByType, findFirstByType, renderScreen } from '@/dev/testkit';
-import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installCodeViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             View: ({ children, ...props }: any) => React.createElement('View', props, children),
             Platform: {
                 OS: 'ios',
@@ -26,29 +26,29 @@ vi.mock('react-native', async () => {
                     : null;
                 return React.createElement('FlatList', props, items);
             },
-        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: { dark: false, colors: {} },
-    });
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: { dark: false, colors: {} },
+        });
+    },
 });
 
 vi.mock('./CodeLineRow', () => ({
     CodeLineRow: (props: any) => React.createElement('CodeLineRow', props),
 }));
 
-beforeEach(() => {
-    vi.useFakeTimers();
-});
+async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
+    return await run();
+}
 
-afterEach(() => {
-    vi.clearAllTimers();
-    vi.useRealTimers();
-});
+async function waitForCodeLinesViewScrollFallback(): Promise<void> {
+    await renderer.act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 75));
+    });
+}
 
 describe('CodeLinesView', () => {
     it('does not render FlatList when virtualized=false', async () => {
@@ -244,116 +244,120 @@ describe('CodeLinesView', () => {
     });
 
     it('attempts a DOM scrollIntoView fallback when scrollToLineId is provided', async () => {
-        const getElementById = vi.fn();
-        const scrollIntoView = vi.fn();
-        getElementById.mockReturnValue({ scrollIntoView });
-        const previousDocument = (globalThis as any).document;
-        (globalThis as any).document = { getElementById };
+        await withFakeTimers(async () => {
+            const getElementById = vi.fn();
+            const scrollIntoView = vi.fn();
+            getElementById.mockReturnValue({ scrollIntoView });
+            const previousDocument = (globalThis as any).document;
+            (globalThis as any).document = { getElementById };
 
-        try {
-            const { CodeLinesView } = await import('./CodeLinesView');
-            const screen = await renderScreen(
-                <CodeLinesView
-                    scrollToLineId="b"
-                    lines={[
-                        {
-                            id: 'a',
-                            sourceIndex: 0,
-                            kind: 'context',
-                            oldLine: 1,
-                            newLine: 1,
-                            renderPrefixText: '',
-                            renderCodeText: 'a',
-                            renderIsHeaderLine: false,
-                            selectable: false,
-                        },
-                        {
-                            id: 'b',
-                            sourceIndex: 1,
-                            kind: 'context',
-                            oldLine: 2,
-                            newLine: 2,
-                            renderPrefixText: '',
-                            renderCodeText: 'b',
-                            renderIsHeaderLine: false,
-                            selectable: false,
-                        },
-                    ]}
-                />
-            );
-            await flushHookEffects({ runOnlyPendingTimers: true });
+            try {
+                const { CodeLinesView } = await import('./CodeLinesView');
+                const screen = await renderScreen(
+                    <CodeLinesView
+                        scrollToLineId="b"
+                        lines={[
+                            {
+                                id: 'a',
+                                sourceIndex: 0,
+                                kind: 'context',
+                                oldLine: 1,
+                                newLine: 1,
+                                renderPrefixText: '',
+                                renderCodeText: 'a',
+                                renderIsHeaderLine: false,
+                                selectable: false,
+                            },
+                            {
+                                id: 'b',
+                                sourceIndex: 1,
+                                kind: 'context',
+                                oldLine: 2,
+                                newLine: 2,
+                                renderPrefixText: '',
+                                renderCodeText: 'b',
+                                renderIsHeaderLine: false,
+                                selectable: false,
+                            },
+                        ]}
+                    />
+                );
+                await waitForCodeLinesViewScrollFallback();
 
-            expect(getElementById).toHaveBeenCalledWith('b');
-            expect(scrollIntoView).toHaveBeenCalled();
-            await screen.unmount();
-        } finally {
-            (globalThis as any).document = previousDocument;
-        }
+                expect(getElementById).toHaveBeenCalledWith('b');
+                expect(scrollIntoView).toHaveBeenCalled();
+                await screen.unmount();
+            } finally {
+                (globalThis as any).document = previousDocument;
+            }
+        });
     });
 
     it('falls back to setting scrollTop on the nearest scroll container when the target element is not mounted', async () => {
-        const scrollContainer: any = {
-            scrollTop: 0,
-            clientHeight: 100,
-            scrollHeight: 1000,
-            parentElement: null,
-            scrollTo: vi.fn(({ top }: { top: number }) => {
-                scrollContainer.scrollTop = top;
-            }),
-        };
+        await withFakeTimers(async () => {
+            const scrollContainer: any = {
+                scrollTop: 0,
+                clientHeight: 100,
+                scrollHeight: 1000,
+                parentElement: null,
+                scrollTo: vi.fn(({ top }: { top: number }) => {
+                    scrollContainer.scrollTop = top;
+                }),
+            };
 
-        const anchorElement: any = {
-            id: 'a',
-            parentElement: scrollContainer,
-        };
+            const anchorElement: any = {
+                id: 'a',
+                parentElement: scrollContainer,
+            };
 
-        const getElementById = vi.fn((id: string) => {
-            if (id === 'b') return null; // target line not mounted yet
-            if (id === 'a') return anchorElement; // first rendered row
-            return null;
+            const getElementById = vi.fn((id: string) => {
+                if (id === 'b') return null; // target line not mounted yet
+                if (id === 'a') return anchorElement; // first rendered row
+                return null;
+            });
+
+            const previousDocument = (globalThis as any).document;
+            (globalThis as any).document = { getElementById };
+
+            try {
+                const { CodeLinesView } = await import('./CodeLinesView');
+                const screen = await renderScreen(
+                    <CodeLinesView
+                        scrollToLineId="b"
+                        lines={[
+                            {
+                                id: 'a',
+                                sourceIndex: 0,
+                                kind: 'context',
+                                oldLine: 1,
+                                newLine: 1,
+                                renderPrefixText: '',
+                                renderCodeText: 'a',
+                                renderIsHeaderLine: false,
+                                selectable: false,
+                            },
+                            {
+                                id: 'b',
+                                sourceIndex: 1,
+                                kind: 'context',
+                                oldLine: 2,
+                                newLine: 2,
+                                renderPrefixText: '',
+                                renderCodeText: 'b',
+                                renderIsHeaderLine: false,
+                                selectable: false,
+                            },
+                        ]}
+                    />
+                );
+                await waitForCodeLinesViewScrollFallback();
+
+                // Estimated row height is 22px; index 1 should land at ~22px.
+                expect(scrollContainer.scrollTop).toBe(22);
+                await screen.unmount();
+            } finally {
+                (globalThis as any).document = previousDocument;
+            }
         });
-
-        const previousDocument = (globalThis as any).document;
-        (globalThis as any).document = { getElementById };
-
-        try {
-            const { CodeLinesView } = await import('./CodeLinesView');
-            const screen = await renderScreen(
-                <CodeLinesView
-                    scrollToLineId="b"
-                    lines={[
-                        {
-                            id: 'a',
-                            sourceIndex: 0,
-                            kind: 'context',
-                            oldLine: 1,
-                            newLine: 1,
-                            renderPrefixText: '',
-                            renderCodeText: 'a',
-                            renderIsHeaderLine: false,
-                            selectable: false,
-                        },
-                        {
-                            id: 'b',
-                            sourceIndex: 1,
-                            kind: 'context',
-                            oldLine: 2,
-                            newLine: 2,
-                            renderPrefixText: '',
-                            renderCodeText: 'b',
-                            renderIsHeaderLine: false,
-                            selectable: false,
-                        },
-                    ]}
-                />
-            );
-            await flushHookEffects({ runOnlyPendingTimers: true });
-
-            // Estimated row height is 22px; index 1 should land at ~22px.
-            expect(scrollContainer.scrollTop).toBe(22);
-            await screen.unmount();
-        } finally {
-            (globalThis as any).document = previousDocument;
-        }
     });
 });

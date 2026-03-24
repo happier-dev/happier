@@ -54,6 +54,23 @@ installRootLayoutRouteCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key: string) => key });
     },
+    storage: async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            importOriginal,
+            storage: {
+                getState: () => ({
+                    settings: mockSettings,
+                }),
+            },
+            useProfile: () => ({ linkedProviders: [], username: null }),
+            useAllSessions: () => [],
+            useFriendRequests: () => [],
+            useLocalSettings: () => ({ activityBadgesEnabled: false }),
+            useSettings: () => mockSettings,
+            useSetting: (key: keyof typeof mockSettings) => mockSettings[key],
+        });
+    },
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -71,23 +88,6 @@ vi.mock('@/utils/platform/platform', () => ({
 vi.mock('@/components/navigation/Header', () => ({
     createHeader: () => null,
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => ({
-            settings: mockSettings,
-        }),
-    },
-    useProfile: () => ({ linkedProviders: [], username: null }),
-    useAllSessions: () => [],
-    useFriendRequests: () => [],
-    useLocalSettings: () => ({ activityBadgesEnabled: false }),
-    useSettings: () => mockSettings,
-    useSetting: (key: keyof typeof mockSettings) => mockSettings[key],
-});
-});
 
 vi.mock('@/sync/domains/state/storageStore', () => {
     const storage = (selector: (state: { profile: { linkedProviders: []; username: null } }) => unknown) => selector({ profile: { linkedProviders: [], username: null } });

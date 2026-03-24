@@ -5,37 +5,18 @@ import {
     changeTextTestInstance,
     renderScreen,
 } from '@/dev/testkit';
+import { installClaudeSessionSubagentCommonModuleMocks } from './claudeSessionSubagentTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sendMessageSpy = vi.fn(async () => undefined);
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-                    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
+installClaudeSessionSubagentCommonModuleMocks();
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
     TextInput: (props: any) => React.createElement('TextInput', props),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
 
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({
     getSyncSingleton: () => ({

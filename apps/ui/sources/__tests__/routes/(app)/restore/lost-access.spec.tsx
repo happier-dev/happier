@@ -123,7 +123,7 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
 }));
 
 function findProviderButtonAction(tree: renderer.ReactTestRenderer): () => Promise<void> | void {
-    const buttons = tree.root.findAll((node) => (node.type as unknown) === 'RoundButton');
+    const buttons = tree.findAll((node) => (node.type as unknown) === 'RoundButton');
     const providerButton = buttons.find((button) => typeof button.props?.action === 'function');
     expect(providerButton).toBeTruthy();
     return providerButton!.props.action as () => Promise<void> | void;

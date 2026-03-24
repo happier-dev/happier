@@ -39,16 +39,18 @@ vi.mock('@/components/ui/text/Text', () => ({
 describe('PrimaryCircleIconButton', () => {
     it('forwards testID to the Pressable', async () => {
         const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<PrimaryCircleIconButton
-                    testID="circle-button"
-                    active
-                    accessibilityLabel="Send"
-                    onPress={() => {}}
-                >
-                    <span />
-                </PrimaryCircleIconButton>)).tree;
-        const pressable = tree.findByType('Pressable' as any);
+        const screen = await renderScreen(<PrimaryCircleIconButton
+            testID="circle-button"
+            active
+            accessibilityLabel="Send"
+            onPress={() => {}}
+        >
+            <span />
+        </PrimaryCircleIconButton>);
+        const pressable = screen.findByTestId('circle-button');
+        if (!pressable) {
+            throw new Error('Expected primary circle icon button pressable to render');
+        }
         expect(pressable.props.testID).toBe('circle-button');
     });
 

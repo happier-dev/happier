@@ -20,13 +20,6 @@ function file(fullPath: string) {
     return { fullPath } as any;
 }
 
-async function flushAsync(count = 3): Promise<void> {
-    for (let i = 0; i < count; i++) {
-        await Promise.resolve();
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-}
-
 type HookValue = ReturnType<typeof import('./useChangedFilesReviewPrefetch')['useChangedFilesReviewPrefetch']>;
 
 async function renderHook(useValue: () => HookValue): Promise<{ getCurrent: () => HookValue; unmount: () => void }> {
@@ -92,11 +85,9 @@ describe('useChangedFilesReviewPrefetch (requestedPaths)', () => {
         act(() => {
             hook.getCurrent().onViewableItemsChanged({ viewableItems: [{ index: 1 }] });
         });
-        await act(async () => {
-            await flushAsync(4);
+        await vi.waitFor(() => {
+            expect(hook.getCurrent().requestedPaths).toEqual(['b.ts']);
         });
-
-        expect(hook.getCurrent().requestedPaths).toEqual(['b.ts']);
         hook.unmount();
     });
 });

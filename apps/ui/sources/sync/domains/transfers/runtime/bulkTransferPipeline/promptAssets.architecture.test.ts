@@ -19,11 +19,11 @@ const FORBIDDEN_PROMPT_ASSET_TRANSFER_TOKENS = [
     'DAEMON_PROMPT_ASSETS_LIST_TYPES',
     'DAEMON_PROMPT_ASSETS_DISCOVER',
     'DAEMON_PROMPT_ASSETS_DELETE',
+    'bulkTransferPipeline/daemonPromptAssets',
 ] as const;
 
 const REQUIRED_PROMPT_ASSET_TRANSFER_TOKENS = [
-    'bulkTransferPipeline',
-    'daemonPromptAssets',
+    "@/sync/domains/transfers/runtime/bulkTransferPipeline",
 ] as const;
 
 describe('bulkTransferPipeline (architecture)', () => {

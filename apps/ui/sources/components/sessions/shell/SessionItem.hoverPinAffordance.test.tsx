@@ -123,7 +123,7 @@ describe('SessionItem pin hover affordance (web)', () => {
     }
 
     function findSessionRow(screen: Awaited<ReturnType<typeof renderSessionItem>>, sessionId: string) {
-        return screen.root.findByProps({ testID: `session-list-item-${sessionId}` }) as any;
+        return screen.findByTestId(`session-list-item-${sessionId}`) as any;
     }
 
     function findPinActions(row: ReturnType<typeof findSessionRow>) {
@@ -142,8 +142,8 @@ describe('SessionItem pin hover affordance (web)', () => {
         node.props.onPointerLeave?.();
     }
 
-    function findRightArea(row: ReturnType<typeof findSessionRow>) {
-        return row.findByProps({ testID: 'session-item-right-area' }) as any;
+    function findRightArea(screen: Awaited<ReturnType<typeof renderSessionItem>>) {
+        return screen.findByTestId('session-item-right-area') as any;
     }
 
     afterEach(() => {
@@ -205,7 +205,7 @@ describe('SessionItem pin hover affordance (web)', () => {
         });
         expect(findPinActions(row)).toHaveLength(1);
 
-        const rightArea = findRightArea(row);
+        const rightArea = findRightArea(screen);
         await act(async () => {
             triggerHoverLeave(row);
             triggerHoverEnter(rightArea);

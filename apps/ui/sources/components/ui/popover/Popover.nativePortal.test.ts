@@ -11,6 +11,7 @@ import {
 } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit';
+import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -32,18 +33,18 @@ vi.mock('expo-blur', () => {
     };
 });
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installPopoverCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             Platform: {
                 OS: 'ios',
             },
             useWindowDimensions: () => ({ width: 390, height: 844 }),
             View: (props: any) => React.createElement('View', props, props.children),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        }
-    );
+        });
+    },
 });
 
 function PopoverChild() {

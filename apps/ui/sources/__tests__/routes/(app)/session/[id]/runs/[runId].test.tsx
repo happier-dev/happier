@@ -7,6 +7,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSessionRouteCommonModuleMocks } from '../sessionRouteTestHelpers';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -84,66 +85,128 @@ const sessionFixture: Session = {
     canApprovePermissions: true,
 };
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                        Platform: {
-                                                            OS: 'web',
-                                                            select: (values: any) => values?.web ?? values?.default,
-                                                        },
-                                                        View: 'View',
-                                                        Text: 'Text',
-                                                        Pressable: 'Pressable',
-                                                        ActivityIndicator: 'ActivityIndicator',
-                                                        TextInput: 'TextInput',
-                                                        AppState: {
-                                                            currentState: 'active',
-                                                            addEventListener: () => ({ remove: () => {} }),
-                                                        },
-                                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#111',
-                surfaceHigh: '#222',
-                divider: '#333',
-                text: '#eee',
-                textSecondary: '#aaa',
-                textLink: '#06f',
-                textDestructive: '#f00',
-                accent: { indigo: '#33f' },
-                groupped: { sectionTitle: '#888' },
-                shadow: { color: '#000' },
+installSessionRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (values: any) => values?.web ?? values?.default,
             },
-        },
-    });
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ActivityIndicator: 'ActivityIndicator',
+            TextInput: 'TextInput',
+            AppState: {
+                currentState: 'active',
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#111',
+                    surfaceHigh: '#222',
+                    divider: '#333',
+                    text: '#eee',
+                    textSecondary: '#aaa',
+                    textLink: '#06f',
+                    textDestructive: '#f00',
+                    accent: { indigo: '#33f' },
+                    groupped: { sectionTitle: '#888' },
+                    shadow: { color: '#000' },
+                },
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            navigation: {
+                canGoBack: navigationCanGoBackSpy,
+            },
+            router: {
+                push: routerPushSpy,
+                back: routerBackSpy,
+                replace: routerReplaceSpy,
+                setParams: vi.fn(),
+            },
+        });
+        return {
+            ...routerMock.module,
+            useLocalSearchParams: () => localSearchParamsMock,
+            Stack: { Screen: (props: any) => stackScreenSpy(props) },
+        };
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, vars?: any) => {
+                if (key === 'runs.detail.pid') return `pid ${vars?.pid ?? ''}`.trim();
+                if (key === 'runs.detail.cpu') return `cpu ${vars?.percent ?? ''}`.trim();
+                if (key === 'runs.detail.memory') return `memory ${vars?.megabytes ?? ''}`.trim();
+                return key;
+            },
+        });
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                storage: {
+                    getState: () => ({
+                        sessions: {
+                            'session-1': {
+                                id: 'session-1',
+                                active: false,
+                                updatedAt: 0,
+                                metadata: {
+                                    machineId: 'machine-stale',
+                                    path: '/Users/leeroy/repo',
+                                    homeDir: '/Users/leeroy',
+                                },
+                            },
+                        },
+                        machines: {
+                            'machine-target': {
+                                id: 'machine-target',
+                                active: true,
+                                activeAt: 10,
+                                metadata: { host: 'workstation.local' },
+                            },
+                        },
+                        getProjectForSession: (sessionId: string) =>
+                            sessionId === 'session-1'
+                                ? {
+                                    key: {
+                                        machineId: 'machine-target',
+                                        path: '/Users/leeroy/repo',
+                                    },
+                                }
+                                : null,
+                        sessionMessages: {
+                            'session-1': {
+                                reducerState: {
+                                    toolIdToMessageId: new Map<string, string>([['side_1', 'message-side-1']]),
+                                },
+                            },
+                        },
+                    }),
+                } as any,
+                useSession: () => sessionFixture,
+                useSessionMessages: () => ({ messages: [], isLoaded: true }),
+                useResolvedSessionMessageRouteId: () => null,
+                useMessage: () => null,
+            },
+        });
+    },
 });
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        navigation: {
-            canGoBack: navigationCanGoBackSpy,
-        },
-        router: {
-            push: routerPushSpy,
-            back: routerBackSpy,
-            replace: routerReplaceSpy,
-            setParams: vi.fn(),
-        },
-    });
-    return {
-        ...routerMock.module,
-        useLocalSearchParams: () => localSearchParamsMock,
-        Stack: { Screen: (props: any) => stackScreenSpy(props) },
-    };
-});
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
@@ -153,18 +216,6 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
 vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
     SessionInvalidLinkFallback: () => React.createElement('SessionInvalidLinkFallback', { testID: 'session-invalid-link' }),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string, vars?: any) => {
-            if (key === 'runs.detail.pid') return `pid ${vars?.pid ?? ''}`.trim();
-            if (key === 'runs.detail.cpu') return `cpu ${vars?.percent ?? ''}`.trim();
-            if (key === 'runs.detail.memory') return `memory ${vars?.megabytes ?? ''}`.trim();
-            return key;
-        },
-    });
-});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -183,58 +234,6 @@ vi.mock('@/sync/ops/machineExecutionRuns', () => ({
     machineExecutionRunsList: (...args: MachineExecutionRunsListArgs) => machineExecutionRunsListSpy(...args),
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            storage: {
-                getState: () => ({
-                    sessions: {
-                        'session-1': {
-                            id: 'session-1',
-                            active: false,
-                            updatedAt: 0,
-                            metadata: {
-                                machineId: 'machine-stale',
-                                path: '/Users/leeroy/repo',
-                                homeDir: '/Users/leeroy',
-                            },
-                        },
-                    },
-                    machines: {
-                        'machine-target': {
-                            id: 'machine-target',
-                            active: true,
-                            activeAt: 10,
-                            metadata: { host: 'workstation.local' },
-                        },
-                    },
-                    getProjectForSession: (sessionId: string) =>
-                        sessionId === 'session-1'
-                            ? {
-                                key: {
-                                    machineId: 'machine-target',
-                                    path: '/Users/leeroy/repo',
-                                },
-                            }
-                            : null,
-                    sessionMessages: {
-                        'session-1': {
-                            reducerState: {
-                                toolIdToMessageId: new Map<string, string>([['side_1', 'message-side-1']]),
-                            },
-                        },
-                    },
-                }),
-            } as any,
-            useSession: () => sessionFixture,
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useResolvedSessionMessageRouteId: () => null,
-            useMessage: () => null,
-        },
-    });
-});
 vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
 vi.mock('@/components/sessions/transcript/details/SessionMessageDetailsView', () => ({
     SessionMessageDetailsView: () => React.createElement('SessionMessageDetailsView'),

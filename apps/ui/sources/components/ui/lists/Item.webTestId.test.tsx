@@ -32,18 +32,18 @@ vi.mock('@/components/ui/lists/itemGroupRowCorners', () => ({
 describe('Item web testID forwarding', () => {
     it('forwards testID as data-testid on interactive web rows', async () => {
         const { Item } = await import('./Item');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<Item
+        const screen = await renderScreen(<Item
                     testID="settings-appearance-themePreference-cycle"
                     title="Appearance"
                     detail="Adaptive"
                     onPress={() => {}}
-                />)).tree;
+                />);
 
-        const pressable = tree.findByType('Pressable' as any);
-        expect(pressable.props.testID).toBe('settings-appearance-themePreference-cycle');
-        expect(pressable.props['data-testid']).toBe('settings-appearance-themePreference-cycle');
-        expect(pressable.props.accessibilityRole).toBe('button');
+        const row = screen.findByTestId('settings-appearance-themePreference-cycle');
+        expect(row).toBeTruthy();
+        expect(row?.props.testID).toBe('settings-appearance-themePreference-cycle');
+        expect(row?.props['data-testid']).toBe('settings-appearance-themePreference-cycle');
+        expect(row?.props.accessibilityRole).toBe('button');
     });
 
     it('forwards testID as data-testid on non-interactive web rows', async () => {

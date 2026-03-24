@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
@@ -108,16 +107,15 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 describe('SessionDetailsPanel (active tab fallback)', () => {
     it('marks only the last tab active when activeTabKey is missing', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        const tabButtons = tree!.root
-            .findAllByType('Pressable')
-            .filter((node: any) => node.props?.accessibilityLabel === 'session.detailsPanel.openTabA11y');
-        expect(tabButtons).toHaveLength(2);
+        const firstTab = screen.findByTestId('session-details-tab-file_a');
+        const secondTab = screen.findByTestId('session-details-tab-file_b');
+        expect(firstTab).toBeTruthy();
+        expect(secondTab).toBeTruthy();
 
-        const firstStyles = tabButtons[0]!.props.style;
-        const secondStyles = tabButtons[1]!.props.style;
+        const firstStyles = firstTab?.props.style;
+        const secondStyles = secondTab?.props.style;
 
         const hasSurfaceHighBg = (styleProp: any) =>
             Array.isArray(styleProp) && styleProp.some((s: any) => s && s.backgroundColor === '#f5f5f5');

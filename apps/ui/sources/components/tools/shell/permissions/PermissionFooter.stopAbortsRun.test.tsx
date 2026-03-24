@@ -1,7 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
 
 
@@ -131,22 +130,19 @@ describe('PermissionFooter stop action', () => {
         sessionStore.updateSessionPermissionMode.mockClear();
 
         const { PermissionFooter } = await import('../permissions/PermissionFooter');
-        let tree: renderer.ReactTestRenderer | undefined;
-        tree = (await renderScreen(React.createElement(PermissionFooter, {
+        const screen = await renderScreen(React.createElement(PermissionFooter, {
             permission: { id: 'p1', status: 'pending' },
             sessionId: 's1',
             toolName,
             toolInput,
             metadata: { flavor },
-        }))).tree;
+        }));
 
-        const buttons = tree?.root.findAllByType('TouchableOpacity') ?? [];
+        const buttons = screen.findAllByType('TouchableOpacity' as any);
         const stopButton = buttons.at(-1);
         expect(stopButton).toBeTruthy();
 
-        await act(async () => {
-            await stopButton?.props.onPress?.();
-        });
+        await pressTestInstanceAsync(stopButton, 'stop button');
 
         expect(ops.sessionDeny).toHaveBeenCalledTimes(1);
         expect(ops.sessionDeny.mock.calls[0]?.[4]).toBe(expectedDecision);

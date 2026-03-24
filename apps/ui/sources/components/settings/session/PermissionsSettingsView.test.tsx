@@ -109,7 +109,7 @@ describe('PermissionsSettingsView', () => {
     it('renders session storage defaults and updates both global and per-agent settings', async () => {
         const { PermissionsSettingsView } = await import('./PermissionsSettingsView');
         const screen = await renderSettingsView(React.createElement(PermissionsSettingsView));
-        const titles = screen.root.findAllByType('Item' as any).map((item) => item.props.title);
+        const titles = screen.findAllByType('Item' as any).map((item) => item.props.title);
         expect(titles).toContain('settingsSession.defaultStorage.globalTitle');
         expect(titles).toContain('agent.codex');
 

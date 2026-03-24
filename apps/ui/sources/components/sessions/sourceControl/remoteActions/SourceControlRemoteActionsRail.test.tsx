@@ -1,9 +1,12 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SourceControlRemoteActionsRail } from './SourceControlRemoteActionsRail';
-import { renderScreen } from '@/dev/testkit';
+import {
+    findTestInstanceByTypeWithProps,
+    pressTestInstanceAsync,
+    renderScreen,
+} from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,11 +39,13 @@ describe('SourceControlRemoteActionsRail', () => {
                     ]}
                 />);
 
-        const buttons = screen.findAllByProps({ accessibilityRole: 'button' });
-        expect(buttons.length).toBe(2);
-        act(() => {
-            buttons.find((button: any) => button.props?.onPress === onFetch)?.props.onPress();
+        const fetchButton = findTestInstanceByTypeWithProps(screen.tree, 'Pressable' as any, {
+            accessibilityRole: 'button',
+            accessibilityLabel: 'Fetch',
         });
+        expect(fetchButton).toBeTruthy();
+
+        await pressTestInstanceAsync(fetchButton, 'Fetch action');
         expect(onFetch).toHaveBeenCalledTimes(1);
     });
 

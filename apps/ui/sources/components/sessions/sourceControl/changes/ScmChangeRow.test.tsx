@@ -3,39 +3,23 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { Pressable as RNPressable } from 'react-native';
 import { renderScreen } from '@/dev/testkit';
+import { installSourceControlChangesCommonModuleMocks } from './sourceControlChangesTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Pressable: 'Pressable',
-                    View: 'View',
-                    Platform: {
-                        OS: 'web',
-                    },
-                }
-    );
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-  Text: 'Text',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-  Typography: {
-    default: () => ({}),
-  },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
+installSourceControlChangesCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Pressable: 'Pressable',
+            View: 'View',
+            Platform: {
+                OS: 'web',
+            },
+        });
+    },
 });
 
 describe('ScmChangeRow', () => {

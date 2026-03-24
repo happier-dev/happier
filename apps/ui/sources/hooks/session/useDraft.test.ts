@@ -3,7 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDraft } from './useDraft';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -64,11 +64,6 @@ type HarnessState = Readonly<{
   rerender: () => void;
 }>;
 
-async function flushAsync(): Promise<void> {
-  await Promise.resolve();
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-}
-
 async function renderHarness(params: { initialSessionId: string }): Promise<{
   getCurrent: () => HarnessState;
   unmount: () => void;
@@ -117,13 +112,13 @@ describe('useDraft', () => {
 
     await act(async () => {
       harness.getCurrent().setValue('typed-1');
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     await act(async () => {
       harness.getCurrent().setSessionId('s2');
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(harness.getCurrent().value).toBe('');
     harness.unmount();
@@ -135,13 +130,13 @@ describe('useDraft', () => {
 
     await act(async () => {
       harness.getCurrent().setValue('typed-1');
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     await act(async () => {
       harness.getCurrent().setSessionId('s3');
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(harness.getCurrent().value).toBe('draft-3');
     harness.unmount();
@@ -153,13 +148,13 @@ describe('useDraft', () => {
 
     await act(async () => {
       harness.getCurrent().setValue('typed-1');
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     await act(async () => {
       harness.getCurrent().setSessionId('s2');
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(harness.getCurrent().value).toBe('');
     harness.unmount();
@@ -229,8 +224,8 @@ describe('useDraft', () => {
 
     await act(async () => {
       harness.getCurrent().rerender();
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(harness.getCurrent().value).toBe('rollback restored prompt');
     harness.unmount();
@@ -246,8 +241,8 @@ describe('useDraft', () => {
 
     await act(async () => {
       harness.getCurrent().setValue('draft-1 edited');
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     // Simulate autosave committing the latest text so there are no unsaved local edits.
     sessionsById = {
@@ -255,8 +250,8 @@ describe('useDraft', () => {
     };
     await act(async () => {
       harness.getCurrent().rerender();
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     sessionsById = {
       s1: { draft: 'rollback target prompt', metadata: {} },
@@ -264,8 +259,8 @@ describe('useDraft', () => {
 
     await act(async () => {
       harness.getCurrent().rerender();
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(harness.getCurrent().value).toBe('rollback target prompt');
     harness.unmount();
@@ -282,8 +277,8 @@ describe('useDraft', () => {
     await act(async () => {
       harness.getCurrent().clearDraft();
       harness.getCurrent().setValue('');
-      await flushAsync();
     });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(sessionsById.s1?.draft).toBeNull();
     expect(harness.getCurrent().value).toBe('');

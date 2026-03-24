@@ -20,11 +20,9 @@ import {
 let localVoiceEngine: typeof import('./localVoiceEngine');
 
 async function waitForAudioPlayer() {
-  for (let i = 0; i < 10_000; i++) {
-    if (createdAudioPlayers.length > 0) return;
-    await Promise.resolve();
-  }
-  throw new Error('Timed out waiting for Kokoro audio player');
+  await vi.waitFor(() => {
+    expect(createdAudioPlayers.length).toBeGreaterThan(0);
+  });
 }
 
 describe('local voice engine agent behavior (kokoro)', () => {

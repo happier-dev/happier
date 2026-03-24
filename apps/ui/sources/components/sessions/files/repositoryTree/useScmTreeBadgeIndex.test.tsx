@@ -2,22 +2,17 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { useScmTreeBadgeIndex } from './useScmTreeBadgeIndex';
+import { installRepositoryTreeCommonModuleMocks } from './repositoryTreeTestHelpers';
 import { renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'web',
-                                            },
-                                        }
-    );
-});
+installRepositoryTreeCommonModuleMocks();
+
+type UseScmTreeBadgeIndex = typeof import('./useScmTreeBadgeIndex').useScmTreeBadgeIndex;
+
+let useScmTreeBadgeIndex: UseScmTreeBadgeIndex;
 
 function makeSnapshot() {
     return {
@@ -76,6 +71,8 @@ function Harness(props: Readonly<{ snapshot: any | null }>) {
 
 describe('useScmTreeBadgeIndex', () => {
     it('defers index computation on web for progressive rendering', async () => {
+        ({ useScmTreeBadgeIndex } = await import('./useScmTreeBadgeIndex'));
+
         const snapshot = makeSnapshot();
         let scheduledCompute: (() => void) | undefined;
         const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: TimerHandler) => {

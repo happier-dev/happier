@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Project } from '@/sync/runtime/orchestration/projectManager';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installSessionFilesViewCommonModuleMocks } from '../sessionFilesViewsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,52 +21,26 @@ function findChipByLabel(screen: Awaited<ReturnType<typeof renderScreen>>, label
     return screen.findAll((node) => node.props?.label === label)[0] ?? null;
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                    Platform: {
-                                                        OS: 'web',
-                                                        select: (value: any) => value?.default ?? null,
-                                                    },
-                                                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        mono: () => ({}),
+installSessionFilesViewCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useProjectForSession: () => repositoryProject,
+            useProjectSessions: () => ['s1'],
+            useSessionProjectScmTouchedPaths: () => ['session-changes-qa-root.txt'],
+            useSessionProjectScmOperationLog: () => [],
+            useSetting: (key: string) => {
+                if (key === 'scmReviewMaxFiles') return 25;
+                if (key === 'scmReviewMaxChangedLines') return 2000;
+                return null;
+            },
+            importOriginal,
+        });
     },
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useProjectForSession: () => repositoryProject,
-    useProjectSessions: () => ['s1'],
-    useSessionProjectScmTouchedPaths: () => ['session-changes-qa-root.txt'],
-    useSessionProjectScmOperationLog: () => [],
-    useSetting: (key: string) => {
-            if (key === 'scmReviewMaxFiles') return 25;
-            if (key === 'scmReviewMaxChangedLines') return 2000;
-            return null;
-        },
-});
 });
 
 vi.mock('@/hooks/session/files/useChangedFilesData', () => ({

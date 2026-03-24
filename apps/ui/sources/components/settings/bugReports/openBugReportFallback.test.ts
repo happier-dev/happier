@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
+import { installBugReportComponentCommonModuleMocks } from './bugReportComponentTestHelpers';
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
+installBugReportComponentCommonModuleMocks();
 
 describe('openBugReportFallbackIssueUrl', () => {
     const originalOs = Platform.OS;

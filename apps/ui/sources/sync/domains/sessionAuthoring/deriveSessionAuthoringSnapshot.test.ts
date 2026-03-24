@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import type { CodexBackendMode } from '@happier-dev/agents';
 
 import { deriveSessionAuthoringSnapshot } from './deriveSessionAuthoringSnapshot';
 
 describe('deriveSessionAuthoringSnapshot', () => {
+    const legacyCodexBackendMode = '  mcp_resume  ' as unknown as CodexBackendMode;
+
     it('derives the authoring-relevant live session snapshot from session metadata and overrides', () => {
         const snapshot = deriveSessionAuthoringSnapshot({
             session: {
@@ -105,5 +108,26 @@ describe('deriveSessionAuthoringSnapshot', () => {
         expect(snapshot.sessionEncryptionMode).toBe('plain');
         expect(snapshot.sessionEncryptionKeyBase64).toBeNull();
         expect(snapshot.sessionEncryptionVariant).toBeNull();
+    });
+
+    it('normalizes legacy codex backend aliases from session metadata', () => {
+        const snapshot = deriveSessionAuthoringSnapshot({
+            session: {
+                id: 'session-3',
+                encryptionMode: 'e2ee',
+                metadata: {
+                    path: '/tmp/project',
+                    host: 'qa-host',
+                    codexBackendMode: legacyCodexBackendMode,
+                },
+                permissionMode: 'default',
+                permissionModeUpdatedAt: null,
+                modelMode: 'default',
+                modelModeUpdatedAt: null,
+            },
+            sessionDekBase64: null,
+        });
+
+        expect(snapshot.codexBackendMode).toBe('acp');
     });
 });

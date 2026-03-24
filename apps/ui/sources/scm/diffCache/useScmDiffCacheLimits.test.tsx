@@ -1,6 +1,6 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,14 +23,9 @@ describe('useScmDiffCacheLimits', () => {
         const cache = { setLimits: vi.fn() } as any;
         const { useScmDiffCacheLimits } = await import('./useScmDiffCacheLimits');
 
-        const Test = () => {
+        const hook = await renderHook(() => {
             useScmDiffCacheLimits(cache);
             return null;
-        };
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<Test />);
         });
 
         expect(cache.setLimits).toHaveBeenCalledTimes(1);
@@ -39,18 +34,14 @@ describe('useScmDiffCacheLimits', () => {
         cache.setLimits.mockClear();
 
         // Re-render with identical settings does not reapply limits on the same component instance.
-        await act(async () => {
-            tree!.update(<Test />);
-        });
+        await hook.rerender();
         expect(cache.setLimits).toHaveBeenCalledTimes(0);
 
         // Settings change: should update.
         maxEntriesSetting = 10;
         maxTotalBytesSetting = 100;
 
-        await act(async () => {
-            tree!.update(<Test />);
-        });
+        await hook.rerender();
 
         expect(cache.setLimits).toHaveBeenCalledTimes(1);
         expect(cache.setLimits).toHaveBeenCalledWith({ maxEntries: 10, maxTotalBytes: 100 });

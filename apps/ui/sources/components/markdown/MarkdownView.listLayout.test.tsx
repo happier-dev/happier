@@ -1,5 +1,5 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { MarkdownView } from './MarkdownView';
@@ -48,16 +48,16 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 
 describe('MarkdownView (lists)', () => {
   it('renders unordered list items with hanging-indent rows and nested padding', async () => {
-    let tree: renderer.ReactTestRenderer | null = null;
+    let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
     try {
-      tree = (await renderScreen(<MarkdownView
+      screen = await renderScreen(<MarkdownView
             markdown={[
               '- Parent',
               '  - Child',
             ].join('\n')}
-          />)).tree;
+          />);
 
-      const rows = tree!.root.findAll((node) => node.props?.testID === 'markdown-list-item-row');
+      const rows = screen.findAll((node) => node.props?.testID === 'markdown-list-item-row');
       expect(rows).toHaveLength(2);
 
       const markers = rows.map((row) =>
@@ -69,7 +69,7 @@ describe('MarkdownView (lists)', () => {
       expect(flattenStyle(rows[1].props.style).paddingLeft).toBe(20);
     } finally {
       act(() => {
-        tree?.unmount();
+        screen?.tree.unmount();
       });
     }
   }, 60_000);

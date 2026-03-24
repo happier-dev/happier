@@ -128,7 +128,7 @@ describe('collectResidualFamilyCounts', () => {
         expect(summary.areas.toolShell.testkitImports).toBe(1);
     });
 
-    it('reports top residual hotspot files in descending score order', () => {
+    it('reports top residual hotspot files with actionable ad hoc files ranked ahead of blocked hotspots', () => {
         const entries: ResidualInventoryEntry[] = [
             {
                 path: 'apps/ui/sources/components/sessions/transcript/ChatList.flashListV2.test.tsx',
@@ -173,12 +173,10 @@ describe('collectResidualFamilyCounts', () => {
         const formatted = formatResidualFileHotspots(fileSummaries, { limit: 2 });
 
         expect(fileSummaries.map((summary) => summary.path)).toEqual([
-            'apps/ui/sources/components/sessions/transcript/ChatList.flashListV2.test.tsx',
             'apps/ui/sources/components/sessions/shell/SessionView.directSessions.test.tsx',
+            'apps/ui/sources/components/sessions/transcript/ChatList.flashListV2.test.tsx',
             'apps/ui/sources/components/sessions/transcript/ChatList.jumpToBottom.test.tsx',
         ]);
-        expect(fileSummaries[0]?.hotspotScore).toBeGreaterThan(fileSummaries[1]?.hotspotScore ?? 0);
-        expect(fileSummaries[1]?.hotspotScore).toBeGreaterThan(fileSummaries[2]?.hotspotScore ?? 0);
         expect(formatted).toContain('topFiles:');
         expect(formatted).toContain('ChatList.flashListV2.test.tsx');
         expect(formatted).toContain('SessionView.directSessions.test.tsx');
@@ -235,6 +233,103 @@ describe('collectResidualFamilyCounts', () => {
             family: 'SessionView.directSessions',
             codemodEligible: false,
             codemodBlockers: ['timerChoreography', 'selectorDrift'],
+        });
+    });
+
+    it('only marks files with ad hoc inline mock shapes as codemod eligible', () => {
+        const entries: ResidualInventoryEntry[] = [
+            {
+                path: 'apps/ui/sources/components/settings/SettingsView.test.tsx',
+                text: [
+                    "import { vi } from 'vitest';",
+                    codeLine("vi.mock('", '@/text', "', async () => {"),
+                    codeLine("    const { createTextModuleMock } = await import('", '@/dev', "/testkit/mocks/text');"),
+                    '    return createTextModuleMock().module;',
+                    '});',
+                ].join('\n'),
+            },
+            {
+                path: 'apps/ui/sources/components/settings/SettingsViewLegacy.test.tsx',
+                text: [
+                    "import { vi } from 'vitest';",
+                    mockLine('@/text', "({ t: (key: string) => key })"),
+                ].join('\n'),
+            },
+        ];
+
+        const summaries = collectResidualFileCounts(entries);
+        const canonicalOnly = summaries.find((summary) => summary.path.endsWith('SettingsView.test.tsx'));
+        const adHoc = summaries.find((summary) => summary.path.endsWith('SettingsViewLegacy.test.tsx'));
+
+        expect(canonicalOnly).toMatchObject({
+            codemodEligible: false,
+        });
+        expect(adHoc).toMatchObject({
+            codemodEligible: true,
+        });
+    });
+
+    it('prioritizes actionable ad hoc inline mock files ahead of canonical-only hotspots', () => {
+        const entries: ResidualInventoryEntry[] = [
+            {
+                path: 'apps/ui/sources/components/settings/SettingsView.test.tsx',
+                text: [
+                    codeLine("vi.mock('", 'react-native', "', async () => {"),
+                    codeLine("    const { createReactNativeWebMock } = await import('", '@/dev', "/testkit/mocks/reactNative');"),
+                    '    return createReactNativeWebMock();',
+                    '});',
+                    codeLine("vi.mock('", 'react-native-unistyles', "', async () => {"),
+                    codeLine("    const { createUnistylesMock } = await import('", '@/dev', "/testkit/mocks/unistyles');"),
+                    '    return createUnistylesMock();',
+                    '});',
+                    codeLine("vi.mock('", '@/text', "', async () => {"),
+                    codeLine("    const { createTextModuleMock } = await import('", '@/dev', "/testkit/mocks/text');"),
+                    '    return createTextModuleMock().module;',
+                    '});',
+                    codeLine("vi.mock('", '@/modal', "', async () => {"),
+                    codeLine("    const { createModalModuleMock } = await import('", '@/dev', "/testkit/mocks/modal');"),
+                    '    return createModalModuleMock().module;',
+                    '});',
+                    codeLine("vi.mock('", 'expo-router', "', async () => {"),
+                    codeLine("    const { createExpoRouterMock } = await import('", '@/dev', "/testkit/mocks/router');"),
+                    '    return createExpoRouterMock().module;',
+                    '});',
+                    codeLine("vi.mock('", '@/sync/domains/state/storage', "', async (importOriginal) => {"),
+                    codeLine("    const { createStorageModuleMock } = await import('", '@/dev', "/testkit/mocks/storage');"),
+                    '    return createStorageModuleMock({ importOriginal, overrides: {} });',
+                    '});',
+                ].join('\n'),
+            },
+            {
+                path: 'apps/ui/sources/__tests__/app/new/pick/profile.secretRequirementNavigation.test.ts',
+                text: [
+                    mockLine('react-native'),
+                    codeLine("vi.mock('", '@/text', "', async () => {"),
+                    codeLine("    const { createTextModuleMock } = await import('", '@/dev', "/testkit/mocks/text');"),
+                    '    return createTextModuleMock().module;',
+                    '});',
+                    codeLine("vi.mock('", '@/modal', "', () => modalMock.module);"),
+                    codeLine("vi.mock('", 'expo-router', "', async () => {"),
+                    codeLine("    const { createExpoRouterMock } = await import('", '@/dev', "/testkit/mocks/router');"),
+                    '    return createExpoRouterMock().module;',
+                    '});',
+                    codeLine("vi.mock('", '@/sync/domains/state/storage', "', async (importOriginal) => {"),
+                    codeLine("    const { createStorageModuleMock } = await import('", '@/dev', "/testkit/mocks/storage');"),
+                    '    return createStorageModuleMock({ importOriginal, overrides: {} });',
+                    '});',
+                ].join('\n'),
+            },
+        ];
+
+        const summaries = collectResidualFileCounts(entries);
+
+        expect(summaries[0]?.path).toBe('apps/ui/sources/__tests__/app/new/pick/profile.secretRequirementNavigation.test.ts');
+        expect(summaries[0]?.inlineMockShapes).toMatchObject({
+            adHoc: 2,
+        });
+        expect(summaries[1]?.inlineMockShapes).toMatchObject({
+            canonical: 6,
+            adHoc: 0,
         });
     });
 });

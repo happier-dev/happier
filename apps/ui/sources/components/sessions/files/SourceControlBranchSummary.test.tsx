@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
+import { installSessionFilesCommonModuleMocks } from './sessionFilesTestHelpers';
+
 
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,27 +12,21 @@ import { renderScreen } from '@/dev/testkit';
 const publishBranchMock = vi.hoisted(() => vi.fn(async () => true));
 const usePublishBranchActionMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Platform: {
-                                        select: (value: any) => value?.default ?? null,
-                                    },
-                                }
-    );
+installSessionFilesCommonModuleMocks({
+    icons: () => ({
+        Octicons: 'Octicons',
+        Ionicons: 'Ionicons',
+    }),
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Platform: {
+                select: (value: any) => value?.default ?? null,
+            },
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
 
 vi.mock('@/components/sessions/sourceControl/branches/SourceControlBranchMenu', () => ({
     SourceControlBranchMenu: (props: any) => React.createElement('SourceControlBranchMenu', props),
@@ -39,11 +35,6 @@ vi.mock('@/components/sessions/sourceControl/branches/SourceControlBranchMenu', 
 vi.mock('@/hooks/session/sourceControl/usePublishBranchAction', () => ({
     usePublishBranchAction: (...args: any[]) => usePublishBranchActionMock(...args),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('SourceControlBranchSummary', () => {
     beforeEach(() => {

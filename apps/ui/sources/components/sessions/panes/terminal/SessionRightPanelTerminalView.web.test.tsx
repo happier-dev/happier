@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
+import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,6 +25,27 @@ let activeScreen: RenderScreenResult | null = null;
 let sessionState: any = { metadata: { machineId: 'machine-1', path: '/tmp' } };
 let projectState: any = null;
 
+installSessionDetailsPanelCommonModuleMocks({
+    storage: async () => ({
+        useLocalSetting: (key: string) => {
+            if (key === 'uiFontScale') return 1;
+            if (key === 'embeddedTerminalDockLocation') return 'sidebar';
+            return null;
+        },
+        useLocalSettingMutable: (key: string) => {
+            if (key === 'embeddedTerminalDockLocation') return ['sidebar', vi.fn()];
+            return [null, vi.fn()];
+        },
+        useAllMachines: () => Object.values(storageGetStateSpy()?.machines ?? {}),
+        useAllSessions: () => Object.values(storageGetStateSpy()?.sessions ?? {}),
+        useProjectForSession: () => projectState,
+        useSession: () => sessionState,
+        storage: {
+            getState: () => storageGetStateSpy(),
+        },
+    }),
+});
+
 async function renderAndFlush(element: React.ReactElement): Promise<RenderScreenResult> {
     const screen = await renderScreen(element);
     activeScreen = screen;
@@ -40,29 +62,6 @@ async function loadSessionEmbeddedTerminalPaneWeb() {
     const mod = await import('@/components/sessions/terminal/SessionEmbeddedTerminalPane.web');
     return mod.SessionEmbeddedTerminalPane;
 }
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                View: (props: any) => React.createElement('View', props, props.children),
-                Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                Platform: {
-                    OS: 'web',
-                    select: (value: any) => value?.default ?? null,
-                },
-            }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: any) => React.createElement('Ionicons', props),
-}));
 
 vi.mock('@/components/ui/buttons/PrimaryCircleIconButton', () => ({
     PrimaryCircleIconButton: (props: any) => React.createElement('PrimaryCircleIconButton', props, props.children),
@@ -122,11 +121,6 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineRpcTargetAvailable: true }),
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'phone',
 }));
@@ -155,28 +149,6 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
         setActiveDetailsTab: vi.fn(),
     }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: (key: string) => {
-            if (key === 'uiFontScale') return 1;
-            if (key === 'embeddedTerminalDockLocation') return 'sidebar';
-            return null;
-        },
-    useLocalSettingMutable: (key: string) => {
-            if (key === 'embeddedTerminalDockLocation') return ['sidebar', vi.fn()];
-            return [null, vi.fn()];
-        },
-    useAllMachines: () => Object.values(storageGetStateSpy()?.machines ?? {}),
-    useAllSessions: () => Object.values(storageGetStateSpy()?.sessions ?? {}),
-    useProjectForSession: () => projectState,
-    useSession: () => sessionState,
-    storage: {
-            getState: () => storageGetStateSpy(),
-        },
-});
-});
 
 vi.mock('@/sync/ops/machineTerminal', () => ({
     machineTerminalEnsure: (...args: any[]) => machineTerminalEnsureSpy(...args),
@@ -557,14 +529,14 @@ describe('SessionRightPanelTerminalView.web', () => {
         expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('hello');
 
         terminalRendererVersion = 1;
-            await screen.update(
-                <SessionEmbeddedTerminalPaneWeb
-                    sessionId="s1"
-                    scopeId="session:s1"
-                    currentDockLocation="details"
-                    testIdPrefix="pane-b"
-                />
-            );
+        await screen.update(
+            <SessionEmbeddedTerminalPaneWeb
+                sessionId="s1"
+                scopeId="session:s1"
+                currentDockLocation="details"
+                testIdPrefix="pane-b"
+            />,
+        );
 
         await flushHookEffects();
 

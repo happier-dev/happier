@@ -1,11 +1,10 @@
-import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 import { useNewSessionRepoScmSnapshot } from './useNewSessionRepoScmSnapshot';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderHook } from '@/dev/testkit';
 
 
 const readCachedSnapshotForMachinePathMock = vi.hoisted(() => vi.fn());
@@ -76,41 +75,6 @@ function makeSnapshot(partial?: Partial<ScmWorkingSnapshot>): ScmWorkingSnapshot
     };
 }
 
-async function flushAsync(): Promise<void> {
-    await Promise.resolve();
-}
-
-async function renderHook<T>(useValue: () => T): Promise<{
-    result: { current: T };
-    unmount: () => void;
-}> {
-    const result: { current: T } = { current: undefined as T };
-    focusEffectRunnerState.callback = null;
-
-    function Test() {
-        result.current = useValue();
-        return null;
-    }
-
-    let root: renderer.ReactTestRenderer | null = null;
-    root = (await renderScreen(React.createElement(Test))).tree;
-
-    await act(async () => {
-        focusEffectRunnerState.callback?.();
-        await flushAsync();
-    });
-
-    return {
-        result,
-        unmount: () => {
-            if (!root) return;
-            act(() => {
-                root?.unmount();
-            });
-        },
-    };
-}
-
 describe('useNewSessionRepoScmSnapshot', () => {
     it('seeds the hook from the cached machine/path snapshot while the refresh request is still in flight', async () => {
         const cachedSnapshot = makeSnapshot({ fetchedAt: 1 });
@@ -126,16 +90,20 @@ describe('useNewSessionRepoScmSnapshot', () => {
             path: '/repo',
         }));
 
-        expect(hook.result.current).toEqual(cachedSnapshot);
+        await act(async () => {
+            focusEffectRunnerState.callback?.();
+        });
+
+        expect(hook.getCurrent()).toEqual(cachedSnapshot);
 
         const refreshedSnapshot = makeSnapshot({ fetchedAt: 2 });
         await act(async () => {
             resolveFetch?.(refreshedSnapshot);
-            await flushAsync();
         });
+        await flushHookEffects();
 
-        expect(hook.result.current).toEqual(refreshedSnapshot);
-        hook.unmount();
+        expect(hook.getCurrent()).toEqual(refreshedSnapshot);
+        await hook.unmount();
     });
 
     it('refreshes the snapshot when the screen regains focus even if machine and path stay the same', async () => {
@@ -159,15 +127,20 @@ describe('useNewSessionRepoScmSnapshot', () => {
             path: '/repo',
         }));
 
-        expect(hook.result.current).toEqual(focusedSnapshot);
+        await act(async () => {
+            focusEffectRunnerState.callback?.();
+        });
+        await flushHookEffects();
+
+        expect(hook.getCurrent()).toEqual(focusedSnapshot);
 
         await act(async () => {
             focusEffectRunnerState.callback?.();
-            await flushAsync();
         });
+        await flushHookEffects();
 
-        expect(hook.result.current).toEqual(refocusedSnapshot);
+        expect(hook.getCurrent()).toEqual(refocusedSnapshot);
         expect(fetchSnapshotForMachinePathMock.mock.calls.length).toBeGreaterThanOrEqual(2);
-        hook.unmount();
+        await hook.unmount();
     });
 });

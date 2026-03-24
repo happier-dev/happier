@@ -7,62 +7,41 @@ import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
-}));
-
 const routerPushSpy = vi.fn();
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        useWindowDimensions: () => ({ width: 1400, height: 900 }),
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            dark: false,
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                surfaceHigh: '#f5f5f5',
-            },
-        },
-    });
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-  Typography: { default: () => ({}) },
-}));
-
 vi.mock('@/utils/platform/responsive', () => ({
   useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useLocalSetting: (key: string) => {
-            if (key === 'uiMultiPanePanelsEnabled') return true;
-            if (key === 'detailsPaneTabsBehavior') return 'preview';
-            return undefined;
+vi.hoisted(async () => {
+    const { installProjectFileLinkPickerCommonModuleMocks } = await import('./projectPicker/projectFileLinkPickerTestHelpers');
+
+    installProjectFileLinkPickerCommonModuleMocks({
+        reactNative: async () => {
+            const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeWebMock({
+                useWindowDimensions: () => ({ width: 1400, height: 900 }),
+            });
+        },
+        router: async () => {
+            const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+            const expoRouterMock = createExpoRouterMock({
+                router: { push: routerPushSpy },
+            });
+            return expoRouterMock.module;
+        },
+        storage: async () => {
+            const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+            return createStorageModuleStub({
+                useLocalSetting: (key: string) => {
+                    if (key === 'uiMultiPanePanelsEnabled') return true;
+                    if (key === 'detailsPaneTabsBehavior') return 'preview';
+                    return undefined;
+                },
+            });
         },
     });
+
+    return null;
 });
 
 describe('LinkedWorkspaceFilesRow', () => {

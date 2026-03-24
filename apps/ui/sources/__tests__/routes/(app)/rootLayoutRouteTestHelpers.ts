@@ -1,10 +1,15 @@
 import { vi } from 'vitest';
 
 type RootLayoutRouteModuleFactory = () => unknown | Promise<unknown>;
+type RootLayoutRouteImportOriginal = <T = unknown>() => Promise<T>;
+type RootLayoutRouteStorageModuleFactory = (
+    importOriginal: RootLayoutRouteImportOriginal,
+) => unknown | Promise<unknown>;
 
 type InstallRootLayoutRouteCommonModuleMocksOptions = Readonly<{
     reactNative?: RootLayoutRouteModuleFactory;
     router?: RootLayoutRouteModuleFactory;
+    storage?: RootLayoutRouteStorageModuleFactory;
     unistyles?: RootLayoutRouteModuleFactory;
     text?: RootLayoutRouteModuleFactory;
 }>;
@@ -13,6 +18,7 @@ const rootLayoutRouteModuleState = vi.hoisted(() => ({
     options: {
         reactNative: undefined as RootLayoutRouteModuleFactory | undefined,
         router: undefined as RootLayoutRouteModuleFactory | undefined,
+        storage: undefined as RootLayoutRouteStorageModuleFactory | undefined,
         unistyles: undefined as RootLayoutRouteModuleFactory | undefined,
         text: undefined as RootLayoutRouteModuleFactory | undefined,
     },
@@ -24,6 +30,7 @@ export function installRootLayoutRouteCommonModuleMocks(
     rootLayoutRouteModuleState.options = {
         reactNative: options.reactNative,
         router: options.router,
+        storage: options.storage,
         unistyles: options.unistyles,
         text: options.text,
     };
@@ -84,5 +91,14 @@ export function installRootLayoutRouteCommonModuleMocks(
 
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock();
+    });
+
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        const activeOptions = rootLayoutRouteModuleState.options;
+        if (activeOptions.storage) {
+            return await activeOptions.storage(importOriginal);
+        }
+
+        return importOriginal();
     });
 }
