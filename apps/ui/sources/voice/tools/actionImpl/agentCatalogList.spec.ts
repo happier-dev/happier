@@ -5,6 +5,7 @@ import {
   resetDynamicModelProbeCacheForTests,
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
+import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
 const machineCapabilitiesInvoke = vi.fn();
 
@@ -39,13 +40,15 @@ const state: any = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installVoiceToolActionImplCommonModuleMocks({
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-            getState: () => state,
-        } as typeof import('@/sync/domains/state/storage').storage,
-});
+      storage: {
+        getState: () => state,
+      } as typeof import('@/sync/domains/state/storage').storage,
+    });
+  },
 });
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({

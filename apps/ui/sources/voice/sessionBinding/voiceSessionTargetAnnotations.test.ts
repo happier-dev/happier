@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installVoiceSessionBindingCommonModuleMocks } from './voiceSessionBindingTestHelpers';
 
 const appendVoiceConversationNoteText = vi.fn();
 
@@ -19,13 +20,15 @@ const state: any = {
   sessionListViewDataByServerId: {},
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-    getState: () => state,
-  },
-});
+installVoiceSessionBindingCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => state,
+            },
+        });
+    },
 });
 
 vi.mock('./voiceConversationTranscript', () => ({

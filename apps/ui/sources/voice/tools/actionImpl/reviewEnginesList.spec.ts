@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
 const state: any = {
   settings: {
@@ -19,13 +20,15 @@ const state: any = {
 
 const getMachineCapabilitiesSnapshot = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installVoiceToolActionImplCommonModuleMocks({
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-            getState: () => state,
-        } as typeof import('@/sync/domains/state/storage').storage,
-});
+      storage: {
+        getState: () => state,
+      } as typeof import('@/sync/domains/state/storage').storage,
+    });
+  },
 });
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({

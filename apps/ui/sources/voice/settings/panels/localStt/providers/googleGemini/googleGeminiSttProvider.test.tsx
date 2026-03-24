@@ -2,33 +2,16 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installLocalSttProviderCommonModuleMocks } from '../localSttProviderTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
+installLocalSttProviderCommonModuleMocks();
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: vi.fn(),
-            alert: vi.fn(),
-        },
-    }).module;
-});
 
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -53,6 +36,7 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 
 describe('GoogleGeminiSttSettings', () => {
   it('populates model dropdown from Google and updates settings on select', async () => {
+    const originalFetch = globalThis.fetch;
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -63,11 +47,12 @@ describe('GoogleGeminiSttSettings', () => {
     });
     (globalThis as any).fetch = fetchSpy;
 
-    const setStt = vi.fn();
-    const { googleGeminiSttProviderSpec } = await import('./googleGeminiSttProvider');
+    try {
+      const setStt = vi.fn();
+      const { googleGeminiSttProviderSpec } = await import('./googleGeminiSttProvider');
 
-    let tree: any;
-    tree = (await renderScreen(React.createElement(googleGeminiSttProviderSpec.Settings, {
+      let tree: any;
+      tree = (await renderScreen(React.createElement(googleGeminiSttProviderSpec.Settings, {
           cfgStt: {
             provider: 'google_gemini',
             openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
@@ -77,20 +62,23 @@ describe('GoogleGeminiSttSettings', () => {
           popoverBoundaryRef: null,
         }))).tree;
 
-    const modelDropdown = tree.root
-      .findAllByType('DropdownMenu' as any)
-      .find((d: any) => d.props?.searchPlaceholder === 'settingsVoice.local.googleGeminiStt.model.searchPlaceholder');
-    expect(modelDropdown).toBeTruthy();
+      const modelDropdown = tree.root
+        .findAllByType('DropdownMenu' as any)
+        .find((d: any) => d.props?.searchPlaceholder === 'settingsVoice.local.googleGeminiStt.model.searchPlaceholder');
+      expect(modelDropdown).toBeTruthy();
 
-    await act(async () => {
-      modelDropdown.props.onSelect?.('gemini-2.5-flash');
-    });
+      await act(async () => {
+        modelDropdown.props.onSelect?.('gemini-2.5-flash');
+      });
 
-    expect(setStt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: 'google_gemini',
-        googleGemini: expect.objectContaining({ model: 'gemini-2.5-flash' }),
-      }),
-    );
+      expect(setStt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'google_gemini',
+          googleGemini: expect.objectContaining({ model: 'gemini-2.5-flash' }),
+        }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

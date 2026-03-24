@@ -9,6 +9,7 @@ import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import { voiceSessionBindingStore } from '@/voice/sessionBinding/voiceSessionBindingStore';
 import { flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installVoiceQaCommonModuleMocks } from './voiceQaScreenTestHelpers';
 
 const voiceQaControllerMocks = {
   start: vi.fn(async () => {}),
@@ -24,42 +25,42 @@ function createPassthroughComponentMock(typeName: string) {
     return (props: PassthroughComponentProps) => React.createElement(typeName, props, props.children);
 }
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        Text: 'Text',
-        TextInput: 'TextInput',
-        ScrollView: 'ScrollView',
-        Pressable: 'Pressable',
-        Platform: {
-            OS: 'web',
-            select: (spec: any) => spec?.web ?? spec?.default,
-        },
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#ddd',
-                groupped: { background: '#fafafa' },
-                input: { placeholder: '#999' },
-                button: { primary: { background: '#000', tint: '#fff' } },
+installVoiceQaCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            TextInput: 'TextInput',
+            ScrollView: 'ScrollView',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'web',
+                select: (spec: any) => spec?.web ?? spec?.default,
             },
-        },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: '#000',
+                    textSecondary: '#666',
+                    surface: '#fff',
+                    surfaceHigh: '#f5f5f5',
+                    divider: '#ddd',
+                    groupped: { background: '#fafafa' },
+                    input: { placeholder: '#999' },
+                    button: { primary: { background: '#000', tint: '#fff' } },
+                },
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
 });
 
 vi.mock('@/sync/store/hooks', () => ({

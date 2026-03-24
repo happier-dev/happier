@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installVoiceSessionBindingCommonModuleMocks } from './voiceSessionBindingTestHelpers';
 
 const applyMessages = vi.fn();
 const applyMessagesLoaded = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installVoiceSessionBindingCommonModuleMocks({
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-    getState: () => ({
-      applyMessages,
-      applyMessagesLoaded,
-    }),
+      storage: {
+        getState: () => ({
+          applyMessages,
+          applyMessagesLoaded,
+        }),
+      },
+    });
   },
-});
 });
 
 describe('voiceConversationTranscript', () => {

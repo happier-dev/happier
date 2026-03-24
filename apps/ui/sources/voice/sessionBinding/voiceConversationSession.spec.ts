@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { installVoiceSessionBindingCommonModuleMocks } from './voiceSessionBindingTestHelpers';
 
 type TestState = {
   settings: any;
@@ -25,13 +27,14 @@ vi.mock('@/sync/domains/session/directSessions/readDirectSessionLink', () => ({
   readDirectSessionLink: () => null,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+installVoiceSessionBindingCommonModuleMocks({
+  storage: () => {
     return createStorageModuleStub({
-    storage: {
-    getState: () => state,
+      storage: {
+        getState: () => state,
+      },
+    });
   },
-});
 });
 
 vi.mock('@/sync/ops/machines', () => ({

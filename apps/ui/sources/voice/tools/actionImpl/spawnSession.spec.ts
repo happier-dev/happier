@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
 const machineSpawnNewSession = vi.fn(async (_params: any) => ({ type: 'success', sessionId: 's_new' }));
 const getActiveServerSnapshot = vi.fn(() => ({ serverId: 'server-a' }));
@@ -30,13 +31,15 @@ const state: any = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
+installVoiceToolActionImplCommonModuleMocks({
+  storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-            getState: () => state,
-        } as typeof import('@/sync/domains/state/storage').storage,
-});
+      storage: {
+        getState: () => state,
+      } as typeof import('@/sync/domains/state/storage').storage,
+    });
+  },
 });
 
 vi.mock('@/sync/ops/machines', () => ({
