@@ -4,6 +4,7 @@ import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { collectHostText, findPressableByText, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installSystemToolRendererCommonModuleMocks } from './systemToolRendererTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,20 +13,15 @@ const sessionAllow = vi.fn();
 const sessionDeny = vi.fn();
 const modalAlert = vi.fn();
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: (...args: any[]) => modalAlert(...args),
-        },
-    }).module;
+installSystemToolRendererCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: (...args: any[]) => modalAlert(...args),
+            },
+        }).module;
+    },
 });
 
 vi.mock('../../shell/presentation/ToolSectionView', () => ({

@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
+import { installSystemToolRendererCommonModuleMocks } from './systemToolRendererTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -31,12 +32,7 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     },
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
+installSystemToolRendererCommonModuleMocks();
 
 describe('BashView', () => {
     it('tails long stdout by default', async () => {
