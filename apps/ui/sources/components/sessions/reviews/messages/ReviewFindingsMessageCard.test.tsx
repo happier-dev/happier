@@ -66,6 +66,12 @@ installSessionMessageCardCommonModuleMocks({
             },
         });
     },
+    uiText: async () => ({
+        Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+            React.createElement('Text', props, props.children),
+        TextInput: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+            React.createElement('TextInput', props, props.children),
+    }),
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock({
