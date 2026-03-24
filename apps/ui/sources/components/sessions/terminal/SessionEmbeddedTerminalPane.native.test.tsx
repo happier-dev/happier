@@ -1,20 +1,26 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { installSessionEmbeddedTerminalCommonModuleMocks } from './sessionEmbeddedTerminalTestHelpers';
 
 let lastXtermProps: Readonly<{ onInput: (data: string) => void }> | null = null;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            OS: 'ios',
-        },
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit');
-    return await createUnistylesMock();
+installSessionEmbeddedTerminalCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+        });
+    },
+    storage: async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+        return {
+            ...actual,
+            useLocalSetting: () => 1,
+            useLocalSettingMutable: () => [null, vi.fn()],
+        };
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -27,10 +33,6 @@ vi.mock('@/components/ui/buttons/PrimaryCircleIconButton', () => ({
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: 'DropdownMenu',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -50,14 +52,6 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
         openDetailsTab: vi.fn(),
     }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-    useLocalSetting: () => 1,
-    useLocalSettingMutable: () => [null, vi.fn()],
-});
-});
 
 const onInputSpy = vi.fn();
 
@@ -83,13 +77,12 @@ vi.mock('@/components/terminal/xterm/webview/XtermWebViewSurface.native', () => 
     }),
 }));
 
-import { SessionEmbeddedTerminalPane } from './SessionEmbeddedTerminalPane.native';
-
 describe('SessionEmbeddedTerminalPane (native)', () => {
     it('renders an Xterm WebView surface wired to the PTY hook', async () => {
         lastXtermProps = null;
         onInputSpy.mockClear();
 
+        const { SessionEmbeddedTerminalPane } = await import('./SessionEmbeddedTerminalPane.native');
         const { renderScreen } = await import('@/dev/testkit');
         await renderScreen(
             React.createElement(SessionEmbeddedTerminalPane, {
