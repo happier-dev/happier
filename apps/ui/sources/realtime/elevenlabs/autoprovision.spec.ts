@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { installRealtimeCommonModuleMocks } from '../realtimeTestHelpers';
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
@@ -9,17 +11,18 @@ vi.mock('@happier-dev/agents', () => ({
     () => 'Claude Code prompt with {{initialConversationContext}} and {{sessionId}}',
   ),
 }));
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-    getState: vi.fn(() => ({ settings: {} })),
-  },
-});
-});
 vi.mock('@/voice/tools/resolveDisabledVoiceActionIds', () => ({
   resolveDisabledVoiceActionIdsFromState: vi.fn(() => []),
 }));
+
+installRealtimeCommonModuleMocks({
+  storage: () =>
+    createStorageModuleStub({
+      storage: {
+        getState: vi.fn(() => ({ settings: {} })),
+      },
+    }),
+});
 
 const REQUIRED_CLIENT_TOOL_SPECS = [
   {

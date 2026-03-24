@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { VoiceSession } from './types';
+import { installRealtimeCommonModuleMocks } from './realtimeTestHelpers';
 
 const setAudioModeAsync = vi.fn(async () => {});
 vi.mock('expo-audio', () => ({
@@ -14,22 +15,6 @@ vi.mock('expo-audio', () => ({
 const modalAlert = vi.fn();
 const modalConfirm = vi.fn(async () => false);
 const modalPrompt = vi.fn(async () => null);
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlert,
-            confirm: modalConfirm,
-            prompt: modalPrompt,
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 const requestMicrophonePermission = vi.fn(async () => ({ granted: true, canAskAgain: true }));
 const showMicrophonePermissionDeniedAlert = vi.fn();
@@ -140,11 +125,23 @@ const state: {
   clearRealtimeModeDebounce: vi.fn(),
 };
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: { getState: () => state },
-});
+installRealtimeCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlert,
+                confirm: modalConfirm,
+                prompt: modalPrompt,
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: { getState: () => state },
+        });
+    },
 });
 vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
   resolveVoiceSessionBindingByControlSessionId: (params: any) => resolveVoiceSessionBindingByControlSessionId(params),
