@@ -3,31 +3,42 @@ import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { installAvatarCommonModuleMocks } from './avatarTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                View: (props: any) => React.createElement('View', props, props.children),
-            }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#ffffff',
-                shadow: { color: '#000000' },
-                text: '#111111',
-                textLink: '#2266ee',
+installAvatarCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: (props: any) => React.createElement('View', props, props.children),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#ffffff',
+                    shadow: { color: '#000000' },
+                    text: '#111111',
+                    textLink: '#2266ee',
+                },
             },
-        },
-    });
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: createUseSettingMock({
+                values: {
+                    avatarStyle: 'gradient',
+                    showFlavorIcons: true,
+                },
+            }),
+        });
+    },
 });
 
 vi.mock('expo-image', () => ({

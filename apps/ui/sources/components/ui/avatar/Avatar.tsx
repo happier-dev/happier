@@ -44,8 +44,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     unreadBadge: {
         position: 'absolute',
-        top: -6,
-        right: -6,
+        top: -2,
+        right: -2,
         backgroundColor: theme.colors.textLink,
         borderRadius: 100,
         borderWidth: 1.5,
