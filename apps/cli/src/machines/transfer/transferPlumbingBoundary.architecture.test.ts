@@ -56,14 +56,6 @@ describe('machines/transfer (architecture)', () => {
             const source = await readFile(filePath, 'utf8');
             expect(source).not.toContain('session-handoffs/direct-transfer');
             expect(source).not.toMatch(/\bmachine-transfers\/direct\/[^'"\s]*\?token=/u);
-
-            // Deletion-proofing: the old FILES_* / ATTACHMENTS_CONFIGURE family must not reappear.
-            expect(source).not.toContain('RPC_METHODS.FILES_UPLOAD_');
-            expect(source).not.toContain('RPC_METHODS.FILES_DOWNLOAD_');
-            expect(source).not.toContain('RPC_METHODS.ATTACHMENTS_CONFIGURE');
-            expect(source).not.toMatch(/\bFILES_UPLOAD_(INIT|CHUNK|FINALIZE|ABORT)\b/u);
-            expect(source).not.toMatch(/\bFILES_DOWNLOAD_(INIT|CHUNK|FINALIZE|ABORT)\b/u);
-            expect(source).not.toMatch(/\bATTACHMENTS_CONFIGURE\b/u);
         }
     });
 

@@ -1,5 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
+import * as fsPromises from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 
 import fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -13,6 +15,7 @@ import {
   createEncryptedTransferChunkEnvelope,
   createTransferManifestHash,
   createTransferRecipientKeyPair,
+  parseTransferRecipientPublicKeyBase64,
   decryptEncryptedTransferChunkEnvelope,
 } from './transferChunkEncryption';
 import {
@@ -33,17 +36,34 @@ import { clampTransferChunkBytes } from './transferChunkSizeLimit';
 const DEFAULT_DIRECT_PEER_TTL_MS = 10 * 60_000;
 const DEFAULT_DIRECT_PEER_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_DIRECT_PEER_CHUNK_BYTES = 256 * 1024;
+// Direct-peer chunk payloads are encoded inside JSON responses as base64 strings. Keep the hard
+// max lower than the generic transfer chunk ceiling to avoid multi-megabyte string allocations
+// (bytes + decoded string + JSON.parse) on each request.
+const DIRECT_PEER_CHUNK_HARD_MAX_BYTES = 512 * 1024;
 const DEFAULT_DIRECT_PEER_OPEN_BODY_MAX_BYTES = 256 * 1024;
 const DEFAULT_DIRECT_PEER_BIND_HOST = '0.0.0.0';
-const DEFAULT_DIRECT_PEER_EXPIRY_SKEW_MS = 0;
+// Tolerate small clock skew by default so candidates published by a peer with a slightly "behind"
+// clock are still attempted (auth TTL is still enforced by the responder).
+const DEFAULT_DIRECT_PEER_EXPIRY_SKEW_MS = 2_000;
+// /open responses should be tiny (transferId + sha256 + totalChunks). Hard-cap to keep JSON buffering
+// bounded even if a hostile peer sends a huge body with a misleading content-length.
+const DIRECT_PEER_OPEN_RESPONSE_MAX_BYTES = 8 * 1024;
 const DIRECT_PEER_AUTH_SCHEME = 'Bearer';
 const DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER = 'x-happier-transfer-recipient-public-key';
+// Transfer tokens are base64url-encoded random bytes. Anything huge is untrusted input that
+// should be rejected before hashing/comparing (DoS hardening).
+const DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS = 256;
+// Base64-encoded Curve25519 public keys are small (~44 chars). Hard-cap before any base64 decode
+// so hostile peers can't force large Buffer allocations via oversized headers.
+const DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS = 128;
 
 const ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES = 1 + 12 + 16; // version + nonce + auth tag
 // Encrypted data-key envelopes are small and fixed-size today (~105 bytes for V1), but we still
 // cap them independently so hostile peers cannot force large base64 decode allocations.
 const ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES = 1024;
-const DIRECT_PEER_OPEN_BODY_HARD_MAX_BYTES = 1024 * 1024;
+// Direct-peer /open bodies should stay tiny (transfer metadata only). Keep the hard cap below a
+// page-sized JSON allocation so large requester-side bodies fail closed before any network work.
+const DIRECT_PEER_OPEN_BODY_HARD_MAX_BYTES = 64 * 1024;
 
 function encodeDirectPeerTransferPathKey(transferId: string): string {
   return Buffer.from(transferId, 'utf8').toString('base64url');
@@ -157,10 +177,12 @@ function estimateJsonUtf8BytesBounded(value: unknown, maxBytes: number): number 
       seenObjects.add(obj);
       try {
         let bytes = 2; // {}
-        const keys = Object.keys(obj as Record<string, unknown>);
-        for (let index = 0; index < keys.length; index += 1) {
-          if (index > 0) bytes += 1; // comma
-          const key = keys[index] ?? '';
+        let wroteAny = false;
+        // Avoid `Object.keys(...)` which can allocate a large array for oversized inputs.
+        for (const key in obj as Record<string, unknown>) {
+          if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+          if (wroteAny) bytes += 1; // comma
+          wroteAny = true;
           bytes += estimateJsonStringUtf8BytesBounded(key, maxBytes);
           bytes += 1; // colon
           bytes += estimateValue((obj as Record<string, unknown>)[key]);
@@ -194,11 +216,18 @@ function extractDirectPeerRequestAuth(candidate: TransferEndpointCandidate): Rea
   const explicitAuthorizationToken = typeof candidate.authorizationToken === 'string'
     ? candidate.authorizationToken.trim()
     : '';
+  const marker = '/machine-transfers/direct/';
   try {
     const parsed = new URL(candidate.url);
+    // Never allow credentialed URLs to propagate.
+    parsed.username = '';
+    parsed.password = '';
     // Direct-peer candidates must not rely on query params for auth or routing. Strip any query/hash.
     parsed.search = '';
     parsed.hash = '';
+    if (!parsed.pathname.includes(marker)) {
+      throw new Error('Invalid direct peer endpoint candidate');
+    }
     const authorizationToken = explicitAuthorizationToken;
     if (!authorizationToken) {
       return { requestUrl: parsed.toString() };
@@ -212,14 +241,7 @@ function extractDirectPeerRequestAuth(candidate: TransferEndpointCandidate): Rea
         : {}),
     };
   } catch {
-    return {
-      requestUrl: candidate.url,
-      ...(explicitAuthorizationToken
-        ? {
-            authorizationHeader: `${DIRECT_PEER_AUTH_SCHEME} ${explicitAuthorizationToken}`,
-          }
-        : {}),
-    };
+    throw new Error('Invalid direct peer endpoint candidate');
   }
 }
 
@@ -236,10 +258,14 @@ function readAdvertisedHosts(networkInterfacesFn: typeof networkInterfaces): str
   for (const entries of Object.values(networkInterfacesFn())) {
     for (const entry of entries ?? []) {
       if (!entry || entry.internal) continue;
-      if (String(entry.family) !== 'IPv4') continue;
-      if (typeof entry.address === 'string' && entry.address.trim().length > 0) {
-        hosts.add(entry.address.trim());
-      }
+      const family = String(entry.family);
+      if (family !== 'IPv4' && family !== 'IPv6') continue;
+      const address = typeof entry.address === 'string' ? entry.address.trim() : '';
+      if (!address) continue;
+      // Zone-qualified IPv6 addresses produce invalid URLs unless percent-encoded. Fail closed by
+      // omitting them from advertisements; callers can still override via env if needed.
+      if (family === 'IPv6' && address.includes('%')) continue;
+      hosts.add(address);
     }
   }
   return Array.from(hosts);
@@ -257,10 +283,10 @@ function readDirectPeerRequestTimeoutMs(): number {
 }
 
 function readDirectPeerChunkBytes(): number {
-  return clampTransferChunkBytes(parsePositiveInt(
+  return Math.min(clampTransferChunkBytes(parsePositiveInt(
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_CHUNK_BYTES,
     DEFAULT_DIRECT_PEER_CHUNK_BYTES,
-  ));
+  )), DIRECT_PEER_CHUNK_HARD_MAX_BYTES);
 }
 
 function readDirectPeerExpirySkewMs(): number {
@@ -313,7 +339,8 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
 
   let bytes: Uint8Array | null = null;
   if (expectedBytes != null) {
-    // Avoid buffering an extra array of chunks when the peer provides a valid content-length.
+    // When the peer provides a trustworthy content-length, preallocate the exact buffer once so
+    // large JSON bodies avoid repeated growth/copy spikes.
     const buffer = new Uint8Array(expectedBytes);
     let offset = 0;
     while (true) {
@@ -333,8 +360,8 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
         continue;
       }
 
-      // If the peer lies about content-length, switch to the same bounded growing-buffer strategy
-      // we use when content-length is omitted.
+      // If the peer lies about content-length, fall back to the same bounded growing-buffer
+      // strategy we use when content-length is omitted.
       let grown = buffer;
       let grownOffset = offset;
       const ensureCapacity = (needed: number) => {
@@ -374,8 +401,11 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
       break;
     }
 
-    // If we never triggered the mismatch fallback, use the filled prefix (may be shorter than content-length).
-    if (!bytes) bytes = buffer.subarray(0, offset);
+    // If we never triggered the mismatch fallback, use the filled prefix (may be shorter than
+    // content-length when the peer closes early).
+    if (!bytes) {
+      bytes = buffer.subarray(0, offset);
+    }
   } else {
     // When the peer doesn't provide content-length, we still want to avoid buffering an extra
     // array of chunks. Use a bounded growing buffer instead.
@@ -414,7 +444,7 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
     bytes = buffer.subarray(0, offset);
   }
 
-  if (!bytes) {
+  if (!bytes || bytes.byteLength === 0) {
     throw params.onInvalidJson();
   }
   const text = decoder.decode(bytes);
@@ -444,7 +474,7 @@ function resolveDirectPeerJsonBodyMaxBytes(maxInMemoryPayloadBytes: number): num
   return maxEncodedChars + maxDataKeyEnvelopeBase64Chars + jsonOverheadBytes;
 }
 
-function serializeDirectPeerOpenRequestBody(params: Readonly<{ openBody: unknown }>): string {
+function serializeDirectPeerOpenRequestBody(params: Readonly<{ openBody: unknown }>): Uint8Array {
   const maxBodyBytes = readDirectPeerOpenBodyMaxBytes();
   const estimatedBytes = estimateJsonUtf8BytesBounded(params.openBody, maxBodyBytes);
   if (estimatedBytes > maxBodyBytes) {
@@ -456,10 +486,11 @@ function serializeDirectPeerOpenRequestBody(params: Readonly<{ openBody: unknown
     if (typeof encoded !== 'string') {
       throw new Error('Invalid direct peer transfer request');
     }
-    if (Buffer.byteLength(encoded, 'utf8') > maxBodyBytes) {
+    const bytes = Buffer.from(encoded, 'utf8');
+    if (bytes.byteLength > maxBodyBytes) {
       throw new Error(`Direct peer transfer open request body exceeds the configured body-limit (${maxBodyBytes} bytes)`);
     }
-    return encoded;
+    return bytes;
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('Direct peer transfer open request body exceeds the configured body-limit')) {
       throw error;
@@ -515,7 +546,6 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
   const networkInterfacesFn = params.networkInterfacesFn ?? networkInterfaces;
   const publishedTransfers = new Map<string, StoredPublishedTransfer>();
   const onDemandScopesByToken = new Map<string, StoredOnDemandScope>();
-  const expirySkewMs = readDirectPeerExpirySkewMs();
 
   const disposePayloadSourceBestEffort = (source: TransferPayloadSource) => {
     void disposeTransferPayloadSource(source).catch(() => undefined);
@@ -582,7 +612,8 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
   }>): TransferPayloadSource | null {
     const stored = publishedTransfers.get(input.transferId);
     if (!stored) return null;
-    if (stored.expiresAt + expirySkewMs < now()) {
+    // `expiresAt` is generated locally; do not apply requester clock-skew tolerance to auth TTL.
+    if (stored.expiresAt < now()) {
       publishedTransfers.delete(input.transferId);
       onDemandScopesByToken.delete(stored.transferToken);
       disposePayloadSourceBestEffort(stored.payloadSource);
@@ -606,7 +637,7 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     if (!scope) {
       return null;
     }
-    if (scope.expiresAt + expirySkewMs < now()) {
+    if (scope.expiresAt < now()) {
       onDemandScopesByToken.delete(input.transferToken);
       return null;
     }
@@ -682,10 +713,31 @@ function isDirectPeerTransferProtocolError(error: unknown): boolean {
 }
 
 function estimateBase64DecodedBytes(value: string): number {
-  const raw = value.trim();
-  if (raw.length === 0) return 0;
-  const paddingBytes = raw.endsWith('==') ? 2 : raw.endsWith('=') ? 1 : 0;
-  return Math.max(0, Math.floor((raw.length * 3) / 4) - paddingBytes);
+  let start = 0;
+  let end = value.length - 1;
+  while (start <= end && isBase64TrimChar(value.charCodeAt(start))) start += 1;
+  while (end >= start && isBase64TrimChar(value.charCodeAt(end))) end -= 1;
+  if (end < start) return 0;
+  const trimmedLength = end - start + 1;
+  const last = value.charCodeAt(end);
+  const paddingBytes = last === 0x3d /* = */
+    ? (end - 1 >= start && value.charCodeAt(end - 1) === 0x3d /* = */ ? 2 : 1)
+    : 0;
+  return Math.max(0, Math.floor((trimmedLength * 3) / 4) - paddingBytes);
+}
+
+function resolveBase64TrimmedLength(value: string): number {
+  let start = 0;
+  let end = value.length - 1;
+  while (start <= end && isBase64TrimChar(value.charCodeAt(start))) start += 1;
+  while (end >= start && isBase64TrimChar(value.charCodeAt(end))) end -= 1;
+  return end < start ? 0 : end - start + 1;
+}
+
+function isBase64TrimChar(code: number): boolean {
+  // We only expect ASCII base64 strings; treat common ASCII whitespace/control as trim chars.
+  // This avoids allocating via `value.trim()` on potentially large payloads.
+  return code <= 0x20 || code === 0xfeff;
 }
 
 export function createDirectPeerTransferApp(params: Readonly<{
@@ -701,8 +753,12 @@ export function createDirectPeerTransferApp(params: Readonly<{
   }>) => Promise<TransferPayloadSource | null>;
 }>): FastifyInstance {
   const OPEN_METADATA_CACHE_MAX_ENTRIES = 256;
+  const OPEN_FILE_HANDLE_CACHE_MAX_ENTRIES = 64;
+  const OPEN_TRANSFER_TOKEN_DIGEST_CACHE_MAX_ENTRIES = 256;
   const openSizeBytesCache = new Map<string, Promise<number>>();
   const openManifestHashCache = new Map<string, Promise<string>>();
+  const openFileHandleCache = new Map<string, Promise<FileHandle>>();
+  const openTransferTokenDigestCache = new Map<string, Buffer>();
 
   const readOpenCacheKeyFromDigest = (transferId: string, transferTokenDigest: Buffer): string =>
     `${transferId}:${transferTokenDigest.toString('base64url')}`;
@@ -735,6 +791,82 @@ export function createDirectPeerTransferApp(params: Readonly<{
     return created;
   };
 
+  const resolveOpenTransferTokenDigest = (transferToken: string): Buffer => {
+    const cached = openTransferTokenDigestCache.get(transferToken);
+    if (cached) {
+      return cached;
+    }
+
+    const digest = hashTransferToken(transferToken);
+    openTransferTokenDigestCache.set(transferToken, digest);
+
+    while (openTransferTokenDigestCache.size > OPEN_TRANSFER_TOKEN_DIGEST_CACHE_MAX_ENTRIES) {
+      const oldestKey = openTransferTokenDigestCache.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      openTransferTokenDigestCache.delete(oldestKey);
+    }
+
+    return digest;
+  };
+
+  const closeFileHandleBestEffort = async (handlePromise: Promise<FileHandle>): Promise<void> => {
+    try {
+      const handle = await handlePromise;
+      await handle.close();
+    } catch {
+      // ignore
+    }
+  };
+
+  const cacheFileHandle = (key: string, filePath: string): Promise<FileHandle> => {
+    const cached = openFileHandleCache.get(key);
+    if (cached) {
+      return cached;
+    }
+
+    const created = fsPromises.open(filePath, 'r');
+    openFileHandleCache.set(key, created);
+
+    // If open fails, don't pin a rejected promise indefinitely.
+    created.catch(() => {
+      if (openFileHandleCache.get(key) === created) {
+        openFileHandleCache.delete(key);
+      }
+    });
+
+    while (openFileHandleCache.size > OPEN_FILE_HANDLE_CACHE_MAX_ENTRIES) {
+      const oldestKey = openFileHandleCache.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      const evicted = openFileHandleCache.get(oldestKey);
+      openFileHandleCache.delete(oldestKey);
+      if (evicted) {
+        void closeFileHandleBestEffort(evicted);
+      }
+    }
+
+    return created;
+  };
+
+  const readTransferPayloadChunkForRequest = async (input: Readonly<{
+    payloadSource: TransferPayloadSource;
+    cacheKey: string;
+    offset: number;
+    length: number;
+  }>): Promise<Buffer> => {
+    if (input.payloadSource.kind !== 'file') {
+      return await readTransferPayloadChunk({
+        source: input.payloadSource,
+        offset: input.offset,
+        length: input.length,
+      });
+    }
+
+    const handle = await cacheFileHandle(input.cacheKey, input.payloadSource.filePath);
+    const chunkBuffer = Buffer.allocUnsafe(input.length);
+    const { bytesRead } = await handle.read(chunkBuffer, 0, input.length, input.offset);
+    return chunkBuffer.subarray(0, bytesRead);
+  };
+
   const app = fastify({
     logger: false,
     bodyLimit: readDirectPeerOpenBodyMaxBytes(),
@@ -746,10 +878,16 @@ export function createDirectPeerTransferApp(params: Readonly<{
   app.setSerializerCompiler(serializerCompiler);
   const typed = app.withTypeProvider<ZodTypeProvider>();
 
+  app.addHook('onClose', async () => {
+    const handles = Array.from(openFileHandleCache.values());
+    openFileHandleCache.clear();
+    await Promise.all(handles.map(closeFileHandleBestEffort));
+  });
+
   typed.post('/machine-transfers/direct/:transferId/open', {
     schema: {
       params: z.object({ transferId: z.string().min(1) }),
-      querystring: z.object({ token: z.string().min(1).optional() }),
+      querystring: z.object({}).passthrough(),
       headers: z.object({
         authorization: z.string().min(1).optional(),
         [DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]: z.string().min(1),
@@ -762,16 +900,34 @@ export function createDirectPeerTransferApp(params: Readonly<{
         404: z.object({ ok: z.literal(false), error: z.string() }).strict(),
       },
     },
-  }, async (request, reply) => {
-    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
-    const transferToken = readDirectPeerAuthorizationToken(request.headers.authorization) ?? request.query.token ?? '';
-    const transferTokenDigest = hashTransferToken(transferToken);
-    let payloadSource = params.readPublishedTransfer({
-      transferId,
-      transferToken,
-      transferTokenDigest,
-    });
-    if (!payloadSource && params.resolveOnDemandTransfer) {
+	  }, async (request, reply) => {
+	    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
+	    const transferToken = (readDirectPeerAuthorizationToken(request.headers.authorization) ?? '').trim();
+	    if (transferToken.length === 0) {
+	      reply.code(404);
+	      return { ok: false as const, error: 'Direct peer transfer not available' };
+	    }
+	    if (transferToken.length > DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS) {
+	      reply.code(401);
+	      return { ok: false as const, error: 'Direct peer transfer not available' };
+	    }
+	    const transferTokenDigest = resolveOpenTransferTokenDigest(transferToken);
+	    let payloadSource = params.readPublishedTransfer({
+	      transferId,
+	      transferToken,
+	      transferTokenDigest,
+	    });
+	    if (!payloadSource && params.resolveOnDemandTransfer) {
+	      try {
+	        // Validate recipient key before any on-demand resolution work (blob pack building, hashing, IO).
+	        if (request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER].length > DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS) {
+	          throw new Error('Oversized recipient public key');
+	        }
+	        parseTransferRecipientPublicKeyBase64(request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]);
+	      } catch {
+	        reply.code(400);
+	        return { ok: false as const, error: 'Invalid direct peer transfer request' };
+	      }
       try {
         payloadSource = await params.resolveOnDemandTransfer({
           transferId,
@@ -783,22 +939,19 @@ export function createDirectPeerTransferApp(params: Readonly<{
         return { ok: false as const, error: 'Invalid direct peer transfer request' };
       }
     }
-    if (!payloadSource) {
-      const statusCode = transferToken.trim().length > 0 ? 401 : 404;
-      reply.code(statusCode);
-      return { ok: false as const, error: 'Direct peer transfer not available' };
-    }
-    try {
-      createEncryptedTransferChunkEnvelope({
-        transferId,
-        sequence: 0,
-        payload: Buffer.alloc(0),
-        recipientPublicKeyBase64: request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER],
-      });
-    } catch {
-      reply.code(400);
-      return { ok: false as const, error: 'Invalid direct peer transfer request' };
-    }
+		    if (!payloadSource) {
+		      reply.code(401);
+		      return { ok: false as const, error: 'Direct peer transfer not available' };
+		    }
+		    try {
+		      if (request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER].length > DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS) {
+		        throw new Error('Oversized recipient public key');
+		      }
+		      parseTransferRecipientPublicKeyBase64(request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]);
+		    } catch {
+		      reply.code(400);
+		      return { ok: false as const, error: 'Invalid direct peer transfer request' };
+		    }
     const cacheKey = readOpenCacheKeyFromDigest(transferId, transferTokenDigest);
     const sizeBytes = await cachePromise(
       openSizeBytesCache,
@@ -822,7 +975,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
         transferId: z.string().min(1),
         sequence: z.coerce.number().int().nonnegative(),
       }),
-      querystring: z.object({ token: z.string().min(1).optional() }),
+      querystring: z.object({}).passthrough(),
       headers: z.object({
         authorization: z.string().min(1).optional(),
         [DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]: z.string().min(1),
@@ -834,24 +987,41 @@ export function createDirectPeerTransferApp(params: Readonly<{
         404: z.object({ ok: z.literal(false), error: z.string() }).strict(),
       },
     },
-  }, async (request, reply) => {
-    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
-    const transferToken = readDirectPeerAuthorizationToken(request.headers.authorization) ?? request.query.token ?? '';
-    const transferTokenDigest = hashTransferToken(transferToken);
-    const payloadSource = params.readPublishedTransfer({
-      transferId,
-      transferToken,
-      transferTokenDigest,
-    });
-    if (!payloadSource) {
-      const statusCode = transferToken.trim().length > 0 ? 401 : 404;
-      reply.code(statusCode);
-      return { ok: false as const, error: 'Direct peer transfer not available' };
-    }
+	  }, async (request, reply) => {
+	    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
+	    const transferToken = (readDirectPeerAuthorizationToken(request.headers.authorization) ?? '').trim();
+	    if (transferToken.length === 0) {
+	      reply.code(404);
+	      return { ok: false as const, error: 'Direct peer transfer not available' };
+	    }
+	    if (transferToken.length > DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS) {
+	      reply.code(401);
+	      return { ok: false as const, error: 'Direct peer transfer not available' };
+	    }
+	    const transferTokenDigest = resolveOpenTransferTokenDigest(transferToken);
+	    const payloadSource = params.readPublishedTransfer({
+	      transferId,
+	      transferToken,
+	      transferTokenDigest,
+	    });
+		    if (!payloadSource) {
+		      reply.code(401);
+		      return { ok: false as const, error: 'Direct peer transfer not available' };
+		    }
+		    try {
+		      // Fail fast before reading payload bytes to avoid wasted IO on malformed keys.
+		      if (request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER].length > DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS) {
+		        throw new Error('Oversized recipient public key');
+		      }
+		      parseTransferRecipientPublicKeyBase64(request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]);
+		    } catch {
+		      reply.code(400);
+		      return { ok: false as const, error: 'Invalid direct peer transfer request' };
+		    }
 
-    const chunkBytes = readDirectPeerChunkBytes();
-    const cacheKey = readOpenCacheKeyFromDigest(transferId, transferTokenDigest);
-    const sizeBytes = await cachePromise(
+	    const chunkBytes = readDirectPeerChunkBytes();
+	    const cacheKey = readOpenCacheKeyFromDigest(transferId, transferTokenDigest);
+	    const sizeBytes = await cachePromise(
       openSizeBytesCache,
       cacheKey,
       async () => await resolveTransferPayloadSizeBytes(payloadSource),
@@ -867,8 +1037,9 @@ export function createDirectPeerTransferApp(params: Readonly<{
       const encryptedChunk = createEncryptedTransferChunkEnvelope({
         transferId,
         sequence: request.params.sequence,
-        payload: await readTransferPayloadChunk({
-          source: payloadSource,
+        payload: await readTransferPayloadChunkForRequest({
+          payloadSource,
+          cacheKey,
           offset,
           length: chunkBytes,
         }),
@@ -930,6 +1101,18 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? Date.now;
   const expirySkewMs = readDirectPeerExpirySkewMs();
+  const recipientKeyPair = createTransferRecipientKeyPair();
+  let openBodyBytes: Uint8Array | undefined;
+  const resolveOpenBodyBytes = (): Uint8Array | undefined => {
+    if (openBodyBytes !== undefined) {
+      return openBodyBytes;
+    }
+    if (params.openBody === undefined) {
+      return undefined;
+    }
+    openBodyBytes = serializeDirectPeerOpenRequestBody({ openBody: params.openBody });
+    return openBodyBytes;
+  };
   let lastError: Error | null = null;
 
   for (const candidate of params.endpointCandidates) {
@@ -940,25 +1123,22 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
       continue;
     }
     try {
-      const recipientKeyPair = createTransferRecipientKeyPair();
       const auth = extractDirectPeerRequestAuth(parsedCandidate.data);
-      const openBodyJson = params.openBody !== undefined
-        ? serializeDirectPeerOpenRequestBody({ openBody: params.openBody })
-        : undefined;
       const headers: Record<string, string> = {
         [DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]: recipientKeyPair.recipientPublicKeyBase64,
       };
       if (auth.authorizationHeader) {
         headers.authorization = auth.authorizationHeader;
       }
-      if (openBodyJson !== undefined) {
+      const candidateOpenBodyBytes = resolveOpenBodyBytes();
+      if (candidateOpenBodyBytes !== undefined) {
         headers['content-type'] = 'application/json';
       }
       const openResponse = await fetchFn(`${auth.requestUrl}/open`, {
         method: 'POST',
         headers,
-        ...(openBodyJson !== undefined
-          ? { body: openBodyJson }
+        ...(candidateOpenBodyBytes !== undefined
+          ? { body: candidateOpenBodyBytes }
           : {}),
         signal: AbortSignal.timeout(readDirectPeerRequestTimeoutMs()),
       });
@@ -970,13 +1150,14 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
       json = await readJsonResponseWithBodyLimit({
         response: openResponse,
         maxBodyBytes: Math.min(
-          64 * 1024,
+          DIRECT_PEER_OPEN_RESPONSE_MAX_BYTES,
           resolveDirectPeerJsonBodyMaxBytes(params.maxInMemoryPayloadBytes),
         ),
         onInvalidJson: () => createInvalidDirectPeerTransferResponseError(params.transferId),
         onOverLimit: () => new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`),
       });
       const parsed = DirectPeerTransferResponseSchema.safeParse(json);
+      json = null;
       if (!parsed.success || parsed.data.transferId !== params.transferId) {
         throw createInvalidDirectPeerTransferResponseError(params.transferId);
       }
@@ -1000,6 +1181,7 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
           onOverLimit: () => new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`),
         });
         const parsedChunk = TransferChunkEnvelopeSchema.safeParse(chunkJson);
+        chunkJson = null;
         if (
           !parsedChunk.success
           || parsedChunk.data.transferId !== params.transferId
@@ -1008,27 +1190,31 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
         ) {
           throw createInvalidDirectPeerTransferResponseError(params.transferId);
         }
-        const rawPayloadBase64 = parsedChunk.data.payloadBase64.trim();
-        const rawDataKeyEnvelopeBase64 = parsedChunk.data.encryptedDataKeyEnvelopeBase64.trim();
-        const estimatedEncryptedPayloadBytes = estimateBase64DecodedBytes(rawPayloadBase64);
-        const estimatedDataKeyEnvelopeBytes = estimateBase64DecodedBytes(rawDataKeyEnvelopeBase64);
+        const payloadBase64 = parsedChunk.data.payloadBase64;
+        const encryptedDataKeyEnvelopeBase64 = parsedChunk.data.encryptedDataKeyEnvelopeBase64;
+        const payloadBase64TrimmedLength = resolveBase64TrimmedLength(payloadBase64);
+        const encryptedDataKeyEnvelopeBase64TrimmedLength = resolveBase64TrimmedLength(encryptedDataKeyEnvelopeBase64);
+        const estimatedEncryptedPayloadBytes = estimateBase64DecodedBytes(payloadBase64);
+        const estimatedDataKeyEnvelopeBytes = estimateBase64DecodedBytes(encryptedDataKeyEnvelopeBase64);
 
         const maxEncryptedBytes = params.maxInMemoryPayloadBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES;
         // Fail closed before decrypting so untrusted peers can't force huge base64 decodes.
         // Note: decrypting requires decoding both payload bytes and the data-key envelope.
         const maxEncodedChars = Math.ceil(maxEncryptedBytes / 3) * 4;
+        const maxDataKeyEnvelopeEncodedChars = Math.ceil(ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES / 3) * 4;
         if (
-          rawPayloadBase64.length > maxEncodedChars
+          payloadBase64TrimmedLength > maxEncodedChars
           || estimatedEncryptedPayloadBytes > maxEncryptedBytes
           || estimatedDataKeyEnvelopeBytes > ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES
+          || encryptedDataKeyEnvelopeBase64TrimmedLength > maxDataKeyEnvelopeEncodedChars
         ) {
           throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
         }
         await params.onChunk(decryptEncryptedTransferChunkEnvelope({
           transferId: params.transferId,
           sequence,
-          payloadBase64: parsedChunk.data.payloadBase64,
-          encryptedDataKeyEnvelopeBase64: parsedChunk.data.encryptedDataKeyEnvelopeBase64,
+          payloadBase64,
+          encryptedDataKeyEnvelopeBase64,
           recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
         }));
       }

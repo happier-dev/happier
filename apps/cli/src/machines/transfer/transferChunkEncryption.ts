@@ -7,12 +7,19 @@ import {
   sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
 
+import { TRANSFER_CHUNK_HARD_MAX_BYTES } from './transferChunkSizeLimit';
+
 const TRANSFER_CHUNK_DATA_KEY_BYTES = 32;
 const TRANSFER_CHUNK_NONCE_BYTES = 12;
 const TRANSFER_CHUNK_AUTH_TAG_BYTES = 16;
 const TRANSFER_CHUNK_BUNDLE_VERSION = 0;
 
 type RandomBytesFn = (length: number) => Uint8Array;
+
+// Keep in sync with the direct-peer/server-routed open-request guards.
+const TRANSFER_ENCRYPTED_DATA_KEY_ENVELOPE_HARD_MAX_BYTES = 1024;
+const TRANSFER_ENCRYPTED_CHUNK_HARD_MAX_BYTES =
+  1 + TRANSFER_CHUNK_NONCE_BYTES + TRANSFER_CHUNK_HARD_MAX_BYTES + TRANSFER_CHUNK_AUTH_TAG_BYTES;
 
 function defaultRandomBytes(length: number): Uint8Array {
   return new Uint8Array(randomBytes(length));
@@ -25,7 +32,25 @@ function buildTransferChunkAad(params: Readonly<{
   return Buffer.from(`${TRANSFER_CHUNK_BUNDLE_VERSION}:${params.transferId}:${params.sequence}`, 'utf8');
 }
 
-function parseRecipientPublicKeyBase64(recipientPublicKeyBase64: string): Uint8Array {
+function resolveBase64EncodedBytesUpperBound(base64: string): number {
+  // Base64: 4 chars encode up to 3 bytes. This intentionally ignores padding correctness; we only
+  // need an upper bound to fail closed before decoding into a potentially huge Buffer.
+  const raw = String(base64 ?? '');
+  // Avoid `trim()` to prevent allocating a second large string before we enforce hard limits.
+  let start = 0;
+  while (start < raw.length && /\s/u.test(raw[start] ?? '')) {
+    start += 1;
+  }
+  let end = raw.length;
+  while (end > start && /\s/u.test(raw[end - 1] ?? '')) {
+    end -= 1;
+  }
+  const rawLen = end - start;
+  if (!rawLen) return 0;
+  return Math.ceil(rawLen / 4) * 3;
+}
+
+export function parseTransferRecipientPublicKeyBase64(recipientPublicKeyBase64: string): Uint8Array {
   const recipientPublicKey = Buffer.from(recipientPublicKeyBase64, 'base64');
   if (recipientPublicKey.length !== BOX_BUNDLE_PUBLIC_KEY_BYTES) {
     throw new Error('Invalid transfer recipient public key');
@@ -92,7 +117,7 @@ export function createEncryptedTransferChunkEnvelope(params: Readonly<{
   authTag.copy(encryptedChunk, 1 + TRANSFER_CHUNK_NONCE_BYTES + ciphertext.length);
   const encryptedDataKeyEnvelope = sealEncryptedDataKeyEnvelopeV1({
     dataKey,
-    recipientPublicKey: parseRecipientPublicKeyBase64(params.recipientPublicKeyBase64),
+    recipientPublicKey: parseTransferRecipientPublicKeyBase64(params.recipientPublicKeyBase64),
     randomBytes: randomBytesFn,
   });
 
@@ -109,6 +134,15 @@ export function decryptEncryptedTransferChunkEnvelope(params: Readonly<{
   encryptedDataKeyEnvelopeBase64: string;
   recipientSecretKeySeed: Uint8Array;
 }>): Buffer {
+  // These inputs come from peer-controlled JSON. Fail closed before decoding base64 so a hostile
+  // peer cannot force us to allocate an oversized Buffer (OOM vector).
+  if (resolveBase64EncodedBytesUpperBound(params.encryptedDataKeyEnvelopeBase64) > TRANSFER_ENCRYPTED_DATA_KEY_ENVELOPE_HARD_MAX_BYTES) {
+    throw new Error(`Invalid encrypted transfer data key for ${params.transferId}`);
+  }
+  if (resolveBase64EncodedBytesUpperBound(params.payloadBase64) > TRANSFER_ENCRYPTED_CHUNK_HARD_MAX_BYTES) {
+    throw new Error(`Invalid encrypted transfer chunk for ${params.transferId}`);
+  }
+
   const encryptedDataKeyEnvelope = Buffer.from(params.encryptedDataKeyEnvelopeBase64, 'base64');
   const dataKey = openEncryptedDataKeyEnvelopeV1({
     envelope: encryptedDataKeyEnvelope,
