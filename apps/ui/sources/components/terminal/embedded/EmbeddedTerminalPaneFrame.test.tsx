@@ -1,33 +1,39 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installEmbeddedTerminalPaneCommonModuleMocks } from './embeddedTerminalPaneTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installEmbeddedTerminalPaneCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             View: (props: any) => React.createElement('View', props, props.children),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),
             Platform: {
                 OS: 'web',
                 select: (value: any) => value?.default ?? null,
             },
-        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#fff',
-                textSecondary: '#aaa',
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: '#fff',
+                    textSecondary: '#aaa',
+                },
             },
-        },
-    });
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -41,13 +47,6 @@ vi.mock('@/components/ui/buttons/PrimaryCircleIconButton', () => ({
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
 
 vi.mock('@/utils/ui/clipboard', () => ({
     setClipboardStringSafe: vi.fn(),
@@ -93,7 +92,7 @@ describe('EmbeddedTerminalPaneFrame', () => {
 
         const overlay = screen.findByTestId('provider-auth-terminal-overlay');
         expect(overlay).toBeTruthy();
-        expect(overlay?.parent?.parent?.props.style).toBe(embeddedTerminalPaneStyles.terminalSurface);
+        expect(overlay?.parent?.props.style).toBe(embeddedTerminalPaneStyles.terminalSurface);
         expect(screen.findByTestId('provider-auth-terminal-close')).toBeTruthy();
     });
 });
