@@ -25,6 +25,7 @@ import {
     SESSION_HANDOFF_WORKSPACE_TRANSFER_STRATEGY_OPTIONS,
 } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { useMachineListByServerId, useMachineRecordValues, useSession, useSessions, useSettingMutable } from '@/sync/domains/state/storage';
+import { sync } from '@/sync/sync';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
@@ -138,6 +139,14 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const actionSpec = getActionSpec('session.handoff');
+
+    React.useEffect(() => {
+        // The picker can open before the UI has ever fetched a fresh machine list (common in QA flows
+        // that start daemons after the UI is already running). Force a refresh so newly-registered
+        // machines show up immediately.
+        void sync.refreshMachinesThrottled({ force: true });
+    }, []);
+
     const sessions = useSessions() ?? [];
     const sessionRecord = useSession(sessionId);
     const machineListByServerId = useMachineListByServerId();

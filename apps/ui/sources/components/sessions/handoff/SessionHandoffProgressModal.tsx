@@ -2,7 +2,12 @@ import * as React from 'react';
 import { ActivityIndicator, Pressable, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { SessionHandoffStatus } from '@happier-dev/protocol';
+import {
+    SessionHandoffProgressCheckpointSchema,
+    resolveSessionHandoffProgressTimeline,
+    type SessionHandoffProgressCheckpoint,
+    type SessionHandoffStatus,
+} from '@happier-dev/protocol';
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { Typography } from '@/constants/Typography';
@@ -16,23 +21,7 @@ type Props = CustomModalInjectedProps & Readonly<{
     status?: SessionHandoffStatus;
 }>;
 
-const CHECKPOINT_TIMELINE = [
-    'scan_source',
-    'plan',
-    'transfer_blobs',
-    'stage_target',
-    'apply',
-    'import_session',
-    'finalize',
-] as const;
-
-type SessionHandoffProgressCheckpoint = typeof CHECKPOINT_TIMELINE[number];
-
-const MINIMAL_CHECKPOINT_TIMELINE = [
-    'stage_target',
-    'import_session',
-    'finalize',
-] as const satisfies readonly SessionHandoffProgressCheckpoint[];
+const CHECKPOINT_TIMELINE = SessionHandoffProgressCheckpointSchema.options;
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -170,6 +159,12 @@ function computeProgressFraction(status: SessionHandoffStatus | undefined): numb
     if (!progress) {
         return null;
     }
+    // The daemon may attach preflight/planning counters on checkpoints like `import_session` so the UI
+    // can show a summary, but those values do not represent active transfer progress. Only show a
+    // percent bar when we're explicitly transferring blobs.
+    if (progress.checkpoint !== 'transfer_blobs') {
+        return null;
+    }
     if (
         typeof progress.planned.totalBytes === 'number'
         && progress.planned.totalBytes > 0
@@ -217,14 +212,6 @@ function isKnownCheckpoint(value: unknown): value is SessionHandoffProgressCheck
     return typeof value === 'string' && (CHECKPOINT_TIMELINE as readonly string[]).includes(value);
 }
 
-function shouldUseFullCheckpointTimeline(status: SessionHandoffStatus | undefined, checkpoint: SessionHandoffProgressCheckpoint | null): boolean {
-    void status;
-    // Keep the UI timeline aligned with daemon-emitted checkpoints. The daemon can attach workspace
-    // preflight/progress counters while still reporting only minimal checkpoints (e.g. `import_session`);
-    // in that case the full timeline would be misleading.
-    return checkpoint === 'scan_source' || checkpoint === 'plan' || checkpoint === 'transfer_blobs' || checkpoint === 'apply';
-}
-
 function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): string {
     switch (checkpoint) {
         case 'scan_source':
@@ -251,26 +238,37 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
 export function SessionHandoffProgressModal({ onClose, title, message, status }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const progressFraction = computeProgressFraction(status);
+    const isFailureState = status?.status === 'failed' || status?.status === 'aborted' || status?.status === 'awaiting_recovery';
+    const isReadyForCutover = status?.status === 'ready_for_cutover';
+    const isCompleted = status?.status === 'completed';
+    const canShowActiveProgress = !isFailureState && !isReadyForCutover;
+    const progressFraction = canShowActiveProgress ? computeProgressFraction(status) : null;
     const summaryChips = buildSummaryChips(status);
     const progressLabel = progressFraction === null ? null : `${Math.round(progressFraction * 100)}%`;
     const checkpointFromProgress = isKnownCheckpoint(status?.progress?.checkpoint) ? status?.progress?.checkpoint : null;
-    const timeline: readonly SessionHandoffProgressCheckpoint[] = shouldUseFullCheckpointTimeline(status, checkpointFromProgress)
-        ? CHECKPOINT_TIMELINE
-        : MINIMAL_CHECKPOINT_TIMELINE;
-    const currentCheckpoint = status?.status === 'completed' ? 'finalize' : checkpointFromProgress;
+    const currentCheckpoint = checkpointFromProgress;
+    const timeline = resolveSessionHandoffProgressTimeline(checkpointFromProgress);
     const currentCheckpointIndex = currentCheckpoint ? timeline.indexOf(currentCheckpoint) : -1;
-    const isFailureState = status?.status === 'failed' || status?.status === 'aborted' || status?.status === 'awaiting_recovery';
-    const isCompleted = status?.status === 'completed';
+    const isAwaitingRecovery = status?.status === 'awaiting_recovery';
     const currentDetailLabel =
         status?.progress?.current?.relativePath
-        ?? (isFailureState ? status?.progress?.current?.phaseDetail : undefined)
+        ?? (isFailureState || isReadyForCutover ? status?.progress?.current?.phaseDetail : undefined)
         ?? (currentCheckpoint ? translateCheckpoint(currentCheckpoint) : null);
     const resolvedTitle =
-        title ?? (isFailureState ? t('sessionHandoff.failure.title') : t('sessionHandoff.progress.title'));
+        title
+        ?? (isAwaitingRecovery
+            ? t('sessionHandoff.recovery.title')
+            : isFailureState
+                ? t('sessionHandoff.failure.title')
+                : t('sessionHandoff.progress.title'));
     const resolvedMessage =
-        message ?? (isFailureState ? t('sessionHandoff.failure.message') : t('sessionHandoff.progress.message'));
-    const showSpinner = !isFailureState && !isCompleted;
+        message
+        ?? (isAwaitingRecovery
+            ? t('sessionHandoff.recovery.messageAfterSourceStop')
+            : isFailureState
+                ? t('sessionHandoff.failure.message')
+                : t('sessionHandoff.progress.message'));
+    const showSpinner = !isFailureState && !isCompleted && !isReadyForCutover;
 
     return (
         <View testID="session-handoff-progress-modal" style={styles.container}>
@@ -346,7 +344,11 @@ export function SessionHandoffProgressModal({ onClose, title, message, status }:
                         ) : null}
                         {progressLabel || currentDetailLabel ? (
                             <View style={styles.progressMetaRow}>
-                                <Text testID="session-handoff-progress-percent" style={styles.progressMetaText}>{progressLabel ?? ''}</Text>
+                                {progressLabel ? (
+                                    <Text testID="session-handoff-progress-percent" style={styles.progressMetaText}>
+                                        {progressLabel}
+                                    </Text>
+                                ) : null}
                                 {currentDetailLabel ? (
                                     <Text testID="session-handoff-progress-path" style={styles.currentPath}>
                                         {currentDetailLabel}

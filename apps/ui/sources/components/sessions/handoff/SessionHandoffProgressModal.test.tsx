@@ -299,7 +299,7 @@ describe('SessionHandoffProgressModal', () => {
         expect(screen.findByTestId('session-handoff-progress-checkpoint-apply')).toBeNull();
     });
 
-    it('highlights finalize as the current checkpoint when the handoff status is completed', async () => {
+    it('keeps the daemon-emitted checkpoint selected when the handoff status is completed', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
 
         const screen = await renderScreen(
@@ -321,11 +321,12 @@ describe('SessionHandoffProgressModal', () => {
             />,
         );
 
-        const currentCheckpointRow = screen.findByTestId('session-handoff-progress-checkpoint-finalize');
+        const currentCheckpointRow = screen.findByTestId('session-handoff-progress-checkpoint-import_session');
         expect(currentCheckpointRow?.props.accessibilityState?.selected).toBe(true);
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-finalize')?.props.accessibilityState?.selected).toBe(false);
     });
 
-    it('anchors ready_for_cutover to the cutover checkpoint instead of an active transfer checkpoint', async () => {
+    it('anchors ready_for_cutover to the daemon-reported checkpoint (import_session)', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
 
         const screen = await renderScreen(
@@ -337,13 +338,9 @@ describe('SessionHandoffProgressModal', () => {
                     phase: 'cutover',
                     progress: {
                         updatedAtMs: 123,
-                        checkpoint: 'transfer_blobs',
-                        planned: {
-                            totalBytes: 1024,
-                        },
-                        transferred: {
-                            bytes: 512,
-                        },
+                        checkpoint: 'import_session',
+                        planned: {},
+                        transferred: {},
                         resumable: true,
                     },
                     recoveryActions: [],
@@ -354,8 +351,8 @@ describe('SessionHandoffProgressModal', () => {
         expect(screen.findByTestId('session-handoff-progress-bar')).toBeNull();
         expect(screen.findByTestId('session-handoff-progress-percent')).toBeNull();
         expect(screen.findByTestId('session-handoff-progress-checkpoint-stage_target')).toBeTruthy();
-        const stageTargetRow = screen.findByTestId('session-handoff-progress-checkpoint-stage_target');
-        expect(stageTargetRow?.props.accessibilityState?.selected).toBe(true);
+        const importSessionRow = screen.findByTestId('session-handoff-progress-checkpoint-import_session');
+        expect(importSessionRow?.props.accessibilityState?.selected).toBe(true);
         expect(screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs')).toBeNull();
     });
 
