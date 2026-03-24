@@ -4,6 +4,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
+import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { attachRecoverableAttachmentDrafts } from '@/components/sessions/attachments/recoverableAttachmentDrafts';
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
@@ -93,8 +94,8 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         if (!attachmentsUploadsEnabled) return base;
         return [
             createAttachmentActionChip({
-                onPickFile: () => filePickerRef.current?.openFiles?.() ?? filePickerRef.current?.open?.(),
-                onPickImage: () => filePickerRef.current?.openImages?.() ?? filePickerRef.current?.openFiles?.() ?? filePickerRef.current?.open?.(),
+                onPickFile: () => openAttachmentFilePickerFiles(filePickerRef.current),
+                onPickImage: () => openAttachmentFilePickerImages(filePickerRef.current),
                 disabled: params.isCreating,
             }),
             ...base,

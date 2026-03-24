@@ -47,4 +47,19 @@ describe('attachmentFilePickerActions', () => {
         expect(openFiles).toHaveBeenCalledTimes(1);
         expect(open).not.toHaveBeenCalled();
     });
+
+    it('does not invoke the picker twice within the same tick (web double-open guard)', async () => {
+        const openFiles = vi.fn(() => undefined);
+        const handle: Partial<AttachmentFilePickerHandle> = { openFiles };
+
+        openAttachmentFilePickerFiles(handle as AttachmentFilePickerHandle);
+        openAttachmentFilePickerFiles(handle as AttachmentFilePickerHandle);
+
+        expect(openFiles).toHaveBeenCalledTimes(1);
+
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+        openAttachmentFilePickerFiles(handle as AttachmentFilePickerHandle);
+        expect(openFiles).toHaveBeenCalledTimes(2);
+    });
 });

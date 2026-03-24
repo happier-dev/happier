@@ -1,9 +1,12 @@
+import Color from 'color';
+
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { AgentInput } from '@/components/sessions/agentInput';
 import type { AgentInputAttachment } from '@/components/sessions/agentInput/agentInputContracts';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { AttachmentFilePickerHandle, PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
+import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { useSessionAgentInputExtraActionChips } from '@/components/sessions/agentInput/sessionActions/useSessionAgentInputExtraActionChips';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
@@ -336,13 +339,13 @@ export const SessionView = React.memo((props: {
                                     justifyContent: 'center',
                                     alignItems: 'center',
                                 }}>
-                                    <Text style={{
-                                        color: '#FFFFFF',
-                                        fontSize: 10,
-                                        fontWeight: '600',
-                                    }}>
-                                        {badgeLabel}
-                                    </Text>
+	                                    <Text style={{
+	                                        color: theme.colors.overlay.text,
+	                                        fontSize: 10,
+	                                        fontWeight: '600',
+	                                    }}>
+	                                        {badgeLabel}
+	                                    </Text>
                                 </View>
                             ) : null}
                         </View>
@@ -355,15 +358,14 @@ export const SessionView = React.memo((props: {
             subtitle: session.metadata?.path ? formatPathRelativeToHome(session.metadata.path, session.metadata?.homeDir) : undefined,
             avatarId: getSessionAvatarId(session),
             onAvatarPress: () => router.push(`/session/${sessionId}/info`),
-            rightElement,
-            badges: providerBadge ? [storageBadge, providerBadge] : [storageBadge],
-            isConnected: isConnected,
-            flavor: session.metadata?.flavor || null,
-            tintColor: isConnected ? '#000' : '#8E8E93'
-        };
-    }, [
-        handleHeaderExtraItemSelect,
-        isDataReady,
+	            rightElement,
+	            badges: providerBadge ? [storageBadge, providerBadge] : [storageBadge],
+	            isConnected: isConnected,
+	            flavor: session.metadata?.flavor || null,
+	        };
+	    }, [
+	        handleHeaderExtraItemSelect,
+	        isDataReady,
         paneScopeId,
         router,
         session,
@@ -1268,10 +1270,10 @@ function SessionViewLoaded({
             isReadOnly,
             isUploadingAttachments,
             onPickAttachmentFile: () => {
-                filePickerRef.current?.openFiles?.() ?? filePickerRef.current?.open?.();
+                openAttachmentFilePickerFiles(filePickerRef.current);
             },
             onPickAttachmentImage: () => {
-                filePickerRef.current?.openImages?.() ?? filePickerRef.current?.openFiles?.() ?? filePickerRef.current?.open?.();
+                openAttachmentFilePickerImages(filePickerRef.current);
             },
             onAppendLinkedPath: (path) => {
                 setMessage((prev) => {
@@ -1907,20 +1909,20 @@ function SessionViewLoaded({
                             left: 16,
                             zIndex: 1000,
                             width: 44,
-                            height: 44,
-                            borderRadius: 22,
-                            backgroundColor: `rgba(${theme.dark ? '28, 23, 28' : '255, 255, 255'}, 0.9)`,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            ...Platform.select({
-                                ios: {
-                                    shadowColor: '#000',
-                                    shadowOffset: { width: 0, height: 2 },
-                                    shadowOpacity: 0.1,
-                                    shadowRadius: 4,
-                                },
-                                android: {
-                                    elevation: 10,
+	                            height: 44,
+	                            borderRadius: 22,
+	                            backgroundColor: Color(theme.colors.header.background).alpha(0.9).rgb().string(),
+	                            alignItems: 'center',
+	                            justifyContent: 'center',
+	                            ...Platform.select({
+	                                ios: {
+	                                    shadowColor: theme.colors.shadow.color,
+	                                    shadowOffset: { width: 0, height: 2 },
+	                                    shadowOpacity: theme.colors.shadow.opacity,
+	                                    shadowRadius: 4,
+	                                },
+	                                android: {
+	                                    elevation: 10,
                                 }
                             }),
                         }}
