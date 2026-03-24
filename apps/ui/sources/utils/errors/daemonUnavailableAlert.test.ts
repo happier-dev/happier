@@ -1,27 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
+import { installErrorUtilityCommonModuleMocks } from './errorUtilityTestHelpers';
 
 const modalAlertSpy = vi.hoisted(() => vi.fn((..._args: unknown[]) => {}));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string, params?: Record<string, unknown>) => {
-        if (key === 'status.lastSeen') return `status.lastSeen:${String(params?.time ?? '')}`;
-        if (key === 'time.minutesAgo') return `time.minutesAgo:${String(params?.count ?? '')}`;
-        if (key === 'time.hoursAgo') return `time.hoursAgo:${String(params?.count ?? '')}`;
-        if (key === 'sessionHistory.daysAgo') return `sessionHistory.daysAgo:${String(params?.count ?? '')}`;
-        return key;
+installErrorUtilityCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+            },
+        }).module;
     },
-    });
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: Record<string, unknown>) => {
+                if (key === 'status.lastSeen') return `status.lastSeen:${String(params?.time ?? '')}`;
+                if (key === 'time.minutesAgo') return `time.minutesAgo:${String(params?.count ?? '')}`;
+                if (key === 'time.hoursAgo') return `time.hoursAgo:${String(params?.count ?? '')}`;
+                if (key === 'sessionHistory.daysAgo') return `sessionHistory.daysAgo:${String(params?.count ?? '')}`;
+                return key;
+            },
+        });
+    },
 });
 
 describe('daemonUnavailableAlert', () => {

@@ -1,13 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
-import { getErrorMessage } from './getErrorMessage';
+import { describe, it, expect } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { installErrorUtilityCommonModuleMocks } from './errorUtilityTestHelpers';
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
+installErrorUtilityCommonModuleMocks();
+
+const { getErrorMessage } = await import('./getErrorMessage');
 
 describe('getErrorMessage', () => {
     it('returns message for Error', () => {
@@ -32,9 +30,7 @@ describe('getErrorMessage', () => {
     });
 
     it('returns a daemon-unavailable message when rpc method is not available', () => {
-        const err = Object.assign(new Error('RPC method not available'), {
-            rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        });
+        const err = new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         expect(getErrorMessage(err)).toBe('errors.daemonUnavailableBody');
     });
 });

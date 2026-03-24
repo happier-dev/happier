@@ -121,7 +121,7 @@ export function tryShowDaemonUnavailableAlertForRpcError(params: Readonly<{
     if (typeof rpcErrorCode === 'string' && rpcErrorCode.trim() && rpcErrorCode.trim() !== DAEMON_UNAVAILABLE_RPC_ERROR_CODE) {
         return false;
     }
-    if (!isRpcMethodNotAvailableError(params.error as any)) {
+    if (!isRpcMethodNotAvailableError(params.error)) {
         return false;
     }
 
@@ -155,7 +155,7 @@ export function tryShowDaemonUnavailableAlertForRpcFailure(params: Readonly<{
         message: typeof params.message === 'string' ? params.message : undefined,
     };
 
-    if (!isRpcMethodNotAvailableError(carrier as any)) {
+    if (!isRpcMethodNotAvailableError(carrier)) {
         return false;
     }
 
