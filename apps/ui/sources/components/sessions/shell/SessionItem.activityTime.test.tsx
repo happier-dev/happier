@@ -6,6 +6,10 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const useProfileSpy = vi.hoisted(() => vi.fn(() => ({ id: 'u1' })));
+const useSessionSpy = vi.hoisted(() => vi.fn(() => null));
+const useSessionListRenderableSpy = vi.hoisted(() => vi.fn(() => null));
+
 vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native-gesture-handler', () => ({
@@ -54,8 +58,9 @@ installSessionShellCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useHasUnreadMessages: () => false,
-            useProfile: () => ({ id: 'u1' }),
-            useSession: () => null,
+            useProfile: useProfileSpy,
+            useSession: useSessionSpy,
+            useSessionListRenderable: useSessionListRenderableSpy,
             useSessionListMeaningfulActivityAt: () => 60_000,
         });
     },
@@ -160,6 +165,9 @@ describe('SessionItem activity time', () => {
         mockSessionStatus = {
             ...defaultSessionStatus,
         };
+        useProfileSpy.mockClear();
+        useSessionSpy.mockClear();
+        useSessionListRenderableSpy.mockClear();
     });
 
     afterEach(() => {
@@ -279,5 +287,28 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId('session-list-item-sess_selected')?.props.accessibilityState).toMatchObject({
             selected: true,
         });
+    });
+
+    it('uses the row-specific renderable selector and currentUserId prop without subscribing to profile or full session state', async () => {
+        const { SessionItem } = await import('./SessionItem');
+
+        await renderScreen(
+            <SessionItem
+                session={createSession('sess_row_state')}
+                currentUserId="u1"
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        expect(useSessionListRenderableSpy).toHaveBeenCalledWith('sess_row_state');
+        expect(useSessionSpy).not.toHaveBeenCalled();
+        expect(useProfileSpy).not.toHaveBeenCalled();
     });
 });

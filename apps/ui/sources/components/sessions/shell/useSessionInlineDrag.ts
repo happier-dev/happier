@@ -3,6 +3,7 @@ import type { ViewStyle } from 'react-native';
 import { useSharedValue, useAnimatedStyle, withSpring, type AnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { Gesture, type GestureType } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
+import { useUnistyles } from 'react-native-unistyles';
 
 export type UseSessionInlineDragParams = Readonly<{
     sessionKey: string | null;
@@ -43,6 +44,8 @@ export type UseSessionInlineDragResult = Readonly<{
 
 export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSessionInlineDragResult {
     const { sessionKey, groupKey, rowHeight, onDragStart, onDragEnd, dataIndex, totalItemCount, dropIndicatorIdx, dropIndicatorEdge } = params;
+    const { theme } = useUnistyles();
+    const shadowColor = theme.colors.shadow.color;
 
     // Use refs for callbacks so the gesture object is never recreated when
     // callbacks change. This keeps the active Pan gesture alive.
@@ -151,7 +154,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
             transform: [{ translateY: translateY.value }, { scale: scale.value }],
             zIndex: isDragging.value ? 1000 : 0,
             ...(isDragging.value
-                ? { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8, elevation: 8 }
+                ? { shadowColor, shadowOpacity: 0.15, shadowRadius: 8, elevation: 8 }
                 : {}),
         };
     });

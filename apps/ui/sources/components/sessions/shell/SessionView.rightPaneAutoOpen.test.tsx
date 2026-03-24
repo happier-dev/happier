@@ -54,6 +54,12 @@ let rightScopeState: any = null;
 let authCredentials: any = { token: 't', secret: 's' };
 let uiMultiPanePanelsEnabledSetting: any = true;
 let lastUrlSyncEnabled: boolean | null = null;
+let pendingMessagesState: { messages: any[]; discarded: any[]; isLoaded: boolean } = {
+    messages: [],
+    discarded: [],
+    isLoaded: true,
+};
+const fetchPendingMessagesSpy = vi.fn(async (_sessionId?: string) => {});
 
 installSessionShellCommonModuleMocks({
     reactNative: async () =>
@@ -117,7 +123,7 @@ installSessionShellCommonModuleMocks({
             useRealtimeStatus: () => 'connected',
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+            useSessionPendingMessages: () => pendingMessagesState,
             useSessionReviewCommentsDrafts: () => [],
             useSessionUsage: () => null,
             useLocalSetting: <K extends keyof LocalSettings>(key: K) => {
@@ -209,6 +215,9 @@ vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
     ChatList: () => React.createElement('ChatList'),
 }));
+vi.mock('@/components/sessions/pending/PendingMessagesDragReorderList', () => ({
+    PendingMessagesDragReorderList: () => React.createElement('PendingMessagesDragReorderList'),
+}));
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({
     EmptyMessages: () => React.createElement('EmptyMessages'),
 }));
@@ -255,12 +264,12 @@ vi.mock('@/voice/session/voiceSession', () => ({
     voiceSessionManager: {},
 }));
 vi.mock('@/sync/sync', () => ({
-    sync: {
-        markSessionViewed: async () => {},
-        fetchPendingMessages: async () => {},
-        publishSessionPermissionModeToMetadata: async () => {},
-        publishSessionAcpSessionModeOverrideToMetadata: async () => {},
-        publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
+        sync: {
+            markSessionViewed: async () => {},
+            fetchPendingMessages: (sessionId: string) => fetchPendingMessagesSpy(sessionId),
+            publishSessionPermissionModeToMetadata: async () => {},
+            publishSessionAcpSessionModeOverrideToMetadata: async () => {},
+            publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
         publishSessionModelOverrideToMetadata: async () => {},
         refreshSessions: async () => {},
         onSessionVisible: () => () => {},
@@ -344,8 +353,14 @@ describe('SessionView (right pane auto-open)', () => {
         authCredentials = { token: 't', secret: 's' };
         uiMultiPanePanelsEnabledSetting = true;
         lastUrlSyncEnabled = null;
+        pendingMessagesState = {
+            messages: [],
+            discarded: [],
+            isLoaded: true,
+        };
         openRightSpy.mockReset();
         setRightTabSpy.mockReset();
+        fetchPendingMessagesSpy.mockReset();
     });
 
     afterEach(() => {
@@ -406,6 +421,41 @@ describe('SessionView (right pane auto-open)', () => {
         const screen = await renderSessionView({ rightTabId: 'git' });
 
         expect(lastUrlSyncEnabled).toBe(true);
+
+        await screen.unmount();
+    });
+
+    it('fetches pending messages once when the session opens with a pending queue rendered', async () => {
+        const { PendingMessagesTranscriptBlock } = await import('@/components/sessions/pending/PendingMessagesTranscriptBlock');
+        const { SessionView } = await import('./SessionView');
+        const screen = await renderScreen(
+            React.createElement(
+                React.Fragment,
+                null,
+                React.createElement(PendingMessagesTranscriptBlock, {
+                    sessionId: 's1',
+                    pendingMessages: [
+                        {
+                            id: 'p1',
+                            text: 'pending',
+                            displayText: undefined,
+                            createdAt: 1,
+                            updatedAt: 1,
+                            localId: 'p1',
+                            rawRecord: {},
+                        },
+                    ],
+                    discardedMessages: [],
+                }),
+                React.createElement(SessionView, { id: 's1' }),
+            ),
+            {
+                wrapper: AppPaneProviderWrapper,
+            },
+        );
+
+        expect(fetchPendingMessagesSpy).toHaveBeenCalledTimes(1);
+        expect(fetchPendingMessagesSpy).toHaveBeenCalledWith('s1');
 
         await screen.unmount();
     });

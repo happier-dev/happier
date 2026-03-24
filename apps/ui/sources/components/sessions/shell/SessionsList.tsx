@@ -4,7 +4,7 @@ import Animated, { useSharedValue, useAnimatedStyle, type SharedValue } from 're
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { Text } from '@/components/ui/text/Text';
 import { usePathname, useRouter } from 'expo-router';
-import { SessionListViewItem, useAllMachines, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { SessionListViewItem, useAllMachines, useProfile, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { Typography } from '@/constants/Typography';
@@ -149,6 +149,15 @@ const ROW_HEIGHT_DEFAULT = SESSION_LIST_ROW_HEIGHT_DEFAULT;
 const ROW_HEIGHT_COMPACT = SESSION_LIST_ROW_HEIGHT_COMPACT;
 const ROW_HEIGHT_MINIMAL = SESSION_LIST_ROW_HEIGHT_MINIMAL;
 
+const SessionsListHeader = React.memo(function SessionsListHeader() {
+    return (
+        <View>
+            <RecoveryKeyReminderBanner />
+            <UpdateBanner />
+        </View>
+    );
+});
+
 type SessionListRowProps = Readonly<
     React.ComponentProps<typeof SessionItem> & {
         sessionKey: string | null;
@@ -268,6 +277,7 @@ const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonl
     onToggleCollapse: () => void;
 }>) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const { item, hasMultipleMachines, workspaceLabelsV1, onRenameWorkspace, onResetWorkspaceName, collapsed, onToggleCollapse } = props;
     const [isRowHovered, setIsRowHovered] = React.useState(false);
     const [isActionsHovered, setIsActionsHovered] = React.useState(false);
@@ -278,7 +288,7 @@ const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonl
     const customLabel = workspaceKey ? workspaceLabelsV1[workspaceKey] : undefined;
     const displayTitle = customLabel || item.title;
     const hasCustomLabel = Boolean(customLabel);
-    const actionIconColor = String((styles.groupHeaderActionIcon as any)?.color ?? '#666');
+    const actionIconColor = theme.colors.textSecondary;
 
     const menuItems = React.useMemo((): DropdownMenuItem[] => {
         const items: DropdownMenuItem[] = [
@@ -306,7 +316,7 @@ const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: Readonl
         }
     }, [workspaceKey, displayTitle, onRenameWorkspace, onResetWorkspaceName]);
 
-    const chevronColor = String((styles.groupHeaderChevron as any)?.color ?? '#666');
+    const chevronColor = theme.colors.textSecondary;
     return (
         <View style={styles.groupHeaderSection}>
             <Pressable
@@ -379,8 +389,9 @@ const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHeader(pr
     onPress: () => void;
 }>) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const isWeb = Platform.OS === 'web';
-    const headerChevronColor = String((styles.headerChevron as any)?.color ?? '#666');
+    const headerChevronColor = theme.colors.textSecondary;
     return (
         <Pressable
             style={styles.headerSection}
@@ -422,8 +433,10 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
     const [workspaceLabelsV1, setWorkspaceLabelsV1] = useSettingMutable('workspaceLabelsV1');
     const [collapsedGroupKeysV1, setCollapsedGroupKeysV1] = useSettingMutable('collapsedGroupKeysV1');
     const sessionListDensity = useSetting('sessionListDensity');
+    const profile = useProfile();
     const compactSessionView = sessionListDensity === 'cozy' || sessionListDensity === 'narrow';
     const compactSessionViewMinimal = sessionListDensity === 'narrow';
+    const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
     const selection = useResolvedActiveServerSelection();
     const selectedServerCount = selection.allowedServerIds?.length ?? 0;
     const showServerBadge = selection.enabled && selection.presentation === 'flat-with-badge' && selectedServerCount > 1;
@@ -752,6 +765,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
                 subtitleOverride={subtitle ?? null}
                 serverId={item.serverId}
                 serverName={item.serverName}
+                currentUserId={currentUserId}
                 showServerBadge={pinned ? showPinnedServerBadge : showServerBadge}
                 pinned={pinned}
                 onTogglePinned={onTogglePinned}
@@ -773,6 +787,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
         allKnownTags,
         compactSessionView,
         compactSessionViewMinimal,
+        currentUserId,
         draggingSessionKey,
         dropIndicatorEdge,
         dropIndicatorIdx,
@@ -795,15 +810,6 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
     const renderVirtualizedItem = ({ item, index }: { item: SessionListViewItem; index: number }) => {
         if (item.type === 'header') return renderHeaderItem(item);
         return renderSessionItem(item, index);
-    };
-
-    const VirtualizedHeaderComponent = () => {
-        return (
-            <View>
-                <RecoveryKeyReminderBanner />
-                <UpdateBanner />
-            </View>
-        );
     };
 
     const renderVirtualizedFooter = React.useCallback(() => {
@@ -841,7 +847,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
             renderItem={renderVirtualizedItem as any}
             keyExtractor={listItemKeyExtractor as any}
             contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth }}
-            ListHeaderComponent={VirtualizedHeaderComponent as any}
+            ListHeaderComponent={SessionsListHeader as any}
             ListFooterComponent={renderVirtualizedFooter as any}
         />
     ) : (
@@ -850,7 +856,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
             renderItem={renderVirtualizedItem as any}
             keyExtractor={listItemKeyExtractor as any}
             contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth } as any}
-            ListHeaderComponent={VirtualizedHeaderComponent as any}
+            ListHeaderComponent={SessionsListHeader as any}
             ListFooterComponent={renderVirtualizedFooter as any}
         />
     );

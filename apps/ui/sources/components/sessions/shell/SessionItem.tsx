@@ -2,7 +2,7 @@ import React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { GestureDetector, Swipeable, type GestureType } from 'react-native-gesture-handler';
 import { Ionicons, Octicons } from '@expo/vector-icons';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text, Text as RNText } from '@/components/ui/text/Text';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -16,7 +16,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sessionArchiveWithServerScope, sessionRename, sessionStopWithServerScope } from '@/sync/ops';
-import { useHasUnreadMessages, useProfile, useSession, useSessionListMeaningfulActivityAt } from '@/sync/domains/state/storage';
+import { useHasUnreadMessages, useSessionListMeaningfulActivityAt, useSessionListRenderable } from '@/sync/domains/state/storage';
 import type { SessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -383,6 +383,7 @@ export const SessionItem = React.memo(
         subtitleOverride,
         serverId,
         serverName,
+        currentUserId,
         showServerBadge,
         pinned,
         onTogglePinned,
@@ -407,6 +408,7 @@ export const SessionItem = React.memo(
         subtitleOverride?: string | null;
         serverId?: string;
         serverName?: string;
+        currentUserId?: string | null;
         showServerBadge?: boolean;
         pinned?: boolean;
         onTogglePinned?: (() => void) | null;
@@ -426,8 +428,9 @@ export const SessionItem = React.memo(
         isBeingDragged?: boolean;
     }) => {
         const styles = stylesheet;
+        const { theme } = useUnistyles();
         const sessionId = String(session?.id ?? '').trim();
-        const sessionFromStore = useSession(sessionId);
+        const sessionFromStore = useSessionListRenderable(sessionId);
         const resolvedSession = sessionFromStore ?? session;
         const sessionStatus = useSessionStatus(resolvedSession);
         const sessionNameResolved = getSessionName(resolvedSession);
@@ -435,8 +438,6 @@ export const SessionItem = React.memo(
         const navigateToSession = useNavigateToSession();
         const isTablet = useIsTablet();
         const swipeableRef = React.useRef<Swipeable | null>(null);
-        const profile = useProfile();
-        const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
         const sessionOwnerId = typeof resolvedSession.owner === 'string' ? resolvedSession.owner : null;
         const isOwnedByCurrentUser = !sessionOwnerId || (currentUserId && sessionOwnerId === currentUserId);
         const hasAdminAccess = isOwnedByCurrentUser || resolvedSession.accessLevel === 'admin';
@@ -452,7 +453,7 @@ export const SessionItem = React.memo(
         const [tagMenuEverOpened, setTagMenuEverOpened] = React.useState(false);
         const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
         const showRowActions = Platform.OS !== 'web' || isRowHovered || isActionsHovered || tagMenuOpen || moreMenuOpen || isBeingDragged === true;
-        const rowActionIconColor = String((styles.rowActionIcon as any)?.color ?? '#666');
+        const rowActionIconColor = theme.colors.textSecondary;
         const supportsPin = typeof onTogglePinned === 'function';
         const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
         const showTagAction = supportsTag && (Platform.OS !== 'web' || showRowActions);
