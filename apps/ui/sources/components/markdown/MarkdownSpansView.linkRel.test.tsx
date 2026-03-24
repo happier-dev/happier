@@ -1,26 +1,22 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installMarkdownCommonModuleMocks } from './markdownTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
-});
+installMarkdownCommonModuleMocks();
 
 function mockPlatform(os: 'web' | 'ios') {
   vi.doMock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-            Platform: {
-                OS: os,
-            },
-        }
-    );
-});
+    return createReactNativeWebMock({
+      Platform: {
+        OS: os,
+      },
+    });
+  });
 }
 
 vi.mock('../ui/text/Text', () => ({
@@ -29,8 +25,8 @@ vi.mock('../ui/text/Text', () => ({
 
 describe('MarkdownSpansView (link rel hardening)', () => {
   it('adds rel="noopener noreferrer" for spans with url (web anchor attrs path)', async () => {
-    vi.resetModules();
     mockPlatform('web');
+    vi.resetModules();
 
     const { MarkdownSpansView } = await import('./MarkdownSpansView');
 
@@ -50,8 +46,8 @@ describe('MarkdownSpansView (link rel hardening)', () => {
   });
 
   it('renders link spans as selectable Text on native so long-press selection works', async () => {
-    vi.resetModules();
     mockPlatform('ios');
+    vi.resetModules();
 
     const { MarkdownSpansView } = await import('./MarkdownSpansView');
 

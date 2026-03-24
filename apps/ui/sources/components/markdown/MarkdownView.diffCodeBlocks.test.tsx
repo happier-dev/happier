@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installMarkdownCommonModuleMocks } from './markdownTestHelpers';
 
 
 declare global {
@@ -15,17 +16,21 @@ vi.mock('./MermaidRenderer', () => ({
     MermaidRenderer: () => null,
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-    useSetting: (key: string) => {
-            if (key === 'filesDiffTokenizationMaxBytes') return tokenizationMaxBytes;
-            if (key === 'wrapLinesInDiffs') return false;
-            if (key === 'showLineNumbersInToolViews') return false;
-            if (key === 'filesDiffFileListVirtualizationMinFiles') return 20;
-            return null;
-        },
-});
+installMarkdownCommonModuleMocks({
+    storage: async () => {
+        const actual = await vi.importActual<typeof import('@/sync/domains/state/storage')>('@/sync/domains/state/storage');
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            ...actual,
+            useSetting: (key: string) => {
+                if (key === 'filesDiffTokenizationMaxBytes') return tokenizationMaxBytes;
+                if (key === 'wrapLinesInDiffs') return false;
+                if (key === 'showLineNumbersInToolViews') return false;
+                if (key === 'filesDiffFileListVirtualizationMinFiles') return 20;
+                return null;
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/code/blocks/CodeBlockView', () => ({
