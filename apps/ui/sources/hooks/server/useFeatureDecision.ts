@@ -9,9 +9,7 @@ import {
     useServerFeaturesRuntimeSnapshot,
     useServerFeaturesSnapshotForServerId,
 } from '@/sync/domains/features/featureDecisionRuntime';
-import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
-import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
-import { featureRequiresServerSnapshot } from '@happier-dev/protocol';
+import { resolveFeatureDecisionSnapshotStrategy } from '@/sync/domains/features/featureDecisionProbeStrategy';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import type { FeatureScopeParams } from './featureScope';
 
@@ -20,45 +18,44 @@ export type FeatureDecisionScopeParams = FeatureScopeParams;
 export function useFeatureDecision(featureId: FeatureId, scope?: FeatureDecisionScopeParams): FeatureDecision | null {
     const settings = useSettings();
     const scopeKind = scope?.scopeKind ?? 'main_selection';
+    const selection = useEffectiveServerSelection();
+    const snapshotStrategy = resolveFeatureDecisionSnapshotStrategy({
+        featureId,
+        settings,
+        scopeKind,
+        hasMainSelectionServerIds: selection.serverIds.length > 0,
+    });
+    const runtimeSnapshot = useServerFeaturesRuntimeSnapshot({ enabled: snapshotStrategy.runtimeEnabled });
+    const spawnServerId = scope?.scopeKind === 'spawn'
+        ? (typeof scope.serverId === 'string' ? scope.serverId.trim() : '')
+        : '';
+    const spawnSnapshot = useServerFeaturesSnapshotForServerId(spawnServerId, {
+        enabled: snapshotStrategy.spawnEnabled,
+    });
+    const mainSelectionSnapshot = useServerFeaturesMainSelectionSnapshot(selection.serverIds, {
+        enabled: snapshotStrategy.mainSelectionEnabled,
+    });
 
-    const buildPolicy = getFeatureBuildPolicyDecision(featureId);
-    const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(featureId, settings);
-    const probesEnabled = featureRequiresServerSnapshot(featureId) && buildPolicy !== 'deny' && localPolicyEnabled;
-    const runtimeSnapshot = useServerFeaturesRuntimeSnapshot({ enabled: probesEnabled });
-
-    if (scopeKind === 'runtime') {
-        return React.useMemo(
-            () =>
-                resolveRuntimeFeatureDecisionFromSnapshot({
+    return React.useMemo(
+        () => {
+            if (scopeKind === 'runtime') {
+                return resolveRuntimeFeatureDecisionFromSnapshot({
                     featureId,
                     settings,
                     snapshot: runtimeSnapshot,
                     scope: { scopeKind: 'runtime' },
-                }),
-            [featureId, settings, runtimeSnapshot],
-        );
-    }
+                });
+            }
 
-    if (scope?.scopeKind === 'spawn') {
-        const snapshot = useServerFeaturesSnapshotForServerId(scope.serverId, { enabled: probesEnabled });
-        const serverId = typeof scope.serverId === 'string' ? scope.serverId.trim() : '';
-        return React.useMemo(
-            () =>
-                resolveRuntimeFeatureDecisionFromSnapshot({
+            if (scopeKind === 'spawn') {
+                return resolveRuntimeFeatureDecisionFromSnapshot({
                     featureId,
                     settings,
-                    snapshot,
-                    scope: { scopeKind: 'spawn', ...(serverId ? { serverId } : {}) },
-                }),
-            [featureId, serverId, settings, snapshot],
-        );
-    }
+                    snapshot: spawnSnapshot,
+                    scope: { scopeKind: 'spawn', ...(spawnServerId ? { serverId: spawnServerId } : {}) },
+                });
+            }
 
-    const selection = useEffectiveServerSelection();
-    const snapshot = useServerFeaturesMainSelectionSnapshot(selection.serverIds, { enabled: probesEnabled });
-
-    return React.useMemo(
-        () => {
             if (selection.serverIds.length === 0) {
                 // Web same-origin / empty server-profile bootstraps still need to resolve feature state.
                 return resolveRuntimeFeatureDecisionFromSnapshot({
@@ -72,9 +69,9 @@ export function useFeatureDecision(featureId: FeatureId, scope?: FeatureDecision
             return resolveMainSelectionFeatureDecision({
                 featureId,
                 settings,
-                snapshot,
+                snapshot: mainSelectionSnapshot,
             });
         },
-        [featureId, runtimeSnapshot, selection.serverIds.length, settings, snapshot],
+        [featureId, mainSelectionSnapshot, runtimeSnapshot, scopeKind, selection.serverIds.length, settings, spawnServerId, spawnSnapshot],
     );
 }

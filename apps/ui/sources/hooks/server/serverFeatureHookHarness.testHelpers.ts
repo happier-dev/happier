@@ -2,11 +2,24 @@ import React from 'react';
 
 import {
     flushHookEffects as flushTestkitHookEffects,
+    type FlushHookEffectsOptions,
     renderHook,
 } from '@/dev/testkit';
 
-export async function flushHookEffects(turns = 2) {
-    await flushTestkitHookEffects({ turns });
+export async function flushHookEffects(options: number | Partial<FlushHookEffectsOptions> = {}): Promise<void> {
+    if (typeof options === 'number') {
+        await flushTestkitHookEffects({
+            cycles: 6,
+            turns: options,
+        });
+        return;
+    }
+
+    await flushTestkitHookEffects({
+        cycles: 6,
+        turns: 4,
+        ...options,
+    });
 }
 
 export async function renderHookAndCollectValues<T>(useValue: () => T): Promise<T[]> {

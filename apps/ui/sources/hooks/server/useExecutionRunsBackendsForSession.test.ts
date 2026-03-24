@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPartialStorageModuleMock, renderHook } from '@/dev/testkit';
+import { renderHook } from '@/dev/testkit';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+
+import { installServerHookCommonModuleMocks } from './serverHookModuleTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,6 +19,12 @@ const capabilitiesState = vi.hoisted(() => ({
 const activeServerSnapshotState = vi.hoisted(() => ({
   value: { serverId: 'active-server' },
 }));
+
+installServerHookCommonModuleMocks({
+  storage: () => createStorageModuleStub({
+    useSession: () => sessionState.value,
+  }),
+});
 
 const sessionServerIdStore = vi.hoisted(() => {
   let value: string | null = null;
@@ -38,10 +47,6 @@ const sessionServerIdStore = vi.hoisted(() => {
     },
   };
 });
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-  useSession: () => sessionState.value,
-}));
 
 vi.mock('@/sync/store/hooks', async () => {
   const React = await import('react');
@@ -87,7 +92,13 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
   },
 }));
 
-import { useExecutionRunsBackendsForSession } from './useExecutionRunsBackendsForSession';
+async function renderExecutionRunsBackendsHook(sessionId: string) {
+  const { useExecutionRunsBackendsForSession } = await import('./useExecutionRunsBackendsForSession');
+  return renderHook(
+    (nextSessionId: string) => useExecutionRunsBackendsForSession(nextSessionId),
+    { initialProps: sessionId, flushOptions: { cycles: 1, turns: 1 } },
+  );
+}
 
 describe('useExecutionRunsBackendsForSession', () => {
   beforeEach(() => {
@@ -115,10 +126,7 @@ describe('useExecutionRunsBackendsForSession', () => {
       },
     };
 
-    const hook = await renderHook(
-      (sessionId: string) => useExecutionRunsBackendsForSession(sessionId),
-      { initialProps: 'session-1', flushOptions: { cycles: 1, turns: 1 } },
-    );
+    const hook = await renderExecutionRunsBackendsHook('session-1');
 
     expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
       machineId: 'machine-direct',
@@ -146,10 +154,7 @@ describe('useExecutionRunsBackendsForSession', () => {
       },
     };
 
-    const hook = await renderHook(
-      (sessionId: string) => useExecutionRunsBackendsForSession(sessionId),
-      { initialProps: 'session-1', flushOptions: { cycles: 1, turns: 1 } },
-    );
+    const hook = await renderExecutionRunsBackendsHook('session-1');
 
     expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
       machineId: 'machine-direct',
@@ -174,10 +179,7 @@ describe('useExecutionRunsBackendsForSession', () => {
       },
     };
 
-    const hook = await renderHook(
-      (sessionId: string) => useExecutionRunsBackendsForSession(sessionId),
-      { initialProps: 'session-1', flushOptions: { cycles: 1, turns: 1 } },
-    );
+    const hook = await renderExecutionRunsBackendsHook('session-1');
 
     expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
       machineId: 'machine-direct',

@@ -1,7 +1,10 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+
+import { installServerHookCommonModuleMocks } from './serverHookModuleTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,15 +21,15 @@ vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
   useExecutionRunsBackendsForSession: () => backendsState.backends,
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-  useSessionMessages: () => ({ messages: messagesState.messages, isLoaded: true }),
-}));
+installServerHookCommonModuleMocks({
+  storage: async () => createStorageModuleStub({
+    useSessionMessages: () => ({ messages: messagesState.messages, isLoaded: true }),
+  }),
+});
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
   sessionExecutionRunList: (...args: unknown[]) => listRunsSpy(...args),
 }));
-
-import { useSessionExecutionRunsSupported } from './useSessionExecutionRunsSupported';
 
 async function renderHarness(sessionId = 'session-1'): Promise<{
   getValue: () => boolean;
@@ -34,6 +37,7 @@ async function renderHarness(sessionId = 'session-1'): Promise<{
   unmount: () => void;
 }> {
   let current = false;
+  const { useSessionExecutionRunsSupported } = await import('./useSessionExecutionRunsSupported');
 
   function Harness(props: Readonly<{ sessionId: string }>) {
     current = useSessionExecutionRunsSupported(props.sessionId);

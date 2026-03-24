@@ -1,19 +1,22 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installServerHookCommonModuleMocks } from './serverHookModuleTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useMachineCapabilitiesCacheMock = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useMachine: vi.fn((machineId: string) => (
-            machineId === 'm1' ? { id: 'm1', metadata: {}, daemonStateVersion: 7 } : null
-        )),
-    });
+installServerHookCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useMachine: vi.fn((machineId: string) => (
+                machineId === 'm1' ? { id: 'm1', metadata: {}, daemonStateVersion: 7 } : null
+            )),
+        });
+    },
 });
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => {

@@ -8,8 +8,6 @@ import { upsertServerProfile, setActiveServerId } from '@/sync/domains/server/se
 import { getStorage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
 const initialStorageState = getStorage().getState();
 
 beforeEach(() => {
@@ -68,10 +66,10 @@ describe('useFeatureDecision', () => {
         expect(seen.at(-1)?.scope.scopeKind).toBe('main_selection');
     }, 30_000);
 
-	    it('returns enabled decision when the feature is available', async () => {
-	        stubServerFeaturesFetch({ voiceEnabled: true });
+    it('returns enabled decision when the feature is available', async () => {
+        stubServerFeaturesFetch({ voiceEnabled: true });
 
-	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
+        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
 
         await getServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, force: true });
 
@@ -91,8 +89,7 @@ describe('useFeatureDecision', () => {
         });
 
         const hook = await renderHook(
-            ({ scope }: Readonly<{ scope?: { scopeKind?: 'main_selection' } | { scopeKind: 'runtime' } }>) =>
-                useFeatureDecision('execution.runs', scope),
+            ({ scope }: Readonly<{ scope?: Parameters<typeof useFeatureDecision>[1] }>) => useFeatureDecision('execution.runs', scope),
             {
                 initialProps: { scope: { scopeKind: 'runtime' } },
             },
@@ -100,22 +97,30 @@ describe('useFeatureDecision', () => {
 
         expect(hook.getCurrent()?.state).toBe('enabled');
 
+        await expect(hook.rerender({ scope: { scopeKind: 'spawn', serverId: 'test-spawn-server' } })).resolves.toMatchObject({
+            state: 'enabled',
+        });
+
         await expect(hook.rerender({ scope: { scopeKind: 'main_selection' } })).resolves.toMatchObject({
+            state: 'enabled',
+        });
+
+        await expect(hook.rerender({ scope: { scopeKind: 'runtime' } })).resolves.toMatchObject({
             state: 'enabled',
         });
     });
 
-	    it('returns unsupported when the features endpoint is missing', async () => {
-	        vi.stubGlobal(
-	            'fetch',
-	            vi.fn(async () => ({
+    it('returns unsupported when the features endpoint is missing', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => ({
                 ok: false,
                 status: 404,
                 json: async () => ({}),
             })) as any,
-	        );
+        );
 
-	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
+        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
 
         await getServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, force: true });
 
@@ -126,10 +131,10 @@ describe('useFeatureDecision', () => {
         expect(seen.at(-1)?.blockerCode).toBe('endpoint_missing');
     }, 30_000);
 
-	    it('returns unknown when probing features fails', async () => {
-	        stubServerFeaturesFetchFailure();
+    it('returns unknown when probing features fails', async () => {
+        stubServerFeaturesFetchFailure();
 
-	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
+        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
 
         await getServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, force: true });
 
