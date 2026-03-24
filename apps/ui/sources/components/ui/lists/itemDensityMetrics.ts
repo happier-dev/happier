@@ -20,7 +20,7 @@ export const ITEM_TITLE_TEXT_METRICS: Record<ResolvedItemDensity, Readonly<{
         letterSpacing: selectValue({ ios: -0.41, default: 0.15 }),
     },
     cozy: {
-        fontSize: selectValue({ ios: 14, default: 14 }),
+        fontSize: selectValue({ ios: 15, default: 14 }),
         lineHeight: selectValue({ ios: 20, default: 20 }),
         letterSpacing: selectValue({ ios: -0.3, default: 0.12 }),
     },
@@ -47,12 +47,12 @@ export const ITEM_SUBTITLE_TEXT_METRICS: Record<ResolvedItemDensity, Readonly<{
         letterSpacing: selectValue({ ios: -0.24, default: 0.1 }),
     },
     cozy: {
-        fontSize: selectValue({ ios: 12, default: 12 }),
+        fontSize: selectValue({ ios: 13, default: 12 }),
         lineHeight: 18,
         letterSpacing: selectValue({ ios: -0.24, default: 0.1 }),
     },
     compact: {
-        fontSize: selectValue({ ios: 12, default: 12 }),
+        fontSize: selectValue({ ios: 13, default: 12 }),
         lineHeight: 16,
         letterSpacing: selectValue({ ios: -0.24, default: 0.1 }),
     },
