@@ -4,5 +4,6 @@ export {
   isRpcMethodNotAvailableError,
   isRpcMethodNotFoundError,
   readRpcErrorCode,
+  RpcError,
   type RpcErrorCarrier,
 } from '@happier-dev/protocol/rpcErrors';
