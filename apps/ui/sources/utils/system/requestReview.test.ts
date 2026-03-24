@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installSystemUtilityCommonModuleMocks } from './systemUtilityTestHelpers';
 
 const storeReview = vi.hoisted(() => ({
     isAvailableAsync: vi.fn(async () => true),
@@ -28,21 +29,6 @@ vi.mock('react-native-mmkv', () => {
 });
 
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: modalConfirmSpy,
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
 
 vi.mock('@/track', () => ({
     trackReviewPromptShown: vi.fn(),
@@ -58,18 +44,28 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => ({
-            settings: {
-                reviewPromptAnswered: false,
-                reviewPromptLikedApp: null,
+installSystemUtilityCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                confirm: modalConfirmSpy,
             },
-        }),
+        }).module;
     },
-});
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => ({
+                    settings: {
+                        reviewPromptAnswered: false,
+                        reviewPromptLikedApp: null,
+                    },
+                }),
+            },
+        });
+    },
 });
 
 async function flushMicrotasks(iterations: number = 5): Promise<void> {
