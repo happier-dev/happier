@@ -122,6 +122,7 @@ function getStaticModelOptionsForAgentType(agentType: AgentType): readonly Model
             value,
             label: model.name,
             description: typeof model.description === 'string' ? model.description : '',
+            ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0 ? { modelOptions: model.modelOptions } : {}),
         });
     }
 
@@ -141,9 +142,23 @@ export function getModelOptionsForAgentTypeOrPreflight(params: {
     if (params.preflight && Array.isArray(params.preflight.availableModels) && params.preflight.availableModels.length > 0) {
         const preflightOptions = getModelOptionsForPreflightModelList(params.preflight);
         const catalogOptions = getModelOptionsForAgentType(params.agentType);
-        const merged = [...preflightOptions];
-        const seen = new Set(merged.map((option) => option.value));
+        const catalogByValue = new Map(catalogOptions.map((option) => [option.value, option] as const));
 
+        // Prefer the preflight list for ids/labels, but preserve catalog metadata like per-model
+        // `modelOptions` when the dynamic probe omits them.
+        const merged: ModelOption[] = preflightOptions.map((option) => {
+            const catalog = catalogByValue.get(option.value) ?? null;
+            if (!catalog) return option;
+            const hasModelOptions = Array.isArray(option.modelOptions) && option.modelOptions.length > 0;
+            const hasDescription = typeof option.description === 'string' && option.description.trim().length > 0;
+            return {
+                ...option,
+                ...(!hasDescription && catalog.description ? { description: catalog.description } : {}),
+                ...(!hasModelOptions && catalog.modelOptions ? { modelOptions: catalog.modelOptions } : {}),
+            };
+        });
+
+        const seen = new Set(merged.map((option) => option.value));
         for (const option of catalogOptions) {
             if (seen.has(option.value)) continue;
             seen.add(option.value);
@@ -198,21 +213,34 @@ export function getModelOptionsForSession(agentType: AgentType, metadata: Metada
         LEGACY_ACP_SESSION_MODELS_STATE_KEY,
     );
     if (state && state.provider === agentType && Array.isArray(state.availableModels) && state.availableModels.length > 0) {
+        const catalogOptions = getModelOptionsForAgentType(agentType);
+        const catalogByValue = new Map(catalogOptions.map((option) => [option.value, option] as const));
+
         const dynamic = state.availableModels
             .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
-            .map((m) => ({
-                value: String(m.id),
-                label: String(m.name),
-                description: typeof m.description === 'string' ? m.description : '',
-                ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions as readonly AcpConfigOption[] } : {}),
-            }));
+            .map((m) => {
+                const value = String(m.id);
+                const catalog = catalogByValue.get(value) ?? null;
+                const description = typeof m.description === 'string' ? m.description : '';
+                const modelOptionsRaw = Array.isArray(m.modelOptions) && m.modelOptions.length > 0
+                    ? (m.modelOptions as readonly AcpConfigOption[])
+                    : null;
+
+                return {
+                    value,
+                    label: String(m.name),
+                    description: description || (catalog?.description ?? ''),
+                    ...(modelOptionsRaw ? { modelOptions: modelOptionsRaw } : {}),
+                    ...(!modelOptionsRaw && catalog?.modelOptions ? { modelOptions: catalog.modelOptions } : {}),
+                };
+            });
 
         const metadataModelOverrideRaw = (metadata as any)?.modelOverrideV1 as { modelId?: unknown } | undefined;
         const selectedModelId =
             typeof metadataModelOverrideRaw?.modelId === 'string' ? metadataModelOverrideRaw.modelId.trim() : '';
 
         const extraSelected: ModelOption[] = selectedModelId && !dynamic.some((m) => m.value === selectedModelId)
-            ? [{ value: selectedModelId, label: selectedModelId, description: '' }]
+            ? [catalogByValue.get(selectedModelId) ?? { value: selectedModelId, label: selectedModelId, description: '' }]
             : [];
 
         const withDefault: ModelOption[] = [

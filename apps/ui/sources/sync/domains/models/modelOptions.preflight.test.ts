@@ -29,6 +29,14 @@ describe('modelOptions preflight', () => {
             'claude-opus-4-5',
             'claude-sonnet-4-5',
         ]);
+
+        // Preflight model lists often omit per-model option metadata; we must preserve catalog
+        // options so controls like Claude "Thinking" can still render.
+        expect(out.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
+            modelOptions: expect.arrayContaining([
+                expect.objectContaining({ id: 'reasoning_effort' }),
+            ]),
+        });
     });
 
     it('prefers preflight model list and always includes Default first', () => {

@@ -63,6 +63,9 @@ describe('modelOptions', () => {
             value: 'claude-opus-4-6',
             label: 'Opus 4.6',
             description: expect.any(String),
+            modelOptions: expect.arrayContaining([
+                expect.objectContaining({ id: 'reasoning_effort' }),
+            ]),
         });
     });
 
@@ -112,6 +115,30 @@ describe('modelOptions', () => {
             value: 'gpt-5.4',
             label: 'GPT-5.4',
             description: 'Latest frontier coding model.',
+        });
+    });
+
+    it('preserves catalog model options when session metadata lists the model but omits per-model options', () => {
+        const out = getModelOptionsForSession(
+            'claude',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'claude',
+                    updatedAt: 1,
+                    currentModelId: 'claude-opus-4-6',
+                    availableModels: [
+                        { id: 'claude-opus-4-6', name: 'Opus 4.6 (From Session)' },
+                        { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
+                    ],
+                },
+            }),
+        );
+
+        expect(out.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
+            modelOptions: expect.arrayContaining([
+                expect.objectContaining({ id: 'reasoning_effort' }),
+            ]),
         });
     });
 
