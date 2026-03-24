@@ -1,3 +1,5 @@
+import { installWebHmrOptOutForCurrentWebTab } from './webHmrOptOut';
+
 type MessageSocketLoaders = {
     loadMessageSocket: () => unknown;
 };
@@ -29,5 +31,9 @@ export function runExpoMessageSocketShim({
 runExpoMessageSocketShim({
     isDev: typeof __DEV__ !== 'undefined' ? __DEV__ : false,
     hasWindow: typeof window !== 'undefined',
-    optOut: globalThis.__HAPPIER_WEB_HMR_OPT_OUT__ === true,
+    optOut:
+        (typeof __DEV__ !== 'undefined' ? __DEV__ : false) &&
+        typeof window !== 'undefined'
+            ? installWebHmrOptOutForCurrentWebTab()
+            : globalThis.__HAPPIER_WEB_HMR_OPT_OUT__ === true,
 });

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+    installWebHmrOptOutForCurrentWebTab,
     installWebHmrOptOutForWebTab,
     installWebHmrOptOutWebSocketGuard,
     resolveWebHmrOptOutActionFromUrl,
@@ -193,5 +194,69 @@ describe('webHmrOptOut', () => {
         new PatchedWebSocket('ws://example.com/socket.io');
 
         expect(FakeWebSocket.instances).toEqual(['ws://example.com/socket.io']);
+    });
+
+    test('installWebHmrOptOutForWebTab disables via happier_hmr=0 and persists per-tab state', () => {
+        const store = new Map<string, string>();
+        const sessionStorage = {
+            getItem: (k: string) => store.get(k) ?? null,
+            setItem: (k: string, v: string) => void store.set(k, v),
+            removeItem: (k: string) => void store.delete(k),
+        };
+
+        const replaced: string[] = [];
+        const history = {
+            replaceState: (_s: unknown, _t: string, nextUrl?: string | URL | null) => {
+                if (typeof nextUrl === 'string') replaced.push(nextUrl);
+                else if (nextUrl instanceof URL) replaced.push(nextUrl.toString());
+                else replaced.push('');
+            },
+        };
+
+        const disabled = installWebHmrOptOutForWebTab({
+            url: new URL('https://example.com/new?happier_hmr=0&x=1'),
+            sessionStorage,
+            history,
+        });
+        expect(disabled).toBe(true);
+        expect(globalThis.__HAPPIER_WEB_HMR_OPT_OUT__).toBe(true);
+        expect(store.get('happier.web.hmrOptOut')).toBe('disabled');
+        expect(replaced.at(-1)).toBe('https://example.com/new?x=1');
+    });
+
+    test('installWebHmrOptOutForCurrentWebTab disables via happier_hmr=0 before Expo runtime initializes', () => {
+        const store = new Map<string, string>();
+        const sessionStorage = {
+            getItem: (k: string) => store.get(k) ?? null,
+            setItem: (k: string, v: string) => void store.set(k, v),
+            removeItem: (k: string) => void store.delete(k),
+        };
+
+        const replaced: string[] = [];
+        const history = {
+            replaceState: (_s: unknown, _t: string, nextUrl?: string | URL | null) => {
+                if (typeof nextUrl === 'string') replaced.push(nextUrl);
+                else if (nextUrl instanceof URL) replaced.push(nextUrl.toString());
+                else replaced.push('');
+            },
+        };
+
+        const originalWindow = (globalThis as any).window;
+        try {
+            // Vitest runs in node; we intentionally stub `window` for this test.
+            (globalThis as any).window = {
+                location: { href: 'https://example.com/new?happier_hmr=0&x=1' },
+                sessionStorage,
+                history,
+            };
+
+            const disabled = installWebHmrOptOutForCurrentWebTab();
+            expect(disabled).toBe(true);
+            expect(globalThis.__HAPPIER_WEB_HMR_OPT_OUT__).toBe(true);
+            expect(store.get('happier.web.hmrOptOut')).toBe('disabled');
+            expect(replaced.at(-1)).toBe('https://example.com/new?x=1');
+        } finally {
+            (globalThis as any).window = originalWindow;
+        }
     });
 });

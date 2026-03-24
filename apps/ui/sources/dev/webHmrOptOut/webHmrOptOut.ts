@@ -311,3 +311,19 @@ export function installWebHmrOptOutForWebTab({
     });
     return res.disabled;
 }
+
+export function installWebHmrOptOutForCurrentWebTab(): boolean {
+    if (typeof window === 'undefined') {
+        return false;
+    }
+
+    try {
+        return installWebHmrOptOutForWebTab({
+            url: new URL(window.location.href),
+            sessionStorage: window.sessionStorage,
+            history: window.history,
+        });
+    } catch {
+        return false;
+    }
+}

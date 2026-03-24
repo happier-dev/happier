@@ -1,3 +1,5 @@
+import { installWebHmrOptOutForCurrentWebTab } from './webHmrOptOut';
+
 type ModuleLoaders = {
     loadSetupFastRefresh: () => unknown;
     loadSetupHMR: () => unknown;
@@ -80,5 +82,12 @@ export function runExpoAsyncRequireSetupShim({
 runExpoAsyncRequireSetupShim({
     isDev: typeof __DEV__ !== 'undefined' ? __DEV__ : false,
     hasWindow: typeof window !== 'undefined',
-    optOut: globalThis.__HAPPIER_WEB_HMR_OPT_OUT__ === true,
+    // IMPORTANT: This module is imported extremely early on web (via Expo's winter runtime).
+    // Initialize the per-tab opt-out *here* so we can disable Fast Refresh/HMR before Expo's
+    // setup modules create dev sockets.
+    optOut:
+        (typeof __DEV__ !== 'undefined' ? __DEV__ : false) &&
+        typeof window !== 'undefined'
+            ? installWebHmrOptOutForCurrentWebTab()
+            : globalThis.__HAPPIER_WEB_HMR_OPT_OUT__ === true,
 });
