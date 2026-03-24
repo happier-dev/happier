@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
 const mockMachine = {
     id: 'machine-1',
@@ -66,6 +67,16 @@ const createTestProps = (): ProviderAuthenticationTerminalPaneProps => ({
     onRequestClose: vi.fn(),
 });
 
+installSettingsViewCommonModuleMocks({
+    storage: async (importOriginal) => {
+        const storage = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+        return {
+            ...storage,
+            useMachine: (_machineId: string) => mockMachine,
+        };
+    },
+});
+
 vi.mock('@/components/terminal/embedded/EmbeddedTerminalPane', () => ({
     EmbeddedTerminalPane: (props: EmbeddedTerminalPaneMockProps) => React.createElement('EmbeddedTerminalPane', props),
 }));
@@ -73,12 +84,6 @@ vi.mock('@/components/terminal/embedded/EmbeddedTerminalPane', () => ({
 vi.mock('@/hooks/machine/useMachineTerminalSession', () => ({
     useMachineTerminalSession: () => createTerminalSessionMock(),
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    await createPartialStorageModuleMock(importOriginal, {
-        useMachine: (_machineId: string) => mockMachine,
-    }),
-);
 
 vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,

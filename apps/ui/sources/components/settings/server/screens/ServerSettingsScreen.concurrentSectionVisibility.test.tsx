@@ -1,36 +1,34 @@
 import * as React from 'react';
-import { ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let controllerValue: any = null;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    KeyboardAvoidingView: ({ children }: any) => React.createElement('KeyboardAvoidingView', null, children),
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: ({ ios, default: defaultValue }: any) => ios ?? defaultValue,
-                                    },
-                                }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {},
-    });
+installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            KeyboardAvoidingView: ({ children }: any) => React.createElement('KeyboardAvoidingView', null, children),
+            Platform: {
+                OS: 'ios',
+                select: ({ ios, default: defaultValue }: any) => ios ?? defaultValue,
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock().module;
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {},
+        });
+    },
 });
 
 vi.mock('@/components/ui/lists/ItemList', () => ({

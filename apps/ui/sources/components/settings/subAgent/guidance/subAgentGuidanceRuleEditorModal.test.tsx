@@ -2,31 +2,38 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                            ScrollView: 'ScrollView',
-                            Pressable: 'Pressable',
-                            TextInput: 'TextInput',
-                            Text: 'Text',
-                            Platform: {
-                                OS: 'web',
-                                select: (opt: any) => opt?.default,
-                            },
-                            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-                        }
-    );
+installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            ScrollView: 'ScrollView',
+            Pressable: 'Pressable',
+            TextInput: 'TextInput',
+            Text: 'Text',
+            Platform: {
+                OS: 'web',
+                select: (opt: any) => opt?.default,
+            },
+            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: () => [],
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
@@ -100,21 +107,9 @@ vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: () => [],
-});
-});
-
 vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
     resolvePreferredMachineId: () => null,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 describe('SubAgentGuidanceRuleEditorModal', () => {
     it('disables Save when description is empty', async () => {

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,30 +10,37 @@ const onSelectMachineMock = vi.fn();
 const onChangePathMock = vi.fn();
 const openMachinePathBrowserModalMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        Pressable: 'Pressable',
-        Platform: {
-            OS: 'web',
-            select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
-        },
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                divider: '#ddd',
-                textSecondary: '#666',
-                input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f', indigo: '#40f' },
+installSettingsViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'web',
+                select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
             },
-        },
-    });
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    divider: '#ddd',
+                    textSecondary: '#666',
+                    input: { background: '#fff', text: '#111', placeholder: '#666' },
+                    accent: { blue: '#00f', indigo: '#40f' },
+                },
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -54,13 +62,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
     openMachinePathBrowserModal: (input: unknown) => openMachinePathBrowserModalMock(input),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
 
 describe('ContextBar', () => {
     beforeEach(() => {

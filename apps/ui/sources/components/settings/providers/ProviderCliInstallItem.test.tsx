@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,16 +9,16 @@ const invokeWithAlertsMock = vi.fn();
 const modalAlertMock = vi.fn();
 const modalConfirmMock = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        ActivityIndicator: 'ActivityIndicator',
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installSettingsViewCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertMock,
+                confirm: modalConfirmMock,
+            },
+        }).module;
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -27,16 +28,6 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertMock,
-            confirm: modalConfirmMock,
-        },
-    }).module;
-});
 
 vi.mock('@/hooks/machine/useMachineCapabilityInvokeWithAlerts', () => ({
     useMachineCapabilityInvokeWithAlerts: () => ({
