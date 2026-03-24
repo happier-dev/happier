@@ -399,7 +399,7 @@ export function createAcpRuntime(params: {
   const streamedTranscriptWriter = createStreamedTranscriptWriter({
     provider: params.provider,
     session: params.session,
-    draftFlushIntervalMs: params.modelOutputStreaming?.deltaFlushIntervalMs ?? null,
+    draftFlushIntervalMs: params.modelOutputStreaming?.deltaFlushIntervalMs,
   });
 
   const clearToolCallCache = () => {

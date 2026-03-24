@@ -3,13 +3,21 @@ import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 const MAX_DEBUG_CHARS = 500;
 const MARKER_WINDOW_CHARS = 64;
 
-const SENSITIVE_MARKERS: ReadonlyArray<string> = [
+const OPEN_SENSITIVE_MARKERS: ReadonlyArray<string> = [
   '<permissions instructions',
-  '</permissions instructions>',
   '<app-context',
-  '</app-context>',
   '<INSTRUCTIONS>',
+];
+
+const CLOSE_SENSITIVE_MARKERS: ReadonlyArray<string> = [
+  '</permissions instructions>',
+  '</app-context>',
   '</INSTRUCTIONS>',
+];
+
+const ALL_SENSITIVE_MARKERS: ReadonlyArray<string> = [
+  ...OPEN_SENSITIVE_MARKERS,
+  ...CLOSE_SENSITIVE_MARKERS,
 ];
 
 type AcpStderrLogSummarizerState = {
@@ -28,7 +36,11 @@ function trimTrailingMarkerWindow(text: string): string {
 }
 
 function hasTrailingSensitiveMarkerPrefix(text: string): boolean {
-  return SENSITIVE_MARKERS.some((marker) => marker.startsWith(text) || marker.includes(text));
+  const window = trimTrailingMarkerWindow(text);
+  const openingAngleIndex = window.lastIndexOf('<');
+  if (openingAngleIndex === -1) return false;
+  const suffix = window.slice(openingAngleIndex);
+  return ALL_SENSITIVE_MARKERS.some((marker) => marker.startsWith(suffix));
 }
 
 function normalizeForSingleLineLog(text: string): string {
@@ -49,10 +61,10 @@ function summarizeWithState(raw: string, state: AcpStderrLogSummarizerState): {
   }
 
   const searchText = `${state.trailingText}${trimmed}`;
-  const openedHarnessContext = SENSITIVE_MARKERS.some((marker) => searchText.includes(marker));
+  const openedHarnessContext = OPEN_SENSITIVE_MARKERS.some((marker) => searchText.includes(marker));
   const insideHarnessContext = state.insideHarnessContext || openedHarnessContext;
   const closedHarnessContext = insideHarnessContext
-    && ['</permissions instructions>', '</app-context>', '</INSTRUCTIONS>'].some((marker) => searchText.includes(marker));
+    && CLOSE_SENSITIVE_MARKERS.some((marker) => searchText.includes(marker));
 
   if (insideHarnessContext) {
     return {
