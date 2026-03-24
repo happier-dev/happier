@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { storage } from '@/sync/domains/state/storage';
+import { installRepositoryScmCommonModuleMocks } from './repositoryScmTestHelpers';
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: vi.fn(),
+const storageGetStateMock = vi.hoisted(() => vi.fn());
+
+installRepositoryScmCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: storageGetStateMock,
+            },
+        });
     },
-});
 });
 
 describe('resolveRepoScmMachinePathRequest', () => {
@@ -17,7 +21,7 @@ describe('resolveRepoScmMachinePathRequest', () => {
     });
 
     it('trims machine/path input and resolves tilde paths against the machine home directory', async () => {
-        vi.mocked(storage.getState).mockReturnValue({
+        storageGetStateMock.mockReturnValue({
             machines: {
                 'machine-a': {
                     id: 'machine-a',

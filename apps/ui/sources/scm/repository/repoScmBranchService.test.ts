@@ -1,17 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { storage } from '@/sync/domains/state/storage';
+import { installRepositoryScmCommonModuleMocks } from './repositoryScmTestHelpers';
 import { machineScmBranchList } from '@/sync/ops/scm/machineScm';
 import { sessionScmBranchList } from '@/sync/ops';
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: vi.fn(),
+const storageGetStateMock = vi.hoisted(() => vi.fn());
+
+installRepositoryScmCommonModuleMocks({
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: storageGetStateMock,
+            },
+        });
     },
 });
-});
+
+const storageModulePromise = import('@/sync/domains/state/storage');
 
 vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmBranchList: vi.fn(),
@@ -23,10 +29,12 @@ vi.mock('@/sync/ops', () => ({
 
 describe('repoScmBranchService', () => {
     afterEach(() => {
+        storageGetStateMock.mockReset();
         vi.restoreAllMocks();
     });
 
     it('fetches repo branches for a machine/path through the canonical machine SCM layer', async () => {
+        const { storage } = await storageModulePromise;
         vi.mocked(storage.getState).mockReturnValue({
             machines: {
                 'machine-a': {
@@ -64,6 +72,7 @@ describe('repoScmBranchService', () => {
     });
 
     it('deduplicates concurrent branch requests for the same machine/path and remote toggle', async () => {
+        const { storage } = await storageModulePromise;
         vi.mocked(storage.getState).mockReturnValue({
             machines: {
                 'machine-a': {
@@ -110,6 +119,7 @@ describe('repoScmBranchService', () => {
     });
 
     it('hydrates the shared machine/path branch cache when a session branch request resolves a repo identity', async () => {
+        const { storage } = await storageModulePromise;
         vi.mocked(storage.getState).mockReturnValue({
             machines: {
                 'machine-a': {
@@ -157,6 +167,7 @@ describe('repoScmBranchService', () => {
     });
 
     it('deduplicates concurrent session and machine/path branch requests for the same repo identity', async () => {
+        const { storage } = await storageModulePromise;
         vi.mocked(storage.getState).mockReturnValue({
             machines: {
                 'machine-a': {
@@ -211,6 +222,7 @@ describe('repoScmBranchService', () => {
     });
 
     it('falls back to the session branch RPC when the machine branch RPC fails for a session-scoped request', async () => {
+        const { storage } = await storageModulePromise;
         vi.mocked(storage.getState).mockReturnValue({
             machines: {
                 'machine-a': {
@@ -261,6 +273,7 @@ describe('repoScmBranchService', () => {
     });
 
     it('does not let an invalidated in-flight request repopulate the branch cache with stale data', async () => {
+        const { storage } = await storageModulePromise;
         vi.mocked(storage.getState).mockReturnValue({
             machines: {
                 'machine-a': {
@@ -322,6 +335,7 @@ describe('repoScmBranchService', () => {
     });
 
     it('keeps cached branches available after invalidation so callers can render immediately while refreshing', async () => {
+        const { storage } = await storageModulePromise;
         vi.mocked(storage.getState).mockReturnValue({
             machines: {
                 'machine-a': {
