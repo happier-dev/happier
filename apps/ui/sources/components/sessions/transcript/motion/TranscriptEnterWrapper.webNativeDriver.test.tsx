@@ -2,32 +2,33 @@ import * as React from 'react';
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedTimingConfigs: any[] = [];
 
-vi.mock('react-native', async () => {
+installTranscriptMotionCommonModuleMocks({
+  reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'web',
-                                    },
-                                    Animated: {
-                                        Value: function Value(this: any, initial: number) {
-                                        this.__value = initial;
-                                      },
-                                        timing: (_value: any, config: any) => {
-                                        capturedTimingConfigs.push(config);
-                                        return { start: () => undefined };
-                                      },
-                                        parallel: (_anims: any[]) => ({ start: () => undefined }),
-                                    },
-                                    View: (props: any) => React.createElement('View', props, props.children),
-                                }
-    );
+    return createReactNativeWebMock({
+      Platform: {
+        OS: 'web',
+      },
+      Animated: {
+        Value: function Value(this: any, initial: number) {
+          this.__value = initial;
+        },
+        timing: (_value: any, config: any) => {
+          capturedTimingConfigs.push(config);
+          return { start: () => undefined };
+        },
+        parallel: (_anims: any[]) => ({ start: () => undefined }),
+      },
+      View: (props: any) => React.createElement('View', props, props.children),
+    });
+  },
 });
 
 vi.mock('./TranscriptMotionContext', () => ({

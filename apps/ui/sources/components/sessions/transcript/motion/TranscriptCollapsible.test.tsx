@@ -3,7 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TranscriptMotionContext } from './TranscriptMotionContext';
-import { renderScreen } from '@/dev/testkit';
+import { installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,25 +12,27 @@ const hoistedAnimatedSpies = vi.hoisted(() => ({
     timingSpy: vi.fn(() => ({ start: (cb?: any) => cb?.({ finished: true }) })),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Animated: {
-                                        Value: class {
-                                            constructor(_v: any) {}
-                                            setValue(_v: any) {}
-                                            interpolate(_cfg: any) { return 0; }
-                                        },
-                                        timing: hoistedAnimatedSpies.timingSpy,
-                                        View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-                                    },
-                                    Easing: {
-                                        bezier: () => (t: number) => t,
-                                        linear: (t: number) => t,
-                                    },
-                                }
-    );
+installTranscriptMotionCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Animated: {
+                Value: class {
+                    constructor(_v: any) {}
+                    setValue(_v: any) {}
+                    interpolate(_cfg: any) {
+                        return 0;
+                    }
+                },
+                timing: hoistedAnimatedSpies.timingSpy,
+                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+            },
+            Easing: {
+                bezier: () => (t: number) => t,
+                linear: (t: number) => t,
+            },
+        });
+    },
 });
 
 describe('TranscriptCollapsible', () => {
@@ -49,6 +51,8 @@ describe('TranscriptCollapsible', () => {
         };
 
         const { TranscriptCollapsible } = await import('./TranscriptCollapsible');
+
+        const { renderScreen } = await import('@/dev/testkit');
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<TranscriptMotionContext.Provider value={runtime}>
@@ -87,6 +91,8 @@ describe('TranscriptCollapsible', () => {
         };
 
         const { TranscriptCollapsible } = await import('./TranscriptCollapsible');
+
+        const { renderScreen } = await import('@/dev/testkit');
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<TranscriptMotionContext.Provider value={runtime}>

@@ -2,6 +2,7 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,35 +13,31 @@ const hoistedAnimatedSpies = vi.hoisted(() => ({
     timingSpy: vi.fn(() => ({ start: (cb?: any) => cb?.({ finished: true }) })),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'web',
-                                    },
-                                    Animated: {
-                                        Value: class {
-                                                constructor(_v: any) { }
-                                            },
-                                        timing: hoistedAnimatedSpies.timingSpy,
-                                        sequence: hoistedAnimatedSpies.sequenceSpy,
-                                        loop: hoistedAnimatedSpies.loopSpy,
-                                        View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-                                    },
-                                    Easing: {
-                                        quad: (t: number) => t,
-                                        bezier: () => (t: number) => t,
-                                        inOut: (fn: any) => fn,
-                                        linear: (t: number) => t,
-                                    },
-                                }
-    );
+installTranscriptMotionCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+            },
+            Animated: {
+                Value: class {
+                    constructor(_v: any) {}
+                },
+                timing: hoistedAnimatedSpies.timingSpy,
+                sequence: hoistedAnimatedSpies.sequenceSpy,
+                loop: hoistedAnimatedSpies.loopSpy,
+                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+            },
+            Easing: {
+                quad: (t: number) => t,
+                bezier: () => (t: number) => t,
+                inOut: (fn: any) => fn,
+                linear: (t: number) => t,
+            },
+        });
+    },
 });
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-}));
 
 describe('ThinkingPulseLabel', () => {
     it('renders plain text when disabled', async () => {
