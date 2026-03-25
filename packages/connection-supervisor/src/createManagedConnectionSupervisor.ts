@@ -38,7 +38,8 @@ export function createManagedConnectionSupervisor(
   let generation = 0;
   let detachCurrentListeners: Array<() => void> = [];
   let startInFlight: Promise<void> | null = null;
-  const maxFastRetries = Math.max(0, config.maxFastRetries);
+  const maxFastRetries =
+    Number.isFinite(config.maxFastRetries) ? Math.max(0, Math.floor(config.maxFastRetries)) : 0;
 
   function publish(next: ManagedConnectionState): void {
     state = next;
