@@ -55,6 +55,9 @@ const DEFAULT_DIRECT_PEER_EXPIRY_SKEW_MS = 2_000;
 // /open responses should be tiny (transferId + sha256 + totalChunks). Hard-cap to keep JSON buffering
 // bounded even if a hostile peer sends a huge body with a misleading content-length.
 const DIRECT_PEER_OPEN_RESPONSE_MAX_BYTES = 8 * 1024;
+// When a peer provides a `content-length`, do not blindly allocate that exact size for large
+// responses. Cap preallocation so bogus/malicious headers cannot force a single large spike.
+const DIRECT_PEER_JSON_RESPONSE_PREALLOC_MAX_BYTES = DIRECT_PEER_CHUNK_HARD_MAX_BYTES;
 const DIRECT_PEER_AUTH_SCHEME = 'Bearer';
 const DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER = 'x-happier-transfer-recipient-public-key';
 // Transfer tokens are base64url-encoded random bytes. Anything huge is untrusted input that
@@ -373,9 +376,14 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
 
   let bytes: Uint8Array | null = null;
   if (expectedBytes != null) {
-    // When the peer provides a trustworthy content-length, preallocate the exact buffer once so
-    // large JSON bodies avoid repeated growth/copy spikes.
-    const buffer = new Uint8Array(expectedBytes);
+    // Preallocate up to a bounded cap so large or bogus content-length values can't force a same-sized
+    // allocation spike purely from the header.
+    const preallocatedBytes = Math.min(
+      expectedBytes,
+      params.maxBodyBytes,
+      DIRECT_PEER_JSON_RESPONSE_PREALLOC_MAX_BYTES,
+    );
+    const buffer = new Uint8Array(preallocatedBytes);
     let offset = 0;
     while (true) {
       const { done, value } = await reader.read();

@@ -1814,9 +1814,12 @@ describe('direct peer machine transfer', () => {
     const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
     const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
 
-    const payload = Buffer.from('payload-from-large-content-length-open-response', 'utf8');
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_CHUNK_BYTES = String(512 * 1024);
+
+    const payload = Buffer.alloc(400 * 1024, 7);
     const recipientSecretKeySeed = new Uint8Array(32).fill(7);
     let recipientPublicKeyBase64 = Buffer.from(deriveBoxPublicKeyFromSeed(recipientSecretKeySeed)).toString('base64');
+    let chunkContentLength = 0;
     const fetchFn: typeof fetch = async (input: string | URL | Request, init?: RequestInit) => {
       const headers = init?.headers as Record<string, string> | undefined;
       const url = String(input);
@@ -1832,7 +1835,7 @@ describe('direct peer machine transfer', () => {
         });
       }
       if (url.endsWith('/chunks/0')) {
-        return new Response(JSON.stringify({
+        const chunkText = JSON.stringify({
           transferId: 'transfer_large_content_length',
           kind: 'chunk',
           sequence: 0,
@@ -1843,12 +1846,15 @@ describe('direct peer machine transfer', () => {
             recipientPublicKeyBase64,
             randomBytes: (length) => new Uint8Array(length).fill(5),
           }),
-        }), {
+        });
+        chunkContentLength = Buffer.byteLength(chunkText, 'utf8');
+        return new Response(chunkText, {
           status: 200,
           headers: {
             'content-type': 'application/json',
-            // Exaggerated on purpose: the client must not allocate a same-sized response buffer.
-            'content-length': String(140 * 1024),
+            // Large (but still within the protocol-derived max body bytes): the client must not
+            // allocate a same-sized response buffer purely because a peer claimed this header.
+            'content-length': String(chunkContentLength),
           },
         });
       }
@@ -1856,12 +1862,15 @@ describe('direct peer machine transfer', () => {
     };
 
     const originalUint8Array = globalThis.Uint8Array;
-    let helperAllocationCount = 0;
+    const helperAllocationArgs: Array<number> = [];
     const guardedUint8Array = new Proxy(originalUint8Array, {
       construct(target, args, newTarget) {
         const stack = new Error().stack ?? '';
         if (stack.includes('readJsonResponseWithBodyLimit') && stack.includes('directPeerTransport.ts')) {
-          helperAllocationCount += 1;
+          const first = args[0];
+          if (typeof first === 'number') {
+            helperAllocationArgs.push(first);
+          }
         }
         return Reflect.construct(target, args, newTarget);
       },
@@ -1892,7 +1901,10 @@ describe('direct peer machine transfer', () => {
         destinationPath,
       });
 
-      expect(helperAllocationCount).toBe(2);
+      expect(chunkContentLength).toBeGreaterThan(0);
+      // We should never preallocate a buffer exactly equal to an untrusted content-length for
+      // large bodies; this is a memory spike footgun.
+      expect(helperAllocationArgs).not.toContain(chunkContentLength);
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
       Object.defineProperty(globalThis, 'Uint8Array', {
