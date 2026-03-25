@@ -1187,6 +1187,8 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.option:engine:codex')).toBeNull();
         expect(lastPopoverProps?.anchorRef).toBe(agentChip.props.ref);
+        // When the engine rail is hidden (running sessions), keep the popover narrower.
+        expect(lastPopoverProps?.maxWidthCap).toBe(570);
         expect((lastModelPickerOverlayProps?.options ?? []).map((o: any) => o.value)).toEqual(['default', 'session-model']);
 
         await act(async () => {

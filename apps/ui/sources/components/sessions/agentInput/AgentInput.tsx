@@ -103,6 +103,8 @@ import type {
 import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
 
 const ACTION_BAR_SCROLL_END_GUTTER_WIDTH = 24;
+const NATIVE_ACTION_CHIP_GAP_Y = 2;
+const WEB_ACTION_BAR_ROW_GAP_Y = 2;
 
 const AGENT_INPUT_TEST_IDS = {
     sessionInput: 'session-composer-input',
@@ -375,12 +377,12 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonsColumn: {
         flexDirection: 'column',
         flex: 1,
-        ...(Platform.OS === 'web' ? { gap: 3 } : {}),
+        ...(Platform.OS === 'web' ? { gap: WEB_ACTION_BAR_ROW_GAP_Y } : {}),
     },
     actionButtonsColumnNarrow: {
         flexDirection: 'column',
         flex: 1,
-        ...(Platform.OS === 'web' ? { gap: 2 } : {}),
+        ...(Platform.OS === 'web' ? { gap: WEB_ACTION_BAR_ROW_GAP_Y } : {}),
     },
     actionButtonsRow: {
         flexDirection: 'row',
@@ -389,7 +391,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     actionButtonsRowWithBelow: {
         // Match the vertical rhythm of wrapped chip rows on native.
-        marginBottom: Platform.OS === 'web' ? 3 : 6,
+        marginBottom: Platform.OS === 'web' ? 0 : NATIVE_ACTION_CHIP_GAP_Y,
     },
     pathRow: {
         flexDirection: 'row',
@@ -397,7 +399,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     actionButtonsLeft: {
         flexDirection: 'row',
-        ...(Platform.OS === 'web' ? { columnGap: 6, rowGap: 3 } : { marginBottom: -6 }),
+        ...(Platform.OS === 'web' ? { columnGap: 6, rowGap: 1 } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
         flex: 1,
         flexWrap: 'wrap',
         overflow: 'visible',
@@ -409,7 +411,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonsLeftScrollContent: {
         flexDirection: 'row',
         alignItems: 'center',
-        ...(Platform.OS === 'web' ? { columnGap: 6 } : { marginBottom: -6 }),
+        ...(Platform.OS === 'web' ? { columnGap: 6 } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
         paddingRight: 6 + ACTION_BAR_SCROLL_END_GUTTER_WIDTH,
     },
     actionButtonsFadeLeft: {
@@ -436,7 +438,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     actionItemWrapper: {
         // Non-chip action items (e.g. SCM status) should align with chips on native.
-        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: 6 }),
+        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
     },
     actionChip: {
         flexDirection: 'row',
@@ -447,7 +449,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'center',
         height: 32,
         gap: 6,
-        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: 6 }),
+        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
     },
     actionChipIconOnly: {
         paddingHorizontal: 8,
@@ -527,7 +529,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'center',
         height: 32,
         // Keep vertical alignment consistent with `actionChip` on native.
-        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: 6 }),
+        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
     },
     actionButtonPressed: {
         opacity: 0.7,

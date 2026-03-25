@@ -39,6 +39,13 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
         });
     }, [props.session.accessLevel, props.session.canApprovePermissions, props.session.presence]);
 
+    if (
+        transcriptInteraction.permissionDisabledReason === 'inactive' &&
+        (props.permissionRequests.length > 0 || props.userActionRequests.length > 0)
+    ) {
+        return null;
+    }
+
     return (
         <View testID={`inbox.session_attention.${props.session.id}`} style={styles.container}>
             <InboxSessionAttentionHeader

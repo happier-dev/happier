@@ -333,6 +333,9 @@ export function AgentInputOverlayLayer(props: Readonly<{
                     onRequestClose={props.onAgentPickerRequestClose}
                     applyLabel={props.agentPickerApplyLabel}
                     detailPaneHeaderAccessory={props.agentPickerDetailPaneHeaderAccessory}
+                    // When the rail is hidden (single-option detail pane in running sessions),
+                    // keep the popover narrower so it doesn't feel overly wide.
+                    maxWidthCap={props.agentPickerOptions.length > 1 ? 720 : 570}
                     maxHeightCap={460}
                 />
             ) : null}

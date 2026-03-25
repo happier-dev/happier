@@ -693,18 +693,18 @@ describe('SessionView (direct sessions)', () => {
     expect(typeof reviewCommentsChip?.collapsedAction).toBe('function');
   });
 
-  it('promotes project file link into canonical extra control metadata', async () => {
-    const screen = await renderSessionViewAndSettle();
+	  it('promotes project file link into canonical extra control metadata', async () => {
+	    const screen = await renderSessionViewAndSettle();
 
-    const agentInput = findAgentInput(screen);
-    const linkFileChip = (agentInput.props.extraActionChips ?? []).find((chip: { key: string }) => chip.key === 'project-file-link');
+	    const agentInput = findAgentInput(screen);
+	    const linkFileChip = (agentInput.props.extraActionChips ?? []).find((chip: { key: string }) => chip.key === 'project-file-link');
 
-    expect(linkFileChip).toEqual(expect.objectContaining({
-      key: 'project-file-link',
-      controlId: 'linkedFiles',
-    }));
-    expect(typeof linkFileChip?.collapsedAction).toBe('function');
-  });
+	    expect(linkFileChip).toEqual(expect.objectContaining({
+	      key: 'project-file-link',
+	      controlId: 'linkedFiles',
+	    }));
+	    expect(linkFileChip?.collapsedContentPopover).toBeTruthy();
+	  });
 
   it('does not surface delivery controls when live participant routing data is absent', async () => {
     participantTargetsState.current = [];

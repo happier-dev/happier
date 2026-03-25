@@ -23,10 +23,7 @@ export function AutomationSettingsPopoverContent(props: Props) {
 
     return (
         <ItemList
-            style={[
-                styles.container,
-                showDetails ? styles.containerEnabled : styles.containerDisabled,
-            ]}
+            style={styles.container}
             // Avoid extra bottom whitespace when only the toggle row is visible.
             containerStyle={showDetails ? styles.contentContainerEnabled : styles.contentContainerDisabled}
             keyboardShouldPersistTaps="handled"
@@ -69,18 +66,14 @@ const styles = StyleSheet.create((theme) => ({
         width: '100%',
         maxWidth: '100%',
         paddingTop: 0,
-    },
-    containerEnabled: {
-        backgroundColor: theme.colors.groupped.background,
-    },
-    containerDisabled: {
+        // Keep the toggle row on the "white" surface. Detail fields get their own grouped surface.
         backgroundColor: theme.colors.surface,
     },
     fullWidth: {
         width: '100%',
     },
     contentContainerEnabled: {
-        paddingBottom: 16,
+        paddingBottom: 12,
     },
     contentContainerDisabled: {
         paddingBottom: 0,
@@ -96,6 +89,8 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
     },
     bodySection: {
+        backgroundColor: theme.colors.groupped.background,
+        // Avoid double-padding: ItemGroup already carries its own insets; this is just a surface break.
         paddingVertical: 0,
     },
 }));
