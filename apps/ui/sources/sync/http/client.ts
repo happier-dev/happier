@@ -25,6 +25,10 @@ type ServerFetchOptions = Readonly<{
 const inFlightControllers = new Set<AbortController>();
 let abortSequence = 0;
 
+const debugLogThrottleMs = 5_000;
+const lastDebugLogMsByKey = new Map<string, number>();
+let didLogActiveServerSnapshot = false;
+
 export function abortServerFetches(reason: string = 'server-switch'): void {
     abortSequence += 1;
     for (const controller of inFlightControllers) {
@@ -48,6 +52,62 @@ function tryParseUrl(raw: string): URL | null {
     }
 }
 
+function isDebugEnabled(): boolean {
+    const raw = String(process.env.EXPO_PUBLIC_DEBUG ?? '').trim();
+    return raw === '1' || raw.toLowerCase() === 'true';
+}
+
+function isLoopbackHostname(rawHost: string): boolean {
+    const host = String(rawHost ?? '').trim().toLowerCase();
+    return (
+        host === 'localhost'
+        || host === '127.0.0.1'
+        || host === '::1'
+        || host === '[::1]'
+        || host.endsWith('.localhost')
+    );
+}
+
+function describeUrlForHint(rawUrl: string): { hostname: string; port: string } | null {
+    const parsed = tryParseUrl(rawUrl);
+    if (!parsed) return null;
+    return { hostname: parsed.hostname, port: parsed.port };
+}
+
+function maybeLogRuntimeFetchFailure(params: {
+    method: string;
+    requestUrl: string;
+    activeServerUrl: string;
+    activeServerId: string;
+    error: unknown;
+}): void {
+    if (!isDebugEnabled()) return;
+
+    const errorName = params.error instanceof Error ? params.error.name : '';
+    const errorMessage = params.error instanceof Error ? params.error.message : String(params.error ?? '');
+    const key = `${params.activeServerId}|${params.activeServerUrl}|${params.requestUrl}|${errorName}|${errorMessage}`;
+    const now = Date.now();
+    const last = lastDebugLogMsByKey.get(key) ?? 0;
+    if (now - last < debugLogThrottleMs) return;
+    lastDebugLogMsByKey.set(key, now);
+
+    const msg =
+        `[serverFetch] runtimeFetch failed: ${params.method} ${params.requestUrl} ` +
+        `(activeServer=${params.activeServerUrl}, serverId=${params.activeServerId}) ` +
+        `${errorName ? `${errorName}: ` : ''}${errorMessage}`.trim();
+    // eslint-disable-next-line no-console
+    console.log(msg);
+
+    const hintUrl = describeUrlForHint(params.activeServerUrl);
+    if (hintUrl && isLoopbackHostname(hintUrl.hostname)) {
+        // eslint-disable-next-line no-console
+        console.log(
+            `[serverFetch] hint: active server URL is loopback (${hintUrl.hostname}${hintUrl.port ? `:${hintUrl.port}` : ''}); ` +
+            `a physical device cannot reach your computer via localhost. Use a LAN/Tailscale URL.`,
+        );
+    }
+}
+
 export async function serverFetch(
     path: string,
     init?: RequestInit,
@@ -59,6 +119,14 @@ export async function serverFetch(
     const requestUrl = normalizedPath.startsWith('http://') || normalizedPath.startsWith('https://')
         ? normalizedPath
         : `${snapshot.serverUrl}${normalizedPath}`;
+
+    if (isDebugEnabled() && !didLogActiveServerSnapshot) {
+        didLogActiveServerSnapshot = true;
+        // eslint-disable-next-line no-console
+        console.log(
+            `[serverFetch] active server snapshot: serverId=${snapshot.serverId}, serverUrl=${snapshot.serverUrl}, generation=${snapshot.generation}`,
+        );
+    }
 
     const absoluteRequestUrl = tryParseUrl(requestUrl);
     const activeServerUrl = tryParseUrl(snapshot.serverUrl);
@@ -128,6 +196,13 @@ export async function serverFetch(
                     signal: requestController.signal,
                 });
             } catch (error) {
+                maybeLogRuntimeFetchFailure({
+                    method,
+                    requestUrl,
+                    activeServerUrl: snapshot.serverUrl,
+                    activeServerId: snapshot.serverId,
+                    error,
+                });
                 const aborted =
                     requestController.signal.aborted || (error instanceof Error && error.name === 'AbortError');
                 if (aborted) {
