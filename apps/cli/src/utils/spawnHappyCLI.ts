@@ -59,6 +59,7 @@ import { createRequire } from 'node:module';
 import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
 import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJavaScriptRuntimeMessage';
 import { resolvePackagedRuntimeEntrypoint } from '@/runtime/resolvePackagedRuntimeEntrypoint';
+import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
 
 function getSubprocessRuntime(): 'node' | 'bun' {
   const override = process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
@@ -100,14 +101,6 @@ function resolveDevTsxFallbackEntrypoint(entrypoint: string): string {
   return join(projectPath(), 'src', 'index.ts');
 }
 
-function parseBooleanEnvLike(value: string | undefined): boolean | null {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (!normalized) return null;
-  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true;
-  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false;
-  return null;
-}
-
 export function resolveCliTsxTsconfigPath(): string {
   // The TSX loader resolves TS path aliases (`@/...`) using the tsconfig it finds.
   // Daemon-spawned subprocesses intentionally run in arbitrary `cwd`s, so TSX may
@@ -119,11 +112,8 @@ export function resolveCliTsxTsconfigPath(): string {
 }
 
 function shouldAllowDevTsxFallback(): boolean {
-  const raw = (process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK ?? '').trim().toLowerCase();
-  if (raw) {
-    if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
-    return true;
-  }
+  const explicit = parseOptionalBooleanEnv(process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK);
+  if (explicit !== null) return explicit;
   const isDevVariant = process.env.HAPPIER_VARIANT === 'dev';
   const hasStackContext = Boolean(
     process.env.HAPPIER_STACK_REPO_DIR ||
@@ -139,7 +129,7 @@ function shouldPreferDevTsxSubprocess(): boolean {
   if (typeof process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT === 'string' && process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim().length > 0) {
     return false;
   }
-  const explicitPreference = parseBooleanEnvLike(process.env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX);
+  const explicitPreference = parseOptionalBooleanEnv(process.env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX);
   if (explicitPreference !== null) return explicitPreference;
   return process.env.HAPPIER_VARIANT === 'dev' || Boolean(
     process.env.HAPPIER_STACK_REPO_DIR ||
