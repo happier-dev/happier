@@ -220,7 +220,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
             return;
           }
           if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
-            preflightModels.probe.onRefresh();
+            preflightModels.probe.onRefresh?.();
             setOpenMenu(null);
             return;
           }
