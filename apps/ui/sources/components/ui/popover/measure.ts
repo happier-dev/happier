@@ -7,10 +7,38 @@ export function measureInWindow(node: any): Promise<PopoverWindowRect | null> {
             if (!node) return resolve(null);
 
             const measureDomRect = (candidate: any): PopoverWindowRect | null => {
-                const el: any =
-                    typeof candidate?.getBoundingClientRect === 'function'
-                        ? candidate
-                        : candidate?.getScrollableNode?.();
+                let el: any = null;
+                let current: any = candidate;
+                const visited = new Set<any>();
+                while (current && !visited.has(current)) {
+                    visited.add(current);
+
+                    if (typeof current?.getBoundingClientRect === 'function') {
+                        el = current;
+                        break;
+                    }
+
+                    const scrollable = current?.getScrollableNode?.();
+                    if (scrollable && typeof scrollable.getBoundingClientRect === 'function') {
+                        el = scrollable;
+                        break;
+                    }
+
+                    if (typeof current?.getNode === 'function') {
+                        current = current.getNode();
+                        continue;
+                    }
+                    if (typeof current?.getHostNode === 'function') {
+                        current = current.getHostNode();
+                        continue;
+                    }
+                    if (typeof current?.getDOMNode === 'function') {
+                        current = current.getDOMNode();
+                        continue;
+                    }
+
+                    break;
+                }
                 if (!el || typeof el.getBoundingClientRect !== 'function') return null;
                 const rect = el.getBoundingClientRect();
                 const x = rect?.left ?? rect?.x;
@@ -95,4 +123,3 @@ export function getFallbackBoundaryRect(params: { windowWidth: number; windowHei
     // On web, this maps closely to the viewport (measureInWindow is viewport-relative).
     return { x: 0, y: 0, width: params.windowWidth, height: params.windowHeight };
 }
-

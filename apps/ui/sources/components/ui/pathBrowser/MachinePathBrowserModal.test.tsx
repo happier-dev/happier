@@ -651,12 +651,17 @@ describe('MachinePathBrowserModal', () => {
 
         const screen = await renderScreen(<MachinePathBrowserModal
             machineId="machine-1"
+            selectionMode="file"
+            includeFiles={true}
             onResolve={vi.fn()}
             onClose={vi.fn()}
         />);
 
         await waitForTestId(screen, getPathBrowserToggleTestId('/'));
         await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+
+        const confirmBefore = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(confirmBefore?.props.disabled).toBe(true);
 
         const usersRow = await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
         const preventDefault = vi.fn();
@@ -669,6 +674,10 @@ describe('MachinePathBrowserModal', () => {
         expect(stopPropagation).toHaveBeenCalled();
 
         await waitForTestId(screen, 'dropdown-option-create-folder');
+
+        const confirmAfter = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(confirmAfter?.props.disabled).toBe(true);
+
         await screen.pressByTestIdAsync('dropdown-option-create-folder');
 
         expect(machineCreateDirectoryMock).toHaveBeenCalledWith(

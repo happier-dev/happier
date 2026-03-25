@@ -56,7 +56,7 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
                         ...(resizeEdge === 'left' ? { left: 0 } : { right: 0 }),
                         top: 0,
                         bottom: 0,
-                        width: 10,
+                        width: 2,
                         cursor: 'col-resize' as any,
                         zIndex: 1000,
                         userSelect: 'none' as any,
@@ -69,8 +69,7 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
                             ...(resizeEdge === 'left' ? { left: 4 } : { right: 4 }),
                             top: 0,
                             bottom: 0,
-                            width: 2,
-                            backgroundColor: 'rgba(0,0,0,0.08)',
+                            width: 1,
                         }}
                     />
                 </Pressable>

@@ -20,6 +20,9 @@ const INITIAL_POSITIONING_TICKS = 3;
 const RETRY_POSITIONING_TICKS = 6;
 const POST_LAYOUT_TICKS = 2;
 
+let mockPopoverContentDomRect: { width: number; height: number } | null = null;
+let mockPopoverContentRefKind: 'dom' | 'opaque' = 'dom';
+
 async function flushInitialPositioning() {
     await flushHookEffects({ cycles: 1, turns: INITIAL_POSITIONING_TICKS });
 }
@@ -58,7 +61,25 @@ installPopoverCommonModuleMocks({
             StyleSheet: {
                 absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
             },
-            View: (props: any) => React.createElement('View', props, props.children),
+            View: React.forwardRef((props: any, ref) => {
+                React.useImperativeHandle(ref, () => {
+                    if (mockPopoverContentRefKind !== 'dom') {
+                        return {};
+                    }
+                    return {
+                        contains: () => false,
+                        getBoundingClientRect: () => ({
+                            left: 0,
+                            top: 0,
+                            x: 0,
+                            y: 0,
+                            width: mockPopoverContentDomRect?.width ?? 0,
+                            height: mockPopoverContentDomRect?.height ?? 0,
+                        }),
+                    };
+                });
+                return React.createElement('View', props, props.children);
+            }),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),
         });
     },
@@ -74,6 +95,8 @@ describe('Popover (web)', () => {
     afterEach(() => {
         restorePopoverWebGlobals?.();
         restorePopoverWebGlobals = null;
+        mockPopoverContentDomRect = null;
+        mockPopoverContentRefKind = 'dom';
         vi.unstubAllGlobals();
     });
 
@@ -793,6 +816,145 @@ describe('Popover (web)', () => {
         expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
+    it('unhides portal popovers on web when content DOM rect is available even if onLayout never fires (prevents stuck non-interactive menus)', async () => {
+        const { Popover } = await import('./Popover');
+
+        mockPopoverContentDomRect = { width: 200, height: 120 };
+        mockPopoverContentRefKind = 'dom';
+
+        const anchorRef = {
+            current: {
+                getBoundingClientRect: () => ({ left: 120, top: 140, width: 48, height: 22 }),
+            },
+        } as any;
+
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            placement: 'bottom',
+            portal: { web: true },
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
+
+        const contentView = findPopoverContentView(screen);
+        const initialOpacity = flattenStyle(contentView?.props?.style).opacity;
+        expect([0, 1]).toContain(initialOpacity);
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        const contentViewAfter = findPopoverContentView(screen);
+        expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(1);
+    });
+
+    it('does not treat inside clicks as outside when the content ref is opaque (falls back to web DOM lookup)', async () => {
+        const { Popover } = await import('./Popover');
+
+        mockPopoverContentRefKind = 'opaque';
+
+        const fixedRandom = 0.12345;
+        const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(fixedRandom);
+        const expectedId = `popover-${fixedRandom.toString(36).slice(2)}`;
+
+        const pointerHandlers: Array<{ handler: any; options: any }> = [];
+        const addEventListener = vi.fn((type: string, handler: any, options?: any) => {
+            if (type === 'pointerdown') pointerHandlers.push({ handler, options });
+        });
+        const removeEventListener = vi.fn();
+
+        const insideTarget = {} as any;
+        const contentDomEl = {
+            contains: (node: any) => node === insideTarget,
+        } as any;
+
+        const getElementById = vi.fn((id: string) => (id === expectedId ? contentDomEl : null));
+
+        vi.stubGlobal('document', {
+            addEventListener,
+            removeEventListener,
+            getElementById,
+        });
+
+        const onRequestClose = vi.fn();
+        const anchorRef = {
+            current: {
+                contains: () => false,
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 10, height: 10 }),
+            },
+        } as any;
+
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            portal: { web: true },
+            onRequestClose,
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
+        expect(screen).toBeTruthy();
+
+        await act(async () => {});
+        expect(pointerHandlers.length).toBeGreaterThan(0);
+
+        pointerHandlers.at(-1)?.handler({
+            target: insideTarget,
+            stopPropagation: vi.fn(),
+            stopImmediatePropagation: vi.fn(),
+        });
+
+        expect(onRequestClose).toHaveBeenCalledTimes(0);
+
+        randomSpy.mockRestore();
+    });
+
+    it('fails open when pointerdown capture cannot resolve anchor/content DOM elements (does not swallow clicks)', async () => {
+        const { Popover } = await import('./Popover');
+
+        mockPopoverContentRefKind = 'opaque';
+
+        const pointerHandlers: Array<{ handler: any; options: any }> = [];
+        const addEventListener = vi.fn((type: string, handler: any, options?: any) => {
+            if (type === 'pointerdown') pointerHandlers.push({ handler, options });
+        });
+        const removeEventListener = vi.fn();
+
+        vi.stubGlobal('document', {
+            addEventListener,
+            removeEventListener,
+            getElementById: vi.fn(() => null),
+            querySelector: vi.fn(() => null),
+        });
+
+        const onRequestClose = vi.fn();
+        const anchorRef = {
+            current: {
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 10, height: 10 }),
+            },
+        } as any;
+
+        await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            portal: { web: true },
+            onRequestClose,
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
+
+        await act(async () => {});
+        expect(pointerHandlers.length).toBeGreaterThan(0);
+
+        pointerHandlers.at(-1)?.handler({
+            target: {} as any,
+            stopPropagation: vi.fn(),
+            stopImmediatePropagation: vi.fn(),
+        });
+
+        expect(onRequestClose).toHaveBeenCalledTimes(0);
+    });
+
     it('retries measuring portal anchors on web when measureInWindow returns invalid values (prevents needing a resize)', async () => {
         const { Popover } = await import('./Popover');
 
@@ -834,6 +996,78 @@ describe('Popover (web)', () => {
 
         const contentViewAfterLayout = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
+    });
+
+    it('retries measuring portal anchors on web when the initial anchor rect is unrealistically tiny (prevents 0-width popovers)', async () => {
+        const { Popover } = await import('./Popover');
+
+        let calls = 0;
+        const anchorRef = {
+            current: {
+                measureInWindow: (cb: any) => {
+                    calls += 1;
+                    queueMicrotask(() => {
+                        if (calls === 1) return cb(100, 100, 1, 1);
+                        cb(100, 100, 120, 24);
+                    });
+                },
+            },
+        } as any;
+
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            placement: 'bottom',
+            portal: { web: true },
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
+
+        await act(async () => {
+            await flushRetryPositioning();
+        });
+
+        const contentView = findPopoverContentView(screen);
+        expect(contentView).toBeTruthy();
+
+        const width = flattenStyle(contentView?.props?.style).width;
+        expect(width).toBe(120);
+    });
+
+    it('keeps retrying portal anchor measurement for multiple frames on web (prevents invisible popovers that only appear after a second click)', async () => {
+        const { Popover } = await import('./Popover');
+
+        let calls = 0;
+        const anchorRef = {
+            current: {
+                measureInWindow: (cb: any) => {
+                    calls += 1;
+                    queueMicrotask(() => {
+                        if (calls <= 3) return cb(100, 100, 1, 1);
+                        cb(100, 100, 120, 24);
+                    });
+                },
+            },
+        } as any;
+
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            placement: 'bottom',
+            portal: { web: true },
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
+
+        await act(async () => {
+            await flushRetryPositioning();
+        });
+
+        const contentView = findPopoverContentView(screen);
+        expect(contentView).toBeTruthy();
+
+        const width = flattenStyle(contentView?.props?.style).width;
+        expect(width).toBe(120);
     });
 
     it('keeps left/right portal popovers hidden until content layout is known (prevents recenter jiggle)', async () => {

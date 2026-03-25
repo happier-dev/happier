@@ -280,7 +280,7 @@ export const Item = React.memo<ItemProps>((props) => {
             await Clipboard.setStringAsync(textToCopy);
             Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: title }));
         } catch (error) {
-            console.error('Failed to copy:', error);
+            Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
         }
     }, [copy, isWeb, title, subtitle, detail]);
     
