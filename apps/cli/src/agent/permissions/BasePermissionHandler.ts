@@ -369,21 +369,12 @@ export abstract class BasePermissionHandler {
                 const result = this.buildPermissionResult(response);
                 this.applyPermissionResponseAnswers(response, result);
 
-                const finalizePermissionRpcResponse = (params: Readonly<{
-                    requestSource: Readonly<{ toolName: string; input: unknown }> | null;
-                    updateAgentStateReason: string;
-                    debugMessage: string;
-                }>): void => {
-                    this.finalizePermissionResponse({
-                        response,
-                        result,
-                        responseAllowedTools,
-                        updatedPermissions,
-                        requestSource: params.requestSource,
-                        updateAgentStateReason: params.updateAgentStateReason,
-                        debugMessage: params.debugMessage,
-                    });
-                };
+                const finalizeParamsBase = {
+                    response,
+                    result,
+                    responseAllowedTools,
+                    updatedPermissions,
+                } as const;
 
                 if (!pending) {
                     // Lifecycle mismatch / race: UI responded, but the in-memory pending promise is gone.
@@ -405,7 +396,8 @@ export abstract class BasePermissionHandler {
                     }
 
                     // Best-effort finalize so the UI doesn't leave a stuck permission prompt forever.
-                    finalizePermissionRpcResponse({
+                    this.finalizePermissionResponse({
+                        ...finalizeParamsBase,
                         requestSource: { toolName: requestFromState.tool, input: requestFromState.arguments },
                         updateAgentStateReason: 'permission response completion (stale)',
                         debugMessage: 'Permission response received without pending request; finalized agentState best-effort',
@@ -417,7 +409,8 @@ export abstract class BasePermissionHandler {
                 this.pendingRequests.delete(response.id);
                 pending.resolve(result);
 
-                finalizePermissionRpcResponse({
+                this.finalizePermissionResponse({
+                    ...finalizeParamsBase,
                     requestSource: { toolName: pending.toolName, input: pending.input },
                     updateAgentStateReason: 'permission response completion',
                     debugMessage: `Permission ${response.approved ? 'approved' : 'denied'} for ${pending.toolName}`,

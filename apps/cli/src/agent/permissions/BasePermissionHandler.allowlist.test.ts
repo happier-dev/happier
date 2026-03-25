@@ -87,6 +87,32 @@ describe('BasePermissionHandler allowlist', () => {
     );
   });
 
+  it('derives per-session allow tools for approved_for_session even when finalizing a stale response (no pending promise)', async () => {
+    const session = new FakeSession();
+    const input = { command: ['bash', '-lc', 'echo hello'] };
+    session.agentState.requests['perm-1'] = {
+      tool: 'bash',
+      arguments: input,
+      createdAt: Date.now(),
+    };
+
+    const handler = new TestPermissionHandler(session as any);
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+
+    await rpc!({ id: 'perm-1', approved: true, decision: 'approved_for_session' });
+
+    expect(handler.isAllowed('bash', input)).toBe(true);
+    expect(session.agentState.requests['perm-1']).toBeUndefined();
+    expect(session.agentState.completedRequests['perm-1']).toEqual(
+      expect.objectContaining({
+        decision: 'approved_for_session',
+        status: 'approved',
+        allowedTools: ['bash(echo hello)'],
+      }),
+    );
+  });
+
   it('remembers approved_for_session tool identifiers and clears them on reset', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);
