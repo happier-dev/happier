@@ -131,6 +131,50 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions.allowedTools).toBeUndefined();
     });
 
+    it('passes effort when the mode specifies a reasoningEffort', async () => {
+        let capturedOptions: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default', reasoningEffort: 'high' } as any) };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedOptions).toBeTruthy();
+        expect(capturedOptions.effort).toBe('high');
+    });
+
     it('uses the resolved JavaScript runtime path instead of a raw node default', async () => {
         let capturedOptions: any = null;
 

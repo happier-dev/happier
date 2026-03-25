@@ -428,6 +428,12 @@ export async function claudeRemoteAgentSdk(opts: {
             typeof opts.resumeSessionAt === 'string' && opts.resumeSessionAt.trim().length > 0
                 ? opts.resumeSessionAt.trim()
                 : null;
+        const resolvedEffort = (() => {
+            const argEffort = typeof argOverrides.effort === 'string' ? argOverrides.effort.trim() : '';
+            if (argEffort.length > 0) return argEffort;
+            const modeEffort = typeof mode.reasoningEffort === 'string' ? mode.reasoningEffort.trim() : '';
+            return modeEffort.length > 0 ? modeEffort : null;
+        })();
             const queryOptions: Record<string, unknown> = {
                 abortController,
                 cwd: opts.path,
@@ -437,6 +443,7 @@ export async function claudeRemoteAgentSdk(opts: {
             settingSources,
             permissionMode: mappedPermissionMode,
             allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
+            ...(resolvedEffort ? { effort: resolvedEffort } : {}),
             model: argOverrides.model ?? mode.model,
             fallbackModel: argOverrides.fallbackModel ?? mode.fallbackModel,
             maxTurns: argOverrides.maxTurns,
