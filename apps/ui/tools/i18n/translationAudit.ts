@@ -70,6 +70,7 @@ const ALLOW_SAME_STRING_VALUES = new Set<string>([
     'Auggie CLI',
     'Tmux',
     'Windows',
+    'Windows Terminal',
     'Happier Voice',
     // Technical ids that should remain unchanged across locales.
     'Xenova/all-MiniLM-L6-v2',
@@ -84,9 +85,19 @@ const ALLOW_SAME_KEY_PREFIXES: ReadonlyArray<string> = [
     'agentInput.geminiPermissionMode.',
     'agentInput.geminiModel.',
     'profiles.builtInNames.',
-    // MCP server settings copy is currently shared across locales.
-    'settings.mcpServers',
 ];
+
+const ALLOW_SAME_STRING_KEYS = new Set<string>([
+    // Literal protocol / command placeholders should remain unchanged.
+    'settings.mcpServersHeaderKeyPlaceholder',
+    'settings.mcpServersArgsPlaceholder',
+    'settings.mcpServersFieldCommandLinePlaceholder',
+    'settings.mcpServersImportJsonPlaceholder',
+    'settingsNotifications.webhooks.signingSecretPromptPlaceholder',
+    // Provider/model examples in replay resume settings are identifiers, not localized UI copy.
+    'settingsSession.replayResume.summaryRunner.backendPlaceholder',
+    'settingsSession.replayResume.summaryRunner.modelPlaceholder',
+]);
 
 const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<string>>> = {
     // These are correctly translated in some locales even though they match English.
@@ -94,7 +105,23 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
     'common.error': new Set(['es', 'ca']),
     'tools.fullView.error': new Set(['es', 'ca']),
     'status.error': new Set(['es']),
+    // Catalan: common noun matches English.
+    'tabs.sessions': new Set(['ca']),
+    'memorySearchSettings.embeddings.openAi.dimensionsTitle': new Set(['ca']),
+    'server.retention.sessions': new Set(['ca']),
+    'settingsProviders.plugins.claude.fields.claudeRemoteSettingSourcesV2.options.local.title': new Set([
+        'es',
+        'ca',
+        'pt',
+    ]),
+    // Italian/Portuguese: Windows "Console" label is correct and matches English.
+    'windowsRemoteSessionLaunchMode.console': new Set(['it', 'pt']),
+    'windowsRemoteSessionLaunchMode.shortConsole': new Set(['it', 'pt']),
 };
+
+function isProviderPluginTitleKey(key: string): boolean {
+    return /^settingsProviders\.plugins\.[^.]+\.title$/.test(key);
+}
 
 function isUrlLike(value: string): boolean {
     return /^([a-z]+):\/\//i.test(value);
@@ -148,7 +175,9 @@ export function findUntranslatedStrings(
         if (isUrlLike(enValue)) continue;
         if (isAllCapsToken(enValue)) continue;
         if (isPlaceholderLike(enValue)) continue;
+        if (ALLOW_SAME_STRING_KEYS.has(key)) continue;
         if (ALLOW_SAME_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+        if (isProviderPluginTitleKey(key)) continue;
         if (ALLOW_SAME_STRING_KEYS_BY_LOCALE[key]?.has(locale.code)) continue;
 
         out.push({ locale: locale.code, key, en: enValue, value: localeValue });

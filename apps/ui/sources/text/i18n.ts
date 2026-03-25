@@ -1,7 +1,7 @@
 import { storage } from '@/sync/domains/state/storage';
 
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLanguageEnglishName, getLanguageNativeName, type SupportedLanguage } from './_all';
-import type { Translations } from './_types';
+import type { TranslationStructure, Translations } from './_types';
 import { getDeviceLocales } from './deviceLocales';
 import { ca } from './translations/ca';
 import { en } from './translations/en';
@@ -27,7 +27,7 @@ const TRANSLATIONS_BY_LANGUAGE = {
     'zh-Hans': zhHans,
     'zh-Hant': zhHant,
     ja,
-} satisfies Record<SupportedLanguage, Translations>;
+} satisfies Record<SupportedLanguage, TranslationStructure>;
 
 type TranslationFunction = (...args: any[]) => string;
 type TranslationLeaf = string | TranslationFunction;

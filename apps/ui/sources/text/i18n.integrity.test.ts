@@ -18,8 +18,12 @@ const IGNORED_UNTRANSLATED_KEYS = new Set([
     'settingsSession.handoff.includeIgnoredMode.globsPlaceholder',
 ]);
 
+// This test is a drift-stopper: it fails if we introduce any *new* untranslated English strings outside
+// of explicitly allowlisted scopes in `apps/ui/tools/i18n/translationAudit.ts`.
+const MAX_UNTRANSLATED_STRINGS = 0;
+
 describe('i18n integrity', () => {
-    it('does not ship untranslated English strings in non-English locales', () => {
+    it('does not increase the number of untranslated English strings', () => {
         const report = auditTranslations({
             en,
             locales: [
@@ -39,7 +43,7 @@ describe('i18n integrity', () => {
             .flatMap(([locale, r]) => r.untranslatedStrings.map((u) => ({ ...u, locale })))
             .filter((entry) => !IGNORED_UNTRANSLATED_KEYS.has(entry.key));
 
-        if (untranslated.length > 0) {
+        if (untranslated.length > MAX_UNTRANSLATED_STRINGS) {
             const sample = untranslated
                 .slice(0, 40)
                 .map((u) => `${u.locale}: ${u.key} = ${JSON.stringify(u.value)}`)
@@ -47,6 +51,7 @@ describe('i18n integrity', () => {
             throw new Error(
                 [
                     `Found ${untranslated.length} untranslated strings identical to English.`,
+                    `Expected ${MAX_UNTRANSLATED_STRINGS}; translate strings or add explicit allowlist entries for intentional fallbacks.`,
                     'Translate these strings in the locale files under sources/text/translations/.',
                     '',
                     'Sample:',
@@ -55,6 +60,6 @@ describe('i18n integrity', () => {
             );
         }
 
-        expect(untranslated).toEqual([]);
+        expect(untranslated.length).toBeLessThanOrEqual(MAX_UNTRANSLATED_STRINGS);
     });
 });

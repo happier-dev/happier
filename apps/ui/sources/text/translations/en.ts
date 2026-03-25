@@ -3091,16 +3091,17 @@ export const en = {
             },
         },
 
-        pendingMessages: {
-            title: 'Pending messages',
-            indicator: ({ count }: { count: number }) => `Pending (${count})`,
-            badgeLabel: ({ count }: { count: number }) => (count > 0 ? `Pending (+${count})` : 'Pending'),
-            empty: 'No pending messages.',
-            actions: {
-                up: 'Up',
-                down: 'Down',
-                edit: 'Edit',
-                viewMore: 'View more',
+	        pendingMessages: {
+	            title: 'Pending messages',
+	            indicator: ({ count }: { count: number }) => `Pending (${count})`,
+	            badgeLabel: ({ count }: { count: number }) => (count > 0 ? `Pending (+${count})` : 'Pending'),
+	            empty: 'No pending messages.',
+	            decryptFailed: 'Couldn’t decrypt this pending message.',
+	            actions: {
+	                up: 'Up',
+	                down: 'Down',
+	                edit: 'Edit',
+	                viewMore: 'View more',
                 viewLess: 'View less',
                 steerNow: 'Steer now',
                 sendNow: 'Send now',
@@ -6462,6 +6463,22 @@ settingsSession: {
     }
 };
 
-export type TranslationStructure = typeof en;
+type DeepTranslationShape<T> =
+    T extends (...args: any[]) => any
+        // Some translation extension modules expose no-arg functions to defer selection until runtime
+        // (for example based on the active language stored in settings). Locales may still implement
+        // these leaves as plain strings, so treat `() => string` and `string` as interchangeable.
+        ? (Parameters<T> extends [] ? string | (() => string) : T)
+        : T extends string
+            ? string
+            : T extends readonly (infer U)[]
+                ? readonly DeepTranslationShape<U>[]
+                : T extends object
+                    ? { readonly [K in keyof T]: DeepTranslationShape<T[K]> }
+                    : T;
 
 export type TranslationsEn = typeof en;
+
+// Shape contract for all locales: enforce identical key structure without requiring English literal
+// string values. Functions are preserved so parameter lists remain typechecked.
+export type TranslationStructure = DeepTranslationShape<TranslationsEn>;
