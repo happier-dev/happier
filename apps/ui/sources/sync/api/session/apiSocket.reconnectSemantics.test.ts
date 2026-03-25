@@ -28,8 +28,8 @@ type ManagedConnectionTransport = Readonly<{
 
 const reachability = vi.hoisted(() => ({
     subscribeSpy: vi.fn(),
-    startSpy: vi.fn(async () => {}),
-    reportSpy: vi.fn(),
+    startSpy: vi.fn(async (..._args: unknown[]) => {}),
+    reportSpy: vi.fn((..._args: unknown[]) => {}),
     listenersByServerUrl: new Map<string, (state: ManagedConnectionState) => void>(),
 }));
 
@@ -131,15 +131,15 @@ function createTransportController(): {
             isConnected() {
                 return connected;
             },
-            onConnected(listener) {
+            onConnected(listener: () => void) {
                 connectedListeners.add(listener);
                 return () => connectedListeners.delete(listener);
             },
-            onDisconnected(listener) {
+            onDisconnected(listener: (event: TransportDisconnectEvent) => void) {
                 disconnectedListeners.add(listener);
                 return () => disconnectedListeners.delete(listener);
             },
-            onError(listener) {
+            onError(listener: (error: unknown) => void) {
                 errorListeners.add(listener);
                 return () => errorListeners.delete(listener);
             },
