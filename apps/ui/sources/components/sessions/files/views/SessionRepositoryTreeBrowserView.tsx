@@ -1,11 +1,16 @@
 import * as React from 'react';
-import { Platform, Pressable, TextInput, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Platform, Pressable, View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 
 import { RepositoryTreeList } from '@/components/sessions/files/content/RepositoryTreeList';
 import { SearchResultsList } from '@/components/sessions/files/content/SearchResultsList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import {
+    FileBrowserToolbar,
+    FileBrowserToolbarIconButton,
+    resolveVisibleFileBrowserToolbarActionIds,
+} from '@/components/ui/filesystemBrowser/FileBrowserToolbar';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { RepositoryTreeDropOverlay } from '@/components/sessions/files/repositoryTree/RepositoryTreeDropOverlay';
@@ -16,7 +21,6 @@ import type { FileItem } from '@/sync/domains/input/suggestionFile';
 import { fileSearchCache, searchFiles } from '@/sync/domains/input/suggestionFile';
 import { clearCachedRepositoryDirectoryEntries } from '@/sync/domains/input/repositoryDirectory';
 import { storage, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths } from '@/sync/domains/state/storage';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { sessionCreateDirectory, sessionWriteFile } from '@/sync/ops';
@@ -37,6 +41,7 @@ import { createRepositoryTreeUploadMenuConfig } from '@/components/sessions/file
 import { useRepositoryTreeWebDropState } from '@/components/sessions/files/repositoryTree/useRepositoryTreeWebDropState';
 import { promptRepositoryUploadDestination } from '@/components/sessions/files/views/promptRepositoryUploadDestination';
 import { RepositoryTreeChangedFilesPane } from '@/components/sessions/files/views/repositoryTreeBrowser/RepositoryTreeChangedFilesPane';
+import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
 
 export type SessionRepositoryTreeBrowserViewProps = Readonly<{
     sessionId: string;
@@ -72,77 +77,7 @@ type ToolbarActionConfig = Readonly<{
     onPress: () => void;
 }>;
 
-const TOOLBAR_HORIZONTAL_PADDING = 24;
-const TOOLBAR_GAP = 8;
-const TOOLBAR_BUTTON_FOOTPRINT = 34 + TOOLBAR_GAP;
-const TOOLBAR_MIN_SEARCH_WIDTH = 180;
-const TOOLBAR_MIN_VISIBLE_ACTIONS = 2;
-
-function resolveVisibleToolbarActionIds(input: Readonly<{
-    toolbarWidth: number | null;
-    actions: ReadonlyArray<ToolbarActionConfig>;
-}>): Set<ToolbarActionId> {
-    if (input.toolbarWidth == null) {
-        return new Set(input.actions.map((action) => action.id));
-    }
-
-    const availableActionSlots = Math.floor(
-        Math.max(0, input.toolbarWidth - TOOLBAR_HORIZONTAL_PADDING - TOOLBAR_MIN_SEARCH_WIDTH + TOOLBAR_GAP)
-        / TOOLBAR_BUTTON_FOOTPRINT,
-    );
-
-    if (availableActionSlots >= input.actions.length) {
-        return new Set(input.actions.map((action) => action.id));
-    }
-
-    const visibleCount = Math.max(TOOLBAR_MIN_VISIBLE_ACTIONS, availableActionSlots - 1);
-    const prioritized = [...input.actions]
-        .sort((left, right) => left.priority - right.priority)
-        .slice(0, Math.min(input.actions.length, visibleCount));
-
-    return new Set(prioritized.map((action) => action.id));
-}
-
-const stylesheet = StyleSheet.create((theme) => ({
-    toolbar: {
-        position: 'relative',
-        zIndex: 10,
-        paddingHorizontal: 12,
-        paddingTop: 10,
-        paddingBottom: 8,
-        borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-        borderBottomColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    searchInput: {
-        flex: 1,
-        height: 34,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        paddingHorizontal: 10,
-        color: theme.colors.text,
-        backgroundColor: theme.colors.surfaceHigh,
-        ...Typography.default(),
-        fontSize: 13,
-    },
-    iconButton: {
-        width: 34,
-        height: 34,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
-    },
-}));
-
 export const SessionRepositoryTreeBrowserView = React.memo((props: SessionRepositoryTreeBrowserViewProps) => {
-    const styles = stylesheet;
     const { theme } = useUnistyles();
     const { machineRpcTargetAvailable } = useSessionMachineReachability(props.sessionId);
 
@@ -163,6 +98,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     const [isSearching, setIsSearching] = React.useState(false);
     const showSearchBar = props.showSearchBar !== false;
     const allowCreateActions = machineRpcTargetAvailable;
+    const uploadActionsAvailable = useSessionFileUploadAvailability(props.sessionId);
     const webDropState = useRepositoryTreeWebDropState({
         sessionId: props.sessionId,
         enabled: allowCreateActions && Platform.OS === 'web',
@@ -379,9 +315,9 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     }, [uploadDestinationDir]);
 
     const uploadMenuConfig = React.useMemo(() => createRepositoryTreeUploadMenuConfig({
-        allowCreateActions,
+        uploadActionsAvailable,
         isWeb: Platform.OS === 'web',
-    }), [allowCreateActions]);
+    }), [uploadActionsAvailable]);
 
     const uploadMenuItems = React.useMemo(() => [
         {
@@ -390,7 +326,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             subtitle: uploadDestinationDir || t('files.projectRoot'),
             category: t('common.path'),
             icon: <Ionicons name="folder-open-outline" size={16} color={theme.colors.textSecondary} />,
-            disabled: !allowCreateActions,
+            disabled: !uploadActionsAvailable,
         },
         ...uploadMenuConfig.items.map((item) => ({
             id: item.id,
@@ -400,11 +336,11 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             icon: <Ionicons name={item.iconName} size={16} color={theme.colors.textSecondary} />,
             disabled: item.disabled,
         })),
-    ], [allowCreateActions, theme.colors.textSecondary, uploadDestinationDir, uploadMenuConfig.items]);
+    ], [theme.colors.textSecondary, uploadActionsAvailable, uploadDestinationDir, uploadMenuConfig.items]);
 
     const onSelectUploadMenuItem = React.useCallback((itemId: string) => {
         setUploadMenuOpen(false);
-        if (!allowCreateActions) return;
+        if (!uploadActionsAvailable) return;
         if (itemId === 'repository-tree-upload-destination-select') {
             void selectUploadDestination();
             return;
@@ -420,7 +356,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             if (Platform.OS !== 'web') return;
             webFolderInputRef.current?.click();
         }
-    }, [allowCreateActions, selectUploadDestination, startNativeUploads]);
+    }, [selectUploadDestination, startNativeUploads, uploadActionsAvailable]);
 
     const toolbarActions = React.useMemo<ToolbarActionConfig[]>(() => {
         const actions: ToolbarActionConfig[] = [
@@ -451,7 +387,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                 icon: <Ionicons name="cloud-upload-outline" size={16} color={theme.colors.textSecondary} />,
                 menuIcon: 'cloud-upload-outline',
                 accessibilityLabel: t('files.toolbar.upload'),
-                disabled: !allowCreateActions,
+                disabled: !uploadActionsAvailable,
                 selected: uploadDestinationDir.length > 0,
                 onPress: () => setUploadMenuOpen(true),
             },
@@ -524,6 +460,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         return actions;
     }, [
         allowCreateActions,
+        uploadActionsAvailable,
         canClearSearch,
         collapseAll,
         createFile,
@@ -540,7 +477,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     ]);
 
     const visibleToolbarActionIds = React.useMemo(
-        () => resolveVisibleToolbarActionIds({ toolbarWidth, actions: toolbarActions }),
+        () => resolveVisibleFileBrowserToolbarActionIds({ toolbarWidth, actions: toolbarActions }),
         [toolbarActions, toolbarWidth],
     );
 
@@ -562,7 +499,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                 id: 'repository-tree-upload-destination-select',
                 title: t('settingsAttachments.workspaceDirectory.uploadsDirectory.title'),
                 icon: 'folder-open-outline',
-                disabled: !allowCreateActions,
+                disabled: !uploadActionsAvailable,
                 onPress: () => onSelectUploadMenuItem('repository-tree-upload-destination-select'),
             },
             ...uploadMenuConfig.items.map((item) => ({
