@@ -39,10 +39,8 @@ export const AGENTS: Partial<Record<CatalogAgentId, AgentCatalogEntry>> = {
 };
 
 export function requireCatalogEntry(agentId: CatalogAgentId): AgentCatalogEntry {
-  const entry = AGENTS[agentId] ?? AGENTS[DEFAULT_CATALOG_AGENT_ID];
-  if (!entry) {
-    throw new Error(`Missing catalog agent entry for ${agentId}`);
-  }
+  const entry = AGENTS[agentId];
+  if (!entry) throw new Error(`Missing catalog agent entry for ${agentId}`);
   return entry;
 }
 

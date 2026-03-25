@@ -33,6 +33,10 @@ describe('AGENTS', () => {
     }
   });
 
+  it('throws when requiring a missing catalog entry (no silent default fallback)', () => {
+    expect(() => requireCatalogEntry('__missing__' as any)).toThrow(/missing catalog agent entry/i);
+  });
+
   it('declares vendor resume support for every agent', () => {
     for (const entry of Object.values(AGENTS)) {
       expect(entry.vendorResumeSupport).toBeTruthy();
