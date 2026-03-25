@@ -66,7 +66,8 @@ describe('parseTransferRecipientPublicKeyBase64', () => {
     const base64Keys: string[] = [];
     for (let index = 0; index < 257; index += 1) {
       const bytes = Buffer.alloc(32, 9);
-      bytes[0] = index;
+      bytes[0] = Math.floor(index / 256);
+      bytes[1] = index % 256;
       base64Keys.push(bytes.toString('base64'));
     }
 
