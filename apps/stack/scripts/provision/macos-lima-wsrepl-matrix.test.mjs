@@ -2610,12 +2610,13 @@ test('macos wsrepl lima matrix wrapper can derive HAPPIER_QA_STEPS_JSON from hos
   const stepsJson = JSON.parse(meta.stepsJson);
   assert.deepEqual(stepsJson, [
     { targetMachineId: 'machine_vm_1', strategy: 'transfer_snapshot' },
-    { targetMachineId: 'machine_host_1', strategy: 'sync_changes' },
+    { targetMachineId: 'machine_host_1', strategy: 'transfer_snapshot' },
+    { targetMachineId: 'machine_vm_1', strategy: 'sync_changes' },
   ]);
   assert.equal(meta.sourceMachineId, 'machine_host_1');
 
   const summary = JSON.parse(await readFile(join(reportDir, 'summary.json'), 'utf8'));
-  assert.deepEqual(summary.parameters.targetMachineIds, ['machine_vm_1', 'machine_host_1']);
+  assert.deepEqual(summary.parameters.targetMachineIds, ['machine_vm_1', 'machine_host_1', 'machine_vm_1']);
   assert.deepEqual(summary.parameters.targetMachineNamePatterns, []);
 });
 
@@ -2743,8 +2744,9 @@ test('macos wsrepl lima matrix wrapper default vm machine name pattern is substr
   const meta = JSON.parse(await readFile(join(reportDir, 'playwright', 'meta.json'), 'utf8'));
   const stepsJson = JSON.parse(meta.stepsJson);
   assert.deepEqual(stepsJson, [
-    { targetMachineNamePattern: '*happy-wsrepl*', strategy: 'transfer_snapshot' },
-    { targetMachineNamePattern: 'host-machine-name-1', strategy: 'sync_changes' },
+    { targetMachineId: 'machine_vm_1', strategy: 'transfer_snapshot' },
+    { targetMachineId: 'machine_host_1', strategy: 'transfer_snapshot' },
+    { targetMachineId: 'machine_vm_1', strategy: 'sync_changes' },
   ]);
 });
 

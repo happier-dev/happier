@@ -1823,7 +1823,12 @@ fi
 # row is first or if machine ordering changes), which makes the matrix unstable.
 
 step_out_strategy="${WSREPL_QA_STEP_OUT_STRATEGY:-transfer_snapshot}"
-step_back_strategy="${WSREPL_QA_STEP_BACK_STRATEGY:-sync_changes}"
+# Fresh environments do not have a baseline for the reverse direction, so a default "handoff back"
+# `sync_changes` will correctly fail with "baseline missing". Default the back step to
+# `transfer_snapshot`, and then run a third step back to the VM with `sync_changes` to exercise
+# the incremental path on a real baseline.
+step_back_strategy="${WSREPL_QA_STEP_BACK_STRATEGY:-transfer_snapshot}"
+step_out_after_back_strategy="${WSREPL_QA_STEP_OUT_AFTER_BACK_STRATEGY:-sync_changes}"
 if [[ "${step_out_strategy}" != "transfer_snapshot" && "${step_out_strategy}" != "sync_changes" ]]; then
   FAILURE_STAGE="preflight"
   FAILURE_REASON="invalid_step_out_strategy"
@@ -1836,6 +1841,12 @@ if [[ "${step_back_strategy}" != "transfer_snapshot" && "${step_back_strategy}" 
   echo "[wsrepl-qa] invalid WSREPL_QA_STEP_BACK_STRATEGY: ${step_back_strategy} (expected transfer_snapshot|sync_changes)" >&2
   exit 2
 fi
+if [[ -n "${step_out_after_back_strategy}" && "${step_out_after_back_strategy}" != "transfer_snapshot" && "${step_out_after_back_strategy}" != "sync_changes" ]]; then
+  FAILURE_STAGE="preflight"
+  FAILURE_REASON="invalid_step_out_after_back_strategy"
+  echo "[wsrepl-qa] invalid WSREPL_QA_STEP_OUT_AFTER_BACK_STRATEGY: ${step_out_after_back_strategy} (expected transfer_snapshot|sync_changes|<empty>)" >&2
+  exit 2
+fi
 
 WSREPL_QA_DERIVE_STEPS_LATER=0
 if [[ -z "${HAPPIER_QA_STEPS_JSON:-}" ]]; then
@@ -1845,11 +1856,11 @@ if [[ -z "${HAPPIER_QA_STEPS_JSON:-}" ]]; then
     vm_machine_name_pattern="$(resolve_vm_machine_name_pattern_for_ui)"
     host_machine_name_pattern="$(resolve_host_machine_name_pattern_for_ui)"
     export HAPPIER_QA_STEPS_JSON
-    HAPPIER_QA_STEPS_JSON="$(python3 - "$vm_machine_id" "$host_machine_id" "$vm_machine_name_pattern" "$host_machine_name_pattern" "$step_out_strategy" "$step_back_strategy" <<'PY'
+    HAPPIER_QA_STEPS_JSON="$(python3 - "$vm_machine_id" "$host_machine_id" "$vm_machine_name_pattern" "$host_machine_name_pattern" "$step_out_strategy" "$step_back_strategy" "$step_out_after_back_strategy" <<'PY'
 import json
 import sys
 
-vm_machine_id, host_machine_id, vm_name_pattern, host_name_pattern, out_strategy, back_strategy = sys.argv[1:]
+vm_machine_id, host_machine_id, vm_name_pattern, host_name_pattern, out_strategy, back_strategy, out_after_back_strategy = sys.argv[1:]
 
 def build_step(machine_id: str, name_pattern: str, strategy: str) -> dict:
   # Prefer explicit ids for determinism: name patterns can match multiple online machines in a dev
@@ -1866,6 +1877,9 @@ steps = [
   build_step(vm_machine_id, vm_name_pattern, out_strategy),
   build_step(host_machine_id, host_name_pattern, back_strategy),
 ]
+
+if (out_after_back_strategy or "").strip():
+  steps.append(build_step(vm_machine_id, vm_name_pattern, out_after_back_strategy))
 print(json.dumps(steps))
 PY
 )"
@@ -2117,11 +2131,11 @@ if [[ "${WSREPL_QA_DERIVE_STEPS_LATER:-0}" == "1" && -z "${HAPPIER_QA_STEPS_JSON
   vm_machine_name_pattern="$(resolve_vm_machine_name_pattern_for_ui)"
   host_machine_name_pattern="$(resolve_host_machine_name_pattern_for_ui)"
   export HAPPIER_QA_STEPS_JSON
-  HAPPIER_QA_STEPS_JSON="$(python3 - "$vm_machine_id" "$host_machine_id" "$vm_machine_name_pattern" "$host_machine_name_pattern" "$step_out_strategy" "$step_back_strategy" <<'PY'
+  HAPPIER_QA_STEPS_JSON="$(python3 - "$vm_machine_id" "$host_machine_id" "$vm_machine_name_pattern" "$host_machine_name_pattern" "$step_out_strategy" "$step_back_strategy" "$step_out_after_back_strategy" <<'PY'
 import json
 import sys
 
-vm_machine_id, host_machine_id, vm_name_pattern, host_name_pattern, out_strategy, back_strategy = sys.argv[1:]
+vm_machine_id, host_machine_id, vm_name_pattern, host_name_pattern, out_strategy, back_strategy, out_after_back_strategy = sys.argv[1:]
 
 def build_step(machine_id: str, name_pattern: str, strategy: str) -> dict:
   # Prefer explicit ids for determinism: name patterns can match multiple online machines in a dev
@@ -2138,6 +2152,9 @@ steps = [
   build_step(vm_machine_id, vm_name_pattern, out_strategy),
   build_step(host_machine_id, host_name_pattern, back_strategy),
 ]
+
+if (out_after_back_strategy or "").strip():
+  steps.append(build_step(vm_machine_id, vm_name_pattern, out_after_back_strategy))
 print(json.dumps(steps))
 PY
 )"
