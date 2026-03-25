@@ -120,4 +120,30 @@ describe('buildSessionHandoffRecoveryPlan', () => {
             }),
         });
     });
+
+    it('normalizes legacy codex backend mode metadata onto the canonical codexBackendMode field', () => {
+        const legacyCodexBackendMode = '  mcp_resume  ' as unknown as Metadata['codexBackendMode'];
+        const sourceMetadata = {
+            flavor: 'codex',
+            path: '/repo',
+            codexBackendMode: legacyCodexBackendMode,
+        } as Metadata;
+
+        expect(
+            buildSessionHandoffRecoveryPlan({
+                handoffId: 'handoff_5',
+                sessionId: 'session_5',
+                sourceMachineId: 'machine_source',
+                sourceMetadata,
+                sessionStorageMode: 'persisted',
+            }),
+        ).toMatchObject({
+            handoffId: 'handoff_5',
+            sourceResume: {
+                agent: 'codex',
+                directory: '/repo',
+                codexBackendMode: 'acp',
+            },
+        });
+    });
 });

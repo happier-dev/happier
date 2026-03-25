@@ -4,6 +4,7 @@ import {
     resolveVendorHandoffIdFromSessionMetadata,
     type AgentId,
 } from '@happier-dev/agents';
+import { normalizeCodexBackendMode } from '@happier-dev/protocol';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
@@ -80,6 +81,8 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
     const directory = typeof input.sourceMetadata.path === 'string' ? input.sourceMetadata.path.trim() : '';
     if (!agent || !directory) return null;
 
+    const codexBackendMode = normalizeCodexBackendMode(input.sourceMetadata.codexBackendMode);
+
     return {
         handoffId: input.handoffId,
         actions: ['restart_on_source', 'keep_stopped'],
@@ -92,9 +95,7 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
             transcriptStorage: input.sessionStorageMode,
             serverId: typeof input.serverId === 'string' ? input.serverId.trim() || null : null,
             ...(input.sourceMetadata.agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: input.sourceMetadata.agentRuntimeDescriptorV1 } : {}),
-            ...((input.sourceMetadata.codexBackendMode === 'mcp' || input.sourceMetadata.codexBackendMode === 'acp' || input.sourceMetadata.codexBackendMode === 'appServer')
-                ? { codexBackendMode: input.sourceMetadata.codexBackendMode }
-                : {}),
+            ...(codexBackendMode ? { codexBackendMode } : {}),
             ...(buildSourceResumeEnvironmentVariables(input.sourceMetadata)
                 ? { environmentVariables: buildSourceResumeEnvironmentVariables(input.sourceMetadata)! }
                 : {}),

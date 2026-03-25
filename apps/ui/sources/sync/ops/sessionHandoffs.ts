@@ -969,23 +969,36 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
                 return `/${segments.join('/')}`;
             };
 
+            // Prefer a daemon-supplied handoff-back target root when present. This avoids relying
+            // on hydrated UI state (which can be stale after a cross-machine cutover).
+            const daemonHandoffBackTargetRootPath = normalizeWorkspaceRootPath(
+                started.response.handoffMetadataV2?.workspaceReplicationHandoffBackTargetRootPath,
+            );
+            if (
+                options.workspaceTransfer?.enabled === true
+                && options.workspaceTransfer.strategy === 'sync_changes'
+                && daemonHandoffBackTargetRootPath
+            ) {
+                return daemonHandoffBackTargetRootPath;
+            }
+
             // When handing back to the previous source machine with `sync_changes`, we must target
             // the original source workspace root so one-way-safe baseline checks don't treat the
             // entire tree as diverged (a cross-platform rewrite would create a fresh sibling path).
-            const priorHandoff = (options.sourceMetadata as { handoffV1?: Record<string, unknown> } | null)?.handoffV1 ?? null;
+            const metadataForTargetPathOverride =
+                (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as
+                    | { handoffV1?: Record<string, unknown> }
+                    | null;
+            const priorHandoff = metadataForTargetPathOverride?.handoffV1 ?? null;
             const priorSourceMachineId = normalizeId(priorHandoff?.sourceMachineId);
-            const priorTargetMachineId = normalizeId(priorHandoff?.targetMachineId);
             const requestedTargetMachineId = normalizeId(options.targetMachineId);
-            const currentSourceMachineId = normalizeId(started.sourceMachineId);
             const priorSourceWorkspaceRootPath = normalizeWorkspaceRootPath(priorHandoff?.sourceWorkspaceRootPath);
 
             if (
                 options.workspaceTransfer?.enabled === true
                 && options.workspaceTransfer.strategy === 'sync_changes'
                 && priorSourceMachineId
-                && priorTargetMachineId
                 && priorSourceMachineId === requestedTargetMachineId
-                && priorTargetMachineId === currentSourceMachineId
                 && priorSourceWorkspaceRootPath
             ) {
                 return priorSourceWorkspaceRootPath;
@@ -1185,7 +1198,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         workspaceReplicationReverseSourceRootPath: preparedResponse.resume.directory,
         // For handoff-back planning, the reverse direction must target the original source
         // workspace root, not a cross-platform rewrite of the target machine's prepare path.
-        workspaceReplicationReverseTargetRootPath: started.response.targetPath,
+        workspaceReplicationReverseTargetRootPath: started.response.handoffMetadataV2?.workspaceReplicationSourceRootPath ?? null,
     });
     if (!sourceCleanup.ok) return sourceCleanup;
 

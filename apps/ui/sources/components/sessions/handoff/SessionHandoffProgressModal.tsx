@@ -252,8 +252,12 @@ export function SessionHandoffProgressModal({ onClose, title, message, status }:
     // even when later checkpoints fall back to minimal-mode (e.g. import_session/finalize), so the
     // UI doesn't appear to "forget" completed phases mid-handoff.
     const hasSeenFullTimelineRef = React.useRef(false);
-    // Use the protocol's canonical resolver so the UI stays aligned with daemon semantics.
-    if (currentCheckpoint && canonicalTimelineForCheckpoint === CHECKPOINT_TIMELINE) {
+    // Use the protocol's canonical resolver so the UI stays aligned with daemon semantics, but do
+    // not rely on reference equality (resolver implementations can return a fresh array).
+    const isFullTimelineForCheckpoint =
+        canonicalTimelineForCheckpoint.length === CHECKPOINT_TIMELINE.length
+        && canonicalTimelineForCheckpoint.every((checkpoint, index) => checkpoint === CHECKPOINT_TIMELINE[index]);
+    if (currentCheckpoint && isFullTimelineForCheckpoint) {
         hasSeenFullTimelineRef.current = true;
     }
     const timeline = hasSeenFullTimelineRef.current
