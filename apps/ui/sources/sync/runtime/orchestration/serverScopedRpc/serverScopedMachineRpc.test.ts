@@ -3,15 +3,15 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { resetScopedMachineDataKeyCacheForTests } from './serverScopedRpcPool';
 
-const ioSpy = vi.hoisted(() => vi.fn());
 const machineRpcSpy = vi.hoisted(() => vi.fn());
+const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
 const getCredentialsSpy = vi.hoisted(() => vi.fn());
 const createEncryptionSpy = vi.hoisted(() => vi.fn());
 const listServerProfilesSpy = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('socket.io-client', () => ({
-    io: (...args: unknown[]) => ioSpy(...args),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', () => ({
+    createEphemeralServerSocketClient: (...args: unknown[]) => createEphemeralSocketSpy(...args),
 }));
 
 vi.mock('@/sync/api/session/apiSocket', () => ({
@@ -40,8 +40,8 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 describe('machineRpcWithServerScope', () => {
     afterEach(() => {
-        ioSpy.mockReset();
         machineRpcSpy.mockReset();
+        createEphemeralSocketSpy.mockReset();
         getCredentialsSpy.mockReset();
         createEncryptionSpy.mockReset();
         listServerProfilesSpy.mockReset();
@@ -73,7 +73,7 @@ describe('machineRpcWithServerScope', () => {
             { value: 1 },
             { timeoutMs: 30000 },
         );
-        expect(ioSpy).not.toHaveBeenCalled();
+        expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
     });
 
     it('routes RPC through a scoped socket when target server differs from active server', async () => {
@@ -103,19 +103,13 @@ describe('machineRpcWithServerScope', () => {
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
         })));
 
+        const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {
-            on: vi.fn((event: string, cb: () => void) => {
-                if (event === 'connect') {
-                    cb();
-                }
-            }),
-            off: vi.fn(),
-            timeout: vi.fn(() => ({
-                emitWithAck: vi.fn(async () => ({ ok: true, result: 'encrypted-result' })),
-            })),
+            timeout: vi.fn(() => ({ emitWithAck })),
+            emit: vi.fn(),
             disconnect: vi.fn(),
         };
-        ioSpy.mockReturnValue(fakeSocket);
+        createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
 
         const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
         const result = await machineRpcWithServerScope({
@@ -128,22 +122,14 @@ describe('machineRpcWithServerScope', () => {
 
         expect(result).toEqual({ decoded: true });
         expect(machineRpcSpy).not.toHaveBeenCalled();
-        expect(ioSpy).toHaveBeenCalledWith(
-            'https://server-b.example.test',
-            expect.objectContaining({
-                path: '/v1/updates',
-                auth: expect.objectContaining({
-                    token: 'token-b',
-                    clientType: 'user-scoped',
-                }),
-                forceNew: true,
-            }),
-        );
-            const opts = ioSpy.mock.calls[0]?.[1] as any;
-            expect(opts).not.toHaveProperty('transports');
+        expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'https://server-b.example.test',
+            token: 'token-b',
+            timeoutMs: 5000,
+        }));
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ value: 2 });
         expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
-        expect((fakeSocket.timeout as any).mock.results[0].value.emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
+        expect(emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
             method: 'machine-1:method-test',
             params: 'encrypted-payload',
             timeoutMs: 5000,
@@ -176,17 +162,13 @@ describe('machineRpcWithServerScope', () => {
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
         })));
 
+        const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {
-            on: vi.fn((event: string, cb: () => void) => {
-                if (event === 'connect') cb();
-            }),
-            off: vi.fn(),
-            timeout: vi.fn(() => ({
-                emitWithAck: vi.fn(async () => ({ ok: true, result: 'encrypted-result' })),
-            })),
+            timeout: vi.fn(() => ({ emitWithAck })),
+            emit: vi.fn(),
             disconnect: vi.fn(),
         };
-        ioSpy.mockReturnValue(fakeSocket);
+        createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
 
         const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
         const result = await machineRpcWithServerScope({
@@ -197,17 +179,11 @@ describe('machineRpcWithServerScope', () => {
 
         expect(result).toEqual({ decoded: true });
         expect(machineRpcSpy).toHaveBeenCalledTimes(1);
-        expect(ioSpy).toHaveBeenCalledWith(
-            'https://server-a.example.test',
-            expect.objectContaining({
-                path: '/v1/updates',
-                auth: expect.objectContaining({
-                    token: 'token-a',
-                    clientType: 'user-scoped',
-                }),
-                forceNew: true,
-            }),
-        );
+        expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'https://server-a.example.test',
+            token: 'token-a',
+            timeoutMs: 30000,
+        }));
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ value: 3 });
         expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
         expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
@@ -240,17 +216,13 @@ describe('machineRpcWithServerScope', () => {
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
         })));
 
+        const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {
-            on: vi.fn((event: string, cb: () => void) => {
-                if (event === 'connect') cb();
-            }),
-            off: vi.fn(),
-            timeout: vi.fn(() => ({
-                emitWithAck: vi.fn(async () => ({ ok: true, result: 'encrypted-result' })),
-            })),
+            timeout: vi.fn(() => ({ emitWithAck })),
+            emit: vi.fn(),
             disconnect: vi.fn(),
         };
-        ioSpy.mockReturnValue(fakeSocket);
+        createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
 
         const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
         const result = await machineRpcWithServerScope({
@@ -261,17 +233,11 @@ describe('machineRpcWithServerScope', () => {
 
         expect(result).toEqual({ decoded: true });
         expect(machineRpcSpy).toHaveBeenCalledTimes(1);
-        expect(ioSpy).toHaveBeenCalledWith(
-            'https://server-a.example.test',
-            expect.objectContaining({
-                path: '/v1/updates',
-                auth: expect.objectContaining({
-                    token: 'token-a',
-                    clientType: 'user-scoped',
-                }),
-                forceNew: true,
-            }),
-        );
+        expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'https://server-a.example.test',
+            token: 'token-a',
+            timeoutMs: 30000,
+        }));
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ directory: '/tmp/repo' });
         expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
         expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
@@ -303,17 +269,13 @@ describe('machineRpcWithServerScope', () => {
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
         })));
 
+        const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {
-            on: vi.fn((event: string, cb: () => void) => {
-                if (event === 'connect') cb();
-            }),
-            off: vi.fn(),
-            timeout: vi.fn(() => ({
-                emitWithAck: vi.fn(async () => ({ ok: true, result: 'encrypted-result' })),
-            })),
+            timeout: vi.fn(() => ({ emitWithAck })),
+            emit: vi.fn(),
             disconnect: vi.fn(),
         };
-        ioSpy.mockReturnValue(fakeSocket);
+        createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
 
         const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
         const rpcPromise = machineRpcWithServerScope({
@@ -327,20 +289,14 @@ describe('machineRpcWithServerScope', () => {
 
         await expect(rpcPromise).resolves.toEqual({ decoded: true });
         expect(machineRpcSpy).toHaveBeenCalledTimes(1);
-        expect(ioSpy).toHaveBeenCalledWith(
-            'https://server-a.example.test',
-            expect.objectContaining({
-                path: '/v1/updates',
-                auth: expect.objectContaining({
-                    token: 'token-a',
-                    clientType: 'user-scoped',
-                }),
-                forceNew: true,
-            }),
-        );
+        expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'https://server-a.example.test',
+            token: 'token-a',
+            timeoutMs: 1_000,
+        }));
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ handoffId: 'handoff_1' });
         expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
-        expect((fakeSocket.timeout as any).mock.results[0].value.emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
+        expect(emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
             method: 'machine-1:daemon.sessionHandoff.prepareTarget',
             params: 'encrypted-payload',
             timeoutMs: 1_000,
@@ -373,17 +329,13 @@ describe('machineRpcWithServerScope', () => {
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
         })));
 
+        const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {
-            on: vi.fn((event: string, cb: () => void) => {
-                if (event === 'connect') cb();
-            }),
-            off: vi.fn(),
-            timeout: vi.fn(() => ({
-                emitWithAck: vi.fn(async () => ({ ok: true, result: 'encrypted-result' })),
-            })),
+            timeout: vi.fn(() => ({ emitWithAck })),
+            emit: vi.fn(),
             disconnect: vi.fn(),
         };
-        ioSpy.mockReturnValue(fakeSocket);
+        createEphemeralSocketSpy.mockResolvedValueOnce(fakeSocket);
 
         const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
         const result = await machineRpcWithServerScope({
@@ -396,16 +348,11 @@ describe('machineRpcWithServerScope', () => {
 
         expect(result).toEqual({ decoded: true });
         expect(machineRpcSpy).not.toHaveBeenCalled();
-        expect(ioSpy).toHaveBeenCalledWith(
-            'https://server-a.example.test',
-            expect.objectContaining({
-                path: '/v1/updates',
-                auth: expect.objectContaining({
-                    token: 'token-a',
-                    clientType: 'user-scoped',
-                }),
-            }),
-        );
+        expect(createEphemeralSocketSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'https://server-a.example.test',
+            token: 'token-a',
+            timeoutMs: 1_000,
+        }));
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ handoffId: 'handoff_1' });
         expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
         expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);

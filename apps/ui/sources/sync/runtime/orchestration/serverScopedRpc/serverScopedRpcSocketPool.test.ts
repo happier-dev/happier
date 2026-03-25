@@ -97,12 +97,12 @@ describe('serverScopedRpcSocketPool', () => {
         pool.resetForTests();
     });
 
-    it('disconnects pooled sockets when reachability network becomes disallowed', async () => {
-        const ioSpy = vi.fn();
-        const { socket, disconnectSpy } = createFakeSocket();
-        ioSpy.mockReturnValue(socket);
+	    it('disconnects pooled sockets when reachability network becomes disallowed', async () => {
+	        const ioSpy = vi.fn();
+	        const { socket, disconnectSpy } = createFakeSocket();
+	        ioSpy.mockReturnValue(socket);
 
-        const networkAllowedListeners = new Set<(allowed: boolean) => void>();
+	        let capturedListener: ((allowed: boolean) => void) | null = null;
 	        const pool = createServerScopedRpcSocketPool({
 	            createSocket: () => ioSpy(),
 	            reachability: {
@@ -110,9 +110,11 @@ describe('serverScopedRpcSocketPool', () => {
 	                startReachability: async () => {},
 	                reportUnreachable: () => {},
 	                subscribeNetworkAllowed: (listener: (allowed: boolean) => void) => {
-	                    networkAllowedListeners.add(listener);
+	                    capturedListener = listener;
 	                    return () => {
-	                        networkAllowedListeners.delete(listener);
+	                        if (capturedListener === listener) {
+	                            capturedListener = null;
+	                        }
 	                    };
 	                },
 	            },
@@ -120,12 +122,13 @@ describe('serverScopedRpcSocketPool', () => {
 	        });
 
         const c1: ScopedSocketClient = await pool.acquire({ serverUrl: 'https://server.example.test', token: 't', timeoutMs: 1000 });
-        c1.disconnect();
+	        c1.disconnect();
 
-        expect(disconnectSpy).toHaveBeenCalledTimes(0);
-        const listener = networkAllowedListeners.values().next().value as ((allowed: boolean) => void) | undefined;
-        if (!listener) throw new Error('Expected reachability.subscribeNetworkAllowed to capture a listener');
-	        listener(false);
+	        expect(disconnectSpy).toHaveBeenCalledTimes(0);
+	        if (!capturedListener) {
+	            throw new Error('Expected reachability.subscribeNetworkAllowed to capture a listener');
+	        }
+	        capturedListener(false);
 	        await vi.waitFor(() => {
 	            expect(disconnectSpy).toHaveBeenCalledTimes(1);
 	        });
