@@ -97,6 +97,9 @@ export {
 export {
   normalizeCodexBackendMode,
   type CodexBackendMode,
+  getAllProviderSettingsDefinitions,
+  getProviderSettingsDefinition,
+  type ProviderSettingsDefinition,
 } from './providerSettings/index.js';
 
 export {
