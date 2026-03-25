@@ -1,6 +1,7 @@
 import { lstat, readdir, readlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
+import type { WorkspaceManifest } from '@happier-dev/protocol';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { buildWorkspaceManifestEntry, type WorkspaceManifestEntry } from '@/scm/sourceController/workspaceExportPackaging/buildWorkspaceManifestEntry';
 import { isIgnorableWorkspaceExportAccessError } from '@/scm/sourceController/workspaceExportFallbackEntries';
@@ -12,10 +13,6 @@ import {
     shouldFilterWorkspaceManifestPath,
     type WorkspaceManifestSafeFilterPolicy,
 } from './workspaceManifestSafeFilterPolicy';
-
-export type WorkspaceManifest = Readonly<{
-    entries: readonly WorkspaceManifestEntry[];
-}>;
 
 export type ScannedWorkspaceFile = Readonly<{
     relativePath: string;

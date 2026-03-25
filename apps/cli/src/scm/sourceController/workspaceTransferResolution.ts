@@ -35,6 +35,9 @@ import {
     type ScmSourceControllerWorkspaceTransferMetadata,
     type ScmSourceControllerWorkspaceTransferResult,
 } from './workspaceTransfer';
+import { buildNonPortableWorkspacePathError } from './workspaceTransferErrors';
+
+export { buildNonPortableWorkspacePathError } from './workspaceTransferErrors';
 
 export type ScmSourceControllerWorkspaceReplicationSourceInputs = Readonly<{
     entries: readonly ScmSourceControllerWorkspaceTransferEntry[];
@@ -42,10 +45,6 @@ export type ScmSourceControllerWorkspaceReplicationSourceInputs = Readonly<{
     safeFilterPolicy: WorkspaceManifestSafeFilterPolicy;
     isNestedRepoSourcePath: boolean;
 }>;
-
-export function buildNonPortableWorkspacePathError(relativePath: string): Error {
-    return new Error(`Workspace transfer contains non-portable workspace path: ${relativePath}`);
-}
 
 async function resolveWorkspaceTransferStateWithSourceController(
     input: Readonly<{
@@ -98,8 +97,9 @@ async function resolveWorkspaceTransferStateWithSourceController(
     };
 
     if (sourceController?.resolveWorkspaceTransfer) {
+        const transfer = await sourceController.resolveWorkspaceTransfer(sourceControllerInput);
         return {
-            transfer: await sourceController.resolveWorkspaceTransfer(sourceControllerInput).catch(() => null),
+            transfer,
             isNestedRepoSourcePath,
         };
     }

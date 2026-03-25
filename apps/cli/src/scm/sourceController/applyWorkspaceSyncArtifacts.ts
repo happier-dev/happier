@@ -5,7 +5,7 @@ import { dirname, join, parse } from 'node:path';
 import type { WorkspaceManifestEntry } from '@happier-dev/protocol';
 
 import type { ScmBackendRegistry } from '@/scm/registry';
-import { assertPortableWorkspaceEntriesWithSourceController } from '@/scm/sourceController';
+import { assertPortableWorkspaceEntriesWithSourceController } from '@/scm/sourceController/workspacePortability';
 import { applyWorkspaceMetadata } from '@/scm/sourceController/workspaceExportStaging/applyWorkspaceMetadata';
 import { cleanupWorkspaceStaging } from '@/scm/sourceController/workspaceExportStaging/cleanupWorkspaceStaging';
 import { createWorkspaceStagingRoot } from '@/scm/sourceController/workspaceExportStaging/createWorkspaceStagingRoot';

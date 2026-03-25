@@ -1,5 +1,5 @@
 import type { ScmBackendRegistry } from '@/scm/registry';
-import { isAdministrativeWorkspacePathWithSourceController } from '@/scm/sourceController';
+import { isAdministrativeWorkspacePathWithSourceController } from '@/scm/sourceController/workspacePortability';
 import { detectWorkspacePathTraits } from '@/scm/sourceController/workspaceExportPackaging/detectWorkspacePathTraits';
 
 export type WorkspaceManifestSafeFilterPolicy = Readonly<{

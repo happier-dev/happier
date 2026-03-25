@@ -6,7 +6,7 @@ import {
     type ScmSourceControllerPortableWorkspacePathClassification,
 } from './portableWorkspacePath';
 
-import { buildNonPortableWorkspacePathError } from './workspaceTransferResolution';
+import { buildNonPortableWorkspacePathError } from './workspaceTransferErrors';
 
 export async function assertPortableWorkspaceEntriesWithSourceController(input: Readonly<{
     entries: readonly Readonly<{

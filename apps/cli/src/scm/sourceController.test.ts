@@ -443,6 +443,68 @@ describe('scm source controller', () => {
         expect(resolveWorkspaceTransfer).toHaveBeenCalledTimes(1);
     });
 
+    it('returns null when the source-controller transfer hook reports no transfer', async () => {
+        const resolveWorkspaceTransfer = vi.fn(async () => null);
+        const registry = createScmBackendRegistry([
+            createTestBackend({
+                id: 'git',
+                detectionRootPath: '/repo',
+                sourceController: {
+                    inspectWorkspaceLocation: async () => null,
+                    resolveWorkspaceTransfer,
+                },
+            }),
+        ]);
+
+        await expect(resolveWorkspaceTransferWithSourceController({
+            sourcePath: '/repo/packages/app',
+            workspaceTransfer: {
+                strategy: 'transfer_snapshot',
+                includeIgnoredMode: 'include_selected',
+                ignoredIncludeGlobs: ['dist/**'],
+            },
+            registry,
+        })).resolves.toBeNull();
+
+        expect(resolveWorkspaceTransfer).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates source-controller transfer resolution errors instead of treating them as no transfer', async () => {
+        const resolveWorkspaceTransfer = vi.fn(async () => {
+            throw new Error('workspace transfer resolution failed');
+        });
+        const resolveWorkspaceTransferEntries = vi.fn(async () => [
+            {
+                relativePath: 'README.md',
+                sourcePath: '/repo/README.md',
+            },
+        ]);
+        const registry = createScmBackendRegistry([
+            createTestBackend({
+                id: 'git',
+                detectionRootPath: '/repo',
+                sourceController: {
+                    inspectWorkspaceLocation: async () => null,
+                    resolveWorkspaceTransfer,
+                    resolveWorkspaceTransferEntries,
+                },
+            }),
+        ]);
+
+        await expect(resolveWorkspaceTransferWithSourceController({
+            sourcePath: '/repo/packages/app',
+            workspaceTransfer: {
+                strategy: 'transfer_snapshot',
+                includeIgnoredMode: 'include_selected',
+                ignoredIncludeGlobs: ['dist/**'],
+            },
+            registry,
+        })).rejects.toThrow('workspace transfer resolution failed');
+
+        expect(resolveWorkspaceTransfer).toHaveBeenCalledTimes(1);
+        expect(resolveWorkspaceTransferEntries).not.toHaveBeenCalled();
+    });
+
     it('resolves replication-friendly source inputs through the shared source-controller seam', async () => {
         const resolveWorkspaceTransfer = vi.fn(async () => ({
             entries: [{

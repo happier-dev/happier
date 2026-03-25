@@ -9,13 +9,13 @@ export const DEFAULT_SCM_SOURCE_CONTROLLER_WORKSPACE_TRANSFER_STRATEGY: ScmSourc
 export type ScmSourceControllerWorkspaceTransferRequest = Readonly<{
     strategy: ScmSourceControllerWorkspaceTransferStrategy;
     includeIgnoredMode: ScmSourceControllerWorkspaceTransferIncludeIgnoredMode;
-    ignoredIncludeGlobs: string[];
+    ignoredIncludeGlobs: readonly string[];
 }>;
 
 export type ScmSourceControllerWorkspaceTransferRequestInput = Readonly<{
     strategy?: ScmSourceControllerWorkspaceTransferStrategy;
     includeIgnoredMode: ScmSourceControllerWorkspaceTransferIncludeIgnoredMode;
-    ignoredIncludeGlobs: string[];
+    ignoredIncludeGlobs: readonly string[];
 }>;
 
 export type ScmSourceControllerWorkspaceTransferEntry = Readonly<{
