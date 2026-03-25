@@ -20,6 +20,7 @@ import type { AgentTextMessage, Message } from '../domains/messages/messageTypes
 import type { Settings } from '../domains/settings/settings';
 import { settingsDefaults } from '../domains/settings/settings';
 import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
+import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
 import { deriveSessionListMeaningfulActivityAt } from '../domains/session/listing/deriveSessionListActivity';
 import { computeHasUnreadActivity } from '../domains/messages/unread';
 import { buildTranscriptDraftMessages } from '../domains/messages/buildTranscriptDraftMessages';
@@ -43,6 +44,10 @@ export function useSessions() {
 
 export function useSession(id: string): Session | null {
   return getStorage()(useShallow((state) => state.sessions[id] ?? null));
+}
+
+export function useSessionListRenderable(id: string): SessionListRenderableSession | null {
+  return getStorage()(useShallow((state) => state.sessionListRenderables[id] ?? null));
 }
 
 export function useSessionServerId(sessionId: string): string | null {

@@ -28,8 +28,7 @@ export type SessionMachineRpcFailure = Readonly<{
 }>;
 
 const GUARDED_MACHINE_RPC_METHOD_PREFIXES = [
-    'daemon.sessionFiles.',
-    'daemon.sessionAttachments.',
+    'daemon.bulkTransfer.',
 ] as const;
 
 const GUARDED_MACHINE_RPC_METHODS = new Set<string>([

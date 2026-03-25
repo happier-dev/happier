@@ -9,10 +9,13 @@ export async function emitSessionMetadataUpdateWithServerScope(params: Readonly<
     sessionId: string;
     expectedVersion: number;
     metadata: string;
+    serverId?: string | null;
     timeoutMs?: number;
 }>): Promise<UpdateMetadataAck> {
     const context = await resolveServerScopedSessionContext({
-        serverId: resolvePreferredServerIdForSessionId(params.sessionId),
+        serverId: typeof params.serverId === 'string' && params.serverId.trim().length > 0
+            ? params.serverId.trim()
+            : resolvePreferredServerIdForSessionId(params.sessionId),
         timeoutMs: params.timeoutMs,
     });
     const payload = {

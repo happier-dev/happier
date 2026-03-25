@@ -571,6 +571,52 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect((storage.getState().sessions[sessionId]?.metadata as any)?.summary?.text).toBe('Renamed session');
     });
 
+    it('supports overriding the server scope used by patchSessionMetadataWithRetry', async () => {
+        const sessionId = 'plain_metadata_session_override';
+        storage.getState().applySessions([{
+            ...createSession(sessionId),
+            encryptionMode: 'plain',
+            metadataVersion: 2,
+            metadata: {
+                path: '/tmp/repo',
+                host: 'test-host',
+            },
+        } as Session]);
+        emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
+            result: 'success',
+            version: 3,
+            metadata: JSON.stringify({
+                path: '/tmp/repo',
+                host: 'test-host',
+                summary: { text: 'Renamed session', updatedAt: 123 },
+            }),
+        });
+
+        const { sync } = await import('./sync');
+
+        await expect(
+            sync.patchSessionMetadataWithRetry(
+                sessionId,
+                (metadata) => ({
+                    ...metadata,
+                    summary: { text: 'Renamed session', updatedAt: 123 },
+                }),
+                { serverId: 'server_override' },
+            ),
+        ).resolves.toBeUndefined();
+
+        expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
+            sessionId,
+            expectedVersion: 2,
+            metadata: JSON.stringify({
+                path: '/tmp/repo',
+                host: 'test-host',
+                summary: { text: 'Renamed session', updatedAt: 123 },
+            }),
+            serverId: 'server_override',
+        });
+    });
+
     it('drops stale direct transcript fetch results after the server scope resets mid-request', async () => {
         const sessionId = 'direct_session_scope_reset';
         storage.getState().applySessions([createDirectSession(sessionId)]);

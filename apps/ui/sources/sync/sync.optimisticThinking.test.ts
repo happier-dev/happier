@@ -55,6 +55,7 @@ import { storage } from './domains/state/storage';
 import type { Session } from './domains/state/storageTypes';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 
 const initialStorageState = storage.getState();
 
@@ -79,6 +80,10 @@ function createSession(params: { sessionId: string }): Session {
     };
 }
 
+function createRpcMethodNotAvailableError(): RpcError {
+    return new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
+}
+
 describe('sync.sendMessage optimistic thinking', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
@@ -99,6 +104,7 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         const { sync } = await import('./sync');
         sync.encryption = encryption;
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
         sync.setMessageTransport({
             emitWithAck: vi.fn(async () => ({
                 ok: true,
@@ -396,6 +402,7 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         const { sync } = await import('./sync');
         sync.encryption = encryption as any;
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
         sync.setMessageTransport({
             emitWithAck,
             send: vi.fn(),
@@ -423,6 +430,7 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         const { sync } = await import('./sync');
         sync.encryption = encryption;
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
         sync.setMessageTransport({
             emitWithAck: vi.fn(async () => ({
                 ok: true,
@@ -466,6 +474,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         sync.encryption = {
             getSessionEncryption: () => null,
         } as any;
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
         sync.setMessageTransport({
             emitWithAck,
             send: vi.fn(),
@@ -605,6 +614,7 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         const { sync } = await import('./sync');
         sync.encryption = encryption;
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
         sync.setMessageTransport({
             emitWithAck: vi.fn(async () => ({
                 ok: true,
@@ -645,6 +655,7 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         const { sync } = await import('./sync');
         sync.encryption = encryption;
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
         sync.setMessageTransport({
             emitWithAck: vi.fn(async () => ({
                 ok: true,

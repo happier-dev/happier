@@ -2,6 +2,12 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { PlannedChangeActions } from './changesPlanner';
 import { runTasksWithLimit } from './runTasksWithLimit';
 
+export type TodoSocketUpdate = Readonly<{
+    key: string;
+    value: string | null;
+    version: number;
+}>;
+
 export async function applyPlannedChangeActions(params: {
     planned: PlannedChangeActions;
     credentials: AuthCredentials;
@@ -21,8 +27,8 @@ export async function applyPlannedChangeActions(params: {
     };
     invalidateMessagesForSession: (sessionId: string) => Promise<void>;
     invalidateScmStatusForSession: (sessionId: string) => void;
-    applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
-    kvBulkGet: (credentials: AuthCredentials, keys: string[]) => Promise<{ values: Array<{ key: string; value: string | null; version: number }> }>;
+    applyTodoSocketUpdates: (changes: TodoSocketUpdate[]) => Promise<void>;
+    kvBulkGet: (credentials: AuthCredentials, keys: string[]) => Promise<{ values: TodoSocketUpdate[] }>;
 }): Promise<void> {
     const { planned } = params;
 
@@ -95,7 +101,7 @@ export async function applyPlannedChangeActions(params: {
                     await (params.invalidate.todos?.() ?? Promise.resolve());
                     return;
                 }
-                await params.applyTodoSocketUpdates(bulk.values.map((v) => ({ key: v.key, value: v.value, version: v.version })));
+                await params.applyTodoSocketUpdates(bulk.values.map((value): TodoSocketUpdate => ({ key: value.key, value: value.value, version: value.version })));
             } catch {
                 await (params.invalidate.todos?.() ?? Promise.resolve());
             }

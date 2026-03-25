@@ -148,7 +148,7 @@ import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrid
 import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/overrides/modelOverridePublish';
 import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/overrides/acpConfigOptionOverridePublish';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError } from '@/sync/runtime/rpcErrors';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { serverFetch } from './http/client';
@@ -204,22 +204,9 @@ function createDefaultMessageTransport(): SyncMessageTransport {
 }
 
 function isFallbackSafeSessionUserMessageRpcError(error: unknown): boolean {
-    if (readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
-        return true;
-    }
-
-    const errorMessage = error instanceof Error ? error.message : String(error ?? '');
-    if (
-        errorMessage === 'Method not found'
-        || errorMessage === 'RPC method not available'
-        || errorMessage === 'Socket not connected'
-        || errorMessage === 'Socket connect timeout'
-    ) {
-        return true;
-    }
-
-    const normalized = errorMessage.toLowerCase();
-    return normalized.includes('connect_error') || normalized.includes('session encryption not found');
+    // The only intended fallback here is compatibility with older daemons that don't implement
+    // the active-session runtime RPC yet.
+    return isRpcMethodNotAvailableError(error);
 }
 
 function readOptionalSessionMetadataString(value: unknown): string | null {
@@ -1291,13 +1278,22 @@ class Sync {
         await this.sendMessage(sessionId, text, displayText, metaOverrides);
     }
 
-    private async updateSessionMetadataWithRetry(sessionId: string, updater: (metadata: Metadata) => Metadata): Promise<void> {
+    private async updateSessionMetadataWithRetry(
+        sessionId: string,
+        updater: (metadata: Metadata) => Metadata,
+        options?: Readonly<{ serverId?: string | null }>,
+    ): Promise<void> {
         const session = storage.getState().sessions[sessionId] ?? null;
         const sessionEncryptionMode: 'e2ee' | 'plain' = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
         const encryption = sessionEncryptionMode === 'plain' ? null : this.encryption.getSessionEncryption(sessionId);
         if (sessionEncryptionMode === 'e2ee' && !encryption) {
             throw new Error(`Session ${sessionId} not found`);
         }
+
+        const resolvedServerIdOverride =
+            typeof options?.serverId === 'string' && options.serverId.trim().length > 0
+                ? options.serverId.trim()
+                : null;
 
         await updateSessionMetadataWithRetryRpc<Metadata>({
             sessionId,
@@ -1312,7 +1308,7 @@ class Sync {
                 }
                 await fetchSessionByIdWithServerScope({
                     sessionId,
-                    serverId: resolvePreferredServerIdForSessionId(sessionId),
+                    serverId: resolvedServerIdOverride ?? resolvePreferredServerIdForSessionId(sessionId),
                     activeCredentials: this.credentials,
                     activeEncryption: this.encryption,
                     sessionDataKeys: this.sessionDataKeys,
@@ -1344,6 +1340,7 @@ class Sync {
                 sessionId,
                 expectedVersion: payload.expectedVersion,
                 metadata: payload.metadata,
+                ...(resolvedServerIdOverride ? { serverId: resolvedServerIdOverride } : {}),
             }),
             applySessionMetadata: ({ metadataVersion, metadata }) => {
                 const currentSession = storage.getState().sessions[sessionId];
@@ -2015,8 +2012,12 @@ class Sync {
      * Generic session metadata patching surface for feature modules that need to
      * atomically update encrypted metadata (with version-mismatch retries).
      */
-    public patchSessionMetadataWithRetry = async (sessionId: string, updater: (metadata: Metadata) => Metadata): Promise<void> => {
-        await this.updateSessionMetadataWithRetry(sessionId, updater);
+    public patchSessionMetadataWithRetry = async (
+        sessionId: string,
+        updater: (metadata: Metadata) => Metadata,
+        options?: Readonly<{ serverId?: string | null }>,
+    ): Promise<void> => {
+        await this.updateSessionMetadataWithRetry(sessionId, updater, options);
     }
 
     public refreshAutomations = async () => {
