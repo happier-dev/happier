@@ -1,6 +1,8 @@
-import { afterEach, beforeEach, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
 import { installVitestRnShim } from './vitestRnShim';
+import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { standardCleanup } from './testkit/cleanup/standardCleanup';
 
 // UI tests should not inherit embedded build-policy gating (set in CI).
 // Clear it by default so feature tests can opt-in explicitly per case.
@@ -157,11 +159,32 @@ afterEach(() => {
     // Ensure fake timers never leak across tests (even when a test fails mid-flight).
     vi.useRealTimers();
 
+    // Ensure mounted React test renderers never leak across tests. This is important for fork-based
+    // Vitest runs: a single test file leaking an interval/subscription can prevent the fork from
+    // exiting and hang the suite.
+    standardCleanup();
+
+    // Tests may override `runtimeFetch` via `setRuntimeFetch(...)`. Reset it after each test to
+    // prevent cross-test pollution (module state can persist across files in the same Vitest fork).
+    resetRuntimeFetch();
+
     // Many tests use `vi.stubGlobal('fetch', ...)` and other globals. Ensure they don't leak across
     // test files (Vitest workers may reuse the same global between sequential test files).
     vi.unstubAllGlobals();
 
     restoreDomGlobalsToOriginal();
+});
+
+afterAll(async () => {
+    // `serverFetch(...)` can start background server reachability supervisors. Ensure they are
+    // fully stopped at the end of the test run so the Vitest fork can exit cleanly.
+    // Best-effort only: never block the suite on teardown (a stuck supervisor stop would hang the run).
+    void (async () => {
+        const actual = await vi.importActual<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>(
+            '@/sync/runtime/connectivity/serverReachabilitySupervisorPool',
+        );
+        await actual.resetServerReachabilitySupervisors();
+    })();
 });
 
 vi.mock('react-native-mmkv', () => {

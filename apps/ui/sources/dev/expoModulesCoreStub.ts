@@ -10,6 +10,12 @@ export const Platform = {
         (specifics as any).node ?? (specifics as any).default,
 } as const;
 
+export enum PermissionStatus {
+    GRANTED = 'granted',
+    UNDETERMINED = 'undetermined',
+    DENIED = 'denied',
+}
+
 // Expo modules use this to access native modules (which don't exist in Vitest/node).
 export function requireOptionalNativeModule() {
     return null;

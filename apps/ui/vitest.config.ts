@@ -59,12 +59,21 @@ function resolveAgentsWorkspaceSource(id: string): string | null {
     );
 }
 
+function resolveConnectionSupervisorWorkspaceSource(id: string): string | null {
+    return resolveWorkspacePackageSource(
+        id,
+        '@happier-dev/connection-supervisor',
+        resolve('../../packages/connection-supervisor/src'),
+    );
+}
+
 const expoNodeModuleStubsPlugin = {
     name: 'happier-vitest-expo-node-module-stubs',
     enforce: 'pre' as const,
     resolveId(id: string) {
         return resolveProtocolWorkspaceSource(id)
             ?? resolveAgentsWorkspaceSource(id)
+            ?? resolveConnectionSupervisorWorkspaceSource(id)
             ?? resolveExpoNodeModuleStub(id);
     },
 };
@@ -76,7 +85,7 @@ export default defineConfig({
     optimizeDeps: {
         // Workspace packages (like `@happier-dev/protocol`) can change frequently during development.
         // Excluding them ensures Vitest doesn't keep using stale optimized dependency caches.
-        exclude: ['@happier-dev/protocol', '@happier-dev/agents'],
+        exclude: ['@happier-dev/protocol', '@happier-dev/agents', '@happier-dev/connection-supervisor'],
     },
     test: {
         // Ensure per-file module isolation so test-local `vi.mock(...)` does not leak
