@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 const FORBIDDEN_SESSION_HANDOFF_RPC_HANDLER_TOKENS = [
     'applyWorkspaceReplicationPlan',
     'createWorkspaceReplicationTransfers',
+    // Legacy/deleted session handoff workspace artifacts wrapper (must not be reintroduced).
+    'session/handoff/workspace/sessionHandoffWorkspaceArtifacts',
+    'exportWorkspaceArtifacts',
+    'workspaceExportArtifacts',
 ] as const;
 
 describe('rpcHandlers.sessionHandoff (architecture)', () => {

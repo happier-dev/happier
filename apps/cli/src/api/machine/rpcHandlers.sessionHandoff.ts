@@ -31,11 +31,14 @@ import {
   registerServerRoutedTransferResponder,
   requestServerRoutedTransferToFile,
   type MachineTransferChannel,
+  ServerRoutedInvalidOpenRequestError,
 } from '../../machines/transfer/serverRoutedTransport';
 import type { DirectPeerOnDemandTransferScope } from '../../machines/transfer/directPeerTransport';
+import { rewriteDirectPeerEndpointCandidatesForTransferId } from '../../machines/transfer/rewriteDirectPeerEndpointCandidatesForTransferId';
 import { createMachineTransferRouteCache } from '../../machines/transfer/transferRouteCache';
 import {
   disposeTransferPayloadSource,
+  createFileTransferPayloadSource,
   resolveTransferPayloadManifestHash,
   resolveTransferPayloadSizeBytes,
   type TransferPayloadSource,
@@ -52,6 +55,7 @@ import {
   createSessionHandoffProviderBundlePayloadSource,
   readSessionHandoffProviderBundleFile,
 } from '../../session/handoff/sessionHandoffProviderBundleFile';
+import { createSessionHandoffSourceExportStore } from '../../session/handoff/state/sessionHandoffSourceExportStore';
 import {
   buildSessionHandoffProviderBundleTransferId,
   parseSessionHandoffProviderBundleTransferId,
@@ -65,24 +69,31 @@ import {
   parseSessionHandoffWorkspaceBlobPackTransferId,
   resolveSessionHandoffWorkspaceReplicationSourceOffer,
   type SessionHandoffWorkspaceReplicationMetadata,
-  type PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers,
 } from '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter';
 import { readSessionHandoffWorkspaceReplicationManifestFromFile } from '../../session/handoff/workspace/sessionHandoffWorkspaceReplicationManifestTransfer';
 import {
+  createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope,
+  parseSessionHandoffWorkspaceDirectPeerBlobPackTransferId,
+} from '../../session/handoff/workspace/sessionHandoffWorkspaceReplicationDirectPeer';
+import {
   parseSessionHandoffWorkspaceManifestTransferId,
   buildSessionHandoffWorkspaceManifestTransferId,
+  parseSessionHandoffWorkspaceBlobPackOpenBody,
 } from '../../session/handoff/workspace/sessionHandoffWorkspaceReplicationServerRouted';
 import { createSessionHandoffWorkspaceReplicationManifestPayloadSource } from '../../session/handoff/workspace/sessionHandoffWorkspaceReplicationManifestTransfer';
-import type { ScmSourceControllerWorkspaceExportArtifacts } from '../../scm/sourceController/workspaceExportArtifacts';
 import {
   createSessionHandoffPrepareTargetJobStore,
   type SessionHandoffPrepareTargetJobRecord,
   type SessionHandoffPrepareTargetJobRecordInput,
 } from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import {
-  createWorkspaceReplicationJobStore,
-  type WorkspaceReplicationJobRecord,
-} from '../../workspaces/replication/jobs/workspaceReplicationJobStore';
+  assertSafeWorkspaceReplicationPackId,
+  createWorkspaceReplicationPackIdForDigests,
+} from '../../workspaces/replication/transport/workspaceReplicationPackId';
+import { createWorkspaceReplicationCasStore } from '../../workspaces/replication/cas/workspaceReplicationCasStore';
+import { createWorkspaceReplicationBaselineStore } from '../../workspaces/replication/baseline/workspaceReplicationBaselineStore';
+import { createWorkspaceReplicationSourceOfferFromManifest } from '../../workspaces/replication/transport/createWorkspaceReplicationSourceOffer';
+import { assertWorkspaceReplicationDigestsAllowedByManifest } from '../../workspaces/replication/transport/workspaceReplicationAllowedDigests';
 import {
   releaseSessionHandoffPrepareTargetJobLease,
   resolveSessionHandoffPrepareTargetJobLeaseTtlMs,
@@ -94,8 +105,11 @@ import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { SessionHandoffProviderBundle } from '../../session/handoff/types';
 import type { WorkspaceExportBlobProvider } from '../../scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
 import { compareWorkspaceManifests } from '../../scm/sourceController/workspaceExportPackaging/compareWorkspaceManifests';
-const SESSION_HANDOFF_TRANSFER_ID_PREFIX = 'session-handoff:';
 const PREPARE_JOB_FAST_PATH_BUDGET_MS = 250;
+// Status polling can race against the background prepare runner acquiring its durable lease and
+// writing the runner heartbeat marker. Avoid incorrectly flipping a freshly (re)started job into
+// `awaiting_recovery` in that window.
+const PREPARE_TARGET_JOB_RECOVERY_GRACE_MAX_MS = 2_000;
 
 type StoredHandoffState = Readonly<{
   status: SessionHandoffStatus;
@@ -103,10 +117,19 @@ type StoredHandoffState = Readonly<{
   targetMachineId?: string;
   workspaceBlobProvider?: WorkspaceExportBlobProvider;
   providerBundlePayloadSource?: TransferPayloadSource;
+  directPeerPayloadSources?: readonly Readonly<{
+    transferId: string;
+    payloadSource: TransferPayloadSource;
+  }>[];
   handoffMetadataV2?: SessionHandoffMetadataV2;
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
-  workspaceReplicationDirectPeerPayloadSources?: PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers['payloadSources'];
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
+}>;
+
+type SessionHandoffExportBundleResult = Readonly<{
+  providerBundle: SessionHandoffProviderBundle;
+  targetPath: string;
+  blobProvider?: WorkspaceExportBlobProvider;
 }>;
 
 export type SessionHandoffDirectPeerTransferHandle = Readonly<{
@@ -123,24 +146,6 @@ export type SessionHandoffDirectPeerTransferHandle = Readonly<{
   }>) => Promise<Readonly<{ destinationPath: string }>>;
   clearPublishedTransfer: (transferId: string) => void;
 }>;
-
-function resolveStoredProviderBundlePayloadSource(current?: StoredHandoffState): TransferPayloadSource | null {
-  return current?.providerBundlePayloadSource ?? null;
-}
-
-function resolvePersistedWorkspaceBlobProvider(params: Readonly<{
-  current?: StoredHandoffState;
-  blobProvider?: WorkspaceExportBlobProvider;
-}>): WorkspaceExportBlobProvider | undefined {
-  return params.blobProvider ?? params.current?.workspaceBlobProvider;
-}
-
-function resolvePersistedHandoffMetadataV2(params: Readonly<{
-  current?: StoredHandoffState;
-  handoffMetadataV2?: SessionHandoffMetadataV2;
-}>): SessionHandoffMetadataV2 | undefined {
-  return params.handoffMetadataV2 ?? params.current?.handoffMetadataV2;
-}
 
 function invalidRequest() {
   return { ok: false, errorCode: 'invalid_request' } as const;
@@ -192,8 +197,16 @@ function isMachineTransferTimeoutErrorMessage(message: string): boolean {
   return message.startsWith('Timed out waiting for machine transfer ');
 }
 
-function buildPrepareJobId(): string {
-  return `prepare_${randomUUID()}`;
+function buildPrepareJobId(handoffId: string): string {
+  // Prepare-target jobs should be stable per handoff so concurrent daemons contend on the same
+  // lease key (avoid double-import when no durable job record exists yet).
+  return `prepare_${handoffId}`;
+}
+
+function buildSourceExportOnlyPrepareJobId(handoffId: string): string {
+  // Source-only (export/abort/source_cleanup) flows can still publish terminal status durably by
+  // using a deterministic synthetic job id.
+  return `source_${handoffId}`;
 }
 
 function isTerminalHandoffStatus(status: SessionHandoffStatus): boolean {
@@ -232,7 +245,7 @@ function buildPreparePendingStatus(input: Readonly<{
 }
 
 function mapWorkspaceReplicationJobCheckpointToHandoffCheckpoint(
-  checkpoint: WorkspaceReplicationJobRecord['status']['checkpoint'],
+  checkpoint: string,
 ): NonNullable<SessionHandoffStatus['progress']>['checkpoint'] {
   switch (checkpoint) {
     case 'job_created':
@@ -254,7 +267,19 @@ function mapWorkspaceReplicationJobCheckpointToHandoffCheckpoint(
 
 function mergeWorkspaceReplicationProgressIntoHandoffStatus(params: Readonly<{
   baseStatus: SessionHandoffStatus;
-  job: WorkspaceReplicationJobRecord;
+  job: Readonly<{
+    updatedAtMs: number;
+    status: Readonly<{
+      checkpoint: string;
+      phase: string;
+      progressCounters: Readonly<{
+        plannedFiles: number;
+        plannedBytes: number;
+        transferredFiles: number;
+        transferredBytes: number;
+      }>;
+    }>;
+  }>;
 }>): SessionHandoffStatus {
   const baseProgress = params.baseStatus.progress;
   const counters = params.job.status.progressCounters;
@@ -361,16 +386,8 @@ function buildPrepareJobRecord(input: Readonly<{
 
 async function readPersistedPrepareJob(params: Readonly<{
   handoffId: string;
-  current?: StoredHandoffState;
   jobStore: ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 }>): Promise<SessionHandoffPrepareTargetJobRecord | null> {
-  const currentJobId = params.current?.status.jobId;
-  if (currentJobId) {
-    const currentJob = await params.jobStore.read(currentJobId);
-    if (currentJob) {
-      return currentJob;
-    }
-  }
   return await params.jobStore.findByHandoffId(params.handoffId);
 }
 
@@ -397,6 +414,10 @@ async function requestServerRoutedPrepareProviderBundle(params: Readonly<{
 }>): Promise<SessionHandoffProviderBundle> {
   const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-provider-server-routed-'));
   const payloadFilePath = join(temporaryDirectory, 'provider-bundle.json');
+  const timeoutMs =
+    typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
+      ? configuration.filesTransferSessionTtlMs
+      : undefined;
 
   try {
     await requestServerRoutedTransferToFile({
@@ -404,6 +425,7 @@ async function requestServerRoutedPrepareProviderBundle(params: Readonly<{
       sourceMachineId: params.sourceMachineId,
       machineTransferChannel: params.machineTransferChannel,
       destinationPath: payloadFilePath,
+      ...(timeoutMs ? { timeoutMs } : {}),
     });
     return await readSessionHandoffProviderBundleFile(payloadFilePath);
   } finally {
@@ -412,25 +434,14 @@ async function requestServerRoutedPrepareProviderBundle(params: Readonly<{
 }
 
 async function resolvePrepareProviderBundle(params: Readonly<{
-  current?: StoredHandoffState;
   request: SessionHandoffPrepareTargetRequest;
   actualTransportStrategy: SessionHandoffPrepareTargetRequest['negotiatedTransportStrategy'];
-  providerBundlePayloadSource?: TransferPayloadSource;
   handoffMetadataV2?: SessionHandoffMetadataV2;
   machineTransferChannel?: Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['machineTransferChannel'];
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
   transferRouteCache?: ReturnType<typeof createMachineTransferRouteCache>;
 }>): Promise<SessionHandoffProviderBundle | undefined> {
-  if (params.providerBundlePayloadSource?.kind === 'file') {
-    return await readSessionHandoffProviderBundleFile(params.providerBundlePayloadSource.filePath);
-  }
-  if (params.current?.providerBundlePayloadSource?.kind === 'file') {
-    return await readSessionHandoffProviderBundleFile(params.current.providerBundlePayloadSource.filePath);
-  }
-
-  const transferPublication =
-    params.handoffMetadataV2?.providerBundleTransferPublication
-    ?? params.current?.handoffMetadataV2?.providerBundleTransferPublication;
+  const transferPublication = params.handoffMetadataV2?.providerBundleTransferPublication;
   if (!transferPublication) {
     if (params.actualTransportStrategy === 'server_routed_stream' && params.machineTransferChannel) {
       return await requestServerRoutedPrepareProviderBundle({
@@ -441,7 +452,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
     }
     return undefined;
   }
-  const transferEndpointCandidates = transferPublication.endpointCandidates;
+  const transferEndpointCandidates = transferPublication.endpointCandidates ?? params.request.endpointCandidates;
   const allowServerRoutedFallback = params.request.allowServerRoutedFallback !== false;
   const canFallbackToServerRouted = allowServerRoutedFallback && params.machineTransferChannel !== undefined;
 
@@ -527,7 +538,6 @@ async function resolvePrepareProviderBundle(params: Readonly<{
 }
 
 async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
-  current?: StoredHandoffState;
   request: SessionHandoffPrepareTargetRequest;
   actualTransportStrategy: SessionHandoffPrepareTargetRequest['negotiatedTransportStrategy'];
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
@@ -535,10 +545,6 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
   machineTransferChannel?: Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['machineTransferChannel'];
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
 }>): Promise<SessionHandoffWorkspaceReplicationMetadata | undefined> {
-  if (params.current?.workspaceReplicationMetadata) {
-    return params.current.workspaceReplicationMetadata;
-  }
-
   if (params.workspaceTransfer?.enabled !== true) {
     return undefined;
   }
@@ -559,11 +565,16 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
         const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-manifest-server-routed-'));
         const payloadFilePath = join(temporaryDirectory, 'workspace-manifest.txt');
         try {
+          const timeoutMs =
+            typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
+              ? configuration.filesTransferSessionTtlMs
+              : undefined;
           const received = await requestServerRoutedTransferToFile({
             transferId: transferPublication.transferId,
             sourceMachineId: params.request.sourceMachineId,
             machineTransferChannel,
             destinationPath: payloadFilePath,
+            ...(timeoutMs ? { timeoutMs } : {}),
           });
           return await readSessionHandoffWorkspaceReplicationManifestFromFile({
             transferId: transferPublication.transferId,
@@ -576,7 +587,14 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
       })()
       : params.actualTransportStrategy === 'direct_peer'
         ? await (async (): Promise<WorkspaceManifest> => {
-          const endpointCandidates = transferPublication.endpointCandidates;
+          const endpointCandidates =
+            transferPublication.endpointCandidates
+            ?? (params.request.endpointCandidates.length
+              ? rewriteDirectPeerEndpointCandidatesForTransferId({
+                  endpointCandidates: params.request.endpointCandidates,
+                  transferId: transferPublication.transferId,
+                })
+              : undefined);
           const requestedFilePayload = params.directPeerTransfer?.requestPayloadFile;
           if (!endpointCandidates?.length || !requestedFilePayload) {
             throw new Error(`Direct peer transfer is unavailable for ${transferPublication.transferId}`);
@@ -584,6 +602,10 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
           const filteredEndpointCandidates = endpointCandidates.filter((candidate) => candidate.expiresAt >= Date.now());
           const allowServerRoutedFallback = params.request.allowServerRoutedFallback !== false;
           const canFallbackToServerRouted = allowServerRoutedFallback && params.machineTransferChannel !== undefined;
+          const timeoutMs =
+            typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
+              ? configuration.filesTransferSessionTtlMs
+              : undefined;
           if (filteredEndpointCandidates.length === 0) {
             if (canFallbackToServerRouted && params.machineTransferChannel) {
               const temporaryServerRoutedDirectory =
@@ -595,6 +617,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
                   sourceMachineId: params.request.sourceMachineId,
                   machineTransferChannel: params.machineTransferChannel,
                   destinationPath: serverRoutedPath,
+                  ...(timeoutMs ? { timeoutMs } : {}),
                 });
                 return await readSessionHandoffWorkspaceReplicationManifestFromFile({
                   transferId: transferPublication.transferId,
@@ -634,6 +657,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
                     sourceMachineId: params.request.sourceMachineId,
                     machineTransferChannel: params.machineTransferChannel,
                     destinationPath: serverRoutedPath,
+                    ...(timeoutMs ? { timeoutMs } : {}),
                   });
                   return await readSessionHandoffWorkspaceReplicationManifestFromFile({
                     transferId: transferPublication.transferId,
@@ -668,10 +692,9 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   loadSessionMetadata?: (sessionId: string) => Promise<Record<string, unknown> | null>;
   stopSessionForHandoff?: (sessionId: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
-  exportSessionBundle?: (metadata: Record<string, unknown>, workspaceTransfer?: SessionHandoffWorkspaceTransfer) => Promise<Readonly<{
+  exportSessionBundle?: (metadata: Record<string, unknown>) => Promise<Readonly<{
     providerBundle: SessionHandoffProviderBundle;
     targetPath: string;
-    workspaceExportArtifacts?: ScmSourceControllerWorkspaceExportArtifacts;
     blobProvider?: WorkspaceExportBlobProvider;
   }>>;
   importSessionBundle?: (bundle: SessionHandoffProviderBundle, targetPath: string, sessionStorageMode: 'direct' | 'persisted') => Promise<Readonly<{
@@ -683,21 +706,19 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   machineTransferChannel?: MachineTransferChannel;
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
 }>): void {
-  const store = new Map<string, StoredHandoffState>();
   const prepareJobStore = createSessionHandoffPrepareTargetJobStore({
     activeServerDir: configuration.activeServerDir,
   });
-  const workspaceReplicationJobStore = createWorkspaceReplicationJobStore({
+  const sourceExportStore = createSessionHandoffSourceExportStore({
     activeServerDir: configuration.activeServerDir,
   });
   const activePrepareJobs = new Map<string, Promise<void>>();
   const prepareTargetJobLeaseOwnerId = `cli-daemon:${process.pid}:${randomUUID()}`;
   const prepareTargetJobLeaseTtlMs = resolveSessionHandoffPrepareTargetJobLeaseTtlMs();
-  type PreparedStartedHandoffState = Awaited<ReturnType<typeof prepareStartedHandoffState>>;
-  // When we acknowledge start before source export completes (server-routed cross-daemon),
-  // transfer responders must be able to await the eventual prepared state to avoid
-  // transient not-found failures for manifest/blob-pack/provider-bundle payloads.
-  const activeSourcePrepareStates = new Map<string, Promise<PreparedStartedHandoffState>>();
+  const prepareTargetJobRecoveryGraceMs = Math.min(
+    PREPARE_TARGET_JOB_RECOVERY_GRACE_MAX_MS,
+    Math.max(250, Math.floor(prepareTargetJobLeaseTtlMs / 4)),
+  );
   const { rpcHandlerManager } = params;
   const transferRouteCache = createMachineTransferRouteCache({
     serverId: configuration.activeServerId,
@@ -705,6 +726,121 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   const workspaceReplicationAdapter = createSessionHandoffWorkspaceReplicationAdapter();
   const workspaceReplicationTransfers = workspaceReplicationAdapter.createReplicationTransfers();
   const ephemeralServerRoutedPayloadSources = new Map<string, TransferPayloadSource>();
+
+  const maybeRecoverPrepareTargetJobMissingRunner = async (
+    job: SessionHandoffPrepareTargetJobRecord,
+  ): Promise<SessionHandoffPrepareTargetJobRecord> => {
+    if (
+      job.status.phase !== 'staging_target'
+      || (job.status.status !== 'pending' && job.status.status !== 'in_progress')
+    ) {
+      return job;
+    }
+    // If this daemon has an active in-memory runner, trust it and avoid any lease probing.
+    if (activePrepareJobs.has(job.jobId)) {
+      return job;
+    }
+
+    const nowMs = Date.now();
+    if (job.updatedAtMs + prepareTargetJobRecoveryGraceMs > nowMs) {
+      // Give the prepare runner time to acquire/renew its durable lease after a (re)start.
+      return job;
+    }
+    const probeOwnerId = `status-probe:${process.pid}:${randomUUID()}`;
+    const leaseAttempt = await tryAcquireSessionHandoffPrepareTargetJobLease({
+      activeServerDir: configuration.activeServerDir,
+      jobId: job.jobId,
+      ownerId: probeOwnerId,
+      nowMs,
+      // Keep probe leases short so a crashed probe can't stall a real resume attempt.
+      ttlMs: 5_000,
+    });
+
+    if (!leaseAttempt.acquired) {
+      // Another daemon instance appears to hold the lease; keep the durable pending status.
+      return job;
+    }
+
+    await releaseSessionHandoffPrepareTargetJobLease({
+      activeServerDir: configuration.activeServerDir,
+      jobId: job.jobId,
+      ownerId: probeOwnerId,
+    }).catch(() => undefined);
+
+    // With no active lease owner, the daemon cannot make forward progress without a new PREPARE_TARGET
+    // request (request inputs are not persisted). Fail closed into recovery instead of reporting a
+    // status with no runner.
+    const recovered = await prepareJobStore.update(job.jobId, (current) => {
+      const { schemaVersion: _schemaVersion, ...rest } = current;
+      const previousProgress = rest.status.progress;
+      const nextProgress = previousProgress
+        ? {
+          ...previousProgress,
+          updatedAtMs: nowMs,
+          current: {
+            ...(previousProgress.current ?? {}),
+            phaseDetail: 'daemon_restart_missing_runner',
+          },
+        }
+        : previousProgress;
+
+      const recoveryMessage = 'Daemon restarted while the handoff prepare-target job was in progress';
+
+      if (rest.cancelRequestedAtMs) {
+        return {
+          ...rest,
+          updatedAtMs: nowMs,
+          abortedAtMs: rest.abortedAtMs ?? nowMs,
+          status: {
+            ...rest.status,
+            status: 'aborted',
+            ...(nextProgress ? { progress: nextProgress } : {}),
+          },
+          lastErrorMessage: rest.lastErrorMessage ?? recoveryMessage,
+        };
+      }
+
+      return {
+        ...rest,
+        updatedAtMs: nowMs,
+        failedAtMs: rest.failedAtMs ?? nowMs,
+        status: {
+          ...rest.status,
+          status: 'awaiting_recovery',
+          ...(nextProgress ? { progress: nextProgress } : {}),
+        },
+        lastErrorMessage: rest.lastErrorMessage ?? recoveryMessage,
+      };
+    });
+
+    return recovered ?? job;
+  };
+
+  const waitForPersistedSourceExport = async (
+    handoffId: string,
+    predicate: (record: NonNullable<Awaited<ReturnType<typeof sourceExportStore.load>>>) => boolean,
+  ): Promise<Awaited<ReturnType<typeof sourceExportStore.load>> | null> => {
+    const configuredTimeoutMs =
+      typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
+        ? configuration.filesTransferSessionTtlMs
+        : 30_000;
+    // Waiting for a source-export record is not the same as "session TTL". Keep this bounded so
+    // a misconfigured TTL can't block handoff/transfer paths for minutes/hours.
+    const timeoutMs = Math.min(30_000, configuredTimeoutMs);
+    const deadlineAtMs = Date.now() + timeoutMs;
+    let delayMs = 25;
+    while (Date.now() < deadlineAtMs) {
+      const record = await sourceExportStore.load(handoffId);
+      if (record && predicate(record)) {
+        return record;
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, delayMs);
+      });
+      delayMs = Math.min(500, Math.floor(delayMs * 1.5));
+    }
+    return null;
+  };
 
   const disposeEphemeralServerRoutedPayloadSourcesForHandoff = async (handoffId: string): Promise<void> => {
     for (const [transferId, payloadSource] of [...ephemeralServerRoutedPayloadSources.entries()]) {
@@ -718,12 +854,6 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       }
       ephemeralServerRoutedPayloadSources.delete(transferId);
       await disposeTransferPayloadSource(payloadSource).catch(() => undefined);
-    }
-  };
-  const disposeDirectPeerWorkspacePayloadSources = async (current?: StoredHandoffState): Promise<void> => {
-    for (const publishedPayloadSource of current?.workspaceReplicationDirectPeerPayloadSources ?? []) {
-      params.directPeerTransfer?.clearPublishedTransfer(publishedPayloadSource.transferId);
-      await disposeTransferPayloadSource(publishedPayloadSource.payloadSource).catch(() => undefined);
     }
   };
   const loadRemoteSessionMetadata =
@@ -758,13 +888,12 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       ...(sourceMachineId ? { preferredLocalExportMachineId: sourceMachineId } : {}),
     });
   };
-  const exportSessionBundle =
+  const exportSessionBundle: (metadata: Record<string, unknown>) => Promise<SessionHandoffExportBundleResult> =
     params.exportSessionBundle ??
-    (async (metadata: Record<string, unknown>, workspaceTransfer?: SessionHandoffWorkspaceTransfer) => {
+    (async (metadata: Record<string, unknown>) => {
       return await exportSessionHandoffState({
         metadata,
         activeServerDir: configuration.activeServerDir,
-        workspaceTransfer,
       });
     });
   const importSessionBundle =
@@ -775,178 +904,297 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         targetPath,
         sessionStorageMode,
       }));
-  const shouldDeferSourcePreparation = (request: SessionHandoffStartRequest): boolean =>
-    params.machineTransferChannel !== undefined
-    && request.sourceMachineId !== request.targetMachineId
-    && (
-      request.negotiatedTransportStrategy === 'server_routed_stream'
-      || request.negotiatedTransportStrategy === 'direct_peer'
-    )
-    && request.workspaceTransfer?.enabled === true;
-  const prepareStartedHandoffState = async (input: Readonly<{
-    handoffId: string;
-    request: SessionHandoffStartRequest;
-    metadata: Record<string, unknown>;
-    sourceStopState: 'stopped' | 'already_inactive';
-  }>): Promise<Readonly<{
-    targetPath: string;
-    endpointCandidates: readonly TransferEndpointCandidate[];
-    nextState: StoredHandoffState;
-    providerBundlePayloadSource?: TransferPayloadSource;
-    directPeerWorkspacePayloadSources?: PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers['payloadSources'];
-  }>> => {
-    let providerBundlePayloadSource: TransferPayloadSource | null = null;
-    let publishedWorkspaceDirectPeerTransfers: PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers | null = null;
-    let providerBundleTransferPublication: SessionHandoffProviderBundleTransferPublication | null = null;
-
-    try {
-      const exported = await exportSessionBundle(input.metadata, input.request.workspaceTransfer);
-      providerBundlePayloadSource = await createSessionHandoffProviderBundlePayloadSource(exported.providerBundle);
-      const providerBundleTransferId = buildSessionHandoffProviderBundleTransferId(input.handoffId);
-      const providerBundleEndpointCandidates =
-        input.request.negotiatedTransportStrategy === 'direct_peer' && params.directPeerTransfer
-          ? [...params.directPeerTransfer.publishTransfer({
-            transferId: providerBundleTransferId,
-            payload: {},
-            payloadSource: providerBundlePayloadSource,
-          })]
-          : [];
-      providerBundleTransferPublication = {
-        transferId: providerBundleTransferId,
-        sizeBytes: await resolveTransferPayloadSizeBytes(providerBundlePayloadSource),
-        manifestHash: await resolveTransferPayloadManifestHash(providerBundlePayloadSource),
-        ...(providerBundleEndpointCandidates.length > 0
-          ? { endpointCandidates: providerBundleEndpointCandidates }
-          : {}),
-      };
-      const preparedWorkspaceTransfer = await workspaceReplicationAdapter.prepareSourceWorkspaceTransfer({
-        handoffId: input.handoffId,
-        activeServerDir: configuration.activeServerDir,
-        negotiatedTransportStrategy: input.request.negotiatedTransportStrategy,
-        workspaceTransfer: input.request.workspaceTransfer,
-        directPeerTransfer: params.directPeerTransfer,
-        sourceRootPath: exported.targetPath,
-        blobProvider: exported.blobProvider,
-        ...(exported.workspaceExportArtifacts
-          ? { workspaceExportArtifacts: exported.workspaceExportArtifacts }
-          : {}),
-        ...(providerBundleTransferPublication
-          ? { providerBundleTransferPublication }
-          : {}),
-      });
-      const handoffMetadataV2 = preparedWorkspaceTransfer.handoffMetadataV2;
-      publishedWorkspaceDirectPeerTransfers =
-        preparedWorkspaceTransfer.publishedWorkspaceDirectPeerTransfers ?? null;
-      const status = buildStartPendingStatus({
-        handoffId: input.handoffId,
-        sourceStopState: input.sourceStopState,
-      });
-
-      return {
-        targetPath: exported.targetPath,
-        endpointCandidates: [],
-        ...(providerBundlePayloadSource ? { providerBundlePayloadSource } : {}),
-        ...(publishedWorkspaceDirectPeerTransfers
-          ? { directPeerWorkspacePayloadSources: publishedWorkspaceDirectPeerTransfers.payloadSources }
-          : {}),
-        nextState: {
-          status,
-          sourceMachineId: input.request.sourceMachineId,
-          targetMachineId: input.request.targetMachineId,
-          ...(handoffMetadataV2 ? { handoffMetadataV2 } : {}),
-          ...(preparedWorkspaceTransfer.workspaceReplicationMetadata
-            ? { workspaceReplicationMetadata: preparedWorkspaceTransfer.workspaceReplicationMetadata }
-            : {}),
-          ...(exported.blobProvider ? { workspaceBlobProvider: exported.blobProvider } : {}),
-          ...(providerBundlePayloadSource ? { providerBundlePayloadSource } : {}),
-          ...(publishedWorkspaceDirectPeerTransfers
-            ? { workspaceReplicationDirectPeerPayloadSources: publishedWorkspaceDirectPeerTransfers.payloadSources }
-            : {}),
-          workspaceTransfer: input.request.workspaceTransfer,
-        },
-      };
-    } catch (error) {
-      if (providerBundleTransferPublication?.endpointCandidates?.length) {
-        params.directPeerTransfer?.clearPublishedTransfer(providerBundleTransferPublication.transferId);
-      }
-      await disposeTransferPayloadSource(providerBundlePayloadSource);
-      if (publishedWorkspaceDirectPeerTransfers) {
-        for (const publishedPayloadSource of publishedWorkspaceDirectPeerTransfers.payloadSources) {
-          params.directPeerTransfer?.clearPublishedTransfer(publishedPayloadSource.transferId);
-          await disposeTransferPayloadSource(publishedPayloadSource.payloadSource).catch(() => undefined);
-        }
-      }
-      throw error;
+  const shouldDeferSourcePreparation = (request: SessionHandoffStartRequest): boolean => {
+    const crossMachine = request.sourceMachineId !== request.targetMachineId;
+    const workspaceEnabled = request.workspaceTransfer?.enabled === true;
+    if (!crossMachine || !workspaceEnabled) {
+      return false;
     }
+
+    const negotiated = request.negotiatedTransportStrategy;
+    const isSupportedNegotiated =
+      negotiated === undefined
+      || negotiated === 'server_routed_stream'
+      || negotiated === 'direct_peer';
+    if (!isSupportedNegotiated) {
+      return false;
+    }
+
+    const canUseServerRouted =
+      params.machineTransferChannel !== undefined
+      && request.preferredTransportStrategies.includes('server_routed_stream');
+    const canUseDirectPeer =
+      params.directPeerTransfer !== undefined
+      && request.preferredTransportStrategies.includes('direct_peer')
+      && (negotiated === undefined || negotiated === 'direct_peer');
+
+    return canUseServerRouted || canUseDirectPeer;
   };
+	  const prepareStartedHandoffState = async (input: Readonly<{
+	    handoffId: string;
+	    request: SessionHandoffStartRequest;
+	    metadata: Record<string, unknown>;
+	    sourceStopState: 'stopped' | 'already_inactive';
+	    preExportedProviderBundle?: Readonly<{
+	      providerBundle: SessionHandoffProviderBundle;
+	      targetPath: string;
+	      providerBundlePayloadSource?: TransferPayloadSource;
+	      providerBundleTransferPublication?: SessionHandoffProviderBundleTransferPublication;
+	    }>;
+	  }>): Promise<Readonly<{
+	    targetPath: string;
+	    endpointCandidates: readonly TransferEndpointCandidate[];
+	    nextState: StoredHandoffState;
+	    providerBundlePayloadSource?: TransferPayloadSource;
+			  }>> => {
+		    let providerBundlePayloadSource: TransferPayloadSource | null =
+		      input.preExportedProviderBundle?.providerBundlePayloadSource ?? null;
+		    let providerBundleTransferPublication: SessionHandoffProviderBundleTransferPublication | null =
+		      input.preExportedProviderBundle?.providerBundleTransferPublication ?? null;
 
-  if (params.machineTransferChannel) {
-    registerServerRoutedTransferResponder({
-      machineTransferChannel: params.machineTransferChannel,
-      loadTransferPayloadSource: async (transferId) => {
-        const cachedPayloadSource = ephemeralServerRoutedPayloadSources.get(transferId);
-      if (cachedPayloadSource) {
-        return cachedPayloadSource;
-      }
+			    try {
+			      const exported = input.preExportedProviderBundle
+			        ? {
+			            providerBundle: input.preExportedProviderBundle.providerBundle,
+			            targetPath: input.preExportedProviderBundle.targetPath,
+		          }
+		        : await exportSessionBundle(input.metadata);
 
-        const workspaceBlobPackTransfer = parseSessionHandoffWorkspaceBlobPackTransferId(transferId);
-        if (workspaceBlobPackTransfer) {
-          let current = store.get(workspaceBlobPackTransfer.handoffId);
-          if (!current || !current.workspaceReplicationMetadata || !current.workspaceBlobProvider) {
-            const pending = activeSourcePrepareStates.get(workspaceBlobPackTransfer.handoffId);
-            if (pending) {
-              await pending.catch(() => undefined);
-              current = store.get(workspaceBlobPackTransfer.handoffId);
+          const persistedProviderBundle = await sourceExportStore.writeProviderBundleFile({
+            handoffId: input.handoffId,
+            providerBundle: exported.providerBundle,
+          });
+
+			      providerBundlePayloadSource =
+			        providerBundlePayloadSource ?? createFileTransferPayloadSource({
+                filePath: persistedProviderBundle.filePath,
+                sizeBytes: persistedProviderBundle.sizeBytes,
+                manifestHash: persistedProviderBundle.manifestHash,
+              });
+
+			      const providerBundleEndpointCandidates: TransferEndpointCandidate[] =
+			        input.request.negotiatedTransportStrategy === 'direct_peer' && params.directPeerTransfer
+			          ? (
+			              providerBundleTransferPublication?.endpointCandidates?.length
+			                ? [...providerBundleTransferPublication.endpointCandidates]
+			                : [...params.directPeerTransfer.publishTransfer({
+			                    transferId: persistedProviderBundle.transferId,
+			                    payload: {},
+			                    payloadSource: providerBundlePayloadSource,
+			                  })]
+			            )
+			          : [];
+
+	      providerBundleTransferPublication = {
+	        transferId: persistedProviderBundle.transferId,
+	        sizeBytes: persistedProviderBundle.sizeBytes,
+	        manifestHash: persistedProviderBundle.manifestHash,
+	        ...(providerBundleEndpointCandidates.length > 0
+	          ? { endpointCandidates: providerBundleEndpointCandidates }
+	          : {}),
+	      };
+
+		      const preparedWorkspaceTransfer = await workspaceReplicationAdapter.prepareSourceWorkspaceTransfer({
+		        handoffId: input.handoffId,
+		        activeServerDir: configuration.activeServerDir,
+		        negotiatedTransportStrategy: input.request.negotiatedTransportStrategy,
+		        workspaceTransfer: input.request.workspaceTransfer,
+		        directPeerTransfer: params.directPeerTransfer,
+		        sourceRootPath: exported.targetPath,
+		        providerBundleTransferPublication: providerBundleTransferPublication,
+		      });
+
+		      const workspaceReplicationMetadata = preparedWorkspaceTransfer.workspaceReplicationMetadata;
+		      const workspaceBlobProvider = preparedWorkspaceTransfer.workspaceBlobProvider;
+		      const workspaceTransferEnabled = input.request.workspaceTransfer?.enabled === true;
+          if (workspaceTransferEnabled && workspaceReplicationMetadata && workspaceBlobProvider) {
+            const casStore = createWorkspaceReplicationCasStore({
+              activeServerDir: configuration.activeServerDir,
+            });
+            const uniqueDigests = new Set<string>();
+            for (const entry of workspaceReplicationMetadata.manifest.entries) {
+              if (entry.kind !== 'file') continue;
+              if (uniqueDigests.has(entry.digest)) continue;
+              uniqueDigests.add(entry.digest);
+              if (await casStore.contains(entry.digest)) continue;
+              const blobPath = workspaceBlobProvider.getBlobFilePath(entry.digest);
+              if (!blobPath) {
+                throw new Error(`Missing workspace replication blob for digest ${entry.digest}`);
+              }
+              await casStore.commitFile({
+                digest: entry.digest,
+                sourcePath: blobPath,
+              });
             }
           }
-          if (!current || !current.workspaceReplicationMetadata) {
-            return null;
-          }
-          const payloadSource = await createSessionHandoffWorkspaceReplicationBlobPackPayloadSource({
-            activeServerDir: configuration.activeServerDir,
-            packId: workspaceBlobPackTransfer.packId,
-            digests: workspaceBlobPackTransfer.digests,
-            blobProvider: current.workspaceBlobProvider,
+          const persistedWorkspaceManifest =
+            workspaceTransferEnabled && workspaceReplicationMetadata
+              ? await sourceExportStore.writeWorkspaceReplicationManifestFile({
+                handoffId: input.handoffId,
+                manifest: workspaceReplicationMetadata.manifest,
+              })
+              : undefined;
+
+          await sourceExportStore.save({
+            handoffId: input.handoffId,
+            sessionId: input.request.sessionId,
+            sourceMachineId: input.request.sourceMachineId,
+            targetMachineId: input.request.targetMachineId,
+            exportedAtMs: Date.now(),
+            ...(workspaceReplicationMetadata?.sourceRootPath
+              ? { workspaceSourceRootPath: workspaceReplicationMetadata.sourceRootPath }
+              : { workspaceSourceRootPath: exported.targetPath }),
+            providerBundle: persistedProviderBundle,
+            ...(persistedWorkspaceManifest ? { workspaceManifest: persistedWorkspaceManifest } : {}),
           });
-          ephemeralServerRoutedPayloadSources.set(transferId, payloadSource);
-          return payloadSource;
-        }
+
+			      const handoffMetadataV2: SessionHandoffMetadataV2 | undefined =
+			        providerBundleTransferPublication || preparedWorkspaceTransfer.handoffMetadataV2
+			          ? {
+			              ...(providerBundleTransferPublication ? { providerBundleTransferPublication } : {}),
+			              ...(preparedWorkspaceTransfer.handoffMetadataV2?.workspaceReplicationSourceRootPath
+			                ? { workspaceReplicationSourceRootPath: preparedWorkspaceTransfer.handoffMetadataV2.workspaceReplicationSourceRootPath }
+			                : { workspaceReplicationSourceRootPath: exported.targetPath }),
+			              ...(preparedWorkspaceTransfer.handoffMetadataV2?.workspaceReplicationManifestTransferPublication
+			                ? { workspaceReplicationManifestTransferPublication: preparedWorkspaceTransfer.handoffMetadataV2.workspaceReplicationManifestTransferPublication }
+			                : (workspaceTransferEnabled
+			                    ? { workspaceReplicationManifestTransferPublication: { transferId: buildSessionHandoffWorkspaceManifestTransferId({ handoffId: input.handoffId }) } }
+			                    : {})),
+			              ...(workspaceReplicationMetadata?.sourceControllerMetadata
+			                ? { workspaceReplicationSourceControllerMetadata: workspaceReplicationMetadata.sourceControllerMetadata }
+			                : {}),
+			            }
+			          : undefined;
+
+	      const status = buildStartPendingStatus({
+	        handoffId: input.handoffId,
+	        sourceStopState: input.sourceStopState,
+      });
+
+		        return {
+		        targetPath: exported.targetPath,
+		        endpointCandidates: [],
+		        ...(providerBundlePayloadSource ? { providerBundlePayloadSource } : {}),
+		          nextState: {
+		            status,
+		            sourceMachineId: input.request.sourceMachineId,
+		            targetMachineId: input.request.targetMachineId,
+		            ...(handoffMetadataV2 ? { handoffMetadataV2 } : {}),
+		            ...(preparedWorkspaceTransfer.workspaceReplicationMetadata
+		              ? { workspaceReplicationMetadata: preparedWorkspaceTransfer.workspaceReplicationMetadata }
+		              : {}),
+		          ...(workspaceBlobProvider ? { workspaceBlobProvider } : {}),
+		          ...(providerBundlePayloadSource ? { providerBundlePayloadSource } : {}),
+		            workspaceTransfer: input.request.workspaceTransfer,
+		        },
+		      };
+			    } catch (error) {
+			      if (providerBundleTransferPublication?.endpointCandidates?.length) {
+			        params.directPeerTransfer?.clearPublishedTransfer(providerBundleTransferPublication.transferId);
+			      }
+			      await disposeTransferPayloadSource(providerBundlePayloadSource);
+			      throw error;
+			    }
+			  };
+
+	  if (params.machineTransferChannel) {
+	    registerServerRoutedTransferResponder({
+	      machineTransferChannel: params.machineTransferChannel,
+	      loadTransferPayloadSource: async (request) => {
+	        const transferId = request.transferId;
+	        const cachedPayloadSource = ephemeralServerRoutedPayloadSources.get(transferId);
+	      if (cachedPayloadSource) {
+	        return cachedPayloadSource;
+	      }
+
+	        const workspaceBlobPackTransfer = parseSessionHandoffWorkspaceBlobPackTransferId(transferId);
+	        if (workspaceBlobPackTransfer) {
+	          const openBody = parseSessionHandoffWorkspaceBlobPackOpenBody(request.openPayload);
+	          if (!openBody || openBody.packId !== workspaceBlobPackTransfer.packId) {
+	            throw new ServerRoutedInvalidOpenRequestError('Invalid workspace blob-pack open payload');
+	          }
+              const persistedSourceExport = await waitForPersistedSourceExport(
+                workspaceBlobPackTransfer.handoffId,
+                (record) => Boolean(record.workspaceManifest),
+              );
+              if (!persistedSourceExport?.workspaceManifest) {
+                return null;
+              }
+
+              const manifest: WorkspaceManifest = await readSessionHandoffWorkspaceReplicationManifestFromFile({
+                transferId: persistedSourceExport.workspaceManifest.transferId,
+                filePath: persistedSourceExport.workspaceManifest.filePath,
+                sizeBytes: persistedSourceExport.workspaceManifest.sizeBytes,
+              });
+
+		          assertWorkspaceReplicationDigestsAllowedByManifest(manifest, openBody.digests);
+	              const derivedBlobProvider: WorkspaceExportBlobProvider | undefined =
+	                persistedSourceExport?.workspaceSourceRootPath
+	                  ? {
+	                      getBlobFilePath: (digest) => {
+	                        const sourceRootPath = persistedSourceExport?.workspaceSourceRootPath;
+	                        if (!sourceRootPath) {
+	                          return null;
+	                        }
+	                        const fileEntry = manifest?.entries.find(
+	                          (entry): entry is Extract<WorkspaceManifest['entries'][number], { kind: 'file' }> =>
+	                            entry.kind === 'file' && entry.digest === digest,
+	                        );
+	                        if (!fileEntry) return null;
+	                        const rel = String(fileEntry.relativePath ?? '').trim();
+	                        if (!rel || rel.startsWith('/') || rel.startsWith('\\') || rel.includes('..')) {
+	                          return null;
+	                        }
+	                        return join(sourceRootPath, rel);
+	                      },
+	                    }
+	                  : undefined;
+		          const payloadSource = await createSessionHandoffWorkspaceReplicationBlobPackPayloadSource({
+		            activeServerDir: configuration.activeServerDir,
+		            packId: workspaceBlobPackTransfer.packId,
+		            digests: openBody.digests,
+		            ...(derivedBlobProvider ? { blobProvider: derivedBlobProvider } : {}),
+	          });
+	          // Do not cache: the responder owns disposal for blob-pack payload sources, and cache reuse
+	          // can cause retries to attempt reusing a disposed file handle/path.
+	          return payloadSource;
+	        }
 
         const workspaceManifestTransfer = parseSessionHandoffWorkspaceManifestTransferId(transferId);
         if (workspaceManifestTransfer) {
-          let current = store.get(workspaceManifestTransfer.handoffId);
-          if (!current || !current.workspaceReplicationMetadata) {
-            const pending = activeSourcePrepareStates.get(workspaceManifestTransfer.handoffId);
-            if (pending) {
-              await pending.catch(() => undefined);
-              current = store.get(workspaceManifestTransfer.handoffId);
-            }
+          const persisted = await waitForPersistedSourceExport(
+            workspaceManifestTransfer.handoffId,
+            (record) => Boolean(record.workspaceManifest),
+          );
+          if (persisted?.workspaceManifest) {
+            const payloadSource = createFileTransferPayloadSource({
+              filePath: persisted.workspaceManifest.filePath,
+              sizeBytes: persisted.workspaceManifest.sizeBytes,
+              manifestHash: persisted.workspaceManifest.manifestHash,
+            });
+            ephemeralServerRoutedPayloadSources.set(transferId, payloadSource);
+            return payloadSource;
           }
-          const workspaceReplicationMetadata = current?.workspaceReplicationMetadata;
-          if (!workspaceReplicationMetadata) {
-            return null;
-          }
-          const payloadSource = await createSessionHandoffWorkspaceReplicationManifestPayloadSource({
-            manifest: workspaceReplicationMetadata.manifest,
-          });
-          ephemeralServerRoutedPayloadSources.set(transferId, payloadSource);
-          return payloadSource;
+          return null;
         }
 
-        const providerBundleTransfer = parseSessionHandoffProviderBundleTransferId(transferId);
-        if (providerBundleTransfer) {
-          let current = store.get(providerBundleTransfer.handoffId);
-          if (!current || !current.providerBundlePayloadSource) {
-            const pending = activeSourcePrepareStates.get(providerBundleTransfer.handoffId);
-            if (pending) {
-              await pending.catch(() => undefined);
-              current = store.get(providerBundleTransfer.handoffId);
-            }
+	        const providerBundleTransfer = parseSessionHandoffProviderBundleTransferId(transferId);
+	        if (providerBundleTransfer) {
+          const persisted = await waitForPersistedSourceExport(
+            providerBundleTransfer.handoffId,
+            (record) => Boolean(record.providerBundle),
+          );
+          if (persisted?.providerBundle) {
+            return createFileTransferPayloadSource({
+              filePath: persisted.providerBundle.filePath,
+              sizeBytes: persisted.providerBundle.sizeBytes,
+              manifestHash: persisted.providerBundle.manifestHash,
+            });
           }
-          return resolveStoredProviderBundlePayloadSource(current);
-        }
-        return null;
-      },
+          return null;
+	        }
+	        return null;
+	      },
     });
   }
 
@@ -978,83 +1226,227 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     }
 
     const handoffId = `handoff_${randomUUID()}`;
-    const sourceStopState = params.stopSessionForHandoff
-      ? await params.stopSessionForHandoff(parsed.data.sessionId)
-      : 'already_inactive';
-    if (sourceStopState === 'failed') {
+    const shouldDefer = shouldDeferSourcePreparation(parsed.data);
+    const sourceStopState =
+      shouldDefer
+        ? 'already_inactive'
+        : (params.stopSessionForHandoff
+          ? await params.stopSessionForHandoff(parsed.data.sessionId)
+          : 'already_inactive');
+    if (!shouldDefer && sourceStopState === 'failed') {
       return {
         ok: false,
         errorCode: 'source_stop_failed',
         error: 'Failed to stop the active source session before handoff cutover',
       } as const;
     }
-    const pendingStatus = buildStartPendingStatus({
-      handoffId,
-      sourceStopState,
-    });
-	    if (shouldDeferSourcePreparation(parsed.data)) {
-	      const targetPath = resolveSessionHandoffTargetPathFromMetadata(metadata);
-	      if (!targetPath) {
-        return {
-          ok: false,
-          errorCode: 'source_export_failed',
-          error: 'Session path is unavailable for handoff',
-	        } as const;
-	      }
-		      const deferredHandoffMetadataV2: SessionHandoffMetadataV2 | undefined =
-		        parsed.data.workspaceTransfer?.enabled === true
-		          ? {
-		              workspaceReplicationSourceRootPath: targetPath,
-		              workspaceReplicationManifestTransferPublication: {
-		                transferId: buildSessionHandoffWorkspaceManifestTransferId({ handoffId }),
-		              },
-		            }
-		          : undefined;
+		    const pendingStatus = buildStartPendingStatus({
+		      handoffId,
+		      sourceStopState: sourceStopState === 'failed' ? 'already_inactive' : sourceStopState,
+		    });
+			    if (shouldDefer) {
+			      const targetPath = resolveSessionHandoffTargetPathFromMetadata(metadata);
+			      if (!targetPath) {
+		        return {
+		          ok: false,
+		          errorCode: 'source_export_failed',
+		          error: 'Session path is unavailable for handoff',
+		        } as const;
+		      }
 
-	      store.set(handoffId, {
-	        status: pendingStatus,
-	        sourceMachineId: parsed.data.sourceMachineId,
-	        targetMachineId: parsed.data.targetMachineId,
-	        ...(deferredHandoffMetadataV2 ? { handoffMetadataV2: deferredHandoffMetadataV2 } : {}),
-	        workspaceTransfer: parsed.data.workspaceTransfer,
-	      });
+			      // Persist a minimal durable marker so `status.get` can immediately report "pending"
+			      // for deferred handoffs (instead of racing to `not_found` before export writes).
+			      await sourceExportStore.save({
+			        handoffId,
+              sessionId: parsed.data.sessionId,
+			        sourceMachineId: parsed.data.sourceMachineId,
+			        targetMachineId: parsed.data.targetMachineId,
+			        exportedAtMs: Date.now(),
+			        workspaceSourceRootPath: targetPath,
+			      });
 
-      const sourcePreparePromise = prepareStartedHandoffState({
-        handoffId,
-        request: parsed.data,
-        metadata,
-        sourceStopState,
-      });
-      activeSourcePrepareStates.set(handoffId, sourcePreparePromise);
-	      void sourcePreparePromise.then(async (prepared) => {
-	        activeSourcePrepareStates.delete(handoffId);
-	        const current = store.get(handoffId);
-	        if (current?.status.status === 'aborted') {
-	          await disposeTransferPayloadSource(prepared.providerBundlePayloadSource);
-	          if (prepared.directPeerWorkspacePayloadSources) {
-	            for (const publishedPayloadSource of prepared.directPeerWorkspacePayloadSources) {
-	              params.directPeerTransfer?.clearPublishedTransfer(publishedPayloadSource.transferId);
-              await disposeTransferPayloadSource(publishedPayloadSource.payloadSource).catch(() => undefined);
-            }
-          }
-          return;
-        }
-        store.set(handoffId, prepared.nextState);
-      }).catch((error) => {
-        activeSourcePrepareStates.delete(handoffId);
-        const current = store.get(handoffId);
-        if (current?.status.status === 'aborted') {
-          return;
-        }
-        const status = buildStartRecoveryStatus(handoffId);
-        store.set(handoffId, {
-          ...(current ?? {}),
-          status,
-          sourceMachineId: parsed.data.sourceMachineId,
-          targetMachineId: parsed.data.targetMachineId,
-          workspaceTransfer: parsed.data.workspaceTransfer,
-        });
-      });
+			      const isDirectPeerDeferredStart =
+			        parsed.data.negotiatedTransportStrategy === 'direct_peer'
+			        && parsed.data.preferredTransportStrategies.includes('direct_peer')
+			        && params.directPeerTransfer !== undefined
+		        // If server-routed fallback is available, do not block start() on direct-peer publications.
+		        // Prepare-target can fall back to server-routed until the async export finishes.
+		        && !(params.machineTransferChannel !== undefined
+		          && parsed.data.preferredTransportStrategies.includes('server_routed_stream'));
+
+		      let preExportedProviderBundle:
+		        | {
+		            providerBundle: SessionHandoffProviderBundle;
+		            targetPath: string;
+		            providerBundlePayloadSource: TransferPayloadSource;
+		            providerBundleTransferPublication: SessionHandoffProviderBundleTransferPublication;
+		          }
+		        | undefined;
+
+	      const deferredHandoffMetadataV2: SessionHandoffMetadataV2 | undefined =
+	        parsed.data.workspaceTransfer?.enabled === true
+	          ? {
+	              workspaceReplicationSourceRootPath: targetPath,
+	              workspaceReplicationManifestTransferPublication: {
+	                transferId: buildSessionHandoffWorkspaceManifestTransferId({ handoffId }),
+	              },
+	            }
+	          : undefined;
+
+		      if (isDirectPeerDeferredStart) {
+		        const exported = await exportSessionBundle(metadata);
+            const persistedProviderBundle = await sourceExportStore.writeProviderBundleFile({
+              handoffId,
+              providerBundle: exported.providerBundle,
+            });
+		        const providerBundlePayloadSource = createFileTransferPayloadSource({
+              filePath: persistedProviderBundle.filePath,
+              sizeBytes: persistedProviderBundle.sizeBytes,
+              manifestHash: persistedProviderBundle.manifestHash,
+            });
+	        const providerBundleTransferId = persistedProviderBundle.transferId;
+	        const providerBundleSizeBytes = persistedProviderBundle.sizeBytes;
+	        const providerBundleManifestHash = persistedProviderBundle.manifestHash;
+	        const manifestTransferId = buildSessionHandoffWorkspaceManifestTransferId({ handoffId });
+
+            await sourceExportStore.save({
+              handoffId,
+              sessionId: parsed.data.sessionId,
+              sourceMachineId: parsed.data.sourceMachineId,
+              targetMachineId: parsed.data.targetMachineId,
+              exportedAtMs: Date.now(),
+              workspaceSourceRootPath: exported.targetPath,
+              providerBundle: persistedProviderBundle,
+            });
+
+	        let cachedWorkspaceScope: DirectPeerOnDemandTransferScope | null = null;
+	        const carrierCandidates = [
+	          ...params.directPeerTransfer.publishTransfer({
+	            transferId: providerBundleTransferId,
+	            payload: {},
+	            payloadSource: providerBundlePayloadSource,
+	            onDemandScope: {
+	              allowTransferId: (transferId) => {
+	                if (transferId === manifestTransferId) {
+	                  return true;
+	                }
+	                const parsed = parseSessionHandoffWorkspaceDirectPeerBlobPackTransferId(transferId);
+	                return parsed?.handoffId === handoffId;
+	              },
+		              resolvePayloadSourceOnOpen: async ({ transferId, requestBody }) => {
+		                if (!cachedWorkspaceScope) {
+                      const persisted = await waitForPersistedSourceExport(
+                        handoffId,
+                        (record) => Boolean(record.workspaceManifest),
+                      );
+                      if (!persisted?.workspaceManifest) {
+                        throw new Error('Direct peer transfer not ready');
+                      }
+
+                      const manifest = await readSessionHandoffWorkspaceReplicationManifestFromFile({
+                        transferId: persisted.workspaceManifest.transferId,
+                        filePath: persisted.workspaceManifest.filePath,
+                        sizeBytes: persisted.workspaceManifest.sizeBytes,
+                      });
+
+                      const workspaceSourceRootPath = persisted.workspaceSourceRootPath;
+                      const derivedBlobProvider: WorkspaceExportBlobProvider | undefined =
+                        workspaceSourceRootPath
+                          ? {
+                              getBlobFilePath: (digest) => {
+                                const entry = manifest.entries.find(
+                                  (candidate): candidate is Extract<WorkspaceManifest['entries'][number], { kind: 'file' }> =>
+                                    candidate.kind === 'file' && candidate.digest === digest,
+                                );
+                                if (!entry) return null;
+                                const rel = String(entry.relativePath ?? '').trim();
+                                if (!rel || rel.startsWith('/') || rel.startsWith('\\') || rel.includes('..')) {
+                                  return null;
+                                }
+                                return join(workspaceSourceRootPath, rel);
+                              },
+                            }
+                          : undefined;
+
+		                  cachedWorkspaceScope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
+		                    handoffId,
+		                    activeServerDir: configuration.activeServerDir,
+		                    manifest,
+		                    ...(derivedBlobProvider ? { blobProvider: derivedBlobProvider } : {}),
+		                  });
+		                }
+		                return await cachedWorkspaceScope.resolvePayloadSourceOnOpen({
+		                  transferId,
+		                  requestBody,
+	                });
+	              },
+	            },
+	          }),
+	        ];
+
+	        const manifestEndpointCandidates =
+	          parsed.data.workspaceTransfer?.enabled === true
+	            ? rewriteDirectPeerEndpointCandidatesForTransferId({
+	                endpointCandidates: carrierCandidates,
+	                transferId: manifestTransferId,
+	              })
+	            : undefined;
+
+		        preExportedProviderBundle = {
+		          providerBundle: exported.providerBundle,
+		          targetPath: exported.targetPath,
+		          providerBundlePayloadSource,
+		          providerBundleTransferPublication: {
+		            transferId: providerBundleTransferId,
+		            sizeBytes: providerBundleSizeBytes,
+	            manifestHash: providerBundleManifestHash,
+	            endpointCandidates: carrierCandidates,
+	          },
+	        };
+
+		        if (deferredHandoffMetadataV2) {
+		          deferredHandoffMetadataV2.providerBundleTransferPublication = preExportedProviderBundle.providerBundleTransferPublication;
+		          if (manifestEndpointCandidates?.length) {
+		            deferredHandoffMetadataV2.workspaceReplicationManifestTransferPublication = {
+		              ...(deferredHandoffMetadataV2.workspaceReplicationManifestTransferPublication ?? { transferId: manifestTransferId }),
+		              endpointCandidates: manifestEndpointCandidates,
+		            };
+		          }
+		        }
+		      }
+
+		      void (async () => {
+		        const actualSourceStopState =
+		          params.stopSessionForHandoff
+		            ? await params.stopSessionForHandoff(parsed.data.sessionId)
+		            : 'already_inactive';
+		        if (actualSourceStopState === 'failed') {
+		          throw new Error('Failed to stop the active source session before handoff cutover');
+		        }
+		        await prepareStartedHandoffState({
+		          handoffId,
+		          request: parsed.data,
+		          metadata,
+		          sourceStopState: actualSourceStopState,
+		          ...(preExportedProviderBundle ? { preExportedProviderBundle } : {}),
+		        });
+		      })().catch((error) => {
+		        const nowMs = Date.now();
+		        const jobId = `start_${handoffId}`;
+		        const errorMessage = error instanceof Error ? error.message : 'Failed to export session handoff state';
+		        void prepareJobStore.write({
+		          jobId,
+		          handoffId,
+		          createdAtMs: nowMs,
+		          updatedAtMs: nowMs,
+		          failedAtMs: nowMs,
+		          lastErrorMessage: errorMessage,
+		          status: {
+		            ...buildStartRecoveryStatus(handoffId),
+		            jobId,
+		          },
+		        }).catch(() => undefined);
+		      });
 
 	      return {
 	        handoffId,
@@ -1066,13 +1458,20 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	    }
 
     try {
+      if (sourceStopState === 'failed') {
+        // Unreachable: non-deferred start returns above on stop failure.
+        return {
+          ok: false,
+          errorCode: 'source_stop_failed',
+          error: 'Failed to stop the active source session before handoff cutover',
+        } as const;
+      }
       const prepared = await prepareStartedHandoffState({
         handoffId,
         request: parsed.data,
         metadata,
         sourceStopState,
       });
-      store.set(handoffId, prepared.nextState);
 
       return {
         handoffId,
@@ -1091,12 +1490,6 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         } as const;
       }
       const status = buildStartRecoveryStatus(handoffId);
-      store.set(handoffId, {
-        status,
-        sourceMachineId: parsed.data.sourceMachineId,
-        targetMachineId: parsed.data.targetMachineId,
-        workspaceTransfer: parsed.data.workspaceTransfer,
-      });
       return {
         ok: false,
         errorCode: 'source_export_failed',
@@ -1111,35 +1504,23 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     const parsed = SessionHandoffPrepareTargetRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
-    const current = store.get(parsed.data.handoffId);
-    let persistedBlobProvider = resolvePersistedWorkspaceBlobProvider({
-      current,
-    });
-    let persistedProviderBundlePayloadSource = current?.providerBundlePayloadSource;
     const persistedJob = await readPersistedPrepareJob({
       handoffId: parsed.data.handoffId,
-      current,
       jobStore: prepareJobStore,
     });
     if (persistedJob?.prepareTargetResult) {
-      store.set(parsed.data.handoffId, {
-        ...(current ?? {}),
-        status: persistedJob.status,
-        ...(persistedBlobProvider ? { workspaceBlobProvider: persistedBlobProvider } : {}),
-        ...(persistedProviderBundlePayloadSource ? { providerBundlePayloadSource: persistedProviderBundlePayloadSource } : {}),
-        workspaceTransfer: current?.workspaceTransfer ?? parsed.data.workspaceTransfer,
-      });
       return persistedJob.prepareTargetResult;
+    }
+    if (persistedJob && isTerminalHandoffStatus(persistedJob.status)) {
+      return {
+        handoffId: parsed.data.handoffId,
+        status: persistedJob.status,
+      };
     }
     if (persistedJob && !isTerminalHandoffStatus(persistedJob.status)) {
       // If we already have an in-flight runner, return the durable status as-is.
       // Otherwise continue below: we'll restart the job runner against the existing job record.
       if (activePrepareJobs.has(persistedJob.jobId)) {
-        store.set(parsed.data.handoffId, {
-          ...(current ?? {}),
-          status: persistedJob.status,
-          workspaceTransfer: current?.workspaceTransfer ?? parsed.data.workspaceTransfer,
-        });
         return {
           handoffId: parsed.data.handoffId,
           status: persistedJob.status,
@@ -1147,8 +1528,9 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       }
     }
 
-    const jobId = persistedJob?.jobId ?? buildPrepareJobId();
-    const createdAtMs = persistedJob?.createdAtMs ?? Date.now();
+    const jobId = persistedJob?.jobId ?? buildPrepareJobId(parsed.data.handoffId);
+    const pendingUpdatedAtMs = Date.now();
+    const createdAtMs = persistedJob?.createdAtMs ?? pendingUpdatedAtMs;
     let workspaceReplicationJobId: string | undefined = persistedJob?.workspaceReplicationJobId;
     const isRestartingPersistedJob = Boolean(
       persistedJob
@@ -1159,7 +1541,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       handoffId: parsed.data.handoffId,
       jobId,
       transportStrategy: parsed.data.negotiatedTransportStrategy,
-      recoveryActions: current?.status.recoveryActions ?? [],
+      recoveryActions: [],
       phaseDetail: isRestartingPersistedJob ? 'resuming_after_restart' : 'importing_workspace',
     });
     let actualTransportStrategy = parsed.data.negotiatedTransportStrategy;
@@ -1178,27 +1560,24 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           }
           : jobRecord;
       await prepareJobStore.write(mergedJobRecord);
-      const previous = store.get(parsed.data.handoffId) ?? current;
-      store.set(parsed.data.handoffId, {
-        ...(previous ?? {}),
-        status: jobRecord.status,
-        ...(persistedBlobProvider ? { workspaceBlobProvider: persistedBlobProvider } : {}),
-        ...(persistedProviderBundlePayloadSource ? { providerBundlePayloadSource: persistedProviderBundlePayloadSource } : {}),
-        workspaceTransfer: current?.workspaceTransfer ?? parsed.data.workspaceTransfer,
-      });
     };
 
     await persistJobRecord(buildPrepareJobRecord({
       jobId,
       handoffId: parsed.data.handoffId,
       createdAtMs,
+      updatedAtMs: pendingUpdatedAtMs,
       status: pendingStatus,
     }));
 
     const existingActiveJob = activePrepareJobs.get(jobId);
-    const runJob =
-      existingActiveJob
-      ?? (async () => {
+    let runJob = existingActiveJob;
+    if (!runJob) {
+      runJob = (async () => {
+        let leaseAcquired = false;
+        let leaseHeartbeat: Readonly<{ stop: () => Promise<void> }> | null = null;
+
+        try {
         const assertPrepareJobNotCancelled = async (): Promise<void> => {
           const latestJob = await prepareJobStore.read(jobId);
           if (latestJob?.cancelRequestedAtMs) {
@@ -1217,7 +1596,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           return;
         }
 
-        const leaseHeartbeat = startSessionHandoffPrepareTargetJobLeaseHeartbeat({
+        leaseAcquired = true;
+        leaseHeartbeat = startSessionHandoffPrepareTargetJobLeaseHeartbeat({
           activeServerDir: configuration.activeServerDir,
           jobId,
           ownerId: prepareTargetJobLeaseOwnerId,
@@ -1243,24 +1623,36 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             }));
             return;
           }
-          const resolvedWorkspaceTransfer = parsed.data.workspaceTransfer ?? current?.workspaceTransfer;
+          const resolvedWorkspaceTransfer = parsed.data.workspaceTransfer;
           actualTransportStrategy = parsed.data.negotiatedTransportStrategy;
           const requestHandoffMetadataV2 = parsed.data.handoffMetadataV2;
-          const requestResolvedHandoffMetadataV2 = resolvePersistedHandoffMetadataV2({
-            current,
-            handoffMetadataV2: requestHandoffMetadataV2,
-          });
+          const requestResolvedHandoffMetadataV2 = requestHandoffMetadataV2;
+          const localSourceExport = await sourceExportStore.load(parsed.data.handoffId);
+          const localProviderBundle =
+            localSourceExport?.providerBundle
+              ? await readSessionHandoffProviderBundleFile(localSourceExport.providerBundle.filePath).catch(() => null)
+              : null;
+          const localWorkspaceReplicationMetadata =
+            localSourceExport?.workspaceManifest && localSourceExport.workspaceSourceRootPath
+              ? {
+                  sourceRootPath: localSourceExport.workspaceSourceRootPath,
+                  manifest: await readSessionHandoffWorkspaceReplicationManifestFromFile({
+                    transferId: localSourceExport.workspaceManifest.transferId,
+                    filePath: localSourceExport.workspaceManifest.filePath,
+                    sizeBytes: localSourceExport.workspaceManifest.sizeBytes,
+                  }),
+                }
+              : undefined;
 
           const allowServerRoutedFallback = parsed.data.allowServerRoutedFallback !== false;
           const canFallbackToServerRouted = allowServerRoutedFallback && params.machineTransferChannel !== undefined;
 
-          const hasStoredProviderBundlePayloadSource = current?.providerBundlePayloadSource?.kind === 'file';
           const hasProviderBundleTransferPublication =
             requestResolvedHandoffMetadataV2?.providerBundleTransferPublication !== undefined;
           if (
             actualTransportStrategy === 'direct_peer'
-            && !hasStoredProviderBundlePayloadSource
             && !hasProviderBundleTransferPublication
+            && !localProviderBundle
           ) {
             if (canFallbackToServerRouted) {
               // Direct-peer starts can be deferred (to avoid socket ack timeouts) which means the
@@ -1271,12 +1663,14 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             }
           }
 
-          const needsWorkspaceReplicationMetadata =
-            resolvedWorkspaceTransfer?.enabled === true && !current?.workspaceReplicationMetadata;
+          const needsWorkspaceReplicationMetadata = resolvedWorkspaceTransfer?.enabled === true;
           if (needsWorkspaceReplicationMetadata) {
             if (
-              requestResolvedHandoffMetadataV2?.workspaceReplicationSourceRootPath === undefined
-              || requestResolvedHandoffMetadataV2?.workspaceReplicationManifestTransferPublication === undefined
+              !localWorkspaceReplicationMetadata
+              && (
+                requestResolvedHandoffMetadataV2?.workspaceReplicationSourceRootPath === undefined
+                || requestResolvedHandoffMetadataV2?.workspaceReplicationManifestTransferPublication === undefined
+              )
             ) {
               throw new Error(missingHandoffMetadataV2().error);
             }
@@ -1286,19 +1680,28 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             const directPeerRequester = params.directPeerTransfer?.requestPayloadFile;
             const providerEndpointCandidates =
               requestResolvedHandoffMetadataV2?.providerBundleTransferPublication?.endpointCandidates;
+            const providerCandidatesFallback = providerEndpointCandidates ?? parsed.data.endpointCandidates;
             const manifestEndpointCandidates =
-              requestResolvedHandoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates;
+              requestResolvedHandoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates
+              ?? (parsed.data.endpointCandidates.length
+                ? rewriteDirectPeerEndpointCandidatesForTransferId({
+                    endpointCandidates: parsed.data.endpointCandidates,
+                    transferId:
+                      requestResolvedHandoffMetadataV2?.workspaceReplicationManifestTransferPublication?.transferId
+                      ?? buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }),
+                  })
+                : undefined);
 
             const nowMs = Date.now();
             const hasUsableProviderEndpointCandidates =
-              Array.isArray(providerEndpointCandidates)
-              && providerEndpointCandidates.some((candidate) => candidate.expiresAt >= nowMs);
+              Array.isArray(providerCandidatesFallback)
+              && providerCandidatesFallback.some((candidate) => candidate.expiresAt >= nowMs);
             const hasUsableManifestEndpointCandidates =
               Array.isArray(manifestEndpointCandidates)
               && manifestEndpointCandidates.some((candidate) => candidate.expiresAt >= nowMs);
 
             const canUseDirectPeerForProviderBundle =
-              hasStoredProviderBundlePayloadSource
+              Boolean(localProviderBundle)
               || (
                 typeof directPeerRequester === 'function'
                 && hasUsableProviderEndpointCandidates
@@ -1306,6 +1709,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             const canUseDirectPeerForWorkspaceManifest =
               resolvedWorkspaceTransfer?.enabled !== true
               || !needsWorkspaceReplicationMetadata
+              || Boolean(localWorkspaceReplicationMetadata)
               || (
                 typeof directPeerRequester === 'function'
                 && hasUsableManifestEndpointCandidates
@@ -1321,35 +1725,31 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           }
 
           providerBundleTransferPublication = requestResolvedHandoffMetadataV2?.providerBundleTransferPublication ?? null;
-          const resolvedProviderBundle = await resolvePrepareProviderBundle({
-            current,
-            request: parsed.data,
-            actualTransportStrategy,
-            handoffMetadataV2: requestResolvedHandoffMetadataV2,
-            machineTransferChannel: params.machineTransferChannel,
-            directPeerTransfer: params.directPeerTransfer,
-            transferRouteCache,
-          });
+          const resolvedProviderBundle =
+            localProviderBundle
+            ?? await resolvePrepareProviderBundle({
+              request: parsed.data,
+              actualTransportStrategy,
+              handoffMetadataV2: requestResolvedHandoffMetadataV2,
+              machineTransferChannel: params.machineTransferChannel,
+              directPeerTransfer: params.directPeerTransfer,
+              transferRouteCache,
+            });
           if (!resolvedProviderBundle) {
             throw new Error('Invalid session handoff provider bundle');
           }
           providerBundle = resolvedProviderBundle;
-          persistedProviderBundlePayloadSource =
-            current?.providerBundlePayloadSource
-            ?? await createSessionHandoffProviderBundlePayloadSource(providerBundle);
-          const persistedHandoffMetadataV2 = resolvePersistedHandoffMetadataV2({
-            current,
-            ...(requestResolvedHandoffMetadataV2 ? { handoffMetadataV2: requestResolvedHandoffMetadataV2 } : {}),
-          });
-          const persistedWorkspaceReplicationMetadata = await resolvePrepareWorkspaceReplicationMetadata({
-            current,
-            request: parsed.data,
-            actualTransportStrategy,
-            workspaceTransfer: resolvedWorkspaceTransfer,
-            handoffMetadataV2: persistedHandoffMetadataV2,
-            machineTransferChannel: params.machineTransferChannel,
-            directPeerTransfer: params.directPeerTransfer,
-          });
+          const persistedHandoffMetadataV2 = requestResolvedHandoffMetadataV2;
+          const persistedWorkspaceReplicationMetadata =
+            localWorkspaceReplicationMetadata
+            ?? await resolvePrepareWorkspaceReplicationMetadata({
+              request: parsed.data,
+              actualTransportStrategy,
+              workspaceTransfer: resolvedWorkspaceTransfer,
+              handoffMetadataV2: persistedHandoffMetadataV2,
+              machineTransferChannel: params.machineTransferChannel,
+              directPeerTransfer: params.directPeerTransfer,
+            });
           const {
             currentTargetManifest,
             sourceOffer,
@@ -1365,7 +1765,6 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             metadata: persistedWorkspaceReplicationMetadata,
             directPeerManifestEndpointCandidates:
               persistedHandoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates,
-            persistedBlobProvider,
             machineTransferChannel: params.machineTransferChannel,
             transfers: workspaceReplicationTransfers,
             blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
@@ -1519,16 +1918,24 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             lastErrorMessage: error instanceof Error ? error.message : 'Failed to prepare handoff target',
             status: failedStatus,
           }));
+        }
         } finally {
-          await leaseHeartbeat.stop().catch(() => undefined);
-          await releaseSessionHandoffPrepareTargetJobLease({
-            activeServerDir: configuration.activeServerDir,
-            jobId,
-            ownerId: prepareTargetJobLeaseOwnerId,
-          }).catch(() => undefined);
-          activePrepareJobs.delete(jobId);
+          await leaseHeartbeat?.stop().catch(() => undefined);
+          if (leaseAcquired) {
+            await releaseSessionHandoffPrepareTargetJobLease({
+              activeServerDir: configuration.activeServerDir,
+              jobId,
+              ownerId: prepareTargetJobLeaseOwnerId,
+            }).catch(() => undefined);
+          }
+          // Only remove the in-memory runner if we still own the map entry. This prevents a
+          // completed/failed runner from deleting a newer replacement runner during restarts.
+          if (activePrepareJobs.get(jobId) === runJob) {
+            activePrepareJobs.delete(jobId);
+          }
         }
       })();
+    }
 
     activePrepareJobs.set(jobId, runJob);
 
@@ -1571,16 +1978,127 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     const parsed = SessionHandoffCommitRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
-    const current = store.get(parsed.data.handoffId);
+    const mode = parsed.data.mode ?? 'target';
     const persistedJob = await readPersistedPrepareJob({
       handoffId: parsed.data.handoffId,
-      current,
       jobStore: prepareJobStore,
     });
-    if (!current && !persistedJob) return { ok: false, errorCode: 'not_found' } as const;
+    const persistedSourceExport = !persistedJob
+      ? await sourceExportStore.load(parsed.data.handoffId)
+      : null;
+    const currentStatus = persistedJob?.status;
+    if (
+      mode === 'target'
+      && currentStatus
+      && currentStatus.status !== 'ready_for_cutover'
+      && currentStatus.status !== 'completed'
+    ) {
+      // Fail closed: commit is not safe while the target is still being prepared because the daemon
+      // would dispose transfer payload sources while the prepare job is still running.
+      return {
+        ok: false,
+        errorCode: 'not_ready',
+        error: 'Handoff target is not ready for cutover',
+        handoffId: parsed.data.handoffId,
+        status: currentStatus,
+      } as const;
+    }
+
+    if (mode === 'source_cleanup') {
+      if (persistedSourceExport?.sessionId && params.stopSessionForHandoff) {
+        try {
+          const stopResult = await params.stopSessionForHandoff(persistedSourceExport.sessionId);
+          if (stopResult === 'failed') {
+            return {
+              ok: false,
+              errorCode: 'source_stop_failed',
+              error: 'Failed to stop the active source session during handoff cleanup',
+              handoffId: parsed.data.handoffId,
+              ...(currentStatus ? { status: currentStatus } : {}),
+            } as const;
+          }
+        } catch (error) {
+          return {
+            ok: false,
+            errorCode: 'source_stop_failed',
+            error: error instanceof Error ? error.message : 'Failed to stop the active source session during handoff cleanup',
+            handoffId: parsed.data.handoffId,
+            ...(currentStatus ? { status: currentStatus } : {}),
+          } as const;
+        }
+      }
+
+      const normalizeReverseRootPath = (raw: unknown): string | null => {
+        const candidate = typeof raw === 'string' ? raw.trim() : '';
+        if (!candidate.startsWith('/')) return null;
+        if (candidate.includes('\0')) return null;
+        const segments = candidate.split('/').filter(Boolean);
+        if (segments.length === 0) return null;
+        if (segments.some((segment) => segment === '..')) return null;
+        return `/${segments.join('/')}`;
+      };
+
+      // `sync_changes` in one-way-safe mode requires a baseline for the (source->target) direction.
+      // After a successful cutover, persist the reverse-direction baseline locally so a subsequent
+      // “handoff back” can use `sync_changes` immediately without forcing a full snapshot transfer.
+      if (
+        persistedSourceExport?.workspaceManifest
+        && persistedSourceExport.sourceMachineId
+        && persistedSourceExport.targetMachineId
+      ) {
+        const reverseSourceRootPath = normalizeReverseRootPath(parsed.data.workspaceReplicationReverseSourceRootPath);
+        const reverseTargetRootPath = normalizeReverseRootPath(parsed.data.workspaceReplicationReverseTargetRootPath);
+        if (reverseSourceRootPath && reverseTargetRootPath) {
+          const reverseScope = {
+            sourceMachineId: persistedSourceExport.targetMachineId,
+            sourceWorkspaceRoot: reverseSourceRootPath,
+            targetMachineId: persistedSourceExport.sourceMachineId,
+            targetWorkspaceRoot: reverseTargetRootPath,
+            mode: 'one_way_safe' as const,
+          };
+
+          // Canonicalize ordering + fingerprint so the saved baseline matches what the engine will
+          // compute when building offers from manifests later.
+          const manifest = await readSessionHandoffWorkspaceReplicationManifestFromFile({
+            transferId: persistedSourceExport.workspaceManifest.transferId,
+            filePath: persistedSourceExport.workspaceManifest.filePath,
+            sizeBytes: persistedSourceExport.workspaceManifest.sizeBytes,
+          });
+          const offer = await createWorkspaceReplicationSourceOfferFromManifest({
+            activeServerDir: configuration.activeServerDir,
+            source: {
+              machineId: reverseScope.sourceMachineId,
+              rootPath: reverseScope.sourceWorkspaceRoot,
+            },
+            target: {
+              machineId: reverseScope.targetMachineId,
+              rootPath: reverseScope.targetWorkspaceRoot,
+            },
+            mode: reverseScope.mode,
+            manifest,
+          });
+
+          const baselineStore = createWorkspaceReplicationBaselineStore({
+            activeServerDir: configuration.activeServerDir,
+          });
+          await baselineStore.save({
+            scope: reverseScope,
+            baseline: {
+              manifestFingerprint: offer.sourceFingerprint,
+              manifest: offer.manifest,
+              savedAtMs: Date.now(),
+            },
+          });
+        }
+      }
+    }
+
+    if (!persistedJob && !persistedSourceExport) {
+      return { ok: false, errorCode: 'not_found' } as const;
+    }
 
     const status: SessionHandoffStatus = {
-      ...(persistedJob?.status ?? current!.status),
+      ...(currentStatus ?? buildStartPendingStatus({ handoffId: parsed.data.handoffId, sourceStopState: 'already_inactive' })),
       status: 'completed',
       phase: 'finalizing',
     };
@@ -1600,19 +2118,23 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           },
         } : {}),
       }));
+    } else if (persistedSourceExport) {
+      const completedAtMs = Date.now();
+      const jobId = buildSourceExportOnlyPrepareJobId(parsed.data.handoffId);
+      const durableStatus: SessionHandoffStatus = { ...status, jobId };
+      await prepareJobStore.write(buildPrepareJobRecord({
+        jobId,
+        handoffId: parsed.data.handoffId,
+        createdAtMs: persistedSourceExport.exportedAtMs,
+        updatedAtMs: completedAtMs,
+        completedAtMs,
+        status: durableStatus,
+      }));
+      status.jobId = jobId;
     }
-    const providerBundleTransferPublication =
-      current?.handoffMetadataV2?.providerBundleTransferPublication;
-    if (providerBundleTransferPublication?.endpointCandidates?.length) {
-      params.directPeerTransfer?.clearPublishedTransfer(providerBundleTransferPublication.transferId);
-    }
-    await disposeDirectPeerWorkspacePayloadSources(current);
-    await disposeTransferPayloadSource(resolveStoredProviderBundlePayloadSource(current));
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
-    store.set(parsed.data.handoffId, {
-      ...(store.get(parsed.data.handoffId) ?? {}),
-      status,
-    });
+    params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
+    params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
     return { handoffId: parsed.data.handoffId, status };
   });
 
@@ -1620,13 +2142,12 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     const parsed = SessionHandoffAbortRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
-    const current = store.get(parsed.data.handoffId);
     const persistedJob = await readPersistedPrepareJob({
       handoffId: parsed.data.handoffId,
-      current,
       jobStore: prepareJobStore,
     });
-    if (!current && !persistedJob) return { ok: false, errorCode: 'not_found' } as const;
+    const persistedSourceExport = await sourceExportStore.load(parsed.data.handoffId);
+    if (!persistedJob && !persistedSourceExport) return { ok: false, errorCode: 'not_found' } as const;
 
     if (persistedJob?.workspaceReplicationJobId) {
       await workspaceReplicationAdapter.abortWorkspaceReplicationJob({
@@ -1649,6 +2170,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         cancelRequestedAtMs: persistedJob.cancelRequestedAtMs ?? abortedAtMs,
         abortedAtMs,
         workspaceReplicationJobId: persistedJob.workspaceReplicationJobId,
+        ...(persistedJob.failedAtMs ? { failedAtMs: persistedJob.failedAtMs } : {}),
+        ...(persistedJob.lastErrorMessage ? { lastErrorMessage: persistedJob.lastErrorMessage } : {}),
         status,
         ...(persistedJob.prepareTargetResult ? {
           prepareTargetResult: {
@@ -1657,30 +2180,33 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           },
         } : {}),
       }));
-      store.set(parsed.data.handoffId, {
-        ...(current ?? {}),
-        status,
-      });
     }
 
+    const baseStatus =
+      persistedJob?.status ?? buildStartPendingStatus({ handoffId: parsed.data.handoffId, sourceStopState: 'already_inactive' });
     const status: SessionHandoffStatus = {
-      ...(persistedJob?.status ?? current!.status),
+      ...baseStatus,
       status: 'aborted',
-      phase: (persistedJob?.status ?? current!.status).phase,
+      phase: baseStatus.phase,
     };
-    activeSourcePrepareStates.delete(parsed.data.handoffId);
-    const providerBundleTransferPublication =
-      current?.handoffMetadataV2?.providerBundleTransferPublication;
-    if (providerBundleTransferPublication?.endpointCandidates?.length) {
-      params.directPeerTransfer?.clearPublishedTransfer(providerBundleTransferPublication.transferId);
+    if (!persistedJob && persistedSourceExport) {
+      const abortedAtMs = Date.now();
+      const jobId = buildSourceExportOnlyPrepareJobId(parsed.data.handoffId);
+      const durableStatus: SessionHandoffStatus = { ...status, jobId };
+      await prepareJobStore.write(buildPrepareJobRecord({
+        jobId,
+        handoffId: parsed.data.handoffId,
+        createdAtMs: persistedSourceExport.exportedAtMs,
+        updatedAtMs: abortedAtMs,
+        cancelRequestedAtMs: abortedAtMs,
+        abortedAtMs,
+        status: durableStatus,
+      }));
+      status.jobId = jobId;
     }
-    await disposeDirectPeerWorkspacePayloadSources(current);
-    await disposeTransferPayloadSource(resolveStoredProviderBundlePayloadSource(current));
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
-    store.set(parsed.data.handoffId, {
-      ...(store.get(parsed.data.handoffId) ?? {}),
-      status,
-    });
+    params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
+    params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
     return { handoffId: parsed.data.handoffId, status };
   });
 
@@ -1688,12 +2214,13 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     const parsed = SessionHandoffStatusGetRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
-    const current = store.get(parsed.data.handoffId);
-    const persistedJob = await readPersistedPrepareJob({
+    let persistedJob = await readPersistedPrepareJob({
       handoffId: parsed.data.handoffId,
-      current,
       jobStore: prepareJobStore,
     });
+    if (persistedJob) {
+      persistedJob = await maybeRecoverPrepareTargetJobMissingRunner(persistedJob);
+    }
     if (persistedJob) {
       const baseStatus = persistedJob.status;
       if (
@@ -1701,7 +2228,10 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         && baseStatus.status === 'pending'
         && baseStatus.phase === 'staging_target'
       ) {
-        const job = await workspaceReplicationJobStore.read(persistedJob.workspaceReplicationJobId);
+        const job = await workspaceReplicationAdapter.readWorkspaceReplicationJobStatus({
+          activeServerDir: configuration.activeServerDir,
+          jobId: persistedJob.workspaceReplicationJobId,
+        });
         if (job) {
           return {
             handoffId: parsed.data.handoffId,
@@ -1714,22 +2244,60 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       }
       return { handoffId: parsed.data.handoffId, status: baseStatus };
     }
-    if (!current) return { ok: false, errorCode: 'not_found' } as const;
-
-    return { handoffId: parsed.data.handoffId, status: current.status };
+    const persistedSourceExport = await sourceExportStore.load(parsed.data.handoffId);
+    if (persistedSourceExport) {
+      return {
+        handoffId: parsed.data.handoffId,
+        status: buildStartPendingStatus({ handoffId: parsed.data.handoffId, sourceStopState: 'already_inactive' }),
+      };
+    }
+    return { ok: false, errorCode: 'not_found' } as const;
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET, async (raw: unknown) => {
     const parsed = SessionHandoffPrepareTargetResultGetRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
-    const persistedJob = await readPersistedPrepareJob({
+    let persistedJob = await readPersistedPrepareJob({
       handoffId: parsed.data.handoffId,
-      current: store.get(parsed.data.handoffId),
       jobStore: prepareJobStore,
     });
+    if (persistedJob) {
+      persistedJob = await maybeRecoverPrepareTargetJobMissingRunner(persistedJob);
+    }
     if (persistedJob?.prepareTargetResult) {
       return persistedJob.prepareTargetResult;
+    }
+    if (persistedJob) {
+      // Canonical contract: result-get returns the terminal ready payload. While the prepare
+      // job is still running, callers should poll `status.get` for progress. If the job has
+      // reached a terminal non-ready state (aborted/failed/awaiting_recovery), surface that
+      // explicitly so callers don't spin forever on `not_found`.
+      if (isTerminalHandoffStatus(persistedJob.status)) {
+        const statusCode = persistedJob.status.status;
+        // `ready_for_cutover` should always have a result payload, but fail closed if the record is corrupt.
+        if (statusCode === 'ready_for_cutover') {
+          return {
+            ok: false,
+            errorCode: 'awaiting_recovery',
+            error: persistedJob.lastErrorMessage ?? 'Prepare-target result missing for ready_for_cutover job',
+          } as const;
+        }
+        if (statusCode === 'completed') {
+          return {
+            ok: false,
+            errorCode: 'awaiting_recovery',
+            error: persistedJob.lastErrorMessage ?? 'Prepare-target job completed without a ready_for_cutover result',
+          } as const;
+        }
+        return {
+          ok: false,
+          errorCode: statusCode,
+          error: persistedJob.lastErrorMessage ?? `Prepare-target job is ${statusCode}`,
+        } as const;
+      }
+
+      return { ok: false, errorCode: 'not_found' } as const;
     }
     return { ok: false, errorCode: 'not_found' } as const;
   });

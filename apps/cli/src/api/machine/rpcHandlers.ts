@@ -56,7 +56,6 @@ import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft'
 import type {
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
-  SessionHandoffProviderBundle,
   TransferEndpointCandidate,
 } from '@happier-dev/protocol';
 import {
