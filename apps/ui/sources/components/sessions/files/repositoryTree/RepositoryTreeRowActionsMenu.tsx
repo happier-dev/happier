@@ -19,6 +19,7 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
     path: string;
     kind: 'file' | 'directory';
     disableWriteActions: boolean;
+    downloadActionsEnabled: boolean;
     onSelect: (itemId: RepositoryTreeRowActionMenuItemId) => void;
 }>) {
     const { theme } = useUnistyles();
@@ -50,18 +51,22 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
             return [
                 renameItem,
                 deleteItem,
-                {
-                    id: 'repository-tree-menuitem-download',
-                    title: t('files.repositoryTree.actions.download'),
-                    icon: 'download-outline',
-                    color: theme.colors.textSecondary,
-                },
-                {
-                    id: 'repository-tree-menuitem-zip',
-                    title: t('files.repositoryTree.actions.downloadAsZip'),
-                    icon: 'archive-outline',
-                    color: theme.colors.textSecondary,
-                },
+                ...(props.downloadActionsEnabled
+                    ? ([
+                        {
+                            id: 'repository-tree-menuitem-download',
+                            title: t('files.repositoryTree.actions.download'),
+                            icon: 'download-outline',
+                            color: theme.colors.textSecondary,
+                        },
+                        {
+                            id: 'repository-tree-menuitem-zip',
+                            title: t('files.repositoryTree.actions.downloadAsZip'),
+                            icon: 'archive-outline',
+                            color: theme.colors.textSecondary,
+                        },
+                    ] satisfies RepositoryTreeRowActionItem[])
+                    : []),
                 copyPathItem,
             ];
         }
@@ -69,15 +74,19 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
         return [
             renameItem,
             deleteItem,
-            {
-                id: 'repository-tree-menuitem-zip',
-                title: t('files.repositoryTree.actions.downloadAsZip'),
-                icon: 'archive-outline',
-                color: theme.colors.textSecondary,
-            },
+            ...(props.downloadActionsEnabled
+                ? ([
+                    {
+                        id: 'repository-tree-menuitem-zip',
+                        title: t('files.repositoryTree.actions.downloadAsZip'),
+                        icon: 'archive-outline',
+                        color: theme.colors.textSecondary,
+                    },
+                ] satisfies RepositoryTreeRowActionItem[])
+                : []),
             copyPathItem,
         ];
-    }, [props.disableWriteActions, props.kind, theme.colors.textSecondary]);
+    }, [props.disableWriteActions, props.downloadActionsEnabled, props.kind, theme.colors.textSecondary]);
 
     const safePath = React.useMemo(() => toTestIdSafeValue(props.path), [props.path]);
     const triggerId = `repository-tree-row-menu-${safePath}`;

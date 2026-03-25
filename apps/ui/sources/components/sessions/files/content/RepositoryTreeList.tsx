@@ -172,6 +172,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                             path={node.path}
                             kind={node.type}
                             disableWriteActions={!writeActionsEnabled}
+                            downloadActionsEnabled={props.onRequestDownload != null}
                             onSelect={(itemId: RepositoryTreeRowActionMenuItemId) => rowActions.onSelectRowMenuItem(actionTarget, itemId)}
                         />
                     );

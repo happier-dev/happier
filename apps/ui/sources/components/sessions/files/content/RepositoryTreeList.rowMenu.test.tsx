@@ -194,7 +194,7 @@ describe('RepositoryTreeList (row menu)', () => {
         setClipboardStringSafeSpy.mockResolvedValue(true);
     });
 
-    async function renderRepositoryTreeList() {
+    async function renderRepositoryTreeList(params: Readonly<{ downloadActionsAvailable?: boolean }> = {}) {
         const { RepositoryTreeList } = await import('./RepositoryTreeList');
 
         function Wrapper() {
@@ -203,6 +203,9 @@ describe('RepositoryTreeList (row menu)', () => {
                 <RepositoryTreeList
                     theme={theme}
                     sessionId="session-1"
+                    onRequestDownload={params.downloadActionsAvailable === false
+                        ? null
+                        : async () => ({ ok: true as const })}
                     expandedPaths={expandedPaths}
                     onExpandedPathsChange={setExpandedPaths}
                     onOpenFile={vi.fn()}
@@ -266,6 +269,35 @@ describe('RepositoryTreeList (row menu)', () => {
             'repository-tree-menuitem-rename',
             'repository-tree-menuitem-delete',
             'repository-tree-menuitem-zip',
+            'repository-tree-menuitem-copy-path',
+        ]);
+    });
+
+    it('omits download actions when file downloads are unavailable', async () => {
+        sessionListDirectorySpy.mockImplementation(async (_sessionId: string, path: string) => {
+            if (path !== '') return { success: true, entries: [] };
+            return {
+                success: true,
+                entries: [
+                    { name: 'src', type: 'directory' },
+                    { name: 'README.md', type: 'file' },
+                ],
+            };
+        });
+
+        const screen = await renderRepositoryTreeList({ downloadActionsAvailable: false });
+
+        const fileMenu = findRowActions(screen, 'README.md');
+        expect(fileMenu.props.actions.map((item: any) => item.id)).toEqual([
+            'repository-tree-menuitem-rename',
+            'repository-tree-menuitem-delete',
+            'repository-tree-menuitem-copy-path',
+        ]);
+
+        const directoryMenu = findRowActions(screen, 'src');
+        expect(directoryMenu.props.actions.map((item: any) => item.id)).toEqual([
+            'repository-tree-menuitem-rename',
+            'repository-tree-menuitem-delete',
             'repository-tree-menuitem-copy-path',
         ]);
     });
