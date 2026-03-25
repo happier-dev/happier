@@ -64,27 +64,37 @@ const ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES = 1024;
 // Direct-peer /open bodies should stay tiny (transfer metadata only). Keep the hard cap below a
 // page-sized JSON allocation so large requester-side bodies fail closed before any network work.
 const DIRECT_PEER_OPEN_BODY_HARD_MAX_BYTES = 64 * 1024;
+// Above this threshold, stream the JSON body instead of materializing one request buffer.
+const DIRECT_PEER_OPEN_BODY_STREAMING_THRESHOLD_BYTES = 8 * 1024;
 
 function encodeDirectPeerTransferPathKey(transferId: string): string {
   return Buffer.from(transferId, 'utf8').toString('base64url');
 }
 
-function decodeDirectPeerTransferPathKey(transferKey: string): string {
+const DIRECT_PEER_TRANSFER_ID_HARD_MAX_CHARS = 512;
+const BASE64URL_KEY_REGEX = /^[A-Za-z0-9_-]+$/;
+
+function decodeDirectPeerTransferPathKey(transferKey: string): string | null {
   const normalizedTransferKey = transferKey.trim();
   if (normalizedTransferKey.length === 0) {
-    return normalizedTransferKey;
+    return null;
+  }
+
+  // Fail closed: never accept legacy raw transfer ids in URL paths. Only allow canonical base64url keys.
+  if (!BASE64URL_KEY_REGEX.test(normalizedTransferKey)) {
+    return null;
   }
 
   try {
     const decoded = Buffer.from(normalizedTransferKey, 'base64url').toString('utf8');
-    if (decoded.length === 0) {
-      return normalizedTransferKey;
+    if (decoded.length === 0 || decoded.length > DIRECT_PEER_TRANSFER_ID_HARD_MAX_CHARS) {
+      return null;
     }
     return encodeDirectPeerTransferPathKey(decoded) === normalizedTransferKey
       ? decoded
-      : normalizedTransferKey;
+      : null;
   } catch {
-    return normalizedTransferKey;
+    return null;
   }
 }
 
@@ -447,7 +457,10 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
   if (!bytes || bytes.byteLength === 0) {
     throw params.onInvalidJson();
   }
+  // Decode and drop the byte buffer reference before parsing so callers don't retain both the
+  // Uint8Array and decoded string longer than necessary.
   const text = decoder.decode(bytes);
+  bytes = null;
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -474,29 +487,220 @@ function resolveDirectPeerJsonBodyMaxBytes(maxInMemoryPayloadBytes: number): num
   return maxEncodedChars + maxDataKeyEnvelopeBase64Chars + jsonOverheadBytes;
 }
 
-function serializeDirectPeerOpenRequestBody(params: Readonly<{ openBody: unknown }>): Uint8Array {
+function* escapeJsonStringChunks(value: string): Generator<string> {
+  let runStart = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    const isSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdfff;
+    if (codeUnit === 0x22 || codeUnit === 0x5c || codeUnit <= 0x1f || isSurrogate) {
+      if (runStart < index) {
+        yield value.slice(runStart, index);
+      }
+      switch (codeUnit) {
+        case 0x22:
+          yield '\\"';
+          break;
+        case 0x5c:
+          yield '\\\\';
+          break;
+        case 0x08:
+          yield '\\b';
+          break;
+        case 0x0c:
+          yield '\\f';
+          break;
+        case 0x0a:
+          yield '\\n';
+          break;
+        case 0x0d:
+          yield '\\r';
+          break;
+        case 0x09:
+          yield '\\t';
+          break;
+        default:
+          yield `\\u${codeUnit.toString(16).padStart(4, '0')}`;
+          break;
+      }
+      runStart = index + 1;
+    }
+  }
+  if (runStart < value.length) {
+    yield value.slice(runStart);
+  }
+}
+
+function* iterateDirectPeerJsonChunks(value: unknown, seenObjects = new Set<object>()): Generator<string> {
+  if (value === null) {
+    yield 'null';
+    return;
+  }
+  if (typeof value === 'string') {
+    yield '"';
+    yield* escapeJsonStringChunks(value);
+    yield '"';
+    return;
+  }
+  if (typeof value === 'boolean') {
+    yield value ? 'true' : 'false';
+    return;
+  }
+  if (typeof value === 'number') {
+    yield Number.isFinite(value) ? String(value) : 'null';
+    return;
+  }
+  if (typeof value === 'undefined' || typeof value === 'function' || typeof value === 'symbol') {
+    yield 'null';
+    return;
+  }
+  if (typeof value === 'bigint') {
+    throw new Error('Invalid direct peer transfer request');
+  }
+
+  if (Array.isArray(value)) {
+    yield '[';
+    for (let index = 0; index < value.length; index += 1) {
+      if (index > 0) {
+        yield ',';
+      }
+      const item = value[index];
+      if (typeof item === 'undefined' || typeof item === 'function' || typeof item === 'symbol') {
+        yield 'null';
+      } else {
+        yield* iterateDirectPeerJsonChunks(item, seenObjects);
+      }
+    }
+    yield ']';
+    return;
+  }
+
+  const obj = value as Record<string, unknown>;
+  if (seenObjects.has(obj)) {
+    throw new Error('Invalid direct peer transfer request');
+  }
+  seenObjects.add(obj);
+  try {
+    const toJSON = obj.toJSON;
+    if (typeof toJSON === 'function') {
+      yield* iterateDirectPeerJsonChunks(toJSON.call(obj), seenObjects);
+      return;
+    }
+
+    yield '{';
+    let wroteAny = false;
+    for (const key in obj) {
+      if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+      const propertyValue = obj[key];
+      if (typeof propertyValue === 'undefined' || typeof propertyValue === 'function' || typeof propertyValue === 'symbol') {
+        continue;
+      }
+      if (wroteAny) {
+        yield ',';
+      }
+      wroteAny = true;
+      yield '"';
+      yield* escapeJsonStringChunks(key);
+      yield '":';
+      yield* iterateDirectPeerJsonChunks(propertyValue, seenObjects);
+    }
+    yield '}';
+  } finally {
+    seenObjects.delete(obj);
+  }
+}
+
+function serializeDirectPeerOpenRequestBodyToBytes(params: Readonly<{
+  openBody: unknown;
+  estimatedBytes: number;
+  maxBodyBytes: number;
+}>): Uint8Array {
+  // Avoid a double-buffer peak (`Uint8Array[]` + concatenated buffer) without iterating the JSON
+  // generator twice (which could re-run `toJSON()` hooks and/or introduce side-effects).
+  const maxBodyBytes = Math.max(0, Math.floor(params.maxBodyBytes));
+  const estimatedBytes = Math.max(0, Math.floor(params.estimatedBytes));
+  const initialCapacity = Math.min(Math.max(256, estimatedBytes), maxBodyBytes);
+
+  const encoder = new TextEncoder();
+  let buffer = new Uint8Array(initialCapacity);
+  let offset = 0;
+
+  const ensureCapacity = (needed: number) => {
+    if (needed <= buffer.byteLength) return;
+    let nextCapacity = Math.max(1, buffer.byteLength);
+    while (nextCapacity < needed) {
+      nextCapacity *= 2;
+    }
+    nextCapacity = Math.min(nextCapacity, maxBodyBytes);
+    if (nextCapacity < needed) {
+      nextCapacity = needed;
+    }
+    const nextBuffer = new Uint8Array(nextCapacity);
+    nextBuffer.set(buffer.subarray(0, offset), 0);
+    buffer = nextBuffer;
+  };
+
+  for (const chunk of iterateDirectPeerJsonChunks(params.openBody)) {
+    const chunkBytes = Buffer.byteLength(chunk, 'utf8');
+    const nextOffset = offset + chunkBytes;
+    if (nextOffset > maxBodyBytes) {
+      throw new Error(`Direct peer transfer open request body exceeds the configured body-limit (${maxBodyBytes} bytes)`);
+    }
+    ensureCapacity(nextOffset);
+    const target = buffer.subarray(offset, nextOffset);
+    const { read, written } = encoder.encodeInto(chunk, target);
+    if (read !== chunk.length || written !== chunkBytes) {
+      throw new Error('Invalid direct peer transfer request');
+    }
+    offset = nextOffset;
+  }
+
+  return buffer.subarray(0, offset);
+}
+
+function createDirectPeerOpenRequestBodyStream(params: Readonly<{ openBody: unknown }>): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const iterator = iterateDirectPeerJsonChunks(params.openBody);
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const next = iterator.next();
+      if (next.done) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(next.value));
+    },
+    cancel() {
+      iterator.return?.(undefined);
+    },
+  });
+}
+
+type DirectPeerOpenRequestBodyTransmission =
+  | Readonly<{ kind: 'bytes'; body: Uint8Array }>
+  | Readonly<{ kind: 'stream'; body: () => ReadableStream<Uint8Array> }>;
+
+function createDirectPeerOpenRequestBodyTransmission(params: Readonly<{
+  openBody: unknown;
+}>): DirectPeerOpenRequestBodyTransmission {
   const maxBodyBytes = readDirectPeerOpenBodyMaxBytes();
   const estimatedBytes = estimateJsonUtf8BytesBounded(params.openBody, maxBodyBytes);
   if (estimatedBytes > maxBodyBytes) {
     throw new Error(`Direct peer transfer open request body exceeds the configured body-limit (${maxBodyBytes} bytes)`);
   }
-
-  try {
-    const encoded = JSON.stringify(params.openBody);
-    if (typeof encoded !== 'string') {
-      throw new Error('Invalid direct peer transfer request');
-    }
-    const bytes = Buffer.from(encoded, 'utf8');
-    if (bytes.byteLength > maxBodyBytes) {
-      throw new Error(`Direct peer transfer open request body exceeds the configured body-limit (${maxBodyBytes} bytes)`);
-    }
-    return bytes;
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith('Direct peer transfer open request body exceeds the configured body-limit')) {
-      throw error;
-    }
-    throw new Error('Invalid direct peer transfer request');
+  if (estimatedBytes > DIRECT_PEER_OPEN_BODY_STREAMING_THRESHOLD_BYTES) {
+    return {
+      kind: 'stream',
+      body: () => createDirectPeerOpenRequestBodyStream(params),
+    };
   }
+  return {
+    kind: 'bytes',
+    body: serializeDirectPeerOpenRequestBodyToBytes({
+      openBody: params.openBody,
+      estimatedBytes,
+      maxBodyBytes,
+    }),
+  };
 }
 
 export type PublishedDirectPeerTransfer = Readonly<{
@@ -902,6 +1106,10 @@ export function createDirectPeerTransferApp(params: Readonly<{
     },
 	  }, async (request, reply) => {
 	    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
+	    if (!transferId) {
+	      reply.code(404);
+	      return { ok: false as const, error: 'Direct peer transfer not available' };
+	    }
 	    const transferToken = (readDirectPeerAuthorizationToken(request.headers.authorization) ?? '').trim();
 	    if (transferToken.length === 0) {
 	      reply.code(404);
@@ -989,6 +1197,10 @@ export function createDirectPeerTransferApp(params: Readonly<{
     },
 	  }, async (request, reply) => {
 	    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
+	    if (!transferId) {
+	      reply.code(404);
+	      return { ok: false as const, error: 'Direct peer transfer not available' };
+	    }
 	    const transferToken = (readDirectPeerAuthorizationToken(request.headers.authorization) ?? '').trim();
 	    if (transferToken.length === 0) {
 	      reply.code(404);
@@ -1102,16 +1314,16 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
   const now = params.now ?? Date.now;
   const expirySkewMs = readDirectPeerExpirySkewMs();
   const recipientKeyPair = createTransferRecipientKeyPair();
-  let openBodyBytes: Uint8Array | undefined;
-  const resolveOpenBodyBytes = (): Uint8Array | undefined => {
-    if (openBodyBytes !== undefined) {
-      return openBodyBytes;
+  let openBodyTransmission: DirectPeerOpenRequestBodyTransmission | undefined;
+  const resolveOpenBodyTransmission = (): DirectPeerOpenRequestBodyTransmission | undefined => {
+    if (openBodyTransmission !== undefined) {
+      return openBodyTransmission;
     }
     if (params.openBody === undefined) {
       return undefined;
     }
-    openBodyBytes = serializeDirectPeerOpenRequestBody({ openBody: params.openBody });
-    return openBodyBytes;
+    openBodyTransmission = createDirectPeerOpenRequestBodyTransmission({ openBody: params.openBody });
+    return openBodyTransmission;
   };
   let lastError: Error | null = null;
 
@@ -1130,18 +1342,22 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
       if (auth.authorizationHeader) {
         headers.authorization = auth.authorizationHeader;
       }
-      const candidateOpenBodyBytes = resolveOpenBodyBytes();
-      if (candidateOpenBodyBytes !== undefined) {
+      const candidateOpenBodyTransmission = resolveOpenBodyTransmission();
+      if (candidateOpenBodyTransmission !== undefined) {
         headers['content-type'] = 'application/json';
       }
-      const openResponse = await fetchFn(`${auth.requestUrl}/open`, {
+      const openRequestInit: RequestInit & { duplex?: 'half' } = {
         method: 'POST',
         headers,
-        ...(candidateOpenBodyBytes !== undefined
-          ? { body: candidateOpenBodyBytes }
-          : {}),
         signal: AbortSignal.timeout(readDirectPeerRequestTimeoutMs()),
-      });
+      };
+      if (candidateOpenBodyTransmission?.kind === 'bytes') {
+        openRequestInit.body = candidateOpenBodyTransmission.body;
+      } else if (candidateOpenBodyTransmission?.kind === 'stream') {
+        openRequestInit.body = candidateOpenBodyTransmission.body();
+        openRequestInit.duplex = 'half';
+      }
+      const openResponse = await fetchFn(`${auth.requestUrl}/open`, openRequestInit);
       if (!openResponse.ok) {
         lastError = new Error(`Direct peer request failed with status ${openResponse.status}`);
         continue;
