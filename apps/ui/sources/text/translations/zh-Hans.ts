@@ -7,13 +7,14 @@
 
 import type { TranslationStructure } from "../_types";
 import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
-import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
 import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
 import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
 import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
 import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
 import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
 
+const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions['zh-Hans'];
 const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions['zh-Hans'];
 const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions['zh-Hans'];
 const acpCatalogTranslationExtension = acpCatalogTranslationExtensions['zh-Hans'];
@@ -536,13 +537,10 @@ export const zhHans: TranslationStructure = {
     labels: {
       server: "服务器",
       socket: "套接字",
-      endpoint: "端点",
       authenticated: "已认证",
       lastSync: "上次同步",
       nextRetry: "下次重试",
       lastError: "上次错误",
-      endpointNextRetry: "端点重试",
-      endpointLastError: "端点错误",
     },
   },
 
@@ -1911,6 +1909,63 @@ export const zhHans: TranslationStructure = {
       footer:
         "当会话需要你关注时，这些通知会由你的 CLI 通过 Expo 发送。",
       enabledSubtitle: "允许此账户接收推送通知",
+      troubleshootTitle: "故障排查",
+      troubleshootSubtitle: "查看权限和已注册设备",
+    },
+    pushTroubleshooting: {
+      status: {
+        title: "状态",
+        footer: "检查账户设置、系统权限以及服务器注册状态。",
+        accountSettingTitle: "账户设置",
+        accountSettingEnabledSubtitle: "此账户已启用推送通知",
+        accountSettingDisabledSubtitle: "此账户已禁用推送通知",
+      },
+      permission: {
+        title: "权限",
+        loading: "加载中…",
+        loadingSubtitle: "正在检查通知权限",
+        unsupported: "不支持",
+        unsupportedSubtitle: "Web 上无法使用推送权限。",
+        allowed: "已允许",
+        allowedSubtitle: "此应用已允许通知。",
+        denied: "已拒绝",
+        notRequested: "未请求",
+        canAskAgainSubtitle: "点按以请求权限。",
+        openSettingsSubtitle: "点按以打开系统设置。",
+      },
+      token: {
+        title: "此设备",
+        subtitle: ({ fingerprint }: { fingerprint: string }) => `当前令牌：${fingerprint}`,
+        unavailableSubtitle: "无法获取 Expo 推送令牌。",
+        registered: "已注册",
+      },
+      actions: {
+        title: "操作",
+        footer: "如果推送通知未送达，请尝试以下步骤。",
+        requestPermissionTitle: "请求权限",
+        requestPermissionSubtitle: "向系统请求通知权限。",
+        reregisterTitle: "重新注册令牌",
+        reregisterSubtitle: "再次将此设备令牌发送到服务器。",
+        refreshTitle: "刷新",
+        refreshSubtitle: "重新加载权限、令牌和服务器设备。",
+      },
+      devices: {
+        title: "已注册设备",
+        footer: ({ count, serverUrl }: { count: string; serverUrl: string }) => `${serverUrl} 上有 ${count} 个令牌`,
+        emptyTitle: "没有设备",
+        emptySubtitle: "此账户在服务器上没有注册任何推送令牌。",
+        clientServerUrl: ({ url }: { url: string }) => `服务器：${url}`,
+        registeredAt: ({ at }: { at: string }) => `注册：${at}`,
+        lastSeenAt: ({ at }: { at: string }) => `最后出现：${at}`,
+        thisDevice: "此设备",
+      },
+      loadError: "无法加载推送通知状态。",
+      authRequired: "请先登录以管理推送通知。",
+      remove: {
+        confirmTitle: "移除设备",
+        confirmBody: ({ fingerprint }: { fingerprint: string }) => `要移除推送令牌 ${fingerprint} 吗？`,
+        error: "移除推送令牌失败。",
+      },
     },
     webhooks: {
       title: "Webhook 通知",

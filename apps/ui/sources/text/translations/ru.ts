@@ -1,12 +1,13 @@
 import type { TranslationStructure } from '../_types';
 import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
-import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
 import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
 import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
 import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
 import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
 import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
 
+const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions.ru;
 const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions.ru;
 const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions.ru;
 const acpCatalogTranslationExtension = acpCatalogTranslationExtensions.ru;
@@ -1947,6 +1948,66 @@ export const ru: TranslationStructure = {
       footer:
         "Эти уведомления отправляются вашим CLI через Expo, когда вашей сессии требуется внимание.",
       enabledSubtitle: "Разрешить push-уведомления для этого аккаунта",
+      troubleshootTitle: "Устранение неполадок",
+      troubleshootSubtitle: "Проверить разрешения и зарегистрированные устройства",
+    },
+    pushTroubleshooting: {
+      status: {
+        title: "Статус",
+        footer: "Проверяет настройку аккаунта, разрешение ОС и состояние регистрации на сервере.",
+        accountSettingTitle: "Настройка аккаунта",
+        accountSettingEnabledSubtitle: "Push-уведомления включены для этого аккаунта",
+        accountSettingDisabledSubtitle: "Push-уведомления отключены для этого аккаунта",
+      },
+      permission: {
+        title: "Разрешение",
+        loading: "Загрузка…",
+        loadingSubtitle: "Проверяем разрешения для уведомлений",
+        unsupported: "Не поддерживается",
+        unsupportedSubtitle: "Разрешения push недоступны в веб-версии.",
+        allowed: "Разрешено",
+        allowedSubtitle: "Уведомления разрешены для этого приложения.",
+        denied: "Запрещено",
+        notRequested: "Не запрошено",
+        canAskAgainSubtitle: "Нажмите, чтобы запросить разрешение.",
+        openSettingsSubtitle: "Нажмите, чтобы открыть системные настройки.",
+      },
+      token: {
+        title: "Это устройство",
+        subtitle: ({ fingerprint }: { fingerprint: string }) =>
+          `Текущий токен: ${fingerprint}`,
+        unavailableSubtitle: "Не удалось получить push-токен Expo.",
+        registered: "Зарегистрирован",
+      },
+      actions: {
+        title: "Действия",
+        footer: "Используйте эти шаги, если push-уведомления не приходят.",
+        requestPermissionTitle: "Запросить разрешение",
+        requestPermissionSubtitle: "Попросить ОС выдать разрешение на уведомления.",
+        reregisterTitle: "Перерегистрировать токен",
+        reregisterSubtitle: "Снова отправить токен этого устройства на сервер.",
+        refreshTitle: "Обновить",
+        refreshSubtitle: "Перезагрузить разрешение, токен и устройства на сервере.",
+      },
+      devices: {
+        title: "Зарегистрированные устройства",
+        footer: ({ count, serverUrl }: { count: string; serverUrl: string }) =>
+          `${count} токен(ов) на ${serverUrl}`,
+        emptyTitle: "Нет устройств",
+        emptySubtitle: "На сервере нет зарегистрированных push-токенов для этого аккаунта.",
+        clientServerUrl: ({ url }: { url: string }) => `Сервер: ${url}`,
+        registeredAt: ({ at }: { at: string }) => `Зарегистрировано: ${at}`,
+        lastSeenAt: ({ at }: { at: string }) => `Последняя активность: ${at}`,
+        thisDevice: "Это устройство",
+      },
+      loadError: "Не удалось загрузить статус push-уведомлений.",
+      authRequired: "Войдите в аккаунт, чтобы управлять push-уведомлениями.",
+      remove: {
+        confirmTitle: "Удалить устройство",
+        confirmBody: ({ fingerprint }: { fingerprint: string }) =>
+          `Удалить push-токен ${fingerprint}?`,
+        error: "Не удалось удалить push-токен.",
+      },
     },
     webhooks: {
       title: "Уведомления вебхука",
@@ -1963,18 +2024,19 @@ export const ru: TranslationStructure = {
       urlPromptSubtitle: "Введите целевой URL-адрес для этого веб-перехватчика уведомлений.",
       urlPromptPlaceholder: 'https://hooks.example.test/notify',
       invalidUrlTitle: "Неверный URL вебхука",
-            invalidUrlSubtitle: "Введите действительный URL-адрес HTTP или HTTPS.",
-            deleteTitle: "Удалить вебхук",
-            deleteConfirm: ({ url }: { url: string }) => `Stop sending notifications to ${url}?`,
-            signingSecretTitle: "Секрет подписания",
-            signingSecretEmptySubtitle: "Добавьте общий секрет для подписи полезных данных веб-перехватчика.",
-            signingSecretConfiguredSubtitle: "Полезные данные Webhook подписываются общим секретом.",
-            signingSecretPromptTitle: "Секрет подписи вебхука",
-            signingSecretPromptSubtitleAdd: "Введите общий секретный ключ, чтобы подписать эту полезную нагрузку веб-перехватчика.",
-            signingSecretPromptSubtitleReplace: "Введите новый общий секрет, чтобы заменить существующий секрет подписи.",
-            signingSecretPromptPlaceholder: "общий секрет",
-            signingSecretClearAction: "Очистить секрет",
-            readyTitle: "Готовый",
+      invalidUrlSubtitle: "Введите действительный URL-адрес HTTP или HTTPS.",
+      deleteTitle: "Удалить вебхук",
+      deleteConfirm: ({ url }: { url: string }) =>
+        `Прекратить отправлять уведомления на ${url}?`,
+      signingSecretTitle: "Секрет подписания",
+      signingSecretEmptySubtitle: "Добавьте общий секрет для подписи полезных данных веб-перехватчика.",
+      signingSecretConfiguredSubtitle: "Полезные данные Webhook подписываются общим секретом.",
+      signingSecretPromptTitle: "Секрет подписи вебхука",
+      signingSecretPromptSubtitleAdd: "Введите общий секретный ключ, чтобы подписать эту полезную нагрузку веб-перехватчика.",
+      signingSecretPromptSubtitleReplace: "Введите новый общий секрет, чтобы заменить существующий секрет подписи.",
+      signingSecretPromptPlaceholder: "общий секрет",
+      signingSecretClearAction: "Очистить секрет",
+      readyTitle: "Готовый",
       readySubtitle: "Отправляйте, когда ход закончится и агент будет ждать вашей команды.",
       readyPreviewTitle: "Превью готовых сообщений",
       readyPreviewSubtitle: "Включить последний текст сообщения помощника в готовые уведомления для этого вебхука.",
@@ -3360,13 +3422,10 @@ export const ru: TranslationStructure = {
     labels: {
       server: "Сервер",
       socket: "Сокет",
-      endpoint: "Endpoint",
       authenticated: "Авторизовано",
       lastSync: "Последняя синхронизация",
       nextRetry: "Следующая попытка",
       lastError: "Последняя ошибка",
-      endpointNextRetry: "Повтор endpoint",
-      endpointLastError: "Ошибка endpoint",
     },
   },
 

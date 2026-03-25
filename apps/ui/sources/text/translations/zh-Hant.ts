@@ -8,13 +8,14 @@
 import type { TranslationStructure } from '../_types';
 import { zhHans } from './zh-Hans';
 import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
-import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
 import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
 import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
 import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
 import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
 import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
 
+const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions['zh-Hant'];
 const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions['zh-Hant'];
 const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions['zh-Hant'];
 const memoryEmbeddingsTranslationExtension = memoryEmbeddingsTranslationExtensions['zh-Hant'];
@@ -1669,32 +1670,32 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
     },
 
-    settingsNotifications: {
-        badges: {
-            title: 'Badges on this device',
-            footer: 'Choose which activity contributes to the app icon badge on this device.',
-            enabledTitle: '啟用徽章',
-            enabledSubtitle: 'Show an app icon badge when activity needs attention',
-            unreadTitle: 'Unread sessions',
-            unreadSubtitle: 'Count sessions that have unread transcript activity',
-            permissionRequestsTitle: '權限請求',
-            permissionRequestsSubtitle: 'Count sessions waiting for approval',
-            userActionsTitle: '操作請求',
-            userActionsSubtitle: 'Count sessions waiting for an answer or confirmation',
-            queuedTitle: 'Queued user input',
-            queuedSubtitle: 'Count sessions with queued work you still need to send',
-            friendRequestsTitle: '好友請求',
-            friendRequestsSubtitle: 'Add incoming friend requests to the numeric badge',
-            desktopDotTitle: 'Desktop dock dot',
-            desktopDotSubtitle: 'On desktop, show a dot when only non-numeric inbox activity exists',
-        },
-        local: {
-            title: 'Local notifications on this device',
-            footer: 'These controls affect how notifications appear on this specific device.',
-            enabledSubtitle: 'Allow this device to show local notifications',
-            readyTitle: '就緒',
-            readySubtitle: '當一輪完成時顯示本機通知',
-            readyPreviewTitle: '就緒訊息預覽',
+		    settingsNotifications: {
+		        badges: {
+		            title: '此裝置的徽章',
+		            footer: '選擇哪些活動會影響此裝置的 App 圖示徽章。',
+		            enabledTitle: '啟用徽章',
+	            enabledSubtitle: '當有需要注意的活動時，在 App 圖示上顯示徽章',
+	            unreadTitle: '未讀工作階段',
+	            unreadSubtitle: '計算具有未讀逐字稿活動的工作階段',
+	            permissionRequestsTitle: '權限請求',
+	            permissionRequestsSubtitle: '計算等待批准的工作階段',
+	            userActionsTitle: '操作請求',
+	            userActionsSubtitle: '計算等待回答或確認的工作階段',
+	            queuedTitle: '已排隊的使用者輸入',
+	            queuedSubtitle: '計算仍有排隊工作尚未送出的工作階段',
+	            friendRequestsTitle: '好友請求',
+	            friendRequestsSubtitle: '將收到的好友請求納入數字徽章',
+	            desktopDotTitle: '桌面 Dock 點',
+	            desktopDotSubtitle: '在桌面上，當只有非數字的收件匣活動時顯示一個點',
+	        },
+	        local: {
+	            title: '此裝置的本機通知',
+	            footer: '這些控制會影響通知在此裝置上的顯示方式。',
+	            enabledSubtitle: '允許此裝置顯示本機通知',
+	            readyTitle: '就緒',
+	            readySubtitle: '當一輪完成時顯示本機通知',
+	            readyPreviewTitle: '就緒訊息預覽',
             readyPreviewSubtitle: '在此裝置的就緒通知中包含最新的助理訊息',
             permissionRequestsTitle: '權限請求',
             permissionRequestsSubtitle: '當工作階段需要批准時顯示本機通知',
@@ -1705,12 +1706,70 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             title: '推播通知',
             footer: '當工作階段需要你注意時，這些通知會由你的 CLI 透過 Expo 傳送。',
             enabledSubtitle: '允許此帳戶接收推播通知',
+            troubleshootTitle: '疑難排解',
+            troubleshootSubtitle: '查看權限與已註冊裝置',
         },
-        webhooks: {
-            title: 'Webhook 通知',
-            footer: '將遠端活動通知傳送到此帳戶的其他 webhook 端點。',
-            addTitle: '新增 webhook',
-            addSubtitle: '將通知傳送到另一個端點',
+        pushTroubleshooting: {
+            status: {
+                title: '狀態',
+                footer: '檢查帳戶設定、作業系統權限與伺服器註冊狀態。',
+                accountSettingTitle: '帳戶設定',
+                accountSettingEnabledSubtitle: '此帳戶已啟用推播通知',
+                accountSettingDisabledSubtitle: '此帳戶已停用推播通知',
+            },
+            permission: {
+                title: '權限',
+                loading: '載入中…',
+                loadingSubtitle: '正在檢查通知權限',
+                unsupported: '不支援',
+                unsupportedSubtitle: 'Web 上無法使用推播權限。',
+                allowed: '已允許',
+                allowedSubtitle: '此應用程式已允許通知。',
+                denied: '已拒絕',
+                notRequested: '尚未請求',
+                canAskAgainSubtitle: '點按以請求權限。',
+                openSettingsSubtitle: '點按以開啟系統設定。',
+            },
+            token: {
+                title: '此裝置',
+                subtitle: ({ fingerprint }: { fingerprint: string }) => `目前 Token：${fingerprint}`,
+                unavailableSubtitle: '無法讀取 Expo 推播 Token。',
+                registered: '已註冊',
+            },
+            actions: {
+                title: '操作',
+                footer: '如果推播通知沒有送達，請嘗試以下步驟。',
+                requestPermissionTitle: '請求權限',
+                requestPermissionSubtitle: '向作業系統請求通知權限。',
+                reregisterTitle: '重新註冊 Token',
+                reregisterSubtitle: '再次將此裝置的 Token 傳送到伺服器。',
+                refreshTitle: '重新整理',
+                refreshSubtitle: '重新載入權限、Token 與伺服器裝置。',
+            },
+            devices: {
+                title: '已註冊裝置',
+                footer: ({ count, serverUrl }: { count: string; serverUrl: string }) =>
+                    `${serverUrl} 上有 ${count} 個 Token`,
+                emptyTitle: '沒有裝置',
+                emptySubtitle: '此帳戶在伺服器上沒有註冊任何推播 Token。',
+                clientServerUrl: ({ url }: { url: string }) => `伺服器：${url}`,
+                registeredAt: ({ at }: { at: string }) => `註冊：${at}`,
+                lastSeenAt: ({ at }: { at: string }) => `最後出現：${at}`,
+                thisDevice: '此裝置',
+            },
+            loadError: '無法載入推播通知狀態。',
+            authRequired: '請先登入以管理推播通知。',
+            remove: {
+                confirmTitle: '移除裝置',
+                confirmBody: ({ fingerprint }: { fingerprint: string }) => `要移除推播 Token ${fingerprint} 嗎？`,
+                error: '移除推播 Token 失敗。',
+            },
+        },
+	        webhooks: {
+	            title: 'Webhook 通知',
+	            footer: '將遠端活動通知傳送到此帳戶的其他 webhook 端點。',
+	            addTitle: '新增 webhook',
+	            addSubtitle: '將通知傳送到另一個端點',
             emptyTitle: '沒有 webhook 管道',
             emptySubtitle: '新增 webhook，將遠端活動事件傳送到 Expo 推播之外的地方。',
             enabledTitle: '啟用 webhook',
@@ -3403,13 +3462,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
             clearSelection: '清除選擇',
         },
-        toolbar: {
-            changedFiles: '變更的檔案',
-            details: '詳細資料',
-            upload: '上傳',
-            uploadFiles: '上傳檔案',
-            uploadFolder: '上傳資料夾',
-            allRepositoryFiles: '儲存庫中的所有檔案',
+	        toolbar: {
+	            changedFiles: '變更的檔案',
+	            hiddenFiles: '顯示隱藏檔案',
+	            details: '詳細資料',
+	            upload: '上傳',
+	            uploadFiles: '上傳檔案',
+	            uploadFolder: '上傳資料夾',
+	            allRepositoryFiles: '儲存庫中的所有檔案',
             repositoryView: '儲存庫檢視',
             turnView: '輪次檢視',
             sessionView: '工作階段檢視',

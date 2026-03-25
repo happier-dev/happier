@@ -1,12 +1,13 @@
 import type { TranslationStructure } from "../_types";
 import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
-import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
 import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
 import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
 import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
 import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
 import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
 
+const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions.pl;
 const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions.pl;
 const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions.pl;
 const acpCatalogTranslationExtension = acpCatalogTranslationExtensions.pl;
@@ -569,20 +570,17 @@ export const pl: TranslationStructure = {
     unknown: "nieznane",
   },
 
-  connectionStatus: {
-    title: "Połączenie",
-    labels: {
-      server: "Serwer",
-      socket: "Gniazdo",
-      endpoint: "Endpoint",
-      authenticated: "Uwierzytelniono",
-      lastSync: "Ostatnia synchronizacja",
-      nextRetry: "Następna próba",
-      lastError: "Ostatni błąd",
-      endpointNextRetry: "Ponów endpoint",
-      endpointLastError: "Błąd endpointu",
-    },
-  },
+	  connectionStatus: {
+	    title: "Połączenie",
+	    labels: {
+	      server: "Serwer",
+	      socket: "Gniazdo",
+	      authenticated: "Uwierzytelniono",
+	      lastSync: "Ostatnia synchronizacja",
+	      nextRetry: "Następna próba",
+	      lastError: "Ostatni błąd",
+	    },
+	  },
 
   time: {
     justNow: "teraz",
@@ -2032,6 +2030,66 @@ export const pl: TranslationStructure = {
       footer:
         "Te powiadomienia są wysyłane z Twojego CLI przez Expo, gdy sesja wymaga Twojej uwagi.",
       enabledSubtitle: "Zezwól na powiadomienia push dla tego konta",
+      troubleshootTitle: "Rozwiązywanie problemów",
+      troubleshootSubtitle: "Sprawdź uprawnienia i zarejestrowane urządzenia",
+    },
+    pushTroubleshooting: {
+      status: {
+        title: "Stan",
+        footer: "Sprawdza ustawienie konta, uprawnienie systemu i rejestrację na serwerze.",
+        accountSettingTitle: "Ustawienie konta",
+        accountSettingEnabledSubtitle: "Powiadomienia push są włączone dla tego konta",
+        accountSettingDisabledSubtitle: "Powiadomienia push są wyłączone dla tego konta",
+      },
+      permission: {
+        title: "Uprawnienie",
+        loading: "Ładowanie…",
+        loadingSubtitle: "Sprawdzanie uprawnień powiadomień",
+        unsupported: "Nieobsługiwane",
+        unsupportedSubtitle: "Uprawnienia push nie są dostępne w web.",
+        allowed: "Dozwolone",
+        allowedSubtitle: "Powiadomienia są dozwolone dla tej aplikacji.",
+        denied: "Odmówione",
+        notRequested: "Niepoproszone",
+        canAskAgainSubtitle: "Dotknij, aby poprosić o uprawnienie.",
+        openSettingsSubtitle: "Dotknij, aby otworzyć ustawienia systemu.",
+      },
+      token: {
+        title: "To urządzenie",
+        subtitle: ({ fingerprint }: { fingerprint: string }) =>
+          `Aktualny token: ${fingerprint}`,
+        unavailableSubtitle: "Nie można odczytać tokenu push Expo.",
+        registered: "Zarejestrowany",
+      },
+      actions: {
+        title: "Akcje",
+        footer: "Użyj tych kroków, jeśli powiadomienia push nie docierają.",
+        requestPermissionTitle: "Poproś o uprawnienie",
+        requestPermissionSubtitle: "Poproś system o uprawnienia do powiadomień.",
+        reregisterTitle: "Zarejestruj token ponownie",
+        reregisterSubtitle: "Wyślij ponownie token tego urządzenia na serwer.",
+        refreshTitle: "Odśwież",
+        refreshSubtitle: "Przeładuj uprawnienie, token i urządzenia na serwerze.",
+      },
+      devices: {
+        title: "Zarejestrowane urządzenia",
+        footer: ({ count, serverUrl }: { count: string; serverUrl: string }) =>
+          `${serverUrl} — tokeny: ${count}`,
+        emptyTitle: "Brak urządzeń",
+        emptySubtitle: "Na serwerze nie ma zarejestrowanych tokenów push dla tego konta.",
+        clientServerUrl: ({ url }: { url: string }) => `Serwer: ${url}`,
+        registeredAt: ({ at }: { at: string }) => `Zarejestrowano: ${at}`,
+        lastSeenAt: ({ at }: { at: string }) => `Ostatnio widziano: ${at}`,
+        thisDevice: "To urządzenie",
+      },
+      loadError: "Nie udało się załadować stanu powiadomień push.",
+      authRequired: "Zaloguj się, aby zarządzać powiadomieniami push.",
+      remove: {
+        confirmTitle: "Usuń urządzenie",
+        confirmBody: ({ fingerprint }: { fingerprint: string }) =>
+          `Usunąć token push ${fingerprint}?`,
+        error: "Nie udało się usunąć tokenu push.",
+      },
     },
     webhooks: {
       title: 'Powiadomienia webhook',
@@ -2048,18 +2106,19 @@ export const pl: TranslationStructure = {
       urlPromptSubtitle: 'Wpisz docelowy URL dla tego webhooka powiadomień.',
       urlPromptPlaceholder: 'https://hooks.example.test/notify',
       invalidUrlTitle: 'Nieprawidłowy URL webhooka',
-            invalidUrlSubtitle: 'Wpisz prawidłowy URL HTTP lub HTTPS.',
-            deleteTitle: 'Usuń webhook',
-            deleteConfirm: ({ url }: { url: string }) => `Przestać wysyłać powiadomienia do ${url}?`,
-            signingSecretTitle: 'Sekret podpisu',
-            signingSecretEmptySubtitle: 'Dodaj wspólny sekret, aby podpisywać payloady webhooka',
-            signingSecretConfiguredSubtitle: 'Payloady webhooka są podpisywane wspólnym sekretem',
-            signingSecretPromptTitle: 'Sekret podpisu webhooka',
-            signingSecretPromptSubtitleAdd: 'Wpisz wspólny sekret, aby podpisywać ten payload webhooka.',
-            signingSecretPromptSubtitleReplace: 'Wpisz nowy wspólny sekret, aby zastąpić istniejący sekret podpisu.',
-            signingSecretPromptPlaceholder: 'shared-secret',
-            signingSecretClearAction: 'Wyczyść sekret',
-            readyTitle: 'Gotowe',
+      invalidUrlSubtitle: 'Wpisz prawidłowy URL HTTP lub HTTPS.',
+      deleteTitle: 'Usuń webhook',
+      deleteConfirm: ({ url }: { url: string }) =>
+        `Przestać wysyłać powiadomienia do ${url}?`,
+      signingSecretTitle: 'Sekret podpisu',
+      signingSecretEmptySubtitle: 'Dodaj wspólny sekret, aby podpisywać payloady webhooka',
+      signingSecretConfiguredSubtitle: 'Payloady webhooka są podpisywane wspólnym sekretem',
+      signingSecretPromptTitle: 'Sekret podpisu webhooka',
+      signingSecretPromptSubtitleAdd: 'Wpisz wspólny sekret, aby podpisywać ten payload webhooka.',
+      signingSecretPromptSubtitleReplace: 'Wpisz nowy wspólny sekret, aby zastąpić istniejący sekret podpisu.',
+      signingSecretPromptPlaceholder: 'shared-secret',
+      signingSecretClearAction: 'Wyczyść sekret',
+      readyTitle: 'Gotowe',
       readySubtitle: 'Wysyłaj, gdy tura się kończy, a agent czeka na Twoją komendę',
       readyPreviewTitle: 'Podglądy wiadomości gotowości',
       readyPreviewSubtitle: 'Uwzględniaj najnowszy tekst wiadomości asystenta w powiadomieniach gotowości dla tego webhooka',

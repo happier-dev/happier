@@ -1,12 +1,13 @@
 import type { TranslationStructure } from "../_types";
 import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
-import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
 import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
 import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
 import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
 import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
 import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
 
+const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions.pt;
 const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions.pt;
 const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions.pt;
 const acpCatalogTranslationExtension = acpCatalogTranslationExtensions.pt;
@@ -696,20 +697,17 @@ export const pt: TranslationStructure = {
     unknown: "desconhecido",
   },
 
-  connectionStatus: {
-    title: "Conexão",
-    labels: {
-      server: "Servidor",
-      socket: "WebSocket",
-      endpoint: "Endpoint",
-      authenticated: "Autenticado",
-      lastSync: "Última sincronização",
-      nextRetry: "Próxima tentativa",
-      lastError: "Último erro",
-      endpointNextRetry: "Nova tentativa do endpoint",
-      endpointLastError: "Erro do endpoint",
+    connectionStatus: {
+      title: "Conexão",
+      labels: {
+        server: "Servidor",
+        socket: "WebSocket",
+        authenticated: "Autenticado",
+        lastSync: "Última sincronização",
+        nextRetry: "Próxima tentativa",
+        lastError: "Último erro",
+      },
     },
-  },
 
   time: {
     justNow: "agora mesmo",
@@ -2193,18 +2191,18 @@ export const pt: TranslationStructure = {
       footer: 'Escolha quais atividades contribuem para o badge do ícone do app neste dispositivo.',
       enabledTitle: 'Ativar badges',
       enabledSubtitle: 'Mostrar um badge no ícone do app quando houver atividade que exija atenção',
-      unreadTitle: 'Unread sessions',
-      unreadSubtitle: 'Count sessions that have unread transcript activity',
+      unreadTitle: 'Sessões não lidas',
+      unreadSubtitle: 'Contar sessões que têm atividade de transcrição não lida',
       permissionRequestsTitle: 'Solicitações de permissão',
-      permissionRequestsSubtitle: 'Count sessions waiting for approval',
+      permissionRequestsSubtitle: 'Contar sessões aguardando aprovação',
       userActionsTitle: 'Solicitações de ação',
-      userActionsSubtitle: 'Count sessions waiting for an answer or confirmation',
-      queuedTitle: 'Queued user input',
-      queuedSubtitle: 'Count sessions with queued work you still need to send',
+      userActionsSubtitle: 'Contar sessões aguardando uma resposta ou confirmação',
+      queuedTitle: 'Entrada de usuário em fila',
+      queuedSubtitle: 'Contar sessões com trabalho em fila que você ainda precisa enviar',
       friendRequestsTitle: 'Solicitações de amizade',
       friendRequestsSubtitle: 'Adicionar solicitações de amizade recebidas ao badge numérico',
-      desktopDotTitle: 'Desktop dock dot',
-      desktopDotSubtitle: 'On desktop, show a dot when only non-numeric inbox activity exists',
+      desktopDotTitle: 'Ponto no dock do desktop',
+      desktopDotSubtitle: 'No desktop, mostrar um ponto quando houver apenas atividade da caixa de entrada não numérica',
     },
     local: {
       title: 'Notificações locais neste dispositivo',
@@ -2224,6 +2222,66 @@ export const pt: TranslationStructure = {
       footer:
         "Essas notificações são enviadas do seu CLI via Expo quando sua sessão precisa de atenção.",
       enabledSubtitle: "Permitir notificações push nesta conta",
+      troubleshootTitle: "Solucionar problemas",
+      troubleshootSubtitle: "Ver permissões e dispositivos registrados",
+    },
+    pushTroubleshooting: {
+      status: {
+        title: "Estado",
+        footer: "Verifica a configuração da conta, a permissão do sistema e o estado de registro no servidor.",
+        accountSettingTitle: "Configuração da conta",
+        accountSettingEnabledSubtitle: "As notificações push estão ativadas nesta conta",
+        accountSettingDisabledSubtitle: "As notificações push estão desativadas nesta conta",
+      },
+      permission: {
+        title: "Permissão",
+        loading: "Carregando…",
+        loadingSubtitle: "Verificando permissões de notificações",
+        unsupported: "Não suportado",
+        unsupportedSubtitle: "As permissões push não estão disponíveis na web.",
+        allowed: "Permitido",
+        allowedSubtitle: "As notificações estão permitidas para este app.",
+        denied: "Negado",
+        notRequested: "Não solicitado",
+        canAskAgainSubtitle: "Toque para solicitar permissão.",
+        openSettingsSubtitle: "Toque para abrir as configurações do sistema.",
+      },
+      token: {
+        title: "Este dispositivo",
+        subtitle: ({ fingerprint }: { fingerprint: string }) =>
+          `Token atual: ${fingerprint}`,
+        unavailableSubtitle: "Não foi possível obter um token push do Expo.",
+        registered: "Registrado",
+      },
+      actions: {
+        title: "Ações",
+        footer: "Use estas etapas se as notificações push não estiverem chegando.",
+        requestPermissionTitle: "Solicitar permissão",
+        requestPermissionSubtitle: "Peça ao sistema a permissão de notificações.",
+        reregisterTitle: "Registrar o token novamente",
+        reregisterSubtitle: "Enviar novamente o token deste dispositivo para o servidor.",
+        refreshTitle: "Atualizar",
+        refreshSubtitle: "Recarregar permissão, token e dispositivos do servidor.",
+      },
+      devices: {
+        title: "Dispositivos registrados",
+        footer: ({ count, serverUrl }: { count: string; serverUrl: string }) =>
+          `${count} token${Number(count) === 1 ? "" : "s"} em ${serverUrl}`,
+        emptyTitle: "Nenhum dispositivo",
+        emptySubtitle: "Nenhum token push está registrado no servidor para esta conta.",
+        clientServerUrl: ({ url }: { url: string }) => `Servidor: ${url}`,
+        registeredAt: ({ at }: { at: string }) => `Registrado: ${at}`,
+        lastSeenAt: ({ at }: { at: string }) => `Visto por último: ${at}`,
+        thisDevice: "Este dispositivo",
+      },
+      loadError: "Falha ao carregar o status das notificações push.",
+      authRequired: "Faça login para gerenciar notificações push.",
+      remove: {
+        confirmTitle: "Remover dispositivo",
+        confirmBody: ({ fingerprint }: { fingerprint: string }) =>
+          `Remover o token push ${fingerprint}?`,
+        error: "Falha ao remover o token push.",
+      },
     },
     webhooks: {
       title: 'Notificações por webhook',
@@ -2240,18 +2298,18 @@ export const pt: TranslationStructure = {
       urlPromptSubtitle: 'Insira a URL de destino para este webhook de notificação.',
       urlPromptPlaceholder: 'https://hooks.example.test/notify',
       invalidUrlTitle: 'URL de webhook inválida',
-            invalidUrlSubtitle: 'Insira uma URL HTTP ou HTTPS válida.',
-            deleteTitle: 'Remover webhook',
-            deleteConfirm: ({ url }: { url: string }) => `Parar de enviar notificações para ${url}?`,
-            signingSecretTitle: 'Segredo de assinatura',
-            signingSecretEmptySubtitle: 'Adicione um segredo compartilhado para assinar as cargas úteis do webhook',
-            signingSecretConfiguredSubtitle: 'As cargas úteis do webhook são assinadas com um segredo compartilhado',
-            signingSecretPromptTitle: 'Segredo de assinatura do webhook',
-            signingSecretPromptSubtitleAdd: 'Insira um segredo compartilhado para assinar a carga útil deste webhook.',
-            signingSecretPromptSubtitleReplace: 'Insira um novo segredo compartilhado para substituir o segredo de assinatura existente.',
-            signingSecretPromptPlaceholder: 'shared-secret',
-            signingSecretClearAction: 'Limpar segredo',
-            readyTitle: 'Pronto',
+      invalidUrlSubtitle: 'Insira uma URL HTTP ou HTTPS válida.',
+      deleteTitle: 'Remover webhook',
+      deleteConfirm: ({ url }: { url: string }) => `Parar de enviar notificações para ${url}?`,
+      signingSecretTitle: 'Segredo de assinatura',
+      signingSecretEmptySubtitle: 'Adicione um segredo compartilhado para assinar as cargas úteis do webhook',
+      signingSecretConfiguredSubtitle: 'As cargas úteis do webhook são assinadas com um segredo compartilhado',
+      signingSecretPromptTitle: 'Segredo de assinatura do webhook',
+      signingSecretPromptSubtitleAdd: 'Insira um segredo compartilhado para assinar a carga útil deste webhook.',
+      signingSecretPromptSubtitleReplace: 'Insira um novo segredo compartilhado para substituir o segredo de assinatura existente.',
+      signingSecretPromptPlaceholder: 'shared-secret',
+      signingSecretClearAction: 'Limpar segredo',
+      readyTitle: 'Pronto',
       readySubtitle: 'Enviar quando um turno terminar e o agente estiver aguardando seu comando',
       readyPreviewTitle: 'Pré-visualizações de mensagens prontas',
       readyPreviewSubtitle: 'Incluir o texto da mensagem mais recente do assistente nas notificações de pronto deste webhook',

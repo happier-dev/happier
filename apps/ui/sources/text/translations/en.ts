@@ -1,9 +1,11 @@
-import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
 import { memoryEmbeddingsTranslationExtension } from './memoryEmbeddingsExtension';
 import { newSessionMcpTranslationExtension } from './newSessionMcpExtension';
 import { providerAuthenticationTranslationExtension } from './providerAuthenticationExtension';
 import { settingsAppearanceTranslationExtension } from './settingsAppearanceExtension';
 import { acpCatalogTranslationExtension } from './acpCatalogExtension';
+
+const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions.en;
 
 /**
  * English plural helper function
@@ -1946,6 +1948,63 @@ export const en = {
             title: 'Push notifications',
             footer: 'These notifications are sent from your CLI via Expo when your session needs attention.',
             enabledSubtitle: 'Allow push notifications on this account',
+            troubleshootTitle: 'Troubleshoot',
+            troubleshootSubtitle: 'View permissions and registered devices',
+        },
+        pushTroubleshooting: {
+            status: {
+                title: 'Status',
+                footer: 'Checks the account setting, OS permission, and server registration state.',
+                accountSettingTitle: 'Account setting',
+                accountSettingEnabledSubtitle: 'Push notifications are enabled for this account',
+                accountSettingDisabledSubtitle: 'Push notifications are disabled for this account',
+            },
+            permission: {
+                title: 'Permission',
+                loading: 'Loading…',
+                loadingSubtitle: 'Checking notification permissions',
+                unsupported: 'Unsupported',
+                unsupportedSubtitle: 'Push permissions are not available on web.',
+                allowed: 'Allowed',
+                allowedSubtitle: 'Notifications are allowed for this app.',
+                denied: 'Denied',
+                notRequested: 'Not requested',
+                canAskAgainSubtitle: 'Tap to request permission.',
+                openSettingsSubtitle: 'Tap to open system settings.',
+            },
+            token: {
+                title: 'This device',
+                subtitle: ({ fingerprint }: { fingerprint: string }) => `Current token: ${fingerprint}`,
+                unavailableSubtitle: 'Unable to read an Expo push token.',
+                registered: 'Registered',
+            },
+            actions: {
+                title: 'Actions',
+                footer: 'Use these steps if push notifications are not arriving.',
+                requestPermissionTitle: 'Request permission',
+                requestPermissionSubtitle: 'Ask the OS for notification permission.',
+                reregisterTitle: 'Re-register token',
+                reregisterSubtitle: 'Send this device token to the server again.',
+                refreshTitle: 'Refresh',
+                refreshSubtitle: 'Reload permission, token, and server devices.',
+            },
+            devices: {
+                title: 'Registered devices',
+                footer: ({ count, serverUrl }: { count: string; serverUrl: string }) => `${count} token(s) on ${serverUrl}`,
+                emptyTitle: 'No devices',
+                emptySubtitle: 'No push tokens are registered on the server for this account.',
+                clientServerUrl: ({ url }: { url: string }) => `Server: ${url}`,
+                registeredAt: ({ at }: { at: string }) => `Registered: ${at}`,
+                lastSeenAt: ({ at }: { at: string }) => `Last seen: ${at}`,
+                thisDevice: 'This device',
+            },
+            loadError: 'Failed to load push notification status.',
+            authRequired: 'Sign in to manage push notifications.',
+            remove: {
+                confirmTitle: 'Remove device',
+                confirmBody: ({ fingerprint }: { fingerprint: string }) => `Remove push token ${fingerprint}?`,
+                error: 'Failed to remove push token.',
+            },
         },
         webhooks: {
             title: 'Webhook notifications',
@@ -4251,6 +4310,7 @@ export const en = {
             },
             toolbar: {
                 changedFiles: 'Changed files',
+                hiddenFiles: 'Show hidden files',
                 details: 'Details',
                 upload: 'Upload',
                 uploadFiles: 'Upload files',

@@ -1,12 +1,13 @@
 import type { TranslationStructure } from "../_types";
 import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
-import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
 import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
 import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
 import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
 import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
 import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
 
+const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions.it;
 const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions.it;
 const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions.it;
 const acpCatalogTranslationExtension = acpCatalogTranslationExtensions.it;
@@ -2336,6 +2337,66 @@ export const it: TranslationStructure = {
       footer:
         "Queste notifiche vengono inviate dal tuo CLI tramite Expo quando la sessione richiede attenzione.",
       enabledSubtitle: "Consenti le notifiche push su questo account",
+      troubleshootTitle: "Risoluzione problemi",
+      troubleshootSubtitle: "Vedi permessi e dispositivi registrati",
+    },
+    pushTroubleshooting: {
+      status: {
+        title: "Stato",
+        footer: "Controlla l’impostazione dell’account, il permesso del sistema e la registrazione sul server.",
+        accountSettingTitle: "Impostazione account",
+        accountSettingEnabledSubtitle: "Le notifiche push sono abilitate per questo account",
+        accountSettingDisabledSubtitle: "Le notifiche push sono disabilitate per questo account",
+      },
+      permission: {
+        title: "Permesso",
+        loading: "Caricamento…",
+        loadingSubtitle: "Verifica dei permessi di notifica",
+        unsupported: "Non supportato",
+        unsupportedSubtitle: "I permessi push non sono disponibili sul web.",
+        allowed: "Consentito",
+        allowedSubtitle: "Le notifiche sono consentite per questa app.",
+        denied: "Negato",
+        notRequested: "Non richiesto",
+        canAskAgainSubtitle: "Tocca per richiedere il permesso.",
+        openSettingsSubtitle: "Tocca per aprire le impostazioni di sistema.",
+      },
+      token: {
+        title: "Questo dispositivo",
+        subtitle: ({ fingerprint }: { fingerprint: string }) =>
+          `Token attuale: ${fingerprint}`,
+        unavailableSubtitle: "Impossibile leggere un token push di Expo.",
+        registered: "Registrato",
+      },
+      actions: {
+        title: "Azioni",
+        footer: "Usa questi passaggi se le notifiche push non arrivano.",
+        requestPermissionTitle: "Richiedi permesso",
+        requestPermissionSubtitle: "Chiedi al sistema il permesso di notifica.",
+        reregisterTitle: "Ri-registrare il token",
+        reregisterSubtitle: "Invia di nuovo il token di questo dispositivo al server.",
+        refreshTitle: "Aggiorna",
+        refreshSubtitle: "Ricarica permesso, token e dispositivi sul server.",
+      },
+      devices: {
+        title: "Dispositivi registrati",
+        footer: ({ count, serverUrl }: { count: string; serverUrl: string }) =>
+          `${count} token${Number(count) === 1 ? "" : "s"} su ${serverUrl}`,
+        emptyTitle: "Nessun dispositivo",
+        emptySubtitle: "Nessun token push è registrato sul server per questo account.",
+        clientServerUrl: ({ url }: { url: string }) => `Server: ${url}`,
+        registeredAt: ({ at }: { at: string }) => `Registrato: ${at}`,
+        lastSeenAt: ({ at }: { at: string }) => `Ultima attività: ${at}`,
+        thisDevice: "Questo dispositivo",
+      },
+      loadError: "Impossibile caricare lo stato delle notifiche push.",
+      authRequired: "Accedi per gestire le notifiche push.",
+      remove: {
+        confirmTitle: "Rimuovi dispositivo",
+        confirmBody: ({ fingerprint }: { fingerprint: string }) =>
+          `Rimuovere il token push ${fingerprint}?`,
+        error: "Impossibile rimuovere il token push.",
+      },
     },
     webhooks: {
       title: "Notifiche webhook",
@@ -2352,18 +2413,19 @@ export const it: TranslationStructure = {
       urlPromptSubtitle: "Inserisci l’URL di destinazione per questo webhook di notifica.",
       urlPromptPlaceholder: "https://hooks.example.test/notify",
       invalidUrlTitle: "URL webhook non valido",
-            invalidUrlSubtitle: "Inserisci un URL HTTP o HTTPS valido.",
-            deleteTitle: "Rimuovi webhook",
-            deleteConfirm: ({ url }: { url: string }) => `Interrompere l’invio delle notifiche a ${url}?`,
-            signingSecretTitle: "Segreto di firma",
-            signingSecretEmptySubtitle: "Aggiungi un segreto condiviso per firmare i payload webhook",
-            signingSecretConfiguredSubtitle: "I payload webhook sono firmati con un segreto condiviso",
-            signingSecretPromptTitle: "Segreto di firma webhook",
-            signingSecretPromptSubtitleAdd: "Inserisci un segreto condiviso per firmare il payload di questo webhook.",
-            signingSecretPromptSubtitleReplace: "Inserisci un nuovo segreto condiviso per sostituire l’attuale segreto di firma.",
-            signingSecretPromptPlaceholder: "shared-secret",
-            signingSecretClearAction: "Cancella segreto",
-            readyTitle: "Pronto",
+      invalidUrlSubtitle: "Inserisci un URL HTTP o HTTPS valido.",
+      deleteTitle: "Rimuovi webhook",
+      deleteConfirm: ({ url }: { url: string }) =>
+        `Interrompere l’invio delle notifiche a ${url}?`,
+      signingSecretTitle: "Segreto di firma",
+      signingSecretEmptySubtitle: "Aggiungi un segreto condiviso per firmare i payload webhook",
+      signingSecretConfiguredSubtitle: "I payload webhook sono firmati con un segreto condiviso",
+      signingSecretPromptTitle: "Segreto di firma webhook",
+      signingSecretPromptSubtitleAdd: "Inserisci un segreto condiviso per firmare il payload di questo webhook.",
+      signingSecretPromptSubtitleReplace: "Inserisci un nuovo segreto condiviso per sostituire l’attuale segreto di firma.",
+      signingSecretPromptPlaceholder: "shared-secret",
+      signingSecretClearAction: "Cancella segreto",
+      readyTitle: "Pronto",
       readySubtitle: "Invia quando un turno termina e l’agente è in attesa del tuo comando",
       readyPreviewTitle: "Anteprime dei messaggi pronti",
       readyPreviewSubtitle: "Includi il testo dell’ultimo messaggio dell’assistente nelle notifiche di pronto per questo webhook",
@@ -4844,6 +4906,7 @@ export const it: TranslationStructure = {
     },
     toolbar: {
       changedFiles: "File modificati",
+      hiddenFiles: "Mostra file nascosti",
       details: "Dettagli",
       upload: "Carica",
       uploadFiles: "Carica file",

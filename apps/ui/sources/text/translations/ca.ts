@@ -1,12 +1,13 @@
 import type { TranslationStructure } from '../_types';
 import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
-import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
 import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
 import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
 import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
 import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
 import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
 
+const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions.ca;
 const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions.ca;
 const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions.ca;
 const acpCatalogTranslationExtension = acpCatalogTranslationExtensions.ca;
@@ -1860,8 +1861,66 @@ export const ca: TranslationStructure = {
             title: 'Notificacions push',
             footer: 'Aquestes notificacions s’envien des del teu CLI via Expo quan la teva sessió necessita atenció.',
             enabledSubtitle: 'Permetre notificacions push en aquest compte',
+            troubleshootTitle: 'Resolució de problemes',
+            troubleshootSubtitle: 'Consulta els permisos i els dispositius registrats',
         },
-            webhooks: {
+        pushTroubleshooting: {
+            status: {
+                title: 'Estat',
+                footer: 'Comprova l’ajust del compte, el permís del sistema i el registre al servidor.',
+                accountSettingTitle: 'Ajust del compte',
+                accountSettingEnabledSubtitle: 'Les notificacions push estan activades en aquest compte',
+                accountSettingDisabledSubtitle: 'Les notificacions push estan desactivades en aquest compte',
+            },
+            permission: {
+                title: 'Permís',
+                loading: 'Carregant…',
+                loadingSubtitle: 'Comprovant els permisos de notificacions',
+                unsupported: 'No disponible',
+                unsupportedSubtitle: 'Els permisos push no estan disponibles al web.',
+                allowed: 'Permès',
+                allowedSubtitle: 'Les notificacions estan permeses per a aquesta app.',
+                denied: 'Denegat',
+                notRequested: 'No sol·licitat',
+                canAskAgainSubtitle: 'Toca per sol·licitar permís.',
+                openSettingsSubtitle: 'Toca per obrir la configuració del sistema.',
+            },
+            token: {
+                title: 'Aquest dispositiu',
+                subtitle: ({ fingerprint }: { fingerprint: string }) => `Token actual: ${fingerprint}`,
+                unavailableSubtitle: 'No s’ha pogut llegir un token push d’Expo.',
+                registered: 'Registrat',
+            },
+            actions: {
+                title: 'Accions',
+                footer: 'Fes servir aquests passos si les notificacions push no arriben.',
+                requestPermissionTitle: 'Sol·licita permís',
+                requestPermissionSubtitle: 'Demana al sistema el permís de notificacions.',
+                reregisterTitle: 'Torna a registrar el token',
+                reregisterSubtitle: 'Envia de nou el token d’aquest dispositiu al servidor.',
+                refreshTitle: 'Actualitza',
+                refreshSubtitle: 'Recarrega el permís, el token i els dispositius del servidor.',
+            },
+            devices: {
+                title: 'Dispositius registrats',
+                footer: ({ count, serverUrl }: { count: string; serverUrl: string }) =>
+                    `${count} token${Number(count) === 1 ? '' : 's'} a ${serverUrl}`,
+                emptyTitle: 'Sense dispositius',
+                emptySubtitle: 'No hi ha tokens push registrats al servidor per a aquest compte.',
+                clientServerUrl: ({ url }: { url: string }) => `Servidor: ${url}`,
+                registeredAt: ({ at }: { at: string }) => `Registrat: ${at}`,
+                lastSeenAt: ({ at }: { at: string }) => `Vist per darrera vegada: ${at}`,
+                thisDevice: 'Aquest dispositiu',
+            },
+            loadError: 'No s’ha pogut carregar l’estat de les notificacions push.',
+            authRequired: 'Inicia sessió per gestionar les notificacions push.',
+            remove: {
+                confirmTitle: 'Elimina dispositiu',
+                confirmBody: ({ fingerprint }: { fingerprint: string }) => `Vols eliminar el token push ${fingerprint}?`,
+                error: 'No s’ha pogut eliminar el token push.',
+            },
+        },
+        webhooks: {
             title: 'Notificacions de webhook',
             footer: 'Envia notificacions d’activitat remota a punts finals de webhook addicionals d’aquest compte.',
             addTitle: 'Afegeix un webhook',
@@ -4124,13 +4183,14 @@ deps: {
             },
             clearSelection: 'Neteja la selecció',
         },
-        toolbar: {
-            changedFiles: 'Fitxers canviats',
-            details: 'Detalls',
-            upload: 'Pujar',
-            uploadFiles: 'Pujar fitxers',
-            uploadFolder: 'Pujar carpeta',
-            allRepositoryFiles: 'Tots els fitxers del repositori',
+	        toolbar: {
+	            changedFiles: 'Fitxers canviats',
+	            hiddenFiles: 'Mostra fitxers ocults',
+	            details: 'Detalls',
+	            upload: 'Pujar',
+	            uploadFiles: 'Pujar fitxers',
+	            uploadFolder: 'Pujar carpeta',
+	            allRepositoryFiles: 'Tots els fitxers del repositori',
             repositoryView: 'Vista del repositori',
             turnView: 'Vista del torn',
             sessionView: 'Vista de la sessió',

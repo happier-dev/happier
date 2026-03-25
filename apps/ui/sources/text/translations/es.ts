@@ -1,12 +1,13 @@
 import type { TranslationStructure } from "../_types";
 import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
-import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
 import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
 import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
 import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
 import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
 import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
 
+const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions.es;
 const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions.es;
 const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions.es;
 const acpCatalogTranslationExtension = acpCatalogTranslationExtensions.es;
@@ -1997,6 +1998,71 @@ export const es: TranslationStructure = {
       footer:
         "Estas notificaciones se envían desde tu CLI mediante Expo cuando tu sesión necesita atención.",
       enabledSubtitle: "Permitir notificaciones push en esta cuenta",
+      troubleshootTitle: "Solucionar problemas",
+      troubleshootSubtitle: "Ver permisos y dispositivos registrados",
+    },
+    pushTroubleshooting: {
+      status: {
+        title: "Estado",
+        footer:
+          "Comprueba el ajuste de la cuenta, el permiso del sistema y el estado de registro en el servidor.",
+        accountSettingTitle: "Ajuste de la cuenta",
+        accountSettingEnabledSubtitle:
+          "Las notificaciones push están habilitadas en esta cuenta",
+        accountSettingDisabledSubtitle:
+          "Las notificaciones push están deshabilitadas en esta cuenta",
+      },
+      permission: {
+        title: "Permiso",
+        loading: "Cargando…",
+        loadingSubtitle: "Comprobando permisos de notificaciones",
+        unsupported: "No compatible",
+        unsupportedSubtitle: "Los permisos push no están disponibles en la web.",
+        allowed: "Permitido",
+        allowedSubtitle: "Las notificaciones están permitidas para esta app.",
+        denied: "Denegado",
+        notRequested: "No solicitado",
+        canAskAgainSubtitle: "Toca para solicitar permiso.",
+        openSettingsSubtitle: "Toca para abrir la configuración del sistema.",
+      },
+      token: {
+        title: "Este dispositivo",
+        subtitle: ({ fingerprint }: { fingerprint: string }) =>
+          `Token actual: ${fingerprint}`,
+        unavailableSubtitle: "No se pudo leer un token push de Expo.",
+        registered: "Registrado",
+      },
+      actions: {
+        title: "Acciones",
+        footer: "Usa estos pasos si las notificaciones push no están llegando.",
+        requestPermissionTitle: "Solicitar permiso",
+        requestPermissionSubtitle: "Pide al sistema el permiso de notificaciones.",
+        reregisterTitle: "Volver a registrar el token",
+        reregisterSubtitle:
+          "Enviar de nuevo el token de este dispositivo al servidor.",
+        refreshTitle: "Actualizar",
+        refreshSubtitle: "Recargar permiso, token y dispositivos del servidor.",
+      },
+      devices: {
+        title: "Dispositivos registrados",
+        footer: ({ count, serverUrl }: { count: string; serverUrl: string }) =>
+          `${count} token${Number(count) === 1 ? "" : "s"} en ${serverUrl}`,
+        emptyTitle: "Sin dispositivos",
+        emptySubtitle:
+          "No hay tokens push registrados en el servidor para esta cuenta.",
+        clientServerUrl: ({ url }: { url: string }) => `Servidor: ${url}`,
+        registeredAt: ({ at }: { at: string }) => `Registrado: ${at}`,
+        lastSeenAt: ({ at }: { at: string }) => `Visto por última vez: ${at}`,
+        thisDevice: "Este dispositivo",
+      },
+      loadError: "No se pudo cargar el estado de las notificaciones push.",
+      authRequired: "Inicia sesión para gestionar las notificaciones push.",
+      remove: {
+        confirmTitle: "Eliminar dispositivo",
+        confirmBody: ({ fingerprint }: { fingerprint: string }) =>
+          `¿Eliminar el token push ${fingerprint}?`,
+        error: "No se pudo eliminar el token push.",
+      },
     },
     webhooks: {
       title: 'Notificaciones por webhook',
@@ -4506,6 +4572,7 @@ export const es: TranslationStructure = {
     },
     toolbar: {
       changedFiles: "Archivos modificados",
+      hiddenFiles: "Mostrar archivos ocultos",
       details: "Detalles",
       upload: "Subir",
       uploadFiles: "Subir archivos",

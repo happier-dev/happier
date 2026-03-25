@@ -75,6 +75,64 @@ function checkIfEnglish(path: string, value: any, englishValue: any, lang: strin
 
     // For strings, check if they're identical to English
     if (typeof value === 'string' && typeof englishValue === 'string') {
+        const key = path;
+
+        // Placeholders and example literals are often intentionally identical across languages.
+        // Treat these as non-actionable to avoid pushing teams toward translating code/URLs/snippets.
+        const placeholderKey =
+            key.toLowerCase().includes('placeholder') ||
+            key.toLowerCase().includes('example') ||
+            key.toLowerCase().includes('sample');
+        if (placeholderKey) {
+            return false;
+        }
+
+        // Provider/product names and other proper nouns are intentionally stable.
+        // Keep this narrow: only ignore known name surfaces where translation is not expected.
+        const properNounKeyPrefixes = [
+            'settingsProviders.plugins.',
+            'agentInput.agent.',
+            'profiles.builtInNames.',
+            'profiles.machineLogin.',
+            'settingsVoice.mode.',
+        ];
+        if (properNounKeyPrefixes.some((prefix) => key.startsWith(prefix))) {
+            return false;
+        }
+
+        // Ignore obviously non-linguistic literals.
+        const trimmed = value.trim();
+        if (!trimmed) return false;
+        const nonLinguisticPatterns: RegExp[] = [
+            /^https?:\/\//i,
+            /^happier:\/\//i,
+            /^\$[ ]?\S+/,
+            /^[a-z0-9_.-]+\/[a-z0-9_.-]+/i, // file-like paths (templates/review.md, dist/**)
+            /^\{[\s\S]*\}$/,
+            /^agent_[a-z0-9_.-]+\.\.\.$/i,
+            /^[xX]+(-[xX]+)+\.\.\.$/, // XXXXX-XXXXX-... patterns
+            /^[*0-9/,\-]+( [*0-9/,\-]+){4,6}$/, // cron-ish expressions
+            /^--[a-z0-9_-]+/i, // CLI args
+            /^ENV_[A-Z0-9_]+$/,
+            /^[A-Z0-9_]{2,}$/, // acronyms like EULA/API_KEY
+        ];
+        if (nonLinguisticPatterns.some((pattern) => pattern.test(trimmed))) {
+            return false;
+        }
+
+        // Common product/proper-noun literals that should remain stable.
+        if (trimmed === englishValue.trim()) {
+            const stableProperNouns = new Set([
+                'Happier',
+                'Windows',
+                'Windows Terminal',
+                'Tmux',
+                'Codex ACP',
+            ]);
+            if (stableProperNouns.has(trimmed)) return false;
+            if (/ CLI$/.test(trimmed)) return false;
+        }
+
         // Some technical terms should remain in English
         const technicalTerms = ['GitHub', 'URL', 'API', 'CLI', 'OAuth', 'QR', 'JSON', 'HTTP', 'HTTPS', 'ID', 'PID'];
         for (const term of technicalTerms) {
@@ -83,8 +141,15 @@ function checkIfEnglish(path: string, value: any, englishValue: any, lang: strin
             }
         }
 
-        // Check if the non-English translation is identical to English
-        return value === englishValue && value.length > 3; // Ignore short strings like "OK"
+        // Model/provider strings frequently include version numbers and should remain stable.
+        if (/\d/.test(trimmed) && trimmed === englishValue.trim()) {
+            return false;
+        }
+
+        // Check if the non-English translation is identical to English.
+        // Only flag higher-signal strings (multi-word or longer single-word) to avoid false positives
+        // for cognates (e.g. "Error", "Sessions") that are legitimately shared across languages.
+        return value === englishValue && (value.includes(' ') || value.length > 12);
     }
 
     return false;

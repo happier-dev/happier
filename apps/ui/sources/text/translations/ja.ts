@@ -7,13 +7,14 @@
 
 import type { TranslationStructure } from "../_types";
 import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
-import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { mcpServersUxTranslationExtensions } from './mcpServersUxExtension';
 import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
 import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
 import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
 import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
 import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
 
+const mcpServersUxTranslationExtension = mcpServersUxTranslationExtensions.ja;
 const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions.ja;
 const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions.ja;
 const acpCatalogTranslationExtension = acpCatalogTranslationExtensions.ja;
@@ -857,20 +858,17 @@ export const ja: TranslationStructure = {
     unknown: "不明",
   },
 
-  connectionStatus: {
-    title: "接続",
-    labels: {
-      server: "サーバー",
-      socket: "ソケット",
-      endpoint: "エンドポイント",
-      authenticated: "認証済み",
-      lastSync: "最終同期",
-      nextRetry: "次の再試行",
-      lastError: "直近のエラー",
-      endpointNextRetry: "エンドポイント再試行",
-      endpointLastError: "エンドポイントエラー",
-    },
-  },
+	  connectionStatus: {
+	    title: "接続",
+	    labels: {
+	      server: "サーバー",
+	      socket: "ソケット",
+	      authenticated: "認証済み",
+	      lastSync: "最終同期",
+	      nextRetry: "次の再試行",
+	      lastError: "直近のエラー",
+	    },
+	  },
 
   time: {
     justNow: "たった今",
@@ -2287,6 +2285,68 @@ export const ja: TranslationStructure = {
       footer:
         "これらの通知は、セッションに注意が必要なときに CLI から Expo 経由で送信されます。",
       enabledSubtitle: "このアカウントでプッシュ通知を許可します",
+      troubleshootTitle: "トラブルシューティング",
+      troubleshootSubtitle: "権限と登録済みデバイスを確認",
+    },
+    pushTroubleshooting: {
+      status: {
+        title: "状態",
+        footer: "アカウント設定、OS 権限、サーバー登録状態を確認します。",
+        accountSettingTitle: "アカウント設定",
+        accountSettingEnabledSubtitle: "このアカウントでプッシュ通知は有効です",
+        accountSettingDisabledSubtitle: "このアカウントでプッシュ通知は無効です",
+      },
+      permission: {
+        title: "権限",
+        loading: "読み込み中…",
+        loadingSubtitle: "通知権限を確認しています",
+        unsupported: "未対応",
+        unsupportedSubtitle: "Web ではプッシュ権限を利用できません。",
+        allowed: "許可",
+        allowedSubtitle: "このアプリの通知が許可されています。",
+        denied: "拒否",
+        notRequested: "未リクエスト",
+        canAskAgainSubtitle: "タップして権限をリクエストします。",
+        openSettingsSubtitle: "タップしてシステム設定を開きます。",
+      },
+      token: {
+        title: "このデバイス",
+        subtitle: ({ fingerprint }: { fingerprint: string }) =>
+          `現在のトークン: ${fingerprint}`,
+        unavailableSubtitle: "Expo のプッシュトークンを取得できません。",
+        registered: "登録済み",
+      },
+      actions: {
+        title: "操作",
+        footer: "プッシュ通知が届かない場合は、次の手順を試してください。",
+        requestPermissionTitle: "権限をリクエスト",
+        requestPermissionSubtitle: "OS に通知権限をリクエストします。",
+        reregisterTitle: "トークンを再登録",
+        reregisterSubtitle: "このデバイスのトークンをサーバーへ再送信します。",
+        refreshTitle: "更新",
+        refreshSubtitle:
+          "権限、トークン、サーバーのデバイス一覧を再読み込みします。",
+      },
+      devices: {
+        title: "登録済みデバイス",
+        footer: ({ count, serverUrl }: { count: string; serverUrl: string }) =>
+          `${serverUrl} に ${count} 件のトークン`,
+        emptyTitle: "デバイスがありません",
+        emptySubtitle:
+          "このアカウントでサーバーに登録されたプッシュトークンはありません。",
+        clientServerUrl: ({ url }: { url: string }) => `サーバー: ${url}`,
+        registeredAt: ({ at }: { at: string }) => `登録: ${at}`,
+        lastSeenAt: ({ at }: { at: string }) => `最終確認: ${at}`,
+        thisDevice: "このデバイス",
+      },
+      loadError: "プッシュ通知の状態を読み込めませんでした。",
+      authRequired: "プッシュ通知を管理するにはサインインしてください。",
+      remove: {
+        confirmTitle: "デバイスを削除",
+        confirmBody: ({ fingerprint }: { fingerprint: string }) =>
+          `プッシュトークン ${fingerprint} を削除しますか？`,
+        error: "プッシュトークンを削除できませんでした。",
+      },
     },
     webhooks: {
       title: "Webhook 通知",
