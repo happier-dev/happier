@@ -12,6 +12,8 @@
  */
 
 const path = require('node:path');
+const os = require('node:os');
+const fs = require('node:fs');
 const readline = require('node:readline');
 const { randomUUID } = require('node:crypto');
 const {
@@ -44,6 +46,30 @@ const isSdkStreamJson = isStreamJson && inputFormat === 'stream-json';
 const hasPrint = argv.includes('--print');
 const mode = isSdkStreamJson ? 'sdk' : 'local';
 const scenario = process.env.HAPPIER_E2E_FAKE_CLAUDE_SCENARIO || process.env.HAPPY_E2E_FAKE_CLAUDE_SCENARIO || '';
+
+function resolveClaudeConfigDir() {
+  const explicit = String(process.env.CLAUDE_CONFIG_DIR || '').trim();
+  if (explicit) return explicit;
+  const happierOverride = String(process.env.HAPPIER_CLAUDE_CONFIG_DIR || '').trim();
+  if (happierOverride) return happierOverride;
+  return path.join(os.homedir(), '.claude');
+}
+
+function resolveClaudeProjectDirForCwd(cwd) {
+  const projectId = path.resolve(cwd).replace(/[^a-zA-Z0-9-]/g, '-');
+  return path.join(resolveClaudeConfigDir(), 'projects', projectId);
+}
+
+const transcriptPath = path.join(resolveClaudeProjectDirForCwd(process.cwd()), `${sessionId}.jsonl`);
+
+function safeAppendTranscriptJsonl(obj) {
+  try {
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    fs.appendFileSync(transcriptPath, `${JSON.stringify(obj)}\n`, 'utf8');
+  } catch {
+    // Best-effort: a missing transcript will surface as a provider bundle export failure in tests/QA.
+  }
+}
 
 function extractUserTextFromSdkMessage(msg) {
   if (!msg || typeof msg !== 'object') return null;
@@ -91,13 +117,24 @@ safeAppendJsonl(logPath, {
   mergedMcpServers,
 });
 
+// Ensure the transcript path exists even if this process is terminated before any SDK output is emitted.
+safeAppendTranscriptJsonl({
+  type: 'system',
+  subtype: 'init',
+  session_id: sessionId,
+  cwd: process.cwd(),
+  uuid: randomUUID(),
+  timestamp: new Date().toISOString(),
+});
+
 const settingsPath = findArgValue(argv, '--settings');
 const hook = parseHookForwarderCommand(settingsPath);
 void runHookForwarder({
   hook,
   payload: {
     session_id: sessionId,
-    transcript_path: path.join(process.cwd(), `${sessionId}.jsonl`),
+    // Match the real Claude transcript location expected by the CLI handoff export path.
+    transcript_path: transcriptPath,
   },
   logPath,
   invocationId,
@@ -110,6 +147,7 @@ async function runSdkStreamUntilEof() {
 
   function emitSdk(obj) {
     process.stdout.write(`${JSON.stringify(obj)}\n`);
+    safeAppendTranscriptJsonl(obj);
     safeAppendJsonl(logPath, {
       type: 'sdk_stdout',
       invocationId,
