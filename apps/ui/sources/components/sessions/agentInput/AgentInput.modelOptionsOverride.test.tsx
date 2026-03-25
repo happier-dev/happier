@@ -637,34 +637,36 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
     it('renders an ACP session mode picker from preflight override options when provided', async () => {
         const { AgentInput } = await import('./AgentInput');
+        const onAcpSessionModeChange = vi.fn();
 
         const screen = await renderScreen(React.createElement(AgentInput, {
-                    value: 'hello',
-                    placeholder: 'placeholder',
-                    onChangeText: () => {},
-                    onSend: () => {},
-                    autocompletePrefixes: [],
-                    autocompleteSuggestions: async () => [],
-                    agentType: 'opencode',
-                    permissionMode: 'default',
-                    onPermissionModeChange: () => {},
-                    modelMode: 'default',
-                    onModelModeChange: () => {},
-                    acpSessionModeOptionsOverride: [
-                        { id: 'default', name: 'Default' },
-                        { id: 'plan', name: 'Plan' },
-                        { id: 'build', name: 'Build' },
-                    ],
-                    acpSessionModeSelectedIdOverride: null,
-                    onAcpSessionModeChange: () => {},
-                } as any));
-        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
-        await screen.pressByTestIdAsync('agent-input-agent-chip');
+            value: 'hello',
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'opencode',
+            permissionMode: 'default',
+            onPermissionModeChange: () => {},
+            modelMode: 'default',
+            onModelModeChange: () => {},
+            acpSessionModeOptionsOverride: [
+                { id: 'default', name: 'Default' },
+                { id: 'plan', name: 'Plan' },
+                { id: 'build', name: 'Build' },
+            ],
+            acpSessionModeSelectedIdOverride: null,
+            onAcpSessionModeChange,
+        } as any));
 
-        expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('agentInput.mode.sectionTitle');
-        expect(screen.findByTestId('agent-input-session-mode-option:plan')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-session-mode-option:build')).toBeTruthy();
+        const modeChip = screen.findByTestId('agent-input-session-mode-chip');
+        expect(modeChip).toBeTruthy();
+
+        await screen.pressByTestIdAsync('agent-input-session-mode-chip');
+
+        expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
+        expect(screen.findByTestId('agent-input-simple-options-popover')).toBeNull();
     });
 
     it('calls onAcpSessionModeChange when selecting a preflight ACP mode', async () => {
@@ -672,28 +674,30 @@ describe('AgentInput (modelOptionsOverride)', () => {
         const onAcpSessionModeChange = vi.fn();
 
         const screen = await renderScreen(React.createElement(AgentInput, {
-                    value: 'hello',
-                    placeholder: 'placeholder',
-                    onChangeText: () => {},
-                    onSend: () => {},
-                    autocompletePrefixes: [],
-                    autocompleteSuggestions: async () => [],
-                    agentType: 'opencode',
-                    permissionMode: 'default',
-                    onPermissionModeChange: () => {},
-                    modelMode: 'default',
-                    onModelModeChange: () => {},
-                    acpSessionModeOptionsOverride: [
-                        { id: 'default', name: 'Default' },
-                        { id: 'plan', name: 'Plan' },
-                    ],
-                    acpSessionModeSelectedIdOverride: null,
-                    onAcpSessionModeChange,
-                } as any));
-        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
-        await screen.pressByTestIdAsync('agent-input-agent-chip');
+            value: 'hello',
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'opencode',
+            permissionMode: 'default',
+            onPermissionModeChange: () => {},
+            modelMode: 'default',
+            onModelModeChange: () => {},
+            acpSessionModeOptionsOverride: [
+                { id: 'default', name: 'Default' },
+                { id: 'plan', name: 'Plan' },
+                { id: 'build', name: 'Build' },
+                { id: 'review', name: 'Review' },
+            ],
+            acpSessionModeSelectedIdOverride: null,
+            onAcpSessionModeChange,
+        } as any));
 
-        await screen.pressByTestIdAsync('agent-input-session-mode-option:plan');
+        await screen.pressByTestIdAsync('agent-input-session-mode-chip');
+        expect(screen.findByTestId('agent-input-simple-options-popover')).toBeTruthy();
+        await screen.pressByTestIdAsync('agent-input-simple-option:plan');
 
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
     });
@@ -1003,6 +1007,78 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(onAgentPickerSelect).toHaveBeenCalledWith('agent:codex');
     });
 
+    it('disables the agent picker refresh control while the probe is busy', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onAgentPickerSelect = vi.fn();
+        const onRefresh = vi.fn();
+
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: 'hello',
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'claude',
+            permissionMode: 'default',
+            onPermissionModeChange: () => {},
+            modelMode: 'default',
+            onModelModeChange: () => {},
+            agentPickerTitle: 'Select engine',
+            agentPickerOptions: [
+                { id: 'agent:claude', label: 'Claude', detailDescription: 'Claude engine' },
+                { id: 'agent:codex', label: 'Codex', detailDescription: 'Codex engine' },
+            ],
+            agentPickerSelectedOptionId: 'agent:claude',
+            onAgentPickerSelect,
+            agentPickerProbe: {
+                phase: 'loading',
+                onRefresh,
+            },
+        } as any));
+
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
+        const refresh = screen.findByTestId('agent-input-agent-picker-refresh');
+        expect(refresh).toBeTruthy();
+        expect(refresh?.props?.disabled).toBe(true);
+        expect(refresh?.props?.accessibilityState).toEqual(expect.objectContaining({ disabled: true }));
+    });
+
+    it('invokes agent picker probe refresh when idle', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onAgentPickerSelect = vi.fn();
+        const onRefresh = vi.fn();
+
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: 'hello',
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'claude',
+            permissionMode: 'default',
+            onPermissionModeChange: () => {},
+            modelMode: 'default',
+            onModelModeChange: () => {},
+            agentPickerTitle: 'Select engine',
+            agentPickerOptions: [
+                { id: 'agent:claude', label: 'Claude', detailDescription: 'Claude engine' },
+                { id: 'agent:codex', label: 'Codex', detailDescription: 'Codex engine' },
+            ],
+            agentPickerSelectedOptionId: 'agent:claude',
+            onAgentPickerSelect,
+            agentPickerProbe: {
+                phase: 'idle',
+                onRefresh,
+            },
+        } as any));
+
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
+        await screen.pressByTestIdAsync('agent-input-agent-picker-refresh');
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
     it('closes the permission popover before showing the shared engine picker in wrap layout', async () => {
         const { AgentInput } = await import('./AgentInput');
 
@@ -1259,11 +1335,12 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     acpSessionModeOptionsOverrideProbe: { phase: 'idle', onRefresh },
                     onAcpSessionModeChange: () => {},
                 } as any));
-        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
-        await screen.pressByTestIdAsync('agent-input-agent-chip');
+        const modeChip = screen.findByTestId('agent-input-session-mode-chip');
+        expect(modeChip).toBeTruthy();
+        expect(modeChip?.props.accessibilityLabel).toContain('Plan');
 
-        expect(screen.getTextContent()).toContain('agentInput.mode.sectionTitle');
-        expect(screen.findByTestId('agent-input-session-mode-refresh')).toBeTruthy();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
+        expect(screen.findByTestId('agent-input-agent-picker-refresh')).toBeTruthy();
 
         mockSessionModePickerControl = null;
     });
@@ -1295,9 +1372,9 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
         await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        const refresh = screen.findByTestId('agent-input-session-mode-refresh');
+        const refresh = screen.findByTestId('agent-input-agent-picker-refresh');
         expect(refresh).toBeTruthy();
-        await screen.pressByTestIdAsync('agent-input-session-mode-refresh');
+        await screen.pressByTestIdAsync('agent-input-agent-picker-refresh');
 
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });
@@ -1343,7 +1420,6 @@ describe('AgentInput (modelOptionsOverride)', () => {
         await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect(screen.findByTestId('agent-input-config-option:speed')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('agentInput.acp.optionsSectionTitle');
         expect(screen.getTextContent()).toContain('Speed');
         expect(screen.getTextContent()).toContain('agentInput.acp.pendingValue');
 
@@ -1373,8 +1449,9 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
         await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        expect(screen.getTextContent()).toContain('agentInput.acp.optionsSectionTitle');
-        expect(screen.findByTestId('agent-input-config-options-refresh')).toBeTruthy();
+        const refresh = screen.findByTestId('agent-input-agent-picker-refresh');
+        expect(refresh).toBeTruthy();
+        expect(Boolean((refresh as any)?.props?.disabled)).toBe(true);
     });
 
     it('calls refresh handler for preflight ACP config options when no options are loaded yet', async () => {
@@ -1399,9 +1476,9 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
         await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        const refresh = screen.findByTestId('agent-input-config-options-refresh');
+        const refresh = screen.findByTestId('agent-input-agent-picker-refresh');
         expect(refresh).toBeTruthy();
-        await pressTestInstanceAsync(refresh, 'agent-input-config-options-refresh');
+        await pressTestInstanceAsync(refresh, 'agent-input-agent-picker-refresh');
 
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });

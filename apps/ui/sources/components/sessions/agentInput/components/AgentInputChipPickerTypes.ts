@@ -11,6 +11,11 @@ export type AgentInputChipPickerOption = Readonly<{
     label: string;
     icon?: React.ReactNode;
     subtitle?: string;
+    /**
+     * When true, the option is visually de-emphasized (e.g. CLI not detected),
+     * but can still be focused/inspected in detailed pickers.
+     */
+    muted?: boolean;
     sectionId?: string;
     sectionLabel?: string;
     detailTitle?: string;
@@ -37,6 +42,7 @@ export type AgentInputChipPickerPanelProps = Readonly<{
     showCloseButton?: boolean;
     railWidth?: number;
     railMaxWidth?: number | `${number}%`;
+    detailPaneHeaderAccessory?: React.ReactNode;
 }>;
 
 export type AgentInputChipPickerOptionSection = Readonly<{

@@ -92,7 +92,16 @@ export function installAgentInputCommonModuleMocks(
             return await activeOptions.storage(importOriginal);
         }
 
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
+        const [{ createStorageModuleStub, createUseSettingMock }, { settingsDefaults }] = await Promise.all([
+            import('@/dev/testkit/mocks/storage'),
+            import('@/sync/domains/settings/settings'),
+        ]);
+
+        return createStorageModuleStub({
+            useSettings: () => settingsDefaults,
+            useSetting: createUseSettingMock({
+                fallback: (key) => settingsDefaults[key],
+            }),
+        });
     });
 }

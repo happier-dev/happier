@@ -14,7 +14,6 @@ import { t } from '@/text';
 
 type AgentInputSessionConfigOptionsSectionProps = Readonly<{
     controls: ReadonlyArray<SessionConfigOptionControl>;
-    headerAccessory?: React.ReactNode;
     onSelectValue?: (configId: string, valueId: SessionConfigOptionValueId) => void;
 }>;
 
@@ -23,23 +22,12 @@ function formatValue(valueId: SessionConfigOptionValueId): string {
 }
 
 export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionConfigOptionsSectionProps) {
-    if (props.controls.length === 0 && !props.headerAccessory) {
+    if (props.controls.length === 0) {
         return null;
     }
 
     return (
         <View style={styles.section}>
-            <View style={styles.headerRow}>
-                <Text style={styles.sectionTitle}>
-                    {t('agentInput.acp.optionsSectionTitle')}
-                </Text>
-                {props.headerAccessory ? (
-                    <View style={styles.headerAccessory}>
-                        {props.headerAccessory}
-                    </View>
-                ) : null}
-            </View>
-
             {props.controls.map((control) => {
                 const option = control.option;
                 const effectiveValue = control.effectiveValue;
@@ -160,22 +148,6 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
 const styles = StyleSheet.create((theme) => ({
     section: {
         gap: 8,
-    },
-    headerRow: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        justifyContent: 'space-between',
-        gap: 12,
-    },
-    headerAccessory: {
-        flexShrink: 0,
-    },
-    sectionTitle: {
-        fontSize: 12,
-        fontWeight: '700',
-        letterSpacing: 0.8,
-        textTransform: 'uppercase',
-        color: theme.colors.textSecondary,
     },
     optionRow: {
         borderRadius: 12,

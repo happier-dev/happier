@@ -162,7 +162,12 @@ export function AgentInputChipPickerPanel(
           ) : null}
           {focusedOption ? (
             <View style={detailedLayout === "split" ? styles.detailScroll : null}>
-              <View style={detailedLayout === "split" ? styles.detailScrollContent : null}>
+              <View style={[styles.detailPane, detailedLayout === "split" ? styles.detailScrollContent : null]}>
+              {props.detailPaneHeaderAccessory ? (
+                <View style={styles.detailPaneHeaderAccessoryRow}>
+                  {props.detailPaneHeaderAccessory}
+                </View>
+              ) : null}
               <AgentInputChipPickerDetailPane
                 style={detailPaneStyle}
                 option={focusedOption}

@@ -75,6 +75,111 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputPopoverSurface', 
     },
 }));
 
+vi.mock('./AgentInputChipPickerPanel', () => ({
+    AgentInputChipPickerPanel: (props: any) => {
+        const options = Array.isArray(props.options) ? props.options : [];
+        const detailed = options.some((option: any) => (
+            option?.detailDescription
+            || option?.detailContent
+            || typeof option?.renderDetailContent === 'function'
+            || Array.isArray(option?.detailSelectOptions)
+            || Array.isArray(option?.detailBullets)
+            || option?.detailActionLabel
+            || option?.onApply
+            || option?.onSelectImmediate
+        ));
+
+        const focusedId = props.selectedOptionId ?? options[0]?.id ?? null;
+        const focused = options.find((option: any) => option?.id === focusedId) ?? options[0] ?? null;
+
+        const renderOptionRow = (option: any) => (
+            React.createElement(
+                'Pressable',
+                {
+                    key: String(option.id),
+                    testID: `agent-input-chip-picker.option:${option.id}`,
+                    onPress: () => {
+                        if (option.disabled) return;
+
+                        if (option.onSelectImmediate) {
+                            option.onSelectImmediate();
+                            const hasFocusOnlyDetail = typeof option.renderDetailContent === 'function';
+                            if (!hasFocusOnlyDetail && option.closeOnSelectImmediate !== false) {
+                                props.onRequestClose?.();
+                            }
+                            return;
+                        }
+
+                        if (option.onApply) {
+                            // Editor-style options require explicit apply; focusing does nothing.
+                            return;
+                        }
+
+                        props.onSelect?.(String(option.id));
+                        props.onRequestClose?.();
+                    },
+                },
+                option.icon ?? null,
+            )
+        );
+
+        const detailSelectOptions: any[] = Array.isArray(focused?.detailSelectOptions) ? focused.detailSelectOptions : [];
+        const detailContent = typeof focused?.renderDetailContent === 'function'
+            ? focused.renderDetailContent()
+            : focused?.detailContent ?? null;
+
+        return React.createElement(
+            'View',
+            { testID: 'agent-input-chip-picker' },
+            detailed && options.length > 1 ? options.map(renderOptionRow) : null,
+            detailed ? (
+                React.createElement(
+                    'View',
+                    { testID: 'agent-input-chip-picker.detail' },
+                    detailContent,
+                    detailSelectOptions.map((entry: any) => React.createElement(
+                        'Pressable',
+                        {
+                            key: String(entry.id),
+                            testID: `agent-input-chip-picker.detailSelectOption:${entry.id}`,
+                            onPress: () => {
+                                if (entry.disabled) return;
+                                props.onSelect?.(String(entry.id));
+                                props.onRequestClose?.();
+                            },
+                        },
+                        null,
+                    )),
+                    focused?.detailActionLabel && focused?.onDetailAction
+                        ? React.createElement(
+                            'Pressable',
+                            {
+                                testID: 'agent-input-chip-picker.detail-action',
+                                onPress: focused.onDetailAction,
+                            },
+                            null,
+                        )
+                        : null,
+                    focused?.onApply
+                        ? React.createElement(
+                            'Pressable',
+                            {
+                                testID: 'agent-input-chip-picker.apply',
+                                onPress: () => {
+                                    focused.onApply();
+                                    props.onRequestClose?.();
+                                },
+                            },
+                            null,
+                        )
+                        : null,
+                )
+            ) : null,
+            !detailed ? options.map(renderOptionRow) : null,
+        );
+    },
+}));
+
 describe('AgentInputChipPickerPopover', () => {
     it('anchors to the provided full-width popover anchor and selects immediately in simple mode', async () => {
         const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');

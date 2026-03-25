@@ -24,7 +24,6 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
     instructionsText: string;
 }>): ReadonlyArray<AgentInputExtraActionChip> | undefined {
     const reviewCommentDraftCount = params.reviewCommentDrafts.length;
-    const [showLinkedFilesPopover, setShowLinkedFilesPopover] = React.useState(false);
 
     return React.useMemo(() => {
         const chips: AgentInputExtraActionChip[] = [];
@@ -41,8 +40,6 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
             chips.push(createLinkedFilesActionChip({
                 sessionId: params.sessionId,
                 disabled: params.isUploadingAttachments,
-                open: showLinkedFilesPopover,
-                onOpenChange: setShowLinkedFilesPopover,
                 onPickPath: params.onAppendLinkedPath,
             }));
         }
@@ -78,6 +75,5 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
         params.reviewCommentDrafts,
         params.reviewCommentsEnabled,
         params.sessionId,
-        showLinkedFilesPopover,
     ]);
 }

@@ -57,7 +57,6 @@ export function AgentInputChipPickerOptionSelector(
                 selected={props.selectedOptionId === option.id}
                 compact={false}
                 onPress={() => {
-                  if (option.disabled) return;
                   props.onFocusOption(option.id);
                 }}
                 checkColor={theme.colors.button.primary.background}
@@ -93,14 +92,13 @@ function AgentInputChipPickerOptionButton(
     <Pressable
       testID={`agent-input-chip-picker.option:${props.option.id}`}
       accessibilityRole="button"
-      disabled={props.option.disabled}
       onPress={props.onPress}
       style={({ pressed }) => [
         styles.optionRow,
         props.compact ? styles.optionRowCompact : null,
         props.focused ? styles.optionRowFocused : null,
         pressed ? styles.optionRowPressed : null,
-        props.option.disabled ? styles.optionRowDisabled : null,
+        (props.option.disabled || props.option.muted) ? styles.optionRowDisabled : null,
       ]}
     >
       <View style={styles.optionLeft}>

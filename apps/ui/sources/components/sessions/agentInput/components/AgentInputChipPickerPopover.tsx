@@ -16,6 +16,7 @@ export type AgentInputChipPickerPopoverProps = Readonly<{
     applyLabel?: string;
     railWidth?: number;
     railMaxWidth?: number | `${number}%`;
+    detailPaneHeaderAccessory?: React.ReactNode;
     maxHeightCap?: number;
     maxWidthCap?: number;
 }>;
@@ -40,6 +41,7 @@ export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverPr
                     applyLabel={props.applyLabel}
                     railWidth={props.railWidth}
                     railMaxWidth={props.railMaxWidth}
+                    detailPaneHeaderAccessory={props.detailPaneHeaderAccessory}
                     maxHeight={maxHeight}
                 />
             )}

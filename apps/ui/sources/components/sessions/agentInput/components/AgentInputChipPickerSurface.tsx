@@ -16,6 +16,7 @@ export type AgentInputChipPickerSurfaceProps = Readonly<{
     applyLabel?: string;
     railWidth?: number;
     railMaxWidth?: number | `${number}%`;
+    detailPaneHeaderAccessory?: React.ReactNode;
     maxHeight?: number | null;
     testID?: string;
 }>;
@@ -31,6 +32,7 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
             applyLabel={props.applyLabel}
             railWidth={props.railWidth}
             railMaxWidth={props.railMaxWidth}
+            detailPaneHeaderAccessory={props.detailPaneHeaderAccessory}
         />
     );
 

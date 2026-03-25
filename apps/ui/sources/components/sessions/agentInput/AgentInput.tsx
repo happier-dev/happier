@@ -25,6 +25,7 @@ import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicator
 import { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
 import { type ModelPickerProbeState } from '@/components/model/ModelPickerOverlay';
+import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     useSessionMessagesById,
@@ -186,6 +187,7 @@ interface AgentInputProps {
     agentPickerSelectedOptionId?: string | null;
     onAgentPickerSelect?: (id: string) => void;
     agentPickerApplyLabel?: string;
+    agentPickerProbe?: OptionPickerProbeState;
     machineName?: string | null;
     onMachineClick?: () => void;
     machinePopover?: AgentInputContentPopoverConfig;
@@ -1025,88 +1027,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         });
     }, [sessionModeChipControl]);
 
-    const sessionModeSectionSummary = React.useMemo<React.ReactNode>(() => {
-        if (sessionModePickerControl) {
-            return sessionModePickerControl.isPending
-                ? t('agentInput.mode.pendingSwitching', {
-                    from: sessionModePickerControl.currentModeName,
-                    to:
-                        sessionModePickerControl.requestedModeName
-                        ?? sessionModePickerControl.requestedModeId
-                        ?? '',
-                })
-                : t('agentInput.mode.currentMode', { name: sessionModePickerControl.currentModeName });
-        }
-        if (preflightAcpSessionModeOptions) {
-            return sessionModeOptionsOverrideProbe?.phase === 'loading'
-                ? t('agentInput.mode.loadingModes')
-                : sessionModeOptionsOverrideProbe?.phase === 'refreshing'
-                    ? t('agentInput.mode.refreshingModes')
-                    : preflightAcpSessionModeEffective.id === 'default'
-                        ? t('agentInput.mode.useDefaultModeHint')
-                        : t('agentInput.mode.startIn', { name: preflightAcpSessionModeEffective.name });
-        }
-        return null;
-    }, [
-        preflightAcpSessionModeEffective.id,
-        preflightAcpSessionModeEffective.name,
-        preflightAcpSessionModeOptions,
-        sessionModeOptionsOverrideProbe?.phase,
-        sessionModePickerControl,
-    ]);
-
-    const sessionModeSectionHeaderAccessory = React.useMemo<React.ReactNode>(() => {
-        if (
-            !preflightAcpSessionModeOptions
-            || !sessionModeOptionsOverrideProbe
-            || (
-                sessionModeOptionsOverrideProbe.phase === 'idle'
-                && typeof sessionModeOptionsOverrideProbe.onRefresh !== 'function'
-            )
-        ) {
-            return null;
-        }
-        if (typeof sessionModeOptionsOverrideProbe.onRefresh === 'function') {
-            return (
-                <Pressable
-                    testID="agent-input-session-mode-refresh"
-                    accessibilityRole="button"
-                    accessibilityLabel={t('agentInput.mode.refreshModesA11y')}
-                    onPress={
-                        sessionModeOptionsOverrideProbe.phase === 'idle'
-                            ? sessionModeOptionsOverrideProbe.onRefresh
-                            : undefined
-                    }
-                    style={({ pressed }) => [
-                        styles.overlayInlineRefreshButton,
-                        pressed ? styles.overlayInlineRefreshButtonPressed : null,
-                        sessionModeOptionsOverrideProbe.phase !== 'idle'
-                            ? styles.overlayInlineRefreshButtonDisabled
-                            : null,
-                    ]}
-                >
-                    {sessionModeOptionsOverrideProbe.phase === 'idle' ? (
-                        renderIoniconNode('refresh-outline', 18, theme.colors.textSecondary)
-                    ) : (
-                        <ActivityIndicator size="small" />
-                    )}
-                </Pressable>
-            );
-        }
-        return (
-            <View style={styles.overlayInlineRefreshButton}>
-                <ActivityIndicator size="small" />
-            </View>
-        );
-    }, [
-        preflightAcpSessionModeOptions,
-        sessionModeOptionsOverrideProbe,
-        styles.overlayInlineRefreshButton,
-        styles.overlayInlineRefreshButtonDisabled,
-        styles.overlayInlineRefreshButtonPressed,
-        theme.colors.textSecondary,
-    ]);
-
     const acpConfigOptionControls = React.useMemo(() => {
         if (!props.onAcpConfigOptionChange) return null;
         if (props.acpConfigOptionsOverride) {
@@ -1141,63 +1061,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.acpConfigOptionOverridesOverride,
         props.onAcpConfigOptionChange,
     ]);
-
-    const acpConfigSectionHeaderAccessory = React.useMemo<React.ReactNode>(() => {
-        if (
-            !acpConfigOptionsOverrideProbe
-            || (
-                acpConfigOptionsOverrideProbe.phase === 'idle'
-                && typeof acpConfigOptionsOverrideProbe.onRefresh !== 'function'
-            )
-        ) {
-            return null;
-        }
-        if (typeof acpConfigOptionsOverrideProbe.onRefresh === 'function') {
-            return (
-                <Pressable
-                    testID="agent-input-config-options-refresh"
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.refresh')}
-                    onPress={
-                        acpConfigOptionsOverrideProbe.phase === 'idle'
-                            ? acpConfigOptionsOverrideProbe.onRefresh
-                            : undefined
-                    }
-                    style={({ pressed }) => [
-                        styles.overlayInlineRefreshButton,
-                        pressed ? styles.overlayInlineRefreshButtonPressed : null,
-                        acpConfigOptionsOverrideProbe.phase !== 'idle'
-                            ? styles.overlayInlineRefreshButtonDisabled
-                            : null,
-                    ]}
-                >
-                    {acpConfigOptionsOverrideProbe.phase === 'idle' ? (
-                        renderIoniconNode('refresh-outline', 18, theme.colors.textSecondary)
-                    ) : (
-                        <ActivityIndicator size="small" />
-                    )}
-                </Pressable>
-            );
-        }
-        return (
-            <View style={styles.overlayInlineRefreshButton}>
-                <ActivityIndicator size="small" />
-            </View>
-        );
-    }, [
-        acpConfigOptionsOverrideProbe,
-        renderIoniconNode,
-        styles.overlayInlineRefreshButton,
-        styles.overlayInlineRefreshButtonDisabled,
-        styles.overlayInlineRefreshButtonPressed,
-        theme.colors.textSecondary,
-    ]);
-
-    const hasSettingsSessionModeSection = Boolean(
-        sessionModePickerControl || (preflightAcpSessionModeOptions && props.onAcpSessionModeChange),
-    );
-    const hasSettingsAcpConfigSection = Boolean(acpConfigOptionControls || acpConfigSectionHeaderAccessory);
-    const hasSettingsModelSection = Boolean(props.onModelModeChange);
+    const hasSettingsAcpConfigSection = Boolean(acpConfigOptionControls);
 
     const shouldShowModelOptionDescriptions = React.useMemo(() => {
         return modelOptions.some((option) => {
@@ -1239,27 +1103,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     }
                     : undefined
             }
-            sessionModeOptions={
-                sessionModePickerControl?.options
-                ?? preflightAcpSessionModeOptions
-                ?? undefined
-            }
-            selectedSessionModeId={
-                sessionModePickerControl?.effectiveModeId
-                ?? preflightAcpSessionModeEffective.id
-            }
-            sessionModeSummary={sessionModeSectionSummary}
-            sessionModeHeaderAccessory={sessionModeSectionHeaderAccessory}
-            onSelectSessionMode={
-                props.onAcpSessionModeChange
-                    ? (optionId) => {
-                        hapticsLight();
-                        props.onAcpSessionModeChange?.(optionId);
-                    }
-                    : undefined
-            }
             configControls={acpConfigOptionControls}
-            configHeaderAccessory={acpConfigSectionHeaderAccessory}
             onSelectConfigValue={
                 props.onAcpConfigOptionChange
                     ? (configId, valueId) => {
@@ -1268,35 +1112,28 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     }
                     : undefined
             }
-            sectionOrder={['model', 'mode', 'config']}
+            sectionOrder={['model', 'config']}
             surfaceVariant={surfaceVariant}
         />
     ), [
         acpConfigOptionControls,
-        acpConfigSectionHeaderAccessory,
         canEnterCustomModel,
         effectiveModelLabel,
         effectiveModelPolicy.effectiveModelId,
         effectiveModelPolicy.notes,
         modelOptions,
         shouldShowModelOptionDescriptions,
-        preflightAcpSessionModeEffective.id,
-        preflightAcpSessionModeOptions,
         props.modelOptionsOverrideProbe,
         props.onAcpConfigOptionChange,
-        props.onAcpSessionModeChange,
         props.onModelModeChange,
         submitCustomModel,
         selectedModelOptionControls,
-        sessionModePickerControl,
-        sessionModeSectionHeaderAccessory,
-        sessionModeSectionSummary,
         sessionModelOptionsProbe,
     ]);
 
     const hasInternalAgentPickerOptions = Boolean(
         props.agentType
-        && (props.onModelModeChange || hasSettingsSessionModeSection || hasSettingsAcpConfigSection),
+        && (props.onModelModeChange || hasSettingsAcpConfigSection),
     );
 
     const internalAgentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
@@ -1335,6 +1172,103 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [agentPickerOptions, props.agentPickerSelectedOptionId]);
 
     const hasAgentPickerOptions = agentPickerOptions.length > 0;
+
+    const agentPickerDetailPaneHeaderAccessory = React.useMemo<React.ReactNode>(() => {
+        const probeCandidates = [
+            props.agentPickerProbe ?? null,
+            props.modelOptionsOverrideProbe ?? null,
+            sessionModeOptionsOverrideProbe,
+            acpConfigOptionsOverrideProbe,
+        ].filter(Boolean) as Array<Readonly<{ phase: 'idle' | 'loading' | 'refreshing'; onRefresh?: (() => void) | undefined }>>;
+
+        if (probeCandidates.length === 0) {
+            return null;
+        }
+
+        const phase: OptionPickerProbeState['phase'] =
+            probeCandidates.some((candidate) => candidate.phase === 'loading')
+                ? 'loading'
+                : probeCandidates.some((candidate) => candidate.phase === 'refreshing')
+                    ? 'refreshing'
+                    : 'idle';
+
+        const refreshFns = probeCandidates
+            .map((candidate) => candidate.onRefresh)
+            .filter((fn): fn is () => void => typeof fn === 'function');
+
+        const probe: OptionPickerProbeState = {
+            phase,
+            ...(refreshFns.length > 0
+                ? {
+                    onRefresh: () => {
+                        for (const fn of refreshFns) fn();
+                    },
+                }
+                : {}),
+        };
+
+        if (
+            !probe
+            || (
+                probe.phase === 'idle'
+                && typeof probe.onRefresh !== 'function'
+            )
+        ) {
+            return null;
+        }
+
+        if (typeof probe.onRefresh === 'function') {
+            return (
+                <Pressable
+                    testID="agent-input-agent-picker-refresh"
+                    accessibilityRole="button"
+                    accessibilityLabel={probe.refreshAccessibilityLabel ?? t('common.refresh')}
+                    accessibilityState={{
+                        disabled: probe.phase !== 'idle',
+                        busy: probe.phase === 'loading' || probe.phase === 'refreshing' ? true : undefined,
+                    }}
+                    disabled={probe.phase !== 'idle'}
+                    onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
+                    style={({ pressed }) => [
+                        styles.overlayInlineRefreshButton,
+                        pressed ? styles.overlayInlineRefreshButtonPressed : null,
+                        probe.phase !== 'idle'
+                            ? styles.overlayInlineRefreshButtonDisabled
+                            : null,
+                    ]}
+                >
+                    {probe.phase === 'idle' ? (
+                        renderIoniconNode('refresh-outline', 18, theme.colors.textSecondary)
+                    ) : (
+                        <ActivityIndicator
+                            size="small"
+                            accessibilityLabel={probe.phase === 'loading'
+                                ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
+                                : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
+                        />
+                    )}
+                </Pressable>
+            );
+        }
+
+        return (
+            <View style={styles.overlayInlineRefreshButton}>
+                <ActivityIndicator
+                    size="small"
+                    accessibilityLabel={probe.phase === 'loading'
+                        ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
+                        : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
+                />
+            </View>
+        );
+    }, [
+        props.agentPickerProbe,
+        renderIoniconNode,
+        styles.overlayInlineRefreshButton,
+        styles.overlayInlineRefreshButtonDisabled,
+        styles.overlayInlineRefreshButtonPressed,
+        theme.colors.textSecondary,
+    ]);
 
     const {
         overlayAnchorRef,
@@ -1929,6 +1863,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     onAgentPickerSelect={props.onAgentPickerSelect}
                     onAgentPickerRequestClose={closeAgentPicker}
                     agentPickerApplyLabel={props.agentPickerApplyLabel}
+                    agentPickerDetailPaneHeaderAccessory={agentPickerDetailPaneHeaderAccessory}
                     showSessionModePicker={showSessionModePicker}
                     shouldRenderSessionModeChip={shouldRenderSessionModeChip}
                     sessionModePickerAnchor={sessionModePickerAnchor}

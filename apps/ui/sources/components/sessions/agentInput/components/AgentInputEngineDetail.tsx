@@ -14,7 +14,6 @@ import type {
 import { t } from "@/text";
 
 import { AgentInputSessionConfigOptionsSection } from "./AgentInputSessionConfigOptionsSection";
-import { type AgentInputSessionModeOption } from "./AgentInputSessionModeSection";
 
 type AgentInputEngineModelOption = Readonly<{
   value: string;
@@ -39,20 +38,13 @@ type AgentInputEngineDetailProps = Readonly<{
     valueId: SessionConfigOptionValueId,
   ) => void;
 
-  sessionModeOptions?: ReadonlyArray<AgentInputSessionModeOption>;
-  selectedSessionModeId?: string;
-  sessionModeSummary?: React.ReactNode;
-  sessionModeHeaderAccessory?: React.ReactNode;
-  onSelectSessionMode?: (optionId: string) => void;
-
   configControls?: ReadonlyArray<SessionConfigOptionControl> | null;
-  configHeaderAccessory?: React.ReactNode;
   onSelectConfigValue?: (
     configId: string,
     valueId: SessionConfigOptionValueId,
   ) => void;
 
-  sectionOrder?: ReadonlyArray<"model" | "mode" | "config">;
+  sectionOrder?: ReadonlyArray<"model" | "config">;
   surfaceVariant?: "carded" | "plain";
 }>;
 
@@ -73,23 +65,15 @@ function wrapSection(
 }
 
 export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
-  const sectionOrder = props.sectionOrder ?? ["model", "mode", "config"];
+  const sectionOrder = props.sectionOrder ?? ["model", "config"];
   const surfaceVariant = props.surfaceVariant ?? "carded";
   const hasModelSection =
     (props.modelOptions?.length ?? 0) > 0 || props.canEnterCustomModel === true;
-  const hasModeSection = (props.sessionModeOptions?.length ?? 0) > 0;
-  const hasConfigSection =
-    (props.configControls?.length ?? 0) > 0 ||
-    Boolean(props.configHeaderAccessory);
+  const hasConfigSection = (props.configControls?.length ?? 0) > 0;
 
-  if (!hasModelSection && !hasModeSection && !hasConfigSection) {
+  if (!hasModelSection && !hasConfigSection) {
     return null;
   }
-
-  const selectedSessionModeName =
-    props.sessionModeOptions?.find(
-      (option) => option.id === props.selectedSessionModeId,
-    )?.name ?? "";
 
   const resolvedModelOptions = React.useMemo(() => {
     const options = props.modelOptions ?? [];
@@ -111,7 +95,7 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
     });
   }, [props.modelOptions]);
 
-  const sections: Record<"model" | "mode" | "config", React.ReactNode | null> =
+  const sections: Record<"model" | "config", React.ReactNode | null> =
     {
       model: hasModelSection
         ? wrapSection(
@@ -141,36 +125,12 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
             />,
           )
         : null,
-      mode: hasModeSection
-        ? wrapSection(
-            surfaceVariant,
-            "mode",
-            <OptionPickerOverlay
-              title={t("agentInput.mode.sectionTitle")}
-              effectiveLabel={selectedSessionModeName}
-              summary={props.sessionModeSummary}
-              summaryTestID="agent-input-session-mode-summary"
-              headerAccessory={props.sessionModeHeaderAccessory}
-              options={(props.sessionModeOptions ?? []).map((option) => ({
-                value: option.id,
-                label: option.name,
-                description: option.description,
-              }))}
-              optionTestIDPrefix="agent-input-session-mode-option"
-              selectedValue={props.selectedSessionModeId ?? "default"}
-              emptyText=""
-              canEnterCustomValue={false}
-              onSelect={props.onSelectSessionMode ?? (() => {})}
-            />,
-          )
-        : null,
       config: hasConfigSection
         ? wrapSection(
             surfaceVariant,
             "config",
             <AgentInputSessionConfigOptionsSection
               controls={props.configControls ?? []}
-              headerAccessory={props.configHeaderAccessory}
               onSelectValue={props.onSelectConfigValue}
             />,
           )

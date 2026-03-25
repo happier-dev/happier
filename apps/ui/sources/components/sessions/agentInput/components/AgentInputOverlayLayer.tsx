@@ -120,6 +120,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
     onAgentPickerSelect?: (selectedId: string) => void;
     onAgentPickerRequestClose: () => void;
     agentPickerApplyLabel?: string;
+    agentPickerDetailPaneHeaderAccessory?: React.ReactNode;
 
     showSessionModePicker: boolean;
     shouldRenderSessionModeChip: boolean;
@@ -331,6 +332,7 @@ export function AgentInputOverlayLayer(props: Readonly<{
                     }}
                     onRequestClose={props.onAgentPickerRequestClose}
                     applyLabel={props.agentPickerApplyLabel}
+                    detailPaneHeaderAccessory={props.agentPickerDetailPaneHeaderAccessory}
                     maxHeightCap={460}
                 />
             ) : null}
