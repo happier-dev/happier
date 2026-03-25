@@ -9,12 +9,16 @@ type NavigationLike = Readonly<{
 }>;
 
 export function safeRouterBack(params: { router: RouterLike; navigation?: NavigationLike | null; fallbackHref: string }): void {
-    const canGoBack =
-        typeof params.navigation?.canGoBack === 'function'
-            ? params.navigation.canGoBack()
-            : typeof params.router.canGoBack === 'function'
-                ? params.router.canGoBack()
-            : true;
+    const routerCanGoBack = typeof params.router.canGoBack === 'function'
+        ? params.router.canGoBack()
+        : null;
+    const navigationCanGoBack = typeof params.navigation?.canGoBack === 'function'
+        ? params.navigation.canGoBack()
+        : null;
+
+    const canGoBack = routerCanGoBack === false || navigationCanGoBack === false
+        ? false
+        : routerCanGoBack ?? navigationCanGoBack ?? true;
 
     if (!canGoBack) {
         params.router.replace(params.fallbackHref);
@@ -22,7 +26,23 @@ export function safeRouterBack(params: { router: RouterLike; navigation?: Naviga
     }
 
     try {
+        const startHref = typeof (globalThis as any)?.location?.href === 'string'
+            ? String((globalThis as any).location.href)
+            : null;
         params.router.back();
+
+        // On web, Expo Router can sometimes no-op `router.back()` without throwing.
+        // If the URL doesn't change shortly after, fall back to a deterministic replace.
+        if (startHref) {
+            setTimeout(() => {
+                const currentHref = typeof (globalThis as any)?.location?.href === 'string'
+                    ? String((globalThis as any).location.href)
+                    : null;
+                if (currentHref && currentHref === startHref) {
+                    params.router.replace(params.fallbackHref);
+                }
+            }, 50);
+        }
     } catch {
         params.router.replace(params.fallbackHref);
     }
