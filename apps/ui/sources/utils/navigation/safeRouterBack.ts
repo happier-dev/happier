@@ -29,7 +29,14 @@ export function safeRouterBack(params: { router: RouterLike; navigation?: Naviga
         const startHref = typeof (globalThis as any)?.location?.href === 'string'
             ? String((globalThis as any).location.href)
             : null;
-        params.router.back();
+        const historyBack = typeof (globalThis as any)?.history?.back === 'function'
+            ? (globalThis as any).history.back.bind((globalThis as any).history)
+            : null;
+        if (historyBack) {
+            historyBack();
+        } else {
+            params.router.back();
+        }
 
         // On web, Expo Router can sometimes no-op `router.back()` without throwing.
         // If the URL doesn't change shortly after, fall back to a deterministic replace.
