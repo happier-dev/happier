@@ -457,13 +457,22 @@ export async function probeAgentModelsBestEffort(params: {
       ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
       : null;
     if (preflightModelsAdapter?.probeModelsRaw) {
-      const modelsRaw = await preflightModelsAdapter.probeModelsRaw({
-        backendTarget: params.backendTarget,
-        cwd,
-        timeoutMs,
-        accountSettings: params.accountSettings ?? null,
-      }).catch(() => null);
-      const models = normalizeDynamicModels(modelsRaw);
+      const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
+        const modelsRaw = await preflightModelsAdapter.probeModelsRaw!({
+          backendTarget: params.backendTarget,
+          cwd,
+          timeoutMs,
+          accountSettings: params.accountSettings ?? null,
+        }).catch(() => null);
+        return normalizeDynamicModels(modelsRaw);
+      };
+
+      let models = await probePreflightModelsOnce();
+      // If the provider marks the preflight probe as authoritative, retry once immediately to
+      // avoid sticky "static fallback" UI states that require an explicit user refresh.
+      if (!models && preflightModelsAdapter.failureCacheStrategy === 'retry') {
+        models = await probePreflightModelsOnce();
+      }
       if (models) {
         const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
         agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });

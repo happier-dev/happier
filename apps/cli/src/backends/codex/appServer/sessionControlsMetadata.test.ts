@@ -169,6 +169,84 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
         });
     });
 
+    it('accepts JSON-RPC result wrappers from model/list', async () => {
+        const client = {
+            request: vi.fn(async (method: string) => {
+                if (method === 'collaborationMode/list') {
+                    return {
+                        result: {
+                            data: [{ name: 'Default', mode: 'default', reasoning_effort: null }],
+                        },
+                    };
+                }
+                if (method === 'model/list') {
+                    return {
+                        result: {
+                            data: [
+                                {
+                                    id: 'gpt-5.4',
+                                    displayName: 'GPT-5.4',
+                                    isDefault: true,
+                                    supported_reasoning_efforts: [
+                                        { reasoning_effort: 'medium', description: 'Balanced' },
+                                        { reasoning_effort: 'high', description: 'Deep' },
+                                    ],
+                                    default_reasoning_effort: 'high',
+                                },
+                            ],
+                        },
+                    };
+                }
+                throw new Error(`Unexpected method: ${method}`);
+            }),
+        };
+        const { session, getMetadata } = createSessionHarness();
+
+        await publishCodexAppServerSessionControlsMetadata({
+            client,
+            session,
+            provider: 'codex',
+            updatedAt: 778,
+            authMethod: 'oauth_cli',
+            currentModelId: 'gpt-5.4',
+        });
+
+        expect(getMetadata()[SESSION_MODELS_STATE_KEY]).toEqual({
+            v: 1,
+            provider: 'codex',
+            updatedAt: 778,
+            currentModelId: 'gpt-5.4',
+            availableModels: [
+                {
+                    id: 'gpt-5.4',
+                    name: 'GPT 5.4',
+                    modelOptions: [
+                        {
+                            id: 'reasoning_effort',
+                            name: 'Thinking',
+                            type: 'select',
+                            currentValue: 'high',
+                            options: [
+                                { value: 'medium', name: 'Medium', description: 'Balanced' },
+                                { value: 'high', name: 'High', description: 'Deep' },
+                            ],
+                        },
+                        {
+                            id: 'service_tier',
+                            name: 'Speed',
+                            type: 'select',
+                            currentValue: 'standard',
+                            options: [
+                                { value: 'standard', name: 'Standard' },
+                                { value: 'fast', name: 'Fast' },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+    });
+
     it('publishes generic session modes and rich model metadata with model-scoped options', async () => {
         const client = {
             request: vi.fn(async (method: string) => {

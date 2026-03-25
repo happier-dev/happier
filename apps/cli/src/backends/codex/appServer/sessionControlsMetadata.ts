@@ -92,11 +92,19 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function readListEntries(value: unknown): unknown[] {
-    if (Array.isArray(value)) return value;
-    const record = asRecord(value);
-    if (!record) return [];
-    if (Array.isArray(record.items)) return record.items;
-    if (Array.isArray(record.data)) return record.data;
+    // Codex app-server responses are usually list-like objects with `data`/`items`, but some
+    // call sites may accidentally pass the JSON-RPC envelope (result wrapper). Be liberal in
+    // what we accept so model-scoped options aren't dropped on cold start.
+    let current: unknown = value;
+    for (let depth = 0; depth < 3; depth += 1) {
+        if (Array.isArray(current)) return current;
+        const record = asRecord(current);
+        if (!record) return [];
+        if (Array.isArray(record.items)) return record.items;
+        if (Array.isArray(record.data)) return record.data;
+        if (record.result === undefined) return [];
+        current = record.result;
+    }
     return [];
 }
 

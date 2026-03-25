@@ -46,7 +46,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
     }
   });
 
-  it('retries a transient Codex app-server failure instead of freezing the fallback in cache', async () => {
+  it('retries a transient Codex app-server failure within the same probe so the first result is rich', async () => {
     withCodexAppServerClientMock
       .mockRejectedValueOnce(new Error('temporary codex app-server failure'))
       .mockImplementationOnce(async ({ cwd, run }: any) => {
@@ -69,14 +69,8 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
       cwd: '/repo',
       accountSettings: { codexBackendMode: 'appServer' },
     });
-    const second = await probeAgentModelsBestEffort({
-      agentId: 'codex',
-      cwd: '/repo',
-      accountSettings: { codexBackendMode: 'appServer' },
-    });
 
-    expect(first.source).toBe('static');
-    expect(second).toEqual({
+    expect(first).toEqual({
       provider: 'codex',
       availableModels: [
         { id: 'default', name: 'Default' },
