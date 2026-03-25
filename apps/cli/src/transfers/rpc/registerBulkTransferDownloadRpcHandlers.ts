@@ -5,17 +5,18 @@ import { TransferSessionStore } from '../core/transferSessionStore';
 import { resolveWorkspaceFileDownloadSource } from '../targets/resolveWorkspaceFileDownloadSource';
 import { registerDownloadTransferLifecycleHandlers } from './registerDownloadTransferLifecycleHandlers';
 
-type SessionFileDownloadInitRequest = Readonly<{
+type BulkTransferDownloadInitRequest = Readonly<{
+  t: 'session_file_download_v1';
   path: string;
   asZip?: boolean;
   recipientPublicKeyBase64?: string;
 }>;
 
-type SessionFileDownloadInitResponse =
+type BulkTransferDownloadInitResponse =
   | Readonly<{ success: true; downloadId: string; chunkSizeBytes: number; sizeBytes: number; name: string }>
   | Readonly<{ success: false; error: string }>;
 
-export function registerSessionFileDownloadTransferRpcHandlers(
+export function registerBulkTransferDownloadRpcHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
   deps: Readonly<{
     workingDirectory: string;
@@ -24,18 +25,28 @@ export function registerSessionFileDownloadTransferRpcHandlers(
     sessionRpcTransferMaxBytes?: number | null;
   }>,
 ): void {
-  registerDownloadTransferLifecycleHandlers<SessionFileDownloadInitResponse>({
+  registerDownloadTransferLifecycleHandlers<BulkTransferDownloadInitResponse>({
     rpcHandlerManager,
     store: deps.store,
     methods: {
-      init: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT,
-      chunk: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK,
-      finalize: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE,
-      abort: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT,
+      init: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
+      chunk: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
+      finalize: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
+      abort: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
     },
     resolveInit: async (data) => {
-      const request = data as SessionFileDownloadInitRequest | null;
-      const recipientPublicKeyBase64 = typeof request?.recipientPublicKeyBase64 === 'string'
+      const request = data as BulkTransferDownloadInitRequest | null;
+      if (!request || request.t !== 'session_file_download_v1') {
+        return {
+          kind: 'rejected',
+          response: {
+            success: false,
+            error: 'Invalid request',
+          },
+        };
+      }
+
+      const recipientPublicKeyBase64 = typeof request.recipientPublicKeyBase64 === 'string'
         ? request.recipientPublicKeyBase64.trim()
         : '';
       if (!recipientPublicKeyBase64) {
@@ -49,8 +60,8 @@ export function registerSessionFileDownloadTransferRpcHandlers(
       }
       const source = await resolveWorkspaceFileDownloadSource({
         workingDirectory: deps.workingDirectory,
-        path: request?.path,
-        asZip: request?.asZip,
+        path: request.path,
+        asZip: request.asZip,
         additionalAllowedReadDirs: deps.getAdditionalAllowedReadDirs?.(),
         sessionRpcTransferMaxBytes: deps.sessionRpcTransferMaxBytes ?? null,
       });
@@ -62,8 +73,8 @@ export function registerSessionFileDownloadTransferRpcHandlers(
         source: source.source,
         recipientPublicKeyBase64,
         logContext: {
-          path: typeof request?.path === 'string' ? request.path : '',
-          asZip: Boolean(request?.asZip),
+          path: request.path,
+          asZip: Boolean(request.asZip),
         },
       };
     },
