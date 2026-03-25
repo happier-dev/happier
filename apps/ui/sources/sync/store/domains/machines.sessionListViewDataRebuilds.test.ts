@@ -1,8 +1,29 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const mmkvStore = new Map<string, string>();
+
+vi.mock('react-native-mmkv', () => {
+    class MMKV {
+        getString(key: string) {
+            return mmkvStore.get(key);
+        }
+
+        set(key: string, value: string) {
+            mmkvStore.set(key, value);
+        }
+
+        delete(key: string) {
+            mmkvStore.delete(key);
+        }
+    }
+
+    return { MMKV };
+});
+
 afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    mmkvStore.clear();
 });
 
 function createHarness(createMachinesDomain: any, initialState: any) {
@@ -19,11 +40,8 @@ function createHarness(createMachinesDomain: any, initialState: any) {
 }
 
 function mockMachineDomainBoundaries(): void {
-    vi.doMock('../sessionListCache', () => ({
-        setActiveServerSessionListCache: (_cache: any, value: any) => ({ server_a: value }),
-    }));
     vi.doMock('../../domains/server/serverRuntime', () => ({
-        getActiveServerSnapshot: () => ({ serverId: 'server_a' }),
+        getActiveServerSnapshot: () => ({ serverId: 'server_a', serverUrl: 'http://server.local', generation: 0 }),
     }));
     vi.doMock('../../domains/state/warmCachePersistence', () => ({
         resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
@@ -33,14 +51,6 @@ function mockMachineDomainBoundaries(): void {
 
 describe('machines domain: sessionListViewData rebuild gating', () => {
     it('keeps sessionListViewData reference stable for machine activity-only updates', async () => {
-        const buildSessionListViewDataWithServerScope = vi.fn(() => [{ type: 'built' }]);
-        vi.doMock('../buildSessionListViewDataWithServerScope', async (importOriginal) => {
-            const actual = await importOriginal<typeof import('../buildSessionListViewDataWithServerScope')>();
-            return {
-                ...actual,
-                buildSessionListViewDataWithServerScope,
-            };
-        });
         mockMachineDomainBoundaries();
 
         const { createMachinesDomain } = await import('./machines');
@@ -137,18 +147,9 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
         ]);
 
         expect(get().sessionListViewData).toBe(initialList);
-        expect(buildSessionListViewDataWithServerScope).toHaveBeenCalledTimes(0);
     });
 
     it('rebuilds sessionListViewData when project header machine display changes', async () => {
-        const buildSessionListViewDataWithServerScope = vi.fn(() => [{ type: 'built' }]);
-        vi.doMock('../buildSessionListViewDataWithServerScope', async (importOriginal) => {
-            const actual = await importOriginal<typeof import('../buildSessionListViewDataWithServerScope')>();
-            return {
-                ...actual,
-                buildSessionListViewDataWithServerScope,
-            };
-        });
         mockMachineDomainBoundaries();
 
         const { createMachinesDomain } = await import('./machines');
@@ -245,58 +246,16 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
         ]);
 
         expect(get().sessionListViewData).not.toBe(initialList);
-        expect(buildSessionListViewDataWithServerScope).toHaveBeenCalledTimes(1);
     });
 
-    it('rebuilds sessionListViewData when the reachable project-header machine display changes for stale metadata sessions', async () => {
-        const buildSessionListViewDataWithServerScope = vi.fn(() => [{ type: 'built' }]);
-        vi.doMock('../buildSessionListViewDataWithServerScope', async (importOriginal) => {
-            const actual = await importOriginal<typeof import('../buildSessionListViewDataWithServerScope')>();
-            return {
-                ...actual,
-                buildSessionListViewDataWithServerScope,
-            };
-        });
+    it('rebuilds sessionListViewData when a host-group project header subtitle changes', async () => {
         mockMachineDomainBoundaries();
 
         const { createMachinesDomain } = await import('./machines');
 
         const initialList = [{ type: 'initial' }];
         const initialState = {
-            sessions: {
-                s1: {
-                    id: 's1',
-                    seq: 1,
-                    createdAt: 1,
-                    updatedAt: 1,
-                    active: true,
-                    activeAt: 1,
-                    archivedAt: null,
-                    metadata: { machineId: 'm-stale', path: '/home/u/repo', homeDir: '/home/u', host: 'stale.local' },
-                    metadataVersion: 1,
-                    agentState: null,
-                    agentStateVersion: 0,
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 'online',
-                },
-                s2: {
-                    id: 's2',
-                    seq: 1,
-                    createdAt: 2,
-                    updatedAt: 2,
-                    active: true,
-                    activeAt: 2,
-                    archivedAt: null,
-                    metadata: { machineId: 'm-target', path: '/home/u/repo', homeDir: '/home/u', host: 'target.local' },
-                    metadataVersion: 1,
-                    agentState: null,
-                    agentStateVersion: 0,
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 'online',
-                },
-            },
+            sessions: {},
             settings: {
                 groupInactiveSessionsByProject: true,
                 sessionListActiveGroupingV1: 'project',
@@ -313,22 +272,7 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
                     archivedAt: null,
                     metadataVersion: 1,
                     agentStateVersion: 0,
-                    metadata: { machineId: 'm-stale', path: '/home/u/repo', homeDir: '/home/u', host: 'stale.local' },
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 'online',
-                },
-                s2: {
-                    id: 's2',
-                    seq: 1,
-                    createdAt: 2,
-                    updatedAt: 2,
-                    active: true,
-                    activeAt: 2,
-                    archivedAt: null,
-                    metadataVersion: 1,
-                    agentStateVersion: 0,
-                    metadata: { machineId: 'm-target', path: '/home/u/repo', homeDir: '/home/u', host: 'target.local' },
+                    metadata: { machineId: 'm1', host: 'host.local', path: '/home/u/repo', homeDir: '/home/u' },
                     thinking: false,
                     thinkingAt: 0,
                     presence: 'online',
@@ -337,146 +281,28 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
             sessionListViewData: initialList,
             sessionListViewDataByServerId: {},
             machines: {
-                'm-target': {
-                    id: 'm-target',
+                m1: {
+                    id: 'm1',
                     seq: 1,
                     createdAt: 1,
                     updatedAt: 1,
                     active: true,
                     activeAt: 1,
-                    metadata: { displayName: 'Target Mac', host: 'target.local' },
+                    metadata: { displayName: 'Host A', host: 'host.local' },
                     metadataVersion: 1,
                     daemonState: null,
                     daemonStateVersion: 0,
                 },
             },
             machineDisplayById: {
-                'm-target': {
-                    id: 'm-target',
+                m1: {
+                    id: 'm1',
                     updatedAt: 1,
                     active: true,
                     activeAt: 1,
                     revokedAt: null,
                     metadataVersion: 1,
-                    metadata: { displayName: 'Target Mac', host: 'target.local' },
-                },
-            },
-            machineListByServerId: {},
-            machineListStatusByServerId: {},
-            profile: { id: 'account_a' },
-            getProjectForSession: () => null,
-        };
-
-        const { get, domain } = createHarness(createMachinesDomain, initialState);
-
-        domain.applyMachines([
-            {
-                id: 'm-target',
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 2,
-                active: true,
-                activeAt: 2,
-                metadata: { displayName: 'Rebound workstation', host: 'target.local' },
-                metadataVersion: 1,
-                daemonState: null,
-                daemonStateVersion: 0,
-            } as any,
-        ]);
-
-        expect(get().sessionListViewData).not.toBe(initialList);
-        expect(buildSessionListViewDataWithServerScope).toHaveBeenCalledTimes(1);
-    });
-
-    it('rebuilds sessionListViewData when a reachable target machine display changes even if renderable metadata is stale', async () => {
-        const buildSessionListViewDataWithServerScope = vi.fn(() => [{ type: 'built' }]);
-        vi.doMock('../buildSessionListViewDataWithServerScope', async (importOriginal) => {
-            const actual = await importOriginal<typeof import('../buildSessionListViewDataWithServerScope')>();
-            return {
-                ...actual,
-                buildSessionListViewDataWithServerScope,
-            };
-        });
-        mockMachineDomainBoundaries();
-
-        const { createMachinesDomain } = await import('./machines');
-
-        const initialList = [{ type: 'initial' }];
-        const initialState = {
-            sessions: {
-                s1: {
-                    id: 's1',
-                    seq: 1,
-                    createdAt: 1,
-                    updatedAt: 1,
-                    active: true,
-                    activeAt: 1,
-                    archivedAt: null,
-                    metadata: { machineId: 'm-stale', path: '/home/u/repo', homeDir: '/home/u', host: 'stale.local' },
-                    metadataVersion: 1,
-                    agentState: null,
-                    agentStateVersion: 0,
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 'online',
-                },
-            },
-            getProjectForSession: (sessionId: string) =>
-                sessionId === 's1'
-                    ? {
-                        key: {
-                            machineId: 'm-target',
-                            path: '/home/u/repo',
-                        },
-                    }
-                    : null,
-            settings: {
-                groupInactiveSessionsByProject: true,
-                sessionListActiveGroupingV1: 'project',
-                sessionListInactiveGroupingV1: 'project',
-            },
-            sessionListRenderables: {
-                s1: {
-                    id: 's1',
-                    seq: 1,
-                    createdAt: 1,
-                    updatedAt: 1,
-                    active: true,
-                    activeAt: 1,
-                    archivedAt: null,
-                    metadataVersion: 1,
-                    agentStateVersion: 0,
-                    metadata: { machineId: 'm-stale', path: '/home/u/repo', homeDir: '/home/u', host: 'stale.local' },
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 'online',
-                },
-            },
-            sessionListViewData: initialList,
-            sessionListViewDataByServerId: {},
-            machines: {
-                'm-target': {
-                    id: 'm-target',
-                    seq: 1,
-                    createdAt: 1,
-                    updatedAt: 1,
-                    active: true,
-                    activeAt: 1,
-                    metadata: { displayName: 'Mac' },
-                    metadataVersion: 1,
-                    daemonState: null,
-                    daemonStateVersion: 0,
-                },
-            },
-            machineDisplayById: {
-                'm-target': {
-                    id: 'm-target',
-                    updatedAt: 1,
-                    active: true,
-                    activeAt: 1,
-                    revokedAt: null,
-                    metadataVersion: 1,
-                    metadata: { displayName: 'Mac' },
+                    metadata: { displayName: 'Host A', host: 'host.local' },
                 },
             },
             machineListByServerId: {},
@@ -488,13 +314,13 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
 
         domain.applyMachines([
             {
-                id: 'm-target',
+                id: 'm1',
                 seq: 1,
                 createdAt: 1,
                 updatedAt: 2,
                 active: true,
                 activeAt: 2,
-                metadata: { displayName: 'Renamed live target' },
+                metadata: { displayName: 'Host A (renamed)', host: 'host.local' },
                 metadataVersion: 2,
                 daemonState: null,
                 daemonStateVersion: 0,
@@ -502,17 +328,232 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
         ]);
 
         expect(get().sessionListViewData).not.toBe(initialList);
-        expect(buildSessionListViewDataWithServerScope).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not rebuild sessionListViewData when a non-referenced machine subtitle changes', async () => {
+        mockMachineDomainBoundaries();
+
+        const { createMachinesDomain } = await import('./machines');
+
+        const initialList = [{ type: 'initial' }];
+        const initialState = {
+            sessions: {},
+            settings: {
+                groupInactiveSessionsByProject: true,
+                sessionListActiveGroupingV1: 'project',
+                sessionListInactiveGroupingV1: 'project',
+            },
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    metadataVersion: 1,
+                    agentStateVersion: 0,
+                    metadata: { machineId: 'm1', host: 'host.local', path: '/home/u/repo', homeDir: '/home/u' },
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                },
+            },
+            sessionListViewData: initialList,
+            sessionListViewDataByServerId: {},
+            machines: {
+                m1: {
+                    id: 'm1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { displayName: 'Host A', host: 'host.local' },
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                },
+                m2: {
+                    id: 'm2',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { displayName: 'Other', host: 'other.local' },
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                },
+            },
+            machineDisplayById: {
+                m1: {
+                    id: 'm1',
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    revokedAt: null,
+                    metadataVersion: 1,
+                    metadata: { displayName: 'Host A', host: 'host.local' },
+                },
+                m2: {
+                    id: 'm2',
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    revokedAt: null,
+                    metadataVersion: 1,
+                    metadata: { displayName: 'Other', host: 'other.local' },
+                },
+            },
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+            profile: { id: 'account_a' },
+        };
+
+        const { get, domain } = createHarness(createMachinesDomain, initialState);
+
+        domain.applyMachines([
+            {
+                id: 'm2',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                metadata: { displayName: 'Other (updated)', host: 'other.local' },
+                metadataVersion: 2,
+                daemonState: null,
+                daemonStateVersion: 0,
+            } as any,
+        ]);
+
+        expect(get().sessionListViewData).toBe(initialList);
+    });
+
+    it('rebuilds sessionListViewData when project-group host headers depend on a different machine than the session machineId', async () => {
+        mockMachineDomainBoundaries();
+
+        const { createMachinesDomain } = await import('./machines');
+
+        const initialList = [{ type: 'initial' }];
+        const initialState = {
+            sessions: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                },
+            },
+            settings: {
+                groupInactiveSessionsByProject: true,
+                sessionListActiveGroupingV1: 'project',
+                sessionListInactiveGroupingV1: 'project',
+            },
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    metadataVersion: 1,
+                    agentStateVersion: 0,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                },
+            },
+            sessionListViewData: initialList,
+            sessionListViewDataByServerId: {},
+            machines: {
+                m1: {
+                    id: 'm1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { displayName: 'Personal', host: 'mbp' },
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                },
+                m2: {
+                    id: 'm2',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { displayName: 'Work', host: 'mbp' },
+                    metadataVersion: 2,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                },
+            },
+            machineDisplayById: {
+                m1: {
+                    id: 'm1',
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    revokedAt: null,
+                    metadataVersion: 1,
+                    metadata: { displayName: 'Personal', host: 'mbp' },
+                },
+                m2: {
+                    id: 'm2',
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    revokedAt: null,
+                    metadataVersion: 2,
+                    metadata: { displayName: 'Work', host: 'mbp' },
+                },
+            },
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+            profile: { id: 'account_a' },
+        };
+
+        const { get, domain } = createHarness(createMachinesDomain, initialState);
+
+        domain.applyMachines([
+            {
+                id: 'm2',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                metadata: { displayName: 'Work (updated)', host: 'mbp' },
+                metadataVersion: 2,
+                daemonState: null,
+                daemonStateVersion: 0,
+            } as any,
+        ]);
+
+        expect(get().sessionListViewData).not.toBe(initialList);
     });
 
     it('updates active server machine cache without leaking machines from other scopes', async () => {
-        vi.doMock('../buildSessionListViewDataWithServerScope', async (importOriginal) => {
-            const actual = await importOriginal<typeof import('../buildSessionListViewDataWithServerScope')>();
-            return {
-                ...actual,
-                buildSessionListViewDataWithServerScope: vi.fn(() => [{ type: 'built' }]),
-            };
-        });
         mockMachineDomainBoundaries();
 
         const { createMachinesDomain } = await import('./machines');

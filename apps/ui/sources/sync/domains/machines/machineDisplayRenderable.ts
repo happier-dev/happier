@@ -1,4 +1,5 @@
 import type { Machine, MachineMetadata } from '@/sync/domains/state/storageTypes';
+import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
 
 export interface MachineDisplayMetadata {
     displayName?: string | null;
@@ -43,4 +44,35 @@ export function getMachineDisplaySubtitle(machine: MachineDisplayRenderable | un
     const host = typeof machine?.metadata?.host === 'string' ? machine.metadata.host.trim() : '';
     if (host) return host;
     return machine?.id ?? machineId;
+}
+
+export function resolveBestMachineDisplayRenderableForHost(
+    machines: Record<string, MachineDisplayRenderable>,
+    hostInput: string,
+): MachineDisplayRenderable | null {
+    const host = normalizeNonEmptyString(hostInput);
+    if (!host) return null;
+
+    let best: MachineDisplayRenderable | null = null;
+    for (const machine of Object.values(machines)) {
+        const machineHost = normalizeNonEmptyString(machine.metadata?.host);
+        if (!machineHost || machineHost !== host) continue;
+        if (!best) {
+            best = machine;
+            continue;
+        }
+
+        if (machine.metadataVersion !== best.metadataVersion) {
+            if (machine.metadataVersion > best.metadataVersion) {
+                best = machine;
+            }
+            continue;
+        }
+
+        if (machine.id.localeCompare(best.id) > 0) {
+            best = machine;
+        }
+    }
+
+    return best;
 }

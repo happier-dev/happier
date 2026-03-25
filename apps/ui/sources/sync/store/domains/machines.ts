@@ -2,13 +2,15 @@ import type { Machine, Session } from '../../domains/state/storageTypes';
 import {
     buildMachineDisplayRenderableFromMachine,
     getMachineDisplaySubtitle,
+    resolveBestMachineDisplayRenderableForHost,
     type MachineDisplayRenderable,
 } from '../../domains/machines/machineDisplayRenderable';
 import type { Settings } from '../../domains/settings/settings';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
+import { resolveSessionProjectGroupingKeyParts } from '../../domains/session/listing/sessionListProjectGroupingKeys';
+import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
 import {
-    applyReachableTargetsToSessionListRenderables,
     buildSessionListViewDataWithServerScope,
 } from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
@@ -128,26 +130,49 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     const usesProjectGrouping = activeGrouping === 'project' || inactiveGrouping === 'project';
 
                     if (usesProjectGrouping) {
-                        const reachableRenderables = applyReachableTargetsToSessionListRenderables({
-                            sessions: state.sessionListRenderables ?? {},
-                            sessionRecords: state.sessions ?? {},
-                            machines: mergedMachineDisplays,
-                            machineRecords: mergedMachines,
-                            getProjectForSession: state.getProjectForSession ?? undefined,
-                        });
-                        const referencedMachineIds = new Set<string>();
-                        for (const session of Object.values(reachableRenderables)) {
-                            const path = String(session.metadata?.path ?? '').trim();
-                            if (!path) continue;
-                            const machineId = String(session.metadata?.machineId ?? '').trim() || 'unknown';
-                            referencedMachineIds.add(machineId);
+                        const referencedGroupIds = new Set<string>();
+                        const resolveMachineGroupId = (
+                            parts: ReturnType<typeof resolveSessionProjectGroupingKeyParts>,
+                            machinesById: Record<string, MachineDisplayRenderable>,
+                        ): string => {
+                            const machine = parts.machineId ? machinesById[parts.machineId] : undefined;
+                            const host = parts.host ?? normalizeNonEmptyString(machine?.metadata?.host);
+                            return host ? `host:${host}` : parts.machineId ? `id:${parts.machineId}` : 'unknown';
+                        };
+
+                        for (const session of Object.values(state.sessionListRenderables ?? {})) {
+                            const parts = resolveSessionProjectGroupingKeyParts(session.metadata ?? null);
+                            if (!parts.pathKey) continue;
+                            const prevGroupId = resolveMachineGroupId(parts, state.machineDisplayById ?? {});
+                            const nextGroupId = resolveMachineGroupId(parts, mergedMachineDisplays);
+                            referencedGroupIds.add(prevGroupId);
+                            referencedGroupIds.add(nextGroupId);
+                            if (prevGroupId !== nextGroupId) {
+                                needsSessionListViewDataRebuild = true;
+                                needsProjectManagerUpdate = true;
+                                break;
+                            }
                         }
 
-                        for (const machineId of referencedMachineIds) {
-                            const prev = state.machineDisplayById[machineId];
-                            const next = mergedMachineDisplays[machineId];
-                            const prevSubtitle = getMachineDisplaySubtitle(prev, machineId);
-                            const nextSubtitle = getMachineDisplaySubtitle(next, machineId);
+                        const resolveSubtitleForGroup = (
+                            groupId: string,
+                            machinesById: Record<string, MachineDisplayRenderable>,
+                        ): string => {
+                            if (groupId.startsWith('host:')) {
+                                const host = groupId.slice('host:'.length);
+                                const machine = resolveBestMachineDisplayRenderableForHost(machinesById, host) ?? undefined;
+                                return getMachineDisplaySubtitle(machine, host);
+                            }
+                            if (groupId.startsWith('id:')) {
+                                const machineId = groupId.slice('id:'.length);
+                                return getMachineDisplaySubtitle(machinesById[machineId], machineId);
+                            }
+                            return 'unknown';
+                        };
+
+                        for (const groupId of referencedGroupIds) {
+                            const prevSubtitle = resolveSubtitleForGroup(groupId, state.machineDisplayById ?? {});
+                            const nextSubtitle = resolveSubtitleForGroup(groupId, mergedMachineDisplays);
                             if (prevSubtitle !== nextSubtitle) {
                                 needsSessionListViewDataRebuild = true;
                                 needsProjectManagerUpdate = true;
@@ -160,13 +185,10 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 const sessionListViewData = needsSessionListViewDataRebuild
                     ? buildSessionListViewDataWithServerScope({
                         sessions: state.sessionListRenderables ?? {},
-                        sessionRecords: state.sessions ?? {},
                         machines: mergedMachineDisplays,
-                        machineRecords: mergedMachines,
                         groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
                         activeGroupingV1: state.settings.sessionListActiveGroupingV1,
                         inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-                        getProjectForSession: state.getProjectForSession ?? undefined,
                     })
                     : state.sessionListViewData;
 

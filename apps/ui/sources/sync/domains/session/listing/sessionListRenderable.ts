@@ -1,5 +1,6 @@
 import type { AgentState, Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { resolveAgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { resolveSessionProjectGroupingKeyParts } from './sessionListProjectGroupingKeys';
 
 export interface SessionListRenderableMetadata {
     name?: string;
@@ -170,14 +171,6 @@ export function didSessionListRenderableStructuralFieldsChange(
     return false;
 }
 
-function resolveProjectMachineScopeId(metadata: SessionListRenderableMetadata | null | undefined): string {
-    const machineId = typeof metadata?.machineId === 'string' ? metadata.machineId.trim() : '';
-    if (machineId) return machineId;
-    const host = typeof metadata?.host === 'string' ? metadata.host.trim() : '';
-    if (host) return `host:${host}`;
-    return 'unknown';
-}
-
 export function didSessionListRenderableProjectGroupingFieldsChange(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
@@ -187,8 +180,11 @@ export function didSessionListRenderableProjectGroupingFieldsChange(
     const prevMeta = previous.metadata;
     const nextMeta = next.metadata;
 
-    if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;
-    if (resolveProjectMachineScopeId(prevMeta) !== resolveProjectMachineScopeId(nextMeta)) return true;
+    const prevParts = resolveSessionProjectGroupingKeyParts(prevMeta ?? null);
+    const nextParts = resolveSessionProjectGroupingKeyParts(nextMeta ?? null);
+
+    if (prevParts.pathKey !== nextParts.pathKey) return true;
+    if (prevParts.machineGroupId !== nextParts.machineGroupId) return true;
 
     return false;
 }
