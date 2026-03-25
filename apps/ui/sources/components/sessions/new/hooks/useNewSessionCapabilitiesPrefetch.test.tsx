@@ -1,19 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { installNewSessionComponentsCommonModuleMocks } from '../components/newSessionComponentsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        InteractionManager: {
-            runAfterInteractions: (fn: () => void) => {
-                fn();
-                return { cancel: () => {} };
+installNewSessionComponentsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            InteractionManager: {
+                runAfterInteractions: (fn: () => void) => {
+                    fn();
+                    return { cancel: () => {} };
+                },
             },
-        },
-    });
+        });
+    },
 });
 
 describe('useNewSessionCapabilitiesPrefetch', () => {

@@ -230,7 +230,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     }, [machines, theme.colors.textSecondary]);
 
     const closeToMcpServersSettings = React.useCallback(() => {
-        router.replace('/settings/mcp' as any);
+        router.replace('/(app)/settings/mcp' as any);
     }, [router]);
 
     const commitDraft = React.useCallback((): boolean => {

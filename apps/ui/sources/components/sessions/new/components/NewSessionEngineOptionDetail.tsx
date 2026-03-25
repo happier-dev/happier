@@ -55,7 +55,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         cwd: props.cwd ?? null,
         probeContext: props.capabilityProbeContext ?? null,
     });
-    const { configOptions } = useNewSessionPreflightConfigOptionsState({
+    const { configOptions, probe: configProbe } = useNewSessionPreflightConfigOptionsState({
         backendTarget: props.backendTarget,
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
@@ -196,6 +196,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                     },
                 });
             }}
+            configProbe={configProbe}
+            configRefreshTestID="agent-input-config-options-refresh"
             sectionOrder={['model', 'config']}
         />
     );

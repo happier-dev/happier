@@ -66,11 +66,11 @@ describe('AgentInputPermissionRequests', () => {
         const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, {
             sessionId: 's1',
             permissionRequests: [
-                { id: 'p1', kind: 'permission', tool: 'execute', arguments: { command: 'pwd' } },
-                { id: 'p2', kind: 'permission', tool: 'execute', arguments: { command: 'ls' } },
+                { id: 'p1', kind: 'permission', tool: 'execute', arguments: { command: 'pwd' }, createdAt: null },
+                { id: 'p2', kind: 'permission', tool: 'execute', arguments: { command: 'ls' }, createdAt: null },
             ],
             userActionRequests: [
-                { id: 'u1', kind: 'user_action', tool: 'execute', arguments: { command: 'whoami' } },
+                { id: 'u1', kind: 'user_action', tool: 'execute', arguments: { command: 'whoami' }, createdAt: null },
             ],
             permissionLocationsById: new Map(),
             metadata: null,
@@ -103,7 +103,7 @@ describe('AgentInputPermissionRequests', () => {
         const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, {
             sessionId: 's1',
             permissionRequests: [
-                { id: 'p1', kind: 'permission', tool: 'execute', arguments: { command: 'pwd' } },
+                { id: 'p1', kind: 'permission', tool: 'execute', arguments: { command: 'pwd' }, createdAt: null },
             ],
             userActionRequests: [],
             permissionLocationsById: new Map(),

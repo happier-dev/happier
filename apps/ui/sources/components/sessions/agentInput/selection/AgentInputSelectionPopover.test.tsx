@@ -62,7 +62,8 @@ describe('AgentInputSelectionPopover', () => {
 
         expect(capturedPopoverProps.current?.open).toBe(true);
         expect(capturedPopoverProps.current?.anchorRef).toBe(anchorRef);
-        expect(capturedPopoverProps.current?.boundaryRef).toBeNull();
+        // boundaryRef should be omitted so Popover can fall back to PopoverBoundaryProvider context.
+        expect(capturedPopoverProps.current?.boundaryRef).toBeUndefined();
         expect(capturedPopoverProps.current?.maxHeightCap).toBe(480);
         expect(capturedPopoverProps.current?.maxWidthCap).toBe(512);
         expect(capturedPopoverProps.current?.edgePadding).toEqual({ horizontal: 16 });

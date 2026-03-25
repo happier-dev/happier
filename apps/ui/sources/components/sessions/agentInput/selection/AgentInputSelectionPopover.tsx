@@ -19,7 +19,11 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
         <Popover
             open={props.open}
             anchorRef={props.anchorRef}
-            boundaryRef={props.boundaryRef ?? null}
+            // IMPORTANT:
+            // Forward `undefined` so Popover can fall back to PopoverBoundaryProvider context.
+            // Passing `null` explicitly disables boundary clamping/measurement, which breaks
+            // new-session popover anchoring on native where we rely on a scroll boundary.
+            boundaryRef={props.boundaryRef}
             placement="top"
             gap={8}
             maxHeightCap={props.maxHeightCap}

@@ -249,7 +249,7 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedConfigOverrides={{}}
         />);
 
-        expect(screen.findByProps({ testID: 'agent-input-config-options-refresh' })).toBeTruthy();
+        expect(screen.findByTestId('agent-input-config-options-refresh')).toBeTruthy();
     });
 
     it('adds a description to the CLI settings option when other models include descriptions', async () => {

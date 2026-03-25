@@ -34,7 +34,6 @@ const promptUnsavedChangesAlertSpy = vi.hoisted(
     () => vi.fn<typeof promptUnsavedChangesAlert>(),
 );
 let navigationCanGoBack = false;
-let routerCanGoBack: boolean | null = null;
 let liveMcpSettings: {
     v: 1;
     strictMode: boolean;
@@ -132,7 +131,6 @@ const mcpServersCommonModuleMockOptions = {
             router: {
                 back: routerBackSpy,
                 replace: routerReplaceSpy,
-                canGoBack: () => routerCanGoBack,
             },
             navigation: {
                 canGoBack: () => navigationCanGoBack,
@@ -238,7 +236,6 @@ beforeEach(() => {
     resetMcpServersCommonModuleMockState();
     resetLiveSettings();
     navigationCanGoBack = false;
-    routerCanGoBack = null;
     routerBackSpy.mockReset();
     routerReplaceSpy.mockReset();
     installMcpServersCommonModuleMocks(mcpServersCommonModuleMockOptions);
@@ -249,7 +246,6 @@ describe('McpServerEditorScreen', () => {
     it('replaces to the MCP servers settings screen when cancelling quick install even if a back stack exists', async () => {
         vi.useFakeTimers();
         navigationCanGoBack = true;
-        routerCanGoBack = true;
 
         Object.defineProperty(globalThis, 'location', {
             value: { href: 'http://localhost/settings/mcp-server?addMode=quick-install', pathname: '/settings/mcp-server' },
@@ -272,7 +268,7 @@ describe('McpServerEditorScreen', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/mcp');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/(app)/settings/mcp');
 
         vi.useRealTimers();
     });
@@ -360,7 +356,7 @@ describe('McpServerEditorScreen', () => {
             servers: [],
             bindings: [],
         });
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/mcp');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/(app)/settings/mcp');
         expect(routerBackSpy).not.toHaveBeenCalled();
     });
 
