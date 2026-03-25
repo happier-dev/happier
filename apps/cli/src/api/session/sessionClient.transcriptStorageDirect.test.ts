@@ -5,6 +5,7 @@ import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
+  flushApiSessionClientMessageCommitQueue,
 } from '@/testkit/backends/apiSessionSocketHarness';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
@@ -179,6 +180,116 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
         echoToSender: true,
       }),
     );
+  });
+
+  it('delivers a committed localId echo to the agent queue when it was not enqueued locally', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    createdClients.push(client);
+
+    client.sendUserTextMessage('hello', { localId: 'echo-local-1' });
+    await flushApiSessionClientMessageCommitQueue(client as any);
+
+    expect((client as any).committedLocalIdsAwaitingEcho.has('echo-local-1')).toBe(true);
+
+    const update = {
+      id: 'u-echo-1',
+      seq: 1,
+      createdAt: 1700000000000,
+      body: {
+        t: 'new-message',
+        sid: 's1',
+        message: {
+          id: 'm-echo-1',
+          seq: 2,
+          localId: 'echo-local-1',
+          sidechainId: null,
+          createdAt: 1700000000000,
+          updatedAt: 1700000000000,
+          content: {
+            t: 'plain',
+            v: {
+              role: 'user',
+              content: { type: 'text', text: 'hello' },
+              meta: { sentFrom: 'cli', source: 'cli' },
+            },
+          },
+        },
+      },
+    };
+
+    sessionSocketStub.trigger('update', update);
+
+    const received: unknown[] = [];
+    client.onUserMessage((message) => received.push(message));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      role: 'user',
+      localId: 'echo-local-1',
+      content: { type: 'text', text: 'hello' },
+    });
+  });
+
+  it('does not double-deliver user messages that were already enqueued locally', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    createdClients.push(client);
+
+    // Internal seam: this is the path used by daemon RPC handlers and initial prompt seeding.
+    (client as any).enqueueSessionUserMessage({
+      text: 'hello',
+      localId: 'queued-local-1',
+      meta: { source: 'daemon-initial-prompt', sentFrom: 'cli' },
+    });
+
+    const received: unknown[] = [];
+    client.onUserMessage((message) => received.push(message));
+    expect(received).toHaveLength(1);
+
+    await flushApiSessionClientMessageCommitQueue(client as any);
+
+    const update = {
+      id: 'u-queued-1',
+      seq: 1,
+      createdAt: 1700000000001,
+      body: {
+        t: 'new-message',
+        sid: 's1',
+        message: {
+          id: 'm-queued-1',
+          seq: 3,
+          localId: 'queued-local-1',
+          sidechainId: null,
+          createdAt: 1700000000001,
+          updatedAt: 1700000000001,
+          content: {
+            t: 'plain',
+            v: {
+              role: 'user',
+              content: { type: 'text', text: 'hello' },
+              meta: { source: 'daemon-initial-prompt', sentFrom: 'cli' },
+            },
+          },
+        },
+      },
+    };
+
+    sessionSocketStub.trigger('update', update);
+
+    expect(received).toHaveLength(1);
   });
 
   it('includes machineId in the session-scoped socket bootstrap when session metadata declares it', async () => {
