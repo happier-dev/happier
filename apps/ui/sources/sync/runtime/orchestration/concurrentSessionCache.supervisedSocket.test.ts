@@ -4,6 +4,12 @@ const ioSpy = vi.fn();
 const getCredentialsForServerUrlSpy = vi.fn();
 const listServerProfilesSpy = vi.fn();
 const getActiveServerSnapshotSpy = vi.fn();
+const fetchAndApplySessionsSpy = vi.hoisted(() => vi.fn(async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
+    applySessions([]);
+}));
+const fetchAndApplyMachinesSpy = vi.hoisted(() => vi.fn(async ({ applyMachines }: { applyMachines: (machines: unknown[]) => void }) => {
+    applyMachines([]);
+}));
 
 type SocketEventHandler = (...args: unknown[]) => void;
 
@@ -51,11 +57,11 @@ function createSocketStub() {
 
 function mockConcurrentSessionCacheDeps() {
     vi.doMock('socket.io-client', () => ({
-        io: (...args: unknown[]) => ioSpy(...args),
+        io: (uri?: unknown, opts?: unknown) => ioSpy(uri, opts),
     }));
     vi.doMock('@/auth/storage/tokenStorage', () => ({
         TokenStorage: {
-            getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+            getCredentialsForServerUrl: (serverUrl: string, options?: unknown) => getCredentialsForServerUrlSpy(serverUrl, options),
         },
         isLegacyAuthCredentials: (credentials: unknown) =>
             Boolean(credentials && typeof credentials === 'object' && typeof (credentials as { secret?: unknown }).secret === 'string'),
@@ -76,15 +82,23 @@ function mockConcurrentSessionCacheDeps() {
         decodeBase64: () => new Uint8Array(32),
     }));
     vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
-        fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
-            applySessions([]);
-        },
+        fetchAndApplySessions: fetchAndApplySessionsSpy,
     }));
     vi.doMock('@/sync/engine/machines/syncMachines', () => ({
-        fetchAndApplyMachines: async ({ applyMachines }: { applyMachines: (machines: unknown[]) => void }) => {
-            applyMachines([]);
-        },
+        fetchAndApplyMachines: fetchAndApplyMachinesSpy,
     }));
+}
+
+function mockRuntimeFetchReachabilityReady() {
+    const runtimeFetchMock = vi.fn(async (_input: RequestInfo | URL) => {
+        return new Response(null, { status: 200, headers: new Headers() });
+    });
+    vi.doMock('@/utils/system/runtimeFetch', () => ({
+        runtimeFetch: runtimeFetchMock,
+        resetRuntimeFetch: () => {},
+        setRuntimeFetch: () => {},
+    }));
+    return runtimeFetchMock;
 }
 
 async function configureConcurrentSelection(): Promise<void> {
@@ -127,6 +141,8 @@ beforeEach(() => {
     getCredentialsForServerUrlSpy.mockReset();
     listServerProfilesSpy.mockReset();
     getActiveServerSnapshotSpy.mockReset();
+    fetchAndApplySessionsSpy.mockReset();
+    fetchAndApplyMachinesSpy.mockReset();
     process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
 });
 
@@ -135,8 +151,117 @@ afterEach(() => {
     delete process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT;
 });
 
+afterEach(async () => {
+    try {
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
+    } catch {
+        // ignore
+    }
+});
+
 describe('concurrent session cache supervised sockets', () => {
+    it('does not connect sockets while server reachability is offline', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(Math, 'random').mockReturnValue(0);
+        process.env.EXPO_PUBLIC_HAPPIER_CONCURRENT_CACHE_REFRESH_INTERVAL_MS = '10000';
+
+        const fakeSocket = createSocketStub();
+        ioSpy.mockReturnValue(fakeSocket);
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        listServerProfilesSpy.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
+            { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
+        ]);
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://stack-a.example.test',
+            kind: 'stack',
+            generation: 1,
+        });
+
+        const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = typeof input === 'string' ? input : String(input);
+            if (url.endsWith('/health')) {
+                throw new TypeError('Network request failed');
+            }
+            return new Response(null, { status: 200, headers: new Headers() });
+        });
+        vi.doMock('@/utils/system/runtimeFetch', () => ({
+            runtimeFetch: runtimeFetchMock,
+            resetRuntimeFetch: () => {},
+            setRuntimeFetch: () => {},
+        }));
+
+        mockConcurrentSessionCacheDeps();
+        await configureConcurrentSelection();
+
+        const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
+        startConcurrentSessionCacheSync();
+        await vi.waitFor(() => {
+            expect(listServerProfilesSpy).toHaveBeenCalled();
+        });
+
+        expect(ioSpy).not.toHaveBeenCalled();
+        expect(fakeSocket.connect).not.toHaveBeenCalled();
+
+        stopConcurrentSessionCacheSync();
+        delete process.env.EXPO_PUBLIC_HAPPIER_CONCURRENT_CACHE_REFRESH_INTERVAL_MS;
+        vi.useRealTimers();
+    });
+
+    it('does not refresh HTTP snapshots while reachability is offline', async () => {
+        vi.useFakeTimers();
+        vi.spyOn(Math, 'random').mockReturnValue(0);
+        process.env.EXPO_PUBLIC_HAPPIER_CONCURRENT_CACHE_REFRESH_INTERVAL_MS = '10000';
+
+        const fakeSocket = createSocketStub();
+        ioSpy.mockReturnValue(fakeSocket);
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        listServerProfilesSpy.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
+            { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
+        ]);
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://stack-a.example.test',
+            kind: 'stack',
+            generation: 1,
+        });
+
+        const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = typeof input === 'string' ? input : String(input);
+            if (url.endsWith('/health')) {
+                throw new TypeError('Network request failed');
+            }
+            return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        });
+        vi.doMock('@/utils/system/runtimeFetch', () => ({
+            runtimeFetch: runtimeFetchMock,
+            resetRuntimeFetch: () => {},
+            setRuntimeFetch: () => {},
+        }));
+
+        mockConcurrentSessionCacheDeps();
+        await configureConcurrentSelection();
+
+        const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
+        startConcurrentSessionCacheSync();
+        await vi.waitFor(() => {
+            expect(listServerProfilesSpy).toHaveBeenCalled();
+        });
+
+        await vi.advanceTimersByTimeAsync(10_000 + 1_000);
+
+        expect(fetchAndApplySessionsSpy).not.toHaveBeenCalled();
+
+        stopConcurrentSessionCacheSync();
+        delete process.env.EXPO_PUBLIC_HAPPIER_CONCURRENT_CACHE_REFRESH_INTERVAL_MS;
+        vi.useRealTimers();
+    });
+
     it('opens non-active server sockets with server-scoped credentials', async () => {
+        mockRuntimeFetchReachabilityReady();
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
@@ -180,6 +305,7 @@ describe('concurrent session cache supervised sockets', () => {
     });
 
     it('does not subscribe to socket.onAny or socket update events', async () => {
+        mockRuntimeFetchReachabilityReady();
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
         getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
@@ -207,6 +333,7 @@ describe('concurrent session cache supervised sockets', () => {
     });
 
     it('uses supervised sockets without built-in socket.io reconnect loops', async () => {
+        mockRuntimeFetchReachabilityReady();
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
         getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
@@ -236,5 +363,115 @@ describe('concurrent session cache supervised sockets', () => {
             expect(fakeSocket.disconnect).toHaveBeenCalled();
             expect(fakeSocket.removeAllListeners).toHaveBeenCalled();
         });
+    });
+
+    it('does not report server unreachable during stop teardown', async () => {
+        const fakeSocket = createSocketStub();
+        ioSpy.mockReturnValue(fakeSocket);
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        listServerProfilesSpy.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
+            { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
+        ]);
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://stack-a.example.test',
+            kind: 'stack',
+            generation: 1,
+        });
+
+        const reportServerUnreachableSpy = vi.fn();
+        const createConcurrentServerSocketTransportSpy = vi.fn();
+        const destroySpy = vi.fn(() => {});
+        vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>();
+            return {
+                ...actual,
+                subscribeServerReachabilityState: (_serverUrl: string, listener: (state: any) => void) => {
+                    const timer = setTimeout(() => {
+                        listener({
+                            phase: 'online',
+                            reason: 'initial_connect',
+                            attempt: 0,
+                            nextRetryAt: null,
+                            lastConnectedAt: Date.now(),
+                            lastDisconnectedAt: null,
+                            lastErrorMessage: null,
+                        });
+                    }, 0);
+                    return () => clearTimeout(timer);
+                },
+                startServerReachabilitySupervisor: async () => {},
+                reportServerUnreachable: (serverUrl: string, error: unknown) => reportServerUnreachableSpy(serverUrl, error),
+                resetServerReachabilitySupervisors: async () => {},
+            };
+        });
+
+        vi.doMock('./concurrentServerConnections/createConcurrentServerSocketTransport', () => {
+            const connectedListeners = new Set<() => void>();
+            const disconnectedListeners = new Set<(event: any) => void>();
+            const errorListeners = new Set<(error: unknown) => void>();
+            let connected = false;
+
+            const transport = {
+                async connect() {
+                    connected = true;
+                    connectedListeners.forEach((listener) => listener());
+                },
+                async disconnect(params?: { intentional?: boolean }) {
+                    connected = false;
+                    disconnectedListeners.forEach((listener) => listener({
+                        intentional: params?.intentional === true,
+                        reason: params?.intentional === true ? 'manual' : 'disconnect',
+                    }));
+                },
+                async destroy() {
+                    destroySpy();
+                    disconnectedListeners.forEach((listener) => listener({ intentional: false, reason: 'destroy' }));
+                    connected = false;
+                    connectedListeners.clear();
+                    disconnectedListeners.clear();
+                    errorListeners.clear();
+                },
+                isConnected() {
+                    return connected;
+                },
+                onConnected(listener: () => void) {
+                    connectedListeners.add(listener);
+                    return () => connectedListeners.delete(listener);
+                },
+                onDisconnected(listener: (event: any) => void) {
+                    disconnectedListeners.add(listener);
+                    return () => disconnectedListeners.delete(listener);
+                },
+                onError(listener: (error: unknown) => void) {
+                    errorListeners.add(listener);
+                    return () => errorListeners.delete(listener);
+                },
+            };
+
+            return {
+                createConcurrentServerSocketTransport: () => {
+                    createConcurrentServerSocketTransportSpy();
+                    return { socket: fakeSocket, transport };
+                },
+            };
+        });
+
+        mockRuntimeFetchReachabilityReady();
+        mockConcurrentSessionCacheDeps();
+        await configureConcurrentSelection();
+
+        const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
+        startConcurrentSessionCacheSync();
+        await vi.waitFor(() => {
+            expect(listServerProfilesSpy).toHaveBeenCalled();
+            expect(getCredentialsForServerUrlSpy).toHaveBeenCalled();
+            expect(createConcurrentServerSocketTransportSpy).toHaveBeenCalled();
+        });
+        stopConcurrentSessionCacheSync();
+
+        expect(destroySpy).toHaveBeenCalled();
+        expect(reportServerUnreachableSpy).not.toHaveBeenCalled();
     });
 });

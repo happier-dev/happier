@@ -10,6 +10,12 @@ import type { ApiEphemeralActivityUpdate } from './api/types/apiTypes';
 import { Session, Machine, MetadataSchema, type Metadata } from './domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { PauseController } from '@/utils/timing/pauseController';
+import {
+    invalidateAllServerReachabilitySupervisors,
+    setServerReachabilityNetworkAllowed,
+    stopServerReachabilitySupervisors,
+} from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { applyInitialAppStateConnectivityGate } from '@/sync/runtime/connectivity/appStateConnectivityGate';
 import { loadSyncTuning, type SyncTuning } from '@/sync/runtime/syncTuning';
 import {
     computeSessionMessagesPaginationUpdateFromPage,
@@ -289,6 +295,11 @@ class Sync {
         dbgSettings('Sync.constructor: loaded pendingSettings', {
             pendingKeys: Object.keys(this.pendingSettings).sort(),
         });
+        applyInitialAppStateConnectivityGate({
+            isForeground: this.isForeground,
+            pauseController: this.pauseController,
+            setNetworkAllowed: setServerReachabilityNetworkAllowed,
+        });
         const onSuccess = () => {
             storage.getState().clearSyncError();
             storage.getState().setLastSyncAt(Date.now());
@@ -341,8 +352,10 @@ class Sync {
           AppState.addEventListener('change', (nextAppState) => {
               if (nextAppState === 'active') {
                   this.isForeground = true;
+                  setServerReachabilityNetworkAllowed(true);
                   log.log('📱 App became active');
                   this.pauseController.resume();
+                  fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: 'Sync.invalidateAllServerReachabilitySupervisors' });
                   try {
                       apiSocket.connect();
                   } catch {
@@ -351,6 +364,7 @@ class Sync {
                   fireAndForget(this.resumeSync('app-foreground'), { tag: 'Sync.resumeSync.app-foreground' });
               } else {
                   this.isForeground = false;
+                  setServerReachabilityNetworkAllowed(false);
                   log.log(`📱 App state changed to: ${nextAppState}`);
                   this.pauseController.pause();
                   try {
@@ -358,6 +372,7 @@ class Sync {
                   } catch {
                       // ignore
                   }
+                  fireAndForget(stopServerReachabilitySupervisors(), { tag: 'Sync.stopServerReachabilitySupervisors' });
                   // Reliability: ensure we persist any pending settings immediately when backgrounding.
                   // This avoids losing last-second settings changes if the OS suspends the app.
                   try {

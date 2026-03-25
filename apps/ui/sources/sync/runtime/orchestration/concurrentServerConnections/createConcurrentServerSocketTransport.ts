@@ -21,6 +21,7 @@ export function createConcurrentServerSocketTransport(params: Readonly<{
         auth: {
             token: params.token,
             clientType: 'user-scoped' as const,
+            clientPurpose: 'concurrent-server-cache' as const,
         },
         ...(transports ? { transports } : null),
         reconnection: false,

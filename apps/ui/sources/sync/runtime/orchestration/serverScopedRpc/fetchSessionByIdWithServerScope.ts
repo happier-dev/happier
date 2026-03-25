@@ -1,7 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { fetchAndApplySessionById, type SessionByIdEncryption } from '@/sync/engine/sessions/sessionById';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 
 import { resolveServerScopedSessionContext } from './resolveServerScopedSessionContext';
 
@@ -83,11 +83,16 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
         encryption: getScopedSessionByIdEncryption(context.encryption),
         sessionDataKeys: params.sessionDataKeys,
         request: async (path: string, init: RequestInit) => {
-            return await runtimeFetch(`${context.targetServerUrl}${path}`, {
-                ...init,
-                headers: {
-                    ...(init.headers ?? {}),
-                    Authorization: `Bearer ${context.token}`,
+            return await runtimeFetchWithServerReachability({
+                serverUrl: context.targetServerUrl,
+                token: context.token,
+                url: `${context.targetServerUrl}${path}`,
+                init: {
+                    ...init,
+                    headers: {
+                        ...(init.headers ?? {}),
+                        Authorization: `Bearer ${context.token}`,
+                    },
                 },
             });
         },

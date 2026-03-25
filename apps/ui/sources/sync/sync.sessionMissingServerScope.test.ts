@@ -136,6 +136,12 @@ function expectHeaderValue(headers: HeadersInit | undefined, key: string, value:
     expect(new Headers(headers).get(key)).toBe(value);
 }
 
+function findRuntimeFetchCall(url: string) {
+    const call = runtimeFetchMock.mock.calls.find(([input]) => String(input) === url);
+    expect(call, `expected runtimeFetch to be called with ${url}`).toBeTruthy();
+    return call;
+}
+
 describe('sync.fetchMessages server-scoped known-session checks', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
@@ -329,7 +335,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 method: 'GET',
             }),
         );
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        const ownerMessagesCall = findRuntimeFetchCall(`https://owner.example/v1/sessions/${sessionId}/messages?scope=main`);
+        expectHeaderValue(ownerMessagesCall?.[1]?.headers, 'Authorization', 'Bearer owner-token');
         const messagesById = storage.getState().sessionMessages[sessionId]?.messagesById ?? {};
         expect(Object.values(messagesById).some((message) => message.kind === 'user-text' && message.text === 'hello scoped')).toBe(true);
     });
@@ -473,7 +480,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 method: 'GET',
             }),
         );
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        const ownerPendingCall = findRuntimeFetchCall(`https://owner.example/v2/sessions/${sessionId}/pending?includeDiscarded=1`);
+        expectHeaderValue(ownerPendingCall?.[1]?.headers, 'Authorization', 'Bearer owner-token');
         expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.text)).toEqual(['queued remotely']);
     });
 
@@ -507,8 +515,9 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 method: 'POST',
             }),
         );
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'Authorization', 'Bearer owner-token');
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'Content-Type', 'application/json');
+        const ownerPendingCall = findRuntimeFetchCall(`https://owner.example/v2/sessions/${sessionId}/pending`);
+        expectHeaderValue(ownerPendingCall?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectHeaderValue(ownerPendingCall?.[1]?.headers, 'Content-Type', 'application/json');
         expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.text)).toEqual(['hello pending']);
     });
 

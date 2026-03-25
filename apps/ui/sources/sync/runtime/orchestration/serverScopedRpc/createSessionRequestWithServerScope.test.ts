@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const kvStore = vi.hoisted(() => new Map<string, string>());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
@@ -77,6 +77,7 @@ describe('createSessionRequestWithServerScope', () => {
 
         getCredentialsForServerUrlMock.mockResolvedValue({ token: 'owner-token', secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
+        runtimeFetchMock.mockImplementation(async () => new Response(null, { status: 200, headers: new Headers() }));
 
         const activeRequest = vi.fn(async () => new Response(null, { status: 200 }));
         const request = createSessionRequestWithServerScope({
@@ -87,11 +88,10 @@ describe('createSessionRequestWithServerScope', () => {
         await request('/v1/sessions/s1/messages?scope=main', { method: 'GET' });
 
         expect(activeRequest).not.toHaveBeenCalled();
-        expect(runtimeFetchMock).toHaveBeenCalledWith(
-            'https://owner.example/v1/sessions/s1/messages?scope=main',
-            expect.objectContaining({ method: 'GET' }),
-        );
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        const call = runtimeFetchMock.mock.calls.find(([input]) => String(input).includes('/v1/sessions/s1/messages?scope=main'));
+        expect(call).toBeTruthy();
+        expect(call?.[1]).toEqual(expect.objectContaining({ method: 'GET' }));
+        expectHeaderValue(call?.[1]?.headers, 'Authorization', 'Bearer owner-token');
     });
 
     it('preserves request body and existing headers for non-GET scoped requests', async () => {
@@ -101,6 +101,7 @@ describe('createSessionRequestWithServerScope', () => {
 
         getCredentialsForServerUrlMock.mockResolvedValue({ token: 'owner-token', secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
+        runtimeFetchMock.mockImplementation(async () => new Response(null, { status: 200, headers: new Headers() }));
 
         const activeRequest = vi.fn(async () => new Response(null, { status: 200 }));
         const request = createSessionRequestWithServerScope({
@@ -118,15 +119,23 @@ describe('createSessionRequestWithServerScope', () => {
         });
 
         expect(activeRequest).not.toHaveBeenCalled();
-        expect(runtimeFetchMock).toHaveBeenCalledWith(
-            'https://owner.example/v2/sessions/s1/pending',
-            expect.objectContaining({
-                method: 'POST',
-                body: JSON.stringify({ hello: 'world' }),
-            }),
-        );
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'Authorization', 'Bearer owner-token');
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'Content-Type', 'application/json');
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'X-Test', '1');
+        const call = runtimeFetchMock.mock.calls.find(([input]) => String(input).includes('/v2/sessions/s1/pending'));
+        expect(call).toBeTruthy();
+        expect(call?.[1]).toEqual(expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ hello: 'world' }),
+        }));
+        expectHeaderValue(call?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectHeaderValue(call?.[1]?.headers, 'Content-Type', 'application/json');
+        expectHeaderValue(call?.[1]?.headers, 'X-Test', '1');
     });
+});
+
+afterEach(async () => {
+    try {
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
+    } catch {
+        // ignore
+    }
 });

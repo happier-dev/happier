@@ -49,6 +49,36 @@ function createSocketStub() {
     return socket;
 }
 
+function onlineState() {
+    return {
+        phase: 'online',
+        reason: 'initial_connect',
+        attempt: 0,
+        nextRetryAt: null,
+        lastConnectedAt: Date.now(),
+        lastDisconnectedAt: null,
+        lastErrorMessage: null,
+    };
+}
+
+function mockReachabilityOnline() {
+    vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>();
+        return {
+            ...actual,
+            subscribeServerReachabilityState: (_serverUrl: string, listener: (state: any) => void) => {
+                const timer = setTimeout(() => {
+                    listener(onlineState());
+                }, 0);
+                return () => clearTimeout(timer);
+            },
+            startServerReachabilitySupervisor: async () => {},
+            reportServerUnreachable: () => {},
+            resetServerReachabilitySupervisors: async () => {},
+        };
+    });
+}
+
 async function flushConcurrentCacheStartup(timerCount = 2): Promise<void> {
     for (let index = 0; index < timerCount; index += 1) {
         await vi.advanceTimersToNextTimerAsync();
@@ -82,6 +112,7 @@ afterEach(() => {
 describe('concurrent session cache socket routing', () => {
     it('replaces stale machine entries when an authoritative refresh omits a removed machine', async () => {
         process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+        mockReachabilityOnline();
 
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
@@ -223,6 +254,7 @@ describe('concurrent session cache socket routing', () => {
 
     it('keeps concurrent session cache updates isolated per server when two servers refresh concurrently', async () => {
         process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+        mockReachabilityOnline();
 
         const fakeSocketB = createSocketStub();
         const fakeSocketC = createSocketStub();
@@ -407,6 +439,7 @@ describe('concurrent session cache socket routing', () => {
 
     it('scopes same-url concurrent cache refreshes by server id when alternate profiles share credentials storage', async () => {
         process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+        mockReachabilityOnline();
 
         const sharedServerUrl = 'https://shared-stack.example.test';
         const fakeSocketB = createSocketStub();
@@ -602,6 +635,7 @@ describe('concurrent session cache socket routing', () => {
 
     it('clears stale non-active server cache entries when a server is removed from the concurrent selection', async () => {
         process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+        mockReachabilityOnline();
 
         const fakeSocketB = createSocketStub();
         const fakeSocketC = createSocketStub();

@@ -6,19 +6,31 @@ import {
 } from './serverScopedRpcPool';
 
 describe('resolveScopedMachineDataKey', () => {
-    afterEach(() => {
+    afterEach(async () => {
         vi.unstubAllGlobals();
         delete process.env.EXPO_PUBLIC_HAPPIER_SCOPED_RPC_MACHINE_KEY_CACHE_MAX;
         resetScopedMachineDataKeyCacheForTests();
+        try {
+            const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+            await resetServerReachabilitySupervisors();
+        } catch {
+            // ignore
+        }
     });
 
     it('fetches and decrypts machine key on first request then uses cache', async () => {
-        const fetchSpy = vi.fn(async () => ({
-            ok: true,
-            json: async () => [
-                { id: 'machine-1', dataEncryptionKey: 'encrypted-key' },
-            ],
-        }));
+        const fetchSpy = vi.fn(async (url: string) => {
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200, json: async () => ({}) };
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => [
+                    { id: 'machine-1', dataEncryptionKey: 'encrypted-key' },
+                ],
+            };
+        });
         vi.stubGlobal('fetch', fetchSpy);
 
         const decryptSpy = vi.fn(async () => new Uint8Array([1, 2, 3]));
@@ -40,17 +52,21 @@ describe('resolveScopedMachineDataKey', () => {
 
         expect(first).toEqual(new Uint8Array([1, 2, 3]));
         expect(second).toEqual(new Uint8Array([1, 2, 3]));
-        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(1);
         expect(decryptSpy).toHaveBeenCalledTimes(1);
     });
 
     it('does not reuse cached machine key when auth token changes', async () => {
         const fetchSpy = vi.fn(async (_url: string, init?: RequestInit) => {
+            if (String(_url).endsWith('/health') || String(_url).endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200, json: async () => ({}) };
+            }
             const auth = String(init?.headers && (init.headers as any).Authorization ? (init.headers as any).Authorization : '');
             const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
             const dataEncryptionKey = token === 'Aa' ? 'encrypted-key-1' : token === 'BB' ? 'encrypted-key-2' : 'encrypted-key-unknown';
             return {
                 ok: true,
+                status: 200,
                 json: async () => [
                     { id: 'machine-1', dataEncryptionKey },
                 ],
@@ -83,15 +99,21 @@ describe('resolveScopedMachineDataKey', () => {
 
         expect(first).toEqual(new Uint8Array([4, 5, 6]));
         expect(second).toEqual(new Uint8Array([7, 8, 9]));
-        expect(fetchSpy).toHaveBeenCalledTimes(2);
+        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(2);
         expect(decryptSpy).toHaveBeenCalledTimes(2);
     });
 
     it('passes an abort signal to fetch for timeout enforcement', async () => {
         const fetchSpy = vi.fn(async (_url: string, init?: RequestInit) => {
-            expect(init && 'signal' in init).toBe(true);
+            if (String(_url).endsWith('/health') || String(_url).endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200, json: async () => ({}) };
+            }
+            if (String(_url).includes('/v1/machines')) {
+                expect(init && 'signal' in init).toBe(true);
+            }
             return {
                 ok: false,
+                status: 503,
                 json: async () => [],
             };
         });
@@ -109,14 +131,23 @@ describe('resolveScopedMachineDataKey', () => {
         });
 
         expect(result).toBeNull();
-        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(1);
     });
 
     it('retries machine key fetch when the first lookup returns no key', async () => {
-        const fetchSpy = vi.fn(async () => {
-            if (fetchSpy.mock.calls.length === 1) {
+        let machineCalls = 0;
+        const fetchSpy = vi.fn(async (url: string) => {
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200, json: async () => ({}) };
+            }
+            if (!url.includes('/v1/machines')) {
+                return { ok: false, status: 404, json: async () => ({}) };
+            }
+            machineCalls += 1;
+            if (machineCalls === 1) {
                 return {
                     ok: true,
+                    status: 200,
                     json: async () => [
                         { id: 'machine-1', dataEncryptionKey: null },
                     ],
@@ -124,6 +155,7 @@ describe('resolveScopedMachineDataKey', () => {
             }
             return {
                 ok: true,
+                status: 200,
                 json: async () => [
                     { id: 'machine-1', dataEncryptionKey: 'encrypted-key' },
                 ],
@@ -150,20 +182,26 @@ describe('resolveScopedMachineDataKey', () => {
 
         expect(first).toBeNull();
         expect(second).toEqual(new Uint8Array([9, 9, 9]));
-        expect(fetchSpy).toHaveBeenCalledTimes(2);
+        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(2);
         expect(decryptSpy).toHaveBeenCalledTimes(1);
     });
 
     it('evicts oldest machine keys when cache exceeds EXPO_PUBLIC_HAPPIER_SCOPED_RPC_MACHINE_KEY_CACHE_MAX', async () => {
         process.env.EXPO_PUBLIC_HAPPIER_SCOPED_RPC_MACHINE_KEY_CACHE_MAX = '1';
 
-        const fetchSpy = vi.fn(async () => ({
-            ok: true,
-            json: async () => [
-                { id: 'machine-1', dataEncryptionKey: 'encrypted-key-1' },
-                { id: 'machine-2', dataEncryptionKey: 'encrypted-key-2' },
-            ],
-        }));
+        const fetchSpy = vi.fn(async (url: string) => {
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200, json: async () => ({}) };
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => [
+                    { id: 'machine-1', dataEncryptionKey: 'encrypted-key-1' },
+                    { id: 'machine-2', dataEncryptionKey: 'encrypted-key-2' },
+                ],
+            };
+        });
         vi.stubGlobal('fetch', fetchSpy);
 
         const decryptSpy = vi.fn(async (value: string) => {
@@ -197,6 +235,6 @@ describe('resolveScopedMachineDataKey', () => {
             decryptEncryptionKey: decryptSpy,
         });
 
-        expect(fetchSpy).toHaveBeenCalledTimes(3);
+        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(3);
     });
 });

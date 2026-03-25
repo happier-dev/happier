@@ -1,4 +1,4 @@
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 
 import { resolveServerScopedSessionContext } from './resolveServerScopedSessionContext';
 
@@ -14,10 +14,15 @@ export function createSessionRequestWithServerScope(params: Readonly<{
 
         const headers = new Headers(init?.headers);
         headers.set('Authorization', `Bearer ${context.token}`);
-        return await runtimeFetch(`${context.targetServerUrl}${path}`, {
+        return await runtimeFetchWithServerReachability({
+            serverUrl: context.targetServerUrl,
+            token: context.token,
+            url: `${context.targetServerUrl}${path}`,
+            init: {
             ...init,
             method: init?.method ?? 'GET',
             headers,
+            },
         });
     };
 }
