@@ -12,6 +12,39 @@ import { t } from '@/text';
 
 const LINK_FILE_ICON: React.ComponentProps<typeof Ionicons>['name'] = 'at-outline';
 
+function normalizeAbsoluteDirectoryForPrefix(raw: string): { normalized: string; prefix: string; isWindows: boolean } | null {
+    const value = String(raw ?? '').trim();
+    if (!value) return null;
+
+    const isWindows = /^[A-Za-z]:[\\/]/.test(value) || value.includes('\\');
+    if (isWindows) {
+        const trimmed = value.replace(/[\\/]+$/g, '');
+        const driveRootMatch = /^([A-Za-z]:)$/.exec(trimmed);
+        const normalized = driveRootMatch ? `${driveRootMatch[1]}\\` : trimmed;
+        const prefix = normalized.endsWith('\\') || normalized.endsWith('/') ? normalized : `${normalized}\\`;
+        return { normalized, prefix, isWindows: true };
+    }
+
+    if (value === '/') {
+        return { normalized: '/', prefix: '/', isWindows: false };
+    }
+    const normalized = value.replace(/\/+$/g, '');
+    const prefix = normalized.endsWith('/') ? normalized : `${normalized}/`;
+    return { normalized, prefix, isWindows: false };
+}
+
+function resolveRelativePathUnderDirectory(rootDirectoryPath: string, absolutePath: string): string {
+    const root = normalizeAbsoluteDirectoryForPrefix(rootDirectoryPath);
+    if (!root) return absolutePath;
+
+    const candidate = String(absolutePath ?? '').trim();
+    if (!candidate) return candidate;
+    const candidateComparable = root.isWindows ? candidate.toLowerCase() : candidate;
+    const prefixComparable = root.isWindows ? root.prefix.toLowerCase() : root.prefix;
+    if (!candidateComparable.startsWith(prefixComparable)) return candidate;
+    return candidate.slice(root.prefix.length).replace(/^[\\/]+/g, '');
+}
+
 function createBaseLinkFileChip(params: Readonly<{
     key: string;
     testID: string;
@@ -117,7 +150,8 @@ export function createNewSessionLinkedFilesActionChip(params: Readonly<{
                 interaction="immediate"
                 maxHeight={maxHeight}
                 onPickPath={(path) => {
-                    params.onPickPath(path);
+                    // Align with session repo-browser behavior: link files relative to the selected root.
+                    params.onPickPath(resolveRelativePathUnderDirectory(rootDirectoryPath, path));
                     requestClose();
                 }}
                 onRequestClose={requestClose}

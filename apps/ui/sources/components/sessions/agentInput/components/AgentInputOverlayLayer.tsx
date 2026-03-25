@@ -355,27 +355,51 @@ export function AgentInputOverlayLayer(props: Readonly<{
                 />
             ) : null}
 
-            {props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover ? (
-                <AgentInputChipPickerPopover
-                    open
-                    anchorRef={props.activeExtraCollapsedPopoverAnchor === 'chip'
-                        ? (props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key] ?? props.actionMenuAnchorRef)
-                        : props.actionMenuAnchorRef}
-                    title={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.title}
-                    options={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.options}
-                    selectedOptionId={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.selectedOptionId ?? null}
-                    applyLabel={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.applyLabel}
-                    railWidth={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.railWidth}
-                    railMaxWidth={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.railMaxWidth}
-                    onSelect={(selectedId) => {
-                        props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover?.onSelect(selectedId);
-                        props.onActiveExtraCollapsedPopoverChipClose();
-                    }}
-                    onRequestClose={props.onActiveExtraCollapsedPopoverChipClose}
-                    maxHeightCap={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.maxHeightCap ?? 420}
-                    maxWidthCap={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.maxWidthCap ?? 360}
-                />
-            ) : null}
+            {props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover ? (() => {
+                const popover = props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover;
+                const anchorRef = props.activeExtraCollapsedPopoverAnchor === 'chip'
+                    ? (props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key] ?? props.actionMenuAnchorRef)
+                    : props.actionMenuAnchorRef;
+
+                if (popover.presentation === 'simple') {
+                    return (
+                        <AgentInputSimpleOptionsPopover
+                            open
+                            anchorRef={anchorRef}
+                            title={popover.title}
+                            options={popover.options}
+                            selectedOptionId={popover.selectedOptionId ?? null}
+                            onSelect={(selectedId) => {
+                                props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover?.onSelect(selectedId);
+                                props.onActiveExtraCollapsedPopoverChipClose();
+                            }}
+                            onRequestClose={props.onActiveExtraCollapsedPopoverChipClose}
+                            maxHeightCap={popover.maxHeightCap ?? 360}
+                            maxWidthCap={popover.maxWidthCap ?? 320}
+                        />
+                    );
+                }
+
+                return (
+                    <AgentInputChipPickerPopover
+                        open
+                        anchorRef={anchorRef}
+                        title={popover.title}
+                        options={popover.options}
+                        selectedOptionId={popover.selectedOptionId ?? null}
+                        applyLabel={popover.applyLabel}
+                        railWidth={popover.railWidth}
+                        railMaxWidth={popover.railMaxWidth}
+                        onSelect={(selectedId) => {
+                            props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover?.onSelect(selectedId);
+                            props.onActiveExtraCollapsedPopoverChipClose();
+                        }}
+                        onRequestClose={props.onActiveExtraCollapsedPopoverChipClose}
+                        maxHeightCap={popover.maxHeightCap ?? 420}
+                        maxWidthCap={popover.maxWidthCap ?? 360}
+                    />
+                );
+            })() : null}
 
         </>
     );
