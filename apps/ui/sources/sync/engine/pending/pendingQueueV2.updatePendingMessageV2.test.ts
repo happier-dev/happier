@@ -75,6 +75,69 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         expect(decrypted?.meta?.displayText).toBe('Old display');
     });
 
+    it('rebuilds rawRecord when existing.rawRecord is not a RawRecord (decrypt-failed placeholder)', async () => {
+        const sessionId = 's_test_decrypt_failed_update';
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 4 });
+
+        storage.setState(
+            {
+                ...storage.getState(),
+                sessions: {
+                    ...storage.getState().sessions,
+                    [sessionId]: {
+                        ...buildSession({ sessionId }),
+                        metadata: { path: '/tmp', host: 'h', flavor: 'claude' },
+                        permissionMode: 'default',
+                        modelMode: 'default',
+                    } as Session,
+                },
+            },
+            true,
+        );
+
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p_decrypt_failed_1',
+            localId: 'p_decrypt_failed_1',
+            createdAt: 1,
+            updatedAt: 1,
+            text: 'old',
+            displayText: "Couldn't decrypt this pending message.",
+            pendingDecryptFailure: { kind: 'decrypt_failed' },
+            // This is the placeholder shape emitted by fetchAndApplyPendingMessagesV2 for decrypt failures.
+            rawRecord: { pendingDecryptFailure: { kind: 'decrypt_failed' } },
+        });
+
+        let capturedCiphertext: string | null = null;
+        const request = async (_path: string, init?: RequestInit) => {
+            const parsed = JSON.parse(String(init?.body ?? 'null'));
+            capturedCiphertext = typeof parsed?.ciphertext === 'string' ? parsed.ciphertext : null;
+            return new Response('{}', { status: 200 });
+        };
+
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p_decrypt_failed_1',
+            text: 'new text',
+            encryption,
+            request,
+        });
+
+        expect(capturedCiphertext).toEqual(expect.any(String));
+        const sessionEncryption = getSessionEncryptionOrThrow({ encryption, sessionId });
+        const decrypted = await sessionEncryption.decryptRaw(capturedCiphertext!);
+        expect(decrypted).toMatchObject({
+            role: 'user',
+            content: { type: 'text', text: 'new text' },
+        });
+
+        // Updating a decrypt-failed placeholder should not preserve the placeholder display text.
+        expect(decrypted?.meta?.displayText).toBeUndefined();
+
+        const updated = storage.getState().sessionPending[sessionId]?.messages?.find((m) => m.id === 'p_decrypt_failed_1') ?? null;
+        expect(updated?.pendingDecryptFailure).toBeUndefined();
+        expect(updated?.displayText).toBeUndefined();
+    });
+
     it('sends plaintext pending updates when session encryptionMode is plain', async () => {
         const sessionId = 's_test_plain_update';
         const encryption = await createPendingQueueEncryption({ sessionId });

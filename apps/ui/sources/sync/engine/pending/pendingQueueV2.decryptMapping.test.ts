@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
+import { Encryption } from '@/sync/encryption/encryption';
 import type { RawRecord } from '@/sync/typesRaw';
 
 import { fetchAndApplyPendingMessagesV2 } from './pendingQueueV2';
@@ -224,5 +225,37 @@ describe('pendingQueueV2 decrypt mapping', () => {
         expect(discardedFailure?.displayText).toBeTruthy();
         expect(discardedFailure?.text).toBe('');
         expect(discardedFailure?.pendingDecryptFailure).toEqual({ kind: 'decrypt_failed' });
+    });
+
+    it('retains encrypted pending rows as decrypt failures when session encryption is unavailable', async () => {
+        const sessionId = 's_missing_session_encryption';
+        const encryption = await Encryption.create(new Uint8Array(32).fill(7));
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption,
+            request: async () =>
+                new Response(
+                    JSON.stringify({
+                        pending: [
+                            {
+                                localId: 'queued-missing-key',
+                                content: { t: 'encrypted', c: 'any-ciphertext' },
+                                status: 'queued',
+                                position: 0,
+                                createdAt: 1,
+                                updatedAt: 1,
+                            },
+                        ],
+                    }),
+                    { status: 200 },
+                ),
+        });
+
+        const pendingState = storage.getState().sessionPending[sessionId];
+        expect(pendingState?.messages.map((message) => message.localId)).toEqual(['queued-missing-key']);
+        expect((pendingState?.messages[0] as { pendingDecryptFailure?: { kind: string } } | undefined)?.pendingDecryptFailure).toEqual({
+            kind: 'decrypt_failed',
+        });
     });
 });

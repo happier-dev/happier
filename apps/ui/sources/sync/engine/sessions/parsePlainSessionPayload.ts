@@ -1,4 +1,4 @@
-import { AgentStateSchema, MetadataSchema, type Metadata } from '@/sync/domains/state/storageTypes';
+import { AgentStateSchema, MetadataSchema, type AgentState, type Metadata } from '@/sync/domains/state/storageTypes';
 
 export function parsePlainSessionMetadata(value: string): Metadata | null {
     try {
@@ -10,7 +10,7 @@ export function parsePlainSessionMetadata(value: string): Metadata | null {
     }
 }
 
-export function parsePlainSessionAgentState(value: string | null): unknown {
+export function parsePlainSessionAgentState(value: string | null): AgentState {
     if (!value) return {};
     try {
         const parsedJson = JSON.parse(value);
