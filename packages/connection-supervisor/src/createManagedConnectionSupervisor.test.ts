@@ -58,6 +58,10 @@ function createTransportHarness(options?: Readonly<{ autoConnectOnCall?: boolean
 
   return {
     transport,
+    emitConnected() {
+      connected = true;
+      for (const listener of onConnectedListeners) listener();
+    },
     emitDisconnect(event: { intentional?: boolean; reason?: string | null; error?: unknown } = {}) {
       connected = false;
       for (const listener of onDisconnectedListeners) listener(event);
@@ -69,6 +73,147 @@ function createTransportHarness(options?: Readonly<{ autoConnectOnCall?: boolean
 }
 
 describe('createManagedConnectionSupervisor', () => {
+  it('dedupes concurrent start() calls while the initial readiness probe is in flight', async () => {
+    const harness = createTransportHarness();
+    const probeDeferred = createDeferred<ReadinessProbeResult>();
+    const probeReadiness = vi.fn(() => probeDeferred.promise);
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => harness.transport,
+      probeReadiness,
+      probeBeforeInitialConnect: true,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 5,
+      backoffMaxMs: 5,
+      jitterRatio: 0,
+    });
+
+    const p1 = supervisor.start();
+    const p2 = supervisor.start();
+
+    expect(probeReadiness).toHaveBeenCalledTimes(1);
+    expect(harness.transport.connect).toHaveBeenCalledTimes(0);
+
+    probeDeferred.resolve({ status: 'ready' });
+    await Promise.all([p1, p2]);
+
+    expect(harness.transport.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it('can probe before the initial transport connect', async () => {
+    vi.useFakeTimers();
+    const harness = createTransportHarness();
+    const probeReadiness = vi
+      .fn<() => Promise<ReadinessProbeResult>>()
+      .mockResolvedValueOnce({ status: 'server_unreachable', errorMessage: 'down' })
+      .mockResolvedValueOnce({ status: 'ready' });
+    const phases: Array<{ phase: string; reason: string | null; attempt: number }> = [];
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => harness.transport,
+      probeReadiness,
+      probeBeforeInitialConnect: true,
+      onStateChange: (state) => {
+        phases.push({ phase: state.phase, reason: state.reason, attempt: state.attempt });
+      },
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 5,
+      backoffMaxMs: 5,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+
+    expect(harness.transport.connect).toHaveBeenCalledTimes(0);
+    expect(phases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'offline', reason: 'server_unreachable', attempt: 1 }),
+      ]),
+    );
+
+    await vi.advanceTimersByTimeAsync(5);
+
+    expect(probeReadiness).toHaveBeenCalled();
+    expect(harness.transport.connect).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('treats transport.connect() throws as a retryable connectivity failure', async () => {
+    vi.useFakeTimers();
+    const harness = createTransportHarness({ autoConnectOnCall: false });
+    (harness.transport.connect as unknown as { mockImplementation: (fn: any) => void }).mockImplementation(async () => {
+      throw new Error('boom');
+    });
+
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+    const states: Array<{ phase: string; attempt: number }> = [];
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => harness.transport,
+      probeReadiness,
+      onStateChange: (state) => {
+        states.push({ phase: state.phase, attempt: state.attempt });
+      },
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 5,
+      backoffMaxMs: 5,
+      jitterRatio: 0,
+    });
+
+    await expect(supervisor.start()).resolves.toBeUndefined();
+
+    expect(states).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'connecting', attempt: 0 }),
+        expect.objectContaining({ phase: 'offline', attempt: 1 }),
+      ]),
+    );
+
+    vi.useRealTimers();
+  });
+
+  it('does not use fast retry delays when maxFastRetries is 0 for connect failures', async () => {
+    vi.useFakeTimers();
+
+    const first = createTransportHarness({ autoConnectOnCall: false });
+    (first.transport.connect as unknown as { mockImplementation: (fn: () => Promise<void>) => void }).mockImplementation(async () => {
+      throw new Error('boom');
+    });
+    const second = createTransportHarness();
+    const transports = [first, second];
+
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => {
+        const next = transports.shift();
+        if (!next) throw new Error('missing transport');
+        return next.transport;
+      },
+      probeReadiness,
+      maxFastRetries: 0,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await expect(supervisor.start()).resolves.toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(probeReadiness).toHaveBeenCalledTimes(0);
+
+    await vi.advanceTimersByTimeAsync(9);
+    expect(probeReadiness).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
   it('connects immediately and publishes online state', async () => {
     const harness = createTransportHarness();
     const states: string[] = [];
@@ -306,6 +451,185 @@ describe('createManagedConnectionSupervisor', () => {
         expect.objectContaining({ phase: 'online', attempt: 1 }),
       ]),
     );
+
+    vi.useRealTimers();
+  });
+
+  it('increments retry attempts when a transport disconnects while still connecting', async () => {
+    vi.useFakeTimers();
+
+    const firstTransport = createTransportHarness();
+    const secondTransport = createTransportHarness({ autoConnectOnCall: false });
+    const thirdTransport = createTransportHarness();
+    const transports = [firstTransport, secondTransport, thirdTransport];
+
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+    const states: Array<{ phase: string; attempt: number }> = [];
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => {
+        const next = transports.shift();
+        if (!next) throw new Error('missing transport');
+        return next.transport;
+      },
+      probeReadiness,
+      onStateChange: (state) => {
+        states.push({ phase: state.phase, attempt: state.attempt });
+      },
+      maxFastRetries: 3,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+
+    firstTransport.emitDisconnect({ reason: 'transport closed' });
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(secondTransport.transport.connect).toHaveBeenCalledTimes(1);
+
+    secondTransport.emitDisconnect({ reason: 'transport closed' });
+
+    const lastOffline = states.filter((s) => s.phase === 'offline').at(-1) ?? null;
+    expect(lastOffline).toEqual(expect.objectContaining({ attempt: 2 }));
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(probeReadiness).toHaveBeenCalledTimes(2);
+    expect(thirdTransport.transport.connect).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('cancels a scheduled reconnect if the transport becomes connected after a connect_error', async () => {
+    vi.useFakeTimers();
+
+    const firstTransport = createTransportHarness({ autoConnectOnCall: false });
+    const secondTransport = createTransportHarness();
+    const transports = [firstTransport, secondTransport];
+    const probeReadiness = vi.fn<() => Promise<ReadinessProbeResult>>().mockResolvedValue({ status: 'ready' });
+
+    const createTransport = vi.fn(() => {
+      const next = transports.shift();
+      if (!next) throw new Error('missing transport');
+      return next.transport;
+    });
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport,
+      probeReadiness,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+
+    expect(createTransport).toHaveBeenCalledTimes(1);
+    firstTransport.emitError(new Error('handshake failed'));
+    firstTransport.emitConnected();
+
+    await vi.advanceTimersByTimeAsync(5);
+
+    expect(probeReadiness).toHaveBeenCalledTimes(0);
+    expect(createTransport).toHaveBeenCalledTimes(1);
+    expect(secondTransport.transport.connect).toHaveBeenCalledTimes(0);
+
+    vi.useRealTimers();
+  });
+
+  it('ignores stale probe results after a manual restart while a reconnect probe is in flight', async () => {
+    vi.useFakeTimers();
+
+    const firstTransport = createTransportHarness();
+    const secondTransport = createTransportHarness();
+    const thirdTransport = createTransportHarness();
+    const transports = [firstTransport, secondTransport, thirdTransport];
+
+    const probeDeferred = createDeferred<ReadinessProbeResult>();
+    const probeReadiness = vi
+      .fn<() => Promise<ReadinessProbeResult>>()
+      .mockImplementationOnce(() => probeDeferred.promise)
+      .mockResolvedValue({ status: 'ready' });
+
+    const createTransport = vi.fn(() => {
+      const next = transports.shift();
+      if (!next) throw new Error('missing transport');
+      return next.transport;
+    });
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport,
+      probeReadiness,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+
+    expect(createTransport).toHaveBeenCalledTimes(1);
+    firstTransport.emitDisconnect({ reason: 'transport closed' });
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(probeReadiness).toHaveBeenCalledTimes(1);
+    expect(createTransport).toHaveBeenCalledTimes(1);
+
+    await supervisor.start();
+    expect(createTransport).toHaveBeenCalledTimes(2);
+
+    probeDeferred.resolve({ status: 'ready' });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(createTransport).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
+  it('clamps retryAfterMs=0 to avoid a tight retry loop', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
+    const harness = createTransportHarness();
+    const states: Array<{ phase: string; nextRetryAt: number | null }> = [];
+
+    const probeReadiness = vi
+      .fn<() => Promise<ReadinessProbeResult>>()
+      .mockResolvedValueOnce({ status: 'retry_later', retryAfterMs: 0, errorMessage: 'busy' })
+      .mockResolvedValueOnce({ status: 'ready' });
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => harness.transport,
+      probeReadiness,
+      probeBeforeInitialConnect: true,
+      onStateChange: (state) => {
+        states.push({ phase: state.phase, nextRetryAt: state.nextRetryAt });
+      },
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+
+    const offlineState = states.findLast((s) => s.phase === 'offline') ?? null;
+    expect(offlineState?.nextRetryAt ?? 0).toBeGreaterThanOrEqual(1);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(probeReadiness).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(probeReadiness).toHaveBeenCalledTimes(2);
 
     vi.useRealTimers();
   });

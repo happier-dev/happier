@@ -78,6 +78,14 @@ export interface ManagedConnectionTimingPolicy {
 }
 
 export interface ManagedConnectionSupervisorConfig extends ManagedConnectionTimingPolicy {
+  /**
+   * When enabled, the supervisor runs `probeReadiness()` before the initial transport
+   * connection attempt. This allows callers to avoid expensive transport connects
+   * (e.g. sockets) when the server is clearly unreachable/auth-invalid.
+   *
+   * Default: false (preserves historical behavior).
+   */
+  probeBeforeInitialConnect?: boolean;
   createTransport: () => ManagedConnectionTransport;
   probeReadiness: () => Promise<ReadinessProbeResult>;
   onStateChange?: (state: ManagedConnectionState) => void;
