@@ -138,21 +138,42 @@ export async function probeAgentConfigOptionsBestEffort(params: {
       ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
       : null;
     if (preflightAdapter?.probeConfigOptionsRaw) {
-      const configOptionsRaw = await preflightAdapter.probeConfigOptionsRaw({
-        backendTarget: params.backendTarget,
-        cwd,
-        timeoutMs: params.timeoutMs ?? 15_000,
-        accountSettings: params.accountSettings ?? null,
-      }).catch(() => null);
-      const configOptions = normalizeDynamicConfigOptions(configOptionsRaw);
+      const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 15_000;
+
+      const probePreflightConfigOptionsOnce = async (): Promise<ProbedAgentConfigOption[] | null> => {
+        const configOptionsRaw = await preflightAdapter.probeConfigOptionsRaw!({
+          backendTarget: params.backendTarget,
+          cwd,
+          timeoutMs,
+          accountSettings: params.accountSettings ?? null,
+        }).catch(() => null);
+        return normalizeDynamicConfigOptions(configOptionsRaw);
+      };
+
+      let configOptions = await probePreflightConfigOptionsOnce();
+      // If the provider marks the preflight probe as authoritative, retry once immediately to
+      // avoid sticky "static fallback" UI states that require an explicit user refresh.
+      if (!configOptions && preflightAdapter.failureCacheStrategy === 'retry') {
+        configOptions = await probePreflightConfigOptionsOnce();
+      }
+
       if (configOptions) {
         const result: ProbedAgentConfigOptionsResult = { ...fallback, configOptions, source: 'dynamic' };
         agentConfigOptionsProbeCache.setSuccess(cacheKey, result, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_SUCCESS_TTL_MS });
         return result;
       }
+
+      if (preflightAdapter.failureCacheStrategy === 'retry') {
+        // For providers where this probe is the primary/authoritative source, cache an error so
+        // subsequent calls retry instead of freezing the static fallback.
+        agentConfigOptionsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS });
+        return fallback;
+      }
+
       // The dynamic probe ran but returned invalid/unparseable data. Never cache that outcome as a
-      // 24h "success" fallback; use the short failure TTL so we can recover quickly.
-      agentConfigOptionsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS });
+      // 24h "success" fallback; use the short failure TTL so we can recover quickly without
+      // re-running the probe on every request.
+      agentConfigOptionsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS });
       return fallback;
     }
 

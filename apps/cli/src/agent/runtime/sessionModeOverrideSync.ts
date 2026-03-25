@@ -23,6 +23,14 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
     if (!params.isStarted()) return Promise.resolve();
 
     const next = pending;
+    // Empty modeId is a "clear override" sentinel (normalized from modeId="default" in metadata).
+    // Not all runtimes support dynamically resetting to a provider default, so treat this as a
+    // no-op apply while still advancing lastAppliedUpdatedAt so we don't retry forever.
+    if (next.modeId === '') {
+      lastAppliedUpdatedAt = next.updatedAt;
+      pending = null;
+      return Promise.resolve();
+    }
     const attempt =
       next.updatedAt === lastAttemptedUpdatedAt
         ? lastAttemptNumber + 1
