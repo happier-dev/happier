@@ -67,6 +67,22 @@ export function sanitizeBundledPackageJson(raw: any): any {
   };
 }
 
+export function readBundledDependencyNames(rawPackageJson: any): string[] {
+  const bundledDependencies = Array.isArray(rawPackageJson?.bundledDependencies)
+    ? rawPackageJson.bundledDependencies
+    : Array.isArray(rawPackageJson?.bundleDependencies)
+      ? rawPackageJson.bundleDependencies
+      : [];
+
+  return bundledDependencies
+    .map((value: unknown) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value: string) => value.length > 0);
+}
+
+export function readBundledWorkspacePackageNames(rawPackageJson: any): string[] {
+  return readBundledDependencyNames(rawPackageJson).filter((packageName) => packageName.startsWith('@happier-dev/'));
+}
+
 export function rmDirSafeSync(
   path: string,
   opts: Readonly<{
@@ -169,18 +185,6 @@ export function bundleWorkspacePackages(params: Readonly<{
   }
 }
 
-function readBundledDependencyNames(rawPackageJson: any): string[] {
-  const bundledDependencies = Array.isArray(rawPackageJson?.bundledDependencies)
-    ? rawPackageJson.bundledDependencies
-    : Array.isArray(rawPackageJson?.bundleDependencies)
-      ? rawPackageJson.bundleDependencies
-      : [];
-
-  return bundledDependencies
-    .map((value: unknown) => (typeof value === 'string' ? value.trim() : ''))
-    .filter((value: string) => value.length > 0);
-}
-
 export function resolveWorkspaceBundlesFromPackageJson(params: Readonly<{
   repoRoot: string;
   hostPackageDir: string;
@@ -195,8 +199,7 @@ export function resolveWorkspaceBundlesFromPackageJson(params: Readonly<{
   }
 
   const hostPackageJson = readJson(hostPackageJsonPath);
-  const bundledWorkspaceNames = readBundledDependencyNames(hostPackageJson)
-    .filter((packageName) => packageName.startsWith('@happier-dev/'));
+  const bundledWorkspaceNames = readBundledWorkspacePackageNames(hostPackageJson);
 
   return bundledWorkspaceNames.map((packageName) => {
     const workspaceName = packageName.split('/').at(-1);

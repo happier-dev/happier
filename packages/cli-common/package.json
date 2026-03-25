@@ -51,6 +51,11 @@
       "default": "./dist/firstPartyRuntime/index.js"
     }
   },
+  "scripts": {
+    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "yarn -s build && node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
+  },
   "dependencies": {
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0"

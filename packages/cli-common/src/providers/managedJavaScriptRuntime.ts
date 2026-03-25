@@ -1,14 +1,13 @@
 import { accessSync, constants as fsConstants } from 'node:fs';
 import { chmod, mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
-import { basename, delimiter, dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { createManagedToolScratchDir } from './createManagedToolScratchDir.js';
 import { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
 import { extractGitHubReleaseAsset } from './extractGitHubReleaseAsset.js';
 import { fetchNodeRuntimeReleaseAsset } from './nodeRelease.js';
 import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
-import { resolveWindowsCommandOnPath } from '../process/index.js';
 
 function resolveManagedJavaScriptRuntimeBinaryName(): string {
   return process.platform === 'win32' ? 'happier-js-runtime.cmd' : 'happier-js-runtime';
@@ -144,29 +143,6 @@ function isRunnableExecutablePath(pathLike: string | null | undefined): boolean 
   }
 }
 
-function resolveSystemNodeOnPath(processEnv: NodeJS.ProcessEnv): string | null {
-  if (process.platform === 'win32') {
-    return resolveWindowsCommandOnPath('node', processEnv) ?? null;
-  }
-
-  const pathDirs = String(processEnv.PATH ?? '')
-    .split(delimiter)
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  for (const dir of pathDirs) {
-    const candidate = join(dir, 'node');
-    try {
-      accessSync(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-}
-
 export function resolveJavaScriptRuntimeCommand(params: Readonly<{
   isBunRuntime: boolean;
   processEnv?: NodeJS.ProcessEnv;
@@ -189,11 +165,15 @@ export function resolveJavaScriptRuntimeCommand(params: Readonly<{
     ) {
       return currentExecPath;
     }
-    return resolveSystemNodeOnPath(processEnv) ?? resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
+    return resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
+  }
+  if (
+    isRunnableExecutablePath(currentExecPath)
+    && (isDirectNodeExecutablePath(currentExecPath) || isManagedJavaScriptRuntimeWrapperPath(currentExecPath))
+  ) {
+    return currentExecPath;
   }
   if (isDirectBunExecutablePath(currentExecPath)) return currentExecPath;
-  const systemNode = resolveSystemNodeOnPath(processEnv);
-  if (systemNode) return systemNode;
   return resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
 }
 

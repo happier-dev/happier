@@ -11,8 +11,8 @@ function makeExecutableFile(path: string, content: string): void {
   chmodSync(path, 0o755);
 }
 
-describe('managedJavaScriptRuntime system node fallback', () => {
-    it('treats JS-backed CLIs as runnable in compiled bun bundles when node is present on PATH', () => {
+describe('managedJavaScriptRuntime binary-safe selection', () => {
+    it('does not treat node on PATH as a runtime fallback for stale bun bundles', () => {
         const root = join(tmpdir(), `happier-cli-common-js-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`);
         const binDir = join(root, 'bin');
         mkdirSync(binDir, { recursive: true });
@@ -37,15 +37,63 @@ describe('managedJavaScriptRuntime system node fallback', () => {
       isBunRuntime: true,
       processEnv: env,
       currentExecPath: '/Applications/Happier.app/Contents/MacOS/happier',
-    })).toBe(nodePath);
+    })).toBeNull();
 
         expect(isProviderCliPathRunnable(cliPath, env, {
             isBunRuntime: true,
             currentExecPath: '/Applications/Happier.app/Contents/MacOS/happier',
-        })).toBe(true);
+        })).toBe(false);
     });
 
-    it('falls back to system node under the node runtime when the current executable path is stale', () => {
+    it('keeps the current node executable when already running under node', () => {
+        const root = join(tmpdir(), `happier-cli-common-node-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        const binDir = join(root, 'bin');
+        mkdirSync(binDir, { recursive: true });
+
+        const nodePath = join(binDir, process.platform === 'win32' ? 'node.exe' : 'node');
+        if (process.platform === 'win32') {
+            makeExecutableFile(nodePath, '');
+        } else {
+            makeExecutableFile(nodePath, '#!/bin/sh\nexit 0\n');
+        }
+
+        const env = {
+            PATH: '',
+            HAPPIER_HOME_DIR: join(root, 'home'),
+        } satisfies NodeJS.ProcessEnv;
+
+        expect(resolveJavaScriptRuntimeCommand({
+            isBunRuntime: false,
+            processEnv: env,
+            currentExecPath: nodePath,
+        })).toBe(nodePath);
+    });
+
+    it('keeps the current node executable even when isBunRuntime=true', () => {
+        const root = join(tmpdir(), `happier-cli-common-bun-node-current-exec-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        const binDir = join(root, 'bin');
+        mkdirSync(binDir, { recursive: true });
+
+        const nodePath = join(binDir, process.platform === 'win32' ? 'node.exe' : 'node');
+        if (process.platform === 'win32') {
+            makeExecutableFile(nodePath, '');
+        } else {
+            makeExecutableFile(nodePath, '#!/bin/sh\nexit 0\n');
+        }
+
+        const env = {
+            PATH: '',
+            HAPPIER_HOME_DIR: join(root, 'home'),
+        } satisfies NodeJS.ProcessEnv;
+
+        expect(resolveJavaScriptRuntimeCommand({
+            isBunRuntime: true,
+            processEnv: env,
+            currentExecPath: nodePath,
+        })).toBe(nodePath);
+    });
+
+    it('fails closed when only a PATH node exists and the current executable is stale', () => {
         const root = join(tmpdir(), `happier-cli-common-node-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`);
         const binDir = join(root, 'bin');
         mkdirSync(binDir, { recursive: true });
@@ -66,7 +114,7 @@ describe('managedJavaScriptRuntime system node fallback', () => {
             isBunRuntime: false,
             processEnv: env,
             currentExecPath: join(root, 'deleted-runtime', 'cli', 'happier'),
-        })).toBe(nodePath);
+        })).toBeNull();
     });
 
     it('does not treat an installed happier binary as the node runtime when no node runtime is available', () => {
