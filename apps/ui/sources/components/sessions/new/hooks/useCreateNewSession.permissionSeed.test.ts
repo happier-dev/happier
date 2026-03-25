@@ -293,7 +293,13 @@ async function setupUseCreateNewSessionHarness() {
     }));
     vi.doMock('@/agents/catalog/catalog', () => ({
         AGENT_IDS: ['codex', 'claude', 'opencode'],
-        getAgentCore: vi.fn(() => ({ model: { supportsSelection: false } })),
+        getAgentCore: vi.fn((agentType: string) => {
+            if (agentType === 'opencode') {
+                return { model: { supportsSelection: true, nonAcpApplyScope: 'next_prompt' } };
+            }
+
+            return { model: { supportsSelection: true, nonAcpApplyScope: 'spawn_only' } };
+        }),
         buildSpawnEnvironmentVariablesFromUiState: vi.fn((opts: { environmentVariables?: Record<string, string> }) => {
             buildSpawnEnvironmentVariablesCapture.value = opts as Record<string, unknown>;
             return opts.environmentVariables;
@@ -475,6 +481,71 @@ describe('useCreateNewSession permission seeding', () => {
 
         expect(captured.value?.resume).toBe('sess_old');
         expect(prefetchMachineCapabilitiesSpy).toHaveBeenCalledTimes(0);
+    });
+
+    it('passes the selected model as initial message metaOverrides so next-prompt model backends can apply it on the first turn', async () => {
+        const {
+            useCreateNewSession,
+            followUpSpawnedSessionWithServerScopeSpy,
+            machineSpawnNewSessionSpy,
+        } = await setupUseCreateNewSessionHarness();
+
+        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_target' });
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = { experiments: false } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'opencode' as any,
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'gpt' as any,
+                sessionPrompt: 'hello',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess_target',
+            initialMessageText: 'hello',
+            metaOverrides: { model: 'gpt' },
+        }));
     });
 
     it('passes connectedServices bindings into machineSpawnNewSession when provided', async () => {
@@ -859,12 +930,12 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith({
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_target',
             targetServerId: 'server-b',
             initialMessageText: 'Ship the scoped follow-up fix',
             profileId: null,
-        });
+        }));
         expect(refreshSessionsSpy).not.toHaveBeenCalled();
         expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });

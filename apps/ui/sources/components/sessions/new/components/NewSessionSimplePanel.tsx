@@ -12,7 +12,8 @@ import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import type { CreatedSessionFollowUpContext } from '../hooks/useCreateNewSession';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 
-const MOBILE_WEB_BOTTOM_ANCHORED_WIDTH = 520;
+// Treat <=767px as "mobile" on web: keep the AgentInput bottom-anchored like native.
+const MOBILE_WEB_BOTTOM_ANCHORED_WIDTH = 768;
 
 export type NewSessionSimplePanelProps = Readonly<{
     popoverBoundaryRef: React.RefObject<View>;

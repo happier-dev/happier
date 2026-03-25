@@ -491,6 +491,8 @@ describe('NewSessionMcpSelectionContent', () => {
 
         expect(capturedItems.some((item) => item.testID === 'new-session.mcp.happier-empty')).toBe(true);
         expect(capturedItems.some((item) => item.testID === 'new-session.mcp.empty')).toBe(false);
+        // Avoid rendering a second empty-state row for the detected/provider section.
+        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.detected-empty')).toBe(false);
 
         const happierEmpty = capturedItems.find((item) => item.testID === 'new-session.mcp.happier-empty') as any;
         const rightElement = happierEmpty?.rightElement as React.ReactNode;

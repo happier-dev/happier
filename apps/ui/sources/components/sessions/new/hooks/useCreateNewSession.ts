@@ -482,6 +482,21 @@ export function useCreateNewSession(params: Readonly<{
                         sessionId: result.sessionId,
                         targetServerId: resolvedTargetServerId,
                         initialMessageText,
+                        metaOverrides: (() => {
+                            const agentCore = getAgentCore(current.agentType);
+                            if (
+                                agentCore.model.supportsSelection
+                                && agentCore.model.nonAcpApplyScope === 'next_prompt'
+                                && current.modelMode
+                                && current.modelMode !== 'default'
+                            ) {
+                                // Some providers only apply model overrides when processing a user prompt.
+                                // Seed the initial message so the first turn uses the selected model.
+                                return { model: current.modelMode };
+                            }
+
+                            return null;
+                        })(),
                         profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
                     });
                 } catch (error) {

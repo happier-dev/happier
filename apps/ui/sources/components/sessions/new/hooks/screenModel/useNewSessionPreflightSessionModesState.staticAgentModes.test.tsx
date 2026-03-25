@@ -64,6 +64,7 @@ describe('useNewSessionPreflightSessionModesState (staticAgentModes)', () => {
 
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(0);
     expect(latest.probe.phase).toBe('idle');
+    expect(latest.probe.onRefresh).toBeUndefined();
     expect((latest.modeOptions ?? []).map((o: any) => o.id)).toEqual(['default', 'plan']);
     expect((latest.modeOptions ?? [])[0]?.name).toBe('t:agentInput.mode.build');
 

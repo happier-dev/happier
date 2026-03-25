@@ -96,7 +96,7 @@ describe('sessionMcpSelectionState', () => {
 
         expect(countSelectedSessionMcpPreviewEntries(preview, {
             visibleManagedServerIds: new Set(['server-1', 'server-2']),
-        })).toBe(2);
+        })).toBe(1);
     });
 
     it('turns off a default-selected server by forcing an exclusion', () => {

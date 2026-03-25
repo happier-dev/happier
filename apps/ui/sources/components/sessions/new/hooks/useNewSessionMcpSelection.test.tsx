@@ -220,7 +220,8 @@ describe('useNewSessionMcpSelection', () => {
         const labelNode = renderedChipChildren[1];
         expect(React.isValidElement(labelNode)).toBe(true);
         expect((labelNode as React.ReactElement<{ label: string; count: number }>).props.label).toBe('MCP');
-        expect((labelNode as React.ReactElement<{ label: string; count: number }>).props.count).toBe(2);
+        // Chip count should reflect detected servers only (exclude managed/Happier entries).
+        expect((labelNode as React.ReactElement<{ label: string; count: number }>).props.count).toBe(1);
 
         await act(async () => {
             renderedChip.props.onPress?.();

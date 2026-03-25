@@ -34,7 +34,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
     probe: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
         refreshedAt: number | null;
-        onRefresh: () => void;
+        onRefresh?: () => void;
     }>;
 }> {
     const [preflightModes, setPreflightModes] = React.useState<PreflightSessionModeList | null>(null);
@@ -255,7 +255,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         probe: {
             phase: probePhase,
             refreshedAt,
-            onRefresh,
+            ...(supportsPreflightModeProbe ? { onRefresh } : {}),
         },
     };
 }
