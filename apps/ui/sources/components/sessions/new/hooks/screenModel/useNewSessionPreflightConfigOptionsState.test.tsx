@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import { installCapabilitiesOpsModuleMock, renderScreen } from '@/dev/testkit';
+import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,7 +43,7 @@ describe('useNewSessionPreflightConfigOptionsState', () => {
         expect(firstCall?.[1]).toMatchObject({
             id: 'cli.opencode',
             method: 'probeConfigOptions',
-            params: expect.objectContaining({ timeoutMs: 15_000, cwd: '/repo' }),
+            params: expect.objectContaining({ timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS, cwd: '/repo' }),
         });
     });
 

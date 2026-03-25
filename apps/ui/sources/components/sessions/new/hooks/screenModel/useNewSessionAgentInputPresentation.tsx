@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import type { ActionId, BackendTargetRefV1, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 import type { Router } from 'expo-router';
@@ -20,10 +20,7 @@ import type { NewSessionCheckoutChipModel } from '@/components/sessions/new/modu
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import { t } from '@/text';
-import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
-import { Ionicons } from '@expo/vector-icons';
-import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
-import { Text } from '@/components/ui/text/Text';
+import { createNewSessionLinkedFilesActionChip } from '@/components/sessions/agentInput/definitions/createLinkedFilesActionChip';
 
 type ThemeLike = Readonly<{
     colors: Readonly<{
@@ -111,55 +108,13 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     }, [params.setSessionPrompt]);
 
     const linkFileChip = React.useMemo<AgentInputExtraActionChip>(() => {
-        const isDisabled = !params.selectedMachineId;
-
-        const openPicker = async () => {
-            if (!params.selectedMachineId) return;
-            const picked = await openMachinePathBrowserModal({
-                machineId: params.selectedMachineId,
-                serverId: params.targetServerId ?? null,
-                title: t('common.linkFile'),
-                initialPath: params.selectedPath,
-                includeFiles: true,
-                selectionMode: 'file',
-            });
-            if (picked) {
-                handleAppendLinkedPath(picked);
-            }
-        };
-
-        return {
-            key: 'new-session-link-file',
-            controlId: 'linkedFiles',
-            labelPolicy: 'auto-hide',
-            collapsedAction: ({ tint, dismiss }) => ({
-                id: 'linked-files',
-                label: t('common.linkFile'),
-                icon: normalizeNodeForView(<Ionicons name="document-outline" size={16} color={tint} />),
-                onPress: () => {
-                    dismiss();
-                    void openPicker();
-                },
-            }),
-            render: (ctx) => (
-                <Pressable
-                    ref={ctx.chipAnchorRef}
-                    testID="new-session-link-file-chip"
-                    onPress={() => void openPicker()}
-                    disabled={isDisabled}
-                    style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
-                >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        {normalizeNodeForView(<Ionicons name="document-outline" size={18} color={ctx.iconColor} />)}
-                        {ctx.showLabel ? (
-                            <Text numberOfLines={1} style={ctx.textStyle}>
-                                {t('common.linkFile')}
-                            </Text>
-                        ) : null}
-                    </View>
-                </Pressable>
-            ),
-        } satisfies AgentInputExtraActionChip;
+        return createNewSessionLinkedFilesActionChip({
+            machineId: params.selectedMachineId,
+            serverId: params.targetServerId ?? null,
+            rootDirectoryPath: params.selectedPath ?? null,
+            disabled: false,
+            onPickPath: handleAppendLinkedPath,
+        });
     }, [handleAppendLinkedPath, params.selectedMachineId, params.selectedPath, params.targetServerId]);
 
     const handleTranscriptStorageChange = React.useCallback((next: 'direct' | 'persisted') => {

@@ -4,13 +4,13 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createMcpActionChip } from '@/components/sessions/agentInput/definitions/createMcpActionChip';
 import { NewSessionMcpSelectionContent } from '@/components/sessions/new/components/NewSessionMcpSelectionContent';
-import { countSelectedSessionMcpPreviewEntries } from '@/components/sessions/new/modules/sessionMcpSelectionState';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSetting } from '@/sync/domains/state/storage';
 import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
 import { machineMcpServersPreview } from '@/sync/ops/machineMcpServers';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@/sync/runtime/rpcErrors';
 import { t } from '@/text';
-import type { DaemonMcpServersPreviewResponse, SessionMcpSelectionV1 } from '@happier-dev/protocol';
+import { resolveManagedSessionMcpSelectionV1, type DaemonMcpServersPreviewResponse, type SessionMcpSelectionV1 } from '@happier-dev/protocol';
 
 type PreviewSuccess = Extract<DaemonMcpServersPreviewResponse, { ok: true }>;
 
@@ -34,6 +34,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
     const [mcpPreview, setMcpPreview] = React.useState<PreviewSuccess | null>(null);
     const [mcpPreviewLoading, setMcpPreviewLoading] = React.useState(false);
     const [mcpPreviewError, setMcpPreviewError] = React.useState<string | null>(null);
+    const [mcpPreviewUnsupported, setMcpPreviewUnsupported] = React.useState(false);
 
     const mcpServersSettingsRaw = useSetting('mcpServersSettingsV1');
     const mcpServersSettings = React.useMemo(
@@ -45,15 +46,21 @@ export function useNewSessionMcpSelection(params: Readonly<{
         [mcpServersSettings.servers],
     );
 
+    React.useEffect(() => {
+        setMcpPreviewUnsupported(false);
+    }, [params.agentType, params.selectedMachineId, params.selectedPath, params.targetServerId]);
+
     const refreshPreview = React.useCallback(async () => {
         if (!mcpServersEnabled || !params.selectedMachineId || params.selectedPath.trim().length === 0) {
             setMcpPreview(null);
             setMcpPreviewError(null);
+            setMcpPreviewUnsupported(false);
             setMcpPreviewLoading(false);
             return;
         }
 
         setMcpPreviewLoading(true);
+        setMcpPreviewUnsupported(false);
         try {
             const response = await machineMcpServersPreview(
                 params.selectedMachineId,
@@ -72,6 +79,16 @@ export function useNewSessionMcpSelection(params: Readonly<{
                 setMcpPreviewError(response.error);
             }
         } catch (error) {
+            if (
+                isRpcMethodNotAvailableError(error)
+                || isRpcMethodNotFoundError(error)
+                || (error instanceof Error && (error.message === 'RPC method not available' || error.message === 'Method not found'))
+            ) {
+                setMcpPreview(null);
+                setMcpPreviewError(null);
+                setMcpPreviewUnsupported(true);
+                return;
+            }
             setMcpPreview(null);
             setMcpPreviewError(error instanceof Error ? error.message : String(error ?? 'unknown error'));
         } finally {
@@ -91,7 +108,12 @@ export function useNewSessionMcpSelection(params: Readonly<{
         if (!mcpServersEnabled || !params.selectedMachineId || params.selectedPath.trim().length === 0) {
             setMcpPreview(null);
             setMcpPreviewError(null);
+            setMcpPreviewUnsupported(false);
             setMcpPreviewLoading(false);
+            return;
+        }
+
+        if (mcpPreviewUnsupported) {
             return;
         }
 
@@ -117,6 +139,16 @@ export function useNewSessionMcpSelection(params: Readonly<{
             })
             .catch((error) => {
                 if (cancelled) return;
+                if (
+                    isRpcMethodNotAvailableError(error)
+                    || isRpcMethodNotFoundError(error)
+                    || (error instanceof Error && (error.message === 'RPC method not available' || error.message === 'Method not found'))
+                ) {
+                    setMcpPreview(null);
+                    setMcpPreviewError(null);
+                    setMcpPreviewUnsupported(true);
+                    return;
+                }
                 setMcpPreview(null);
                 setMcpPreviewError(error instanceof Error ? error.message : String(error ?? 'unknown error'));
             })
@@ -135,9 +167,11 @@ export function useNewSessionMcpSelection(params: Readonly<{
         params.selectedMachineId,
         params.selectedPath,
         params.targetServerId,
+        mcpPreviewUnsupported,
     ]);
 
     const contentProps = React.useMemo(() => ({
+        machineId: params.selectedMachineId,
         machineName: params.selectedMachineName,
         directory: params.selectedPath.trim(),
         agentType: params.agentType,
@@ -146,6 +180,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
         selection: params.mcpSelection,
         loading: mcpPreviewLoading,
         error: mcpPreviewError,
+        previewUnsupported: mcpPreviewUnsupported,
         onSelectionChange: (selection: SessionMcpSelectionV1) => {
             params.setMcpSelection(selection);
         },
@@ -155,11 +190,43 @@ export function useNewSessionMcpSelection(params: Readonly<{
         mcpPreview,
         mcpPreviewError,
         mcpPreviewLoading,
+        mcpPreviewUnsupported,
         params,
         refreshPreview,
     ]);
 
-    const selectedCount = countSelectedSessionMcpPreviewEntries(mcpPreview, { visibleManagedServerIds });
+    const selectedManagedCount = React.useMemo(() => {
+        if (!mcpServersEnabled) return 0;
+        if (!params.selectedMachineId) return 0;
+        const directory = params.selectedPath.trim();
+        if (!directory) return 0;
+        try {
+            const resolved = resolveManagedSessionMcpSelectionV1(mcpServersSettings, {
+                machineId: params.selectedMachineId,
+                directory,
+                selection: params.mcpSelection,
+            });
+            return Object.values(resolved.itemsByName).filter((item) =>
+                item.selected && (visibleManagedServerIds ? visibleManagedServerIds.has(item.serverId) : true),
+            ).length;
+        } catch {
+            return 0;
+        }
+    }, [
+        mcpServersEnabled,
+        mcpServersSettings,
+        params.mcpSelection,
+        params.selectedMachineId,
+        params.selectedPath,
+        visibleManagedServerIds,
+    ]);
+
+    const selectedDetectedCount = React.useMemo(() => {
+        if (!mcpPreview) return 0;
+        return mcpPreview.detected.filter((entry) => entry.selected).length;
+    }, [mcpPreview]);
+
+    const selectedCount = selectedManagedCount + selectedDetectedCount;
     const chipLabel = t('newSession.mcpChipLabel');
 
     const mcpChip = React.useMemo<AgentInputExtraActionChip | null>(() => {

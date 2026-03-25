@@ -4,6 +4,8 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { renderScreen } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
@@ -93,10 +95,23 @@ installNewSessionScreenModelCommonModuleMocks({
                                 id: 'server-playwright',
                                 name: 'playwright',
                                 title: 'Playwright',
-                                command: 'playwright',
+                                transport: 'stdio',
+                                stdio: { command: 'playwright', args: [] },
+                                env: {},
+                                createdAt: 1,
+                                updatedAt: 2,
                             },
                         ],
-                        bindings: [],
+                        bindings: [
+                            {
+                                id: 'binding-all',
+                                serverId: 'server-playwright',
+                                enabled: true,
+                                target: { t: 'allMachines' },
+                                createdAt: 1,
+                                updatedAt: 2,
+                            },
+                        ],
                         presets: [],
                     } as any,
                 },
@@ -249,5 +264,48 @@ describe('useNewSessionMcpSelection', () => {
         expect(updatedContentNode.props.selection).toEqual(expect.objectContaining({
             forceExcludeServerIds: ['server-playwright'],
         }));
+    });
+
+    it('treats RPC method-not-available preview errors as unsupported instead of surfacing them as a blocking error', async () => {
+        previewSpy.mockRejectedValueOnce(new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE));
+
+        const { useNewSessionMcpSelection } = await import('./useNewSessionMcpSelection');
+
+        let chip: any = null;
+
+        function Probe() {
+            const [selection, setSelection] = React.useState(() => SessionMcpSelectionV1Schema.parse({}));
+            const result = useNewSessionMcpSelection({
+                selectedMachineId: 'machine-1',
+                selectedPath: '/workspace',
+                selectedMachineName: 'Machine One',
+                agentType: 'codex',
+                mcpSelection: selection,
+                setMcpSelection: setSelection,
+                onOpenSettings: vi.fn(),
+            });
+            chip = result.mcpChip;
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(chip).toBeTruthy();
+        const renderedContent = chip!.collapsedContentPopover.renderContent({
+            requestClose: () => {},
+            maxHeight: 420,
+        });
+        expect(React.isValidElement(renderedContent)).toBe(true);
+
+        const contentNode = renderedContent as React.ReactElement<{
+            preview: unknown;
+            error: unknown;
+            previewUnsupported?: boolean;
+        }>;
+
+        expect(contentNode.props.preview).toBeNull();
+        expect(contentNode.props.error).toBeNull();
+        expect(contentNode.props.previewUnsupported).toBe(true);
     });
 });

@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
@@ -122,6 +122,10 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'attachments.uploads',
 }));
+
+afterEach(() => {
+    standardCleanup();
+});
 
 describe('NewSessionSimplePanel (attachments.uploads)', () => {
     it('wires AgentInput attachments handlers and attach action when enabled', async () => {

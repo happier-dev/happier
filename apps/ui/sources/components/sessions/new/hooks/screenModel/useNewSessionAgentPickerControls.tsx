@@ -129,56 +129,72 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         if (params.resolvedBackendEntries.length <= 1) {
             return undefined;
         }
-        return params.resolvedBackendEntries.map((entry) => {
+        const resolved = params.resolvedBackendEntries.map((entry) => {
             const isCompatibleWithSelectedProfile = !profileForAgentSelection || compatibleBackendTargetKeys.has(entry.targetKey);
-            const disabled = !params.isBackendEntrySelectable(entry) || !isCompatibleWithSelectedProfile;
+            const selectable = params.isBackendEntrySelectable(entry);
+            const disabled = !isCompatibleWithSelectedProfile;
+            const muted = !selectable && !disabled;
             const subtitle = !isCompatibleWithSelectedProfile
                 ? t('newSession.aiBackendNotCompatibleWithSelectedProfile')
                 : undefined;
 
-	            return {
-	            id: entry.targetKey,
-	            label: entry.title,
-	            icon: (
-	                <AgentIcon
-	                    agentId={entry.iconAgentId}
-	                    size={12}
-	                    style={{ transform: [{ scale: getAgentPickerIconScale(entry.iconAgentId) }] }}
-	                />
-	            ),
-	            subtitle,
-	            disabled,
-                closeOnSelectImmediate: false,
-	            onSelectImmediate: () => {
-                if (disabled) return;
-                const nextSelection = getEngineSelectionForTargetKey(entry.targetKey);
-                applyEngineSelection(entry, nextSelection);
-            },
-            renderDetailContent: () => {
-                const selection = getEngineSelectionForTargetKey(entry.targetKey);
-                const capabilityProbeContext = resolveNewSessionCapabilityProbeContext({
-                    backendTarget: entry.target,
-                    settings: params.settings,
-                });
-                return (
-                    <NewSessionEngineOptionDetail
-                        backendTarget={entry.target}
-                        selectedMachineId={params.selectedMachineId}
-                        capabilityServerId={params.capabilityServerId}
-                        cwd={params.selectedPath}
-                        capabilityProbeContext={capabilityProbeContext}
-                        selectedModelId={selection.modelId}
-                        selectedSessionModeId={selection.sessionModeId}
-                        selectedConfigOverrides={selection.configOverrides}
-                        onSelectionChange={(nextSelection) => {
-                            engineSelectionByTargetKeyRef.current.set(entry.targetKey, nextSelection);
-                            applyEngineSelection(entry, nextSelection);
-                        }}
+            return {
+                id: entry.targetKey,
+                label: entry.title,
+                icon: (
+                    <AgentIcon
+                        agentId={entry.iconAgentId}
+                        size={12}
+                        style={{ transform: [{ scale: getAgentPickerIconScale(entry.iconAgentId) }] }}
                     />
-                );
-            },
+                ),
+                subtitle,
+                disabled,
+                muted: muted || disabled,
+                closeOnSelectImmediate: false,
+                onSelectImmediate: () => {
+                    if (disabled) return;
+                    const nextSelection = getEngineSelectionForTargetKey(entry.targetKey);
+                    applyEngineSelection(entry, nextSelection);
+                },
+                renderDetailContent: () => {
+                    const selection = getEngineSelectionForTargetKey(entry.targetKey);
+                    const capabilityProbeContext = resolveNewSessionCapabilityProbeContext({
+                        backendTarget: entry.target,
+                        settings: params.settings,
+                    });
+                    return (
+                        <NewSessionEngineOptionDetail
+                            backendTarget={entry.target}
+                            selectedMachineId={params.selectedMachineId}
+                            capabilityServerId={params.capabilityServerId}
+                            cwd={params.selectedPath}
+                            capabilityProbeContext={capabilityProbeContext}
+                            selectedModelId={selection.modelId}
+                            selectedSessionModeId={selection.sessionModeId}
+                            selectedConfigOverrides={selection.configOverrides}
+                            onSelectionChange={(nextSelection) => {
+                                engineSelectionByTargetKeyRef.current.set(entry.targetKey, nextSelection);
+                                applyEngineSelection(entry, nextSelection);
+                            }}
+                        />
+                    );
+                },
             };
         });
+        const available: AgentInputChipPickerOption[] = [];
+        const muted: AgentInputChipPickerOption[] = [];
+        const disabledOptions: AgentInputChipPickerOption[] = [];
+        for (const option of resolved) {
+            if (option.disabled) {
+                disabledOptions.push(option);
+            } else if (option.muted) {
+                muted.push(option);
+            } else {
+                available.push(option);
+            }
+        }
+        return [...available, ...muted, ...disabledOptions];
     }, [
         applyEngineSelection,
         compatibleBackendTargetKeys,
@@ -193,12 +209,12 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     ]);
 
     const handleAgentPickerSelect = React.useCallback((selectedId: string) => {
-        const nextEntry = selectableBackendEntries.find((entry) => entry.targetKey === selectedId) ?? null;
+        const nextEntry = params.resolvedBackendEntries.find((entry) => entry.targetKey === selectedId) ?? null;
         if (nextEntry) {
             const nextSelection = getEngineSelectionForTargetKey(nextEntry.targetKey);
             applyEngineSelection(nextEntry, nextSelection);
         }
-    }, [applyEngineSelection, getEngineSelectionForTargetKey, selectableBackendEntries]);
+    }, [applyEngineSelection, getEngineSelectionForTargetKey, params.resolvedBackendEntries]);
 
     const handleAgentClick = React.useCallback(() => {
         if (selectableBackendEntries.length === 0) {

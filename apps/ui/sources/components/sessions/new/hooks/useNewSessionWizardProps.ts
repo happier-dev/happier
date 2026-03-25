@@ -11,6 +11,7 @@ import type { CLIAvailability } from '@/hooks/auth/useCLIDetection';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
+import { buildCliAvailabilityProbeState } from '@/components/sessions/new/modules/buildCliAvailabilityProbeState';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secretRequirementApply';
 
@@ -300,6 +301,15 @@ export function useNewSessionWizardProps(params: Readonly<{
     }, [params.selectedMachineCapabilities.status, params.selectedMachineId, params.targetServerId, params.wizardInstallableDeps]);
 
     const wizardAgentProps = React.useMemo((): NewSessionWizardAgentProps => {
+        const agentPickerProbe: NewSessionWizardAgentProps['agentPickerProbe'] =
+            buildCliAvailabilityProbeState({
+                selectedMachineId: params.selectedMachineId,
+                cliAvailability: params.cliAvailability,
+                onRefresh: () => {
+                    void params.cliAvailability.refresh({ bypassCache: true });
+                },
+            });
+
         return {
             cliAvailability: params.cliAvailability,
             tmuxRequested: params.tmuxRequested,
@@ -314,6 +324,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             agentPickerOptions: params.agentPickerOptions,
             agentPickerSelectedOptionId: params.agentPickerSelectedOptionId,
             onAgentPickerSelect: params.onAgentPickerSelect,
+            agentPickerProbe,
             modelOptions: params.modelOptions,
             modelOptionsProbe: params.modelOptionsProbe,
             acpSessionModeOptions: params.acpSessionModeOptions,
@@ -339,6 +350,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.agentPickerSelectedOptionId,
         params.agentPickerTitle,
         params.cliAvailability,
+        params.selectedMachineId,
         params.dismissCliBanner,
         params.enabledAgentIds,
         params.isAgentSelectable,

@@ -31,11 +31,36 @@ const enabledAgentIdsState = vi.hoisted(() => ({
     value: ['codex', 'claude'] as string[],
 }));
 
+const cliAvailabilityRefreshMock = vi.hoisted(() => vi.fn());
+
+type CliAvailabilityMockValue = Partial<{
+    refresh: ReturnType<typeof vi.fn>;
+    isDetecting: boolean;
+    timestamp: number;
+    available: { codex: boolean; claude: boolean; opencode: boolean | null };
+    login: any;
+    authStatus: any;
+    resolvedPath: any;
+    resolvedCommand: any;
+    resolutionSource: any;
+    tmux: null;
+}>;
+
+const cliAvailabilityDefaults = vi.hoisted(() => ({
+    refresh: cliAvailabilityRefreshMock,
+    isDetecting: false,
+    timestamp: 1,
+    available: { codex: false, claude: true, opencode: null as boolean | null },
+    login: {} as any,
+    authStatus: {} as any,
+    resolvedPath: {} as any,
+    resolvedCommand: {} as any,
+    resolutionSource: {} as any,
+    tmux: null,
+}));
+
 const cliAvailabilityState = vi.hoisted(() => ({
-    value: {
-        timestamp: 1,
-        available: { codex: false, claude: true, opencode: null as boolean | null },
-    },
+    value: {} as CliAvailabilityMockValue,
 }));
 
 const featureEnabledState = vi.hoisted(() => ({
@@ -311,7 +336,13 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 }));
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
-    useCLIDetection: () => cliAvailabilityState.value,
+    useCLIDetection: () => ({
+        ...cliAvailabilityDefaults,
+        ...cliAvailabilityState.value,
+        refresh: cliAvailabilityRefreshMock,
+        available: cliAvailabilityState.value.available ?? cliAvailabilityDefaults.available,
+        tmux: cliAvailabilityState.value.tmux ?? cliAvailabilityDefaults.tmux,
+    }),
 }));
 
 vi.mock('@/utils/sessions/machineUtils', () => ({
@@ -321,13 +352,14 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
 const machineCapabilitiesInvoke = vi.hoisted(() =>
     vi.fn(async () => ({ supported: true, response: { ok: true, result: null } })),
 );
+const machineCapabilitiesCacheRefreshMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/ops', () => ({
     machineCapabilitiesInvoke,
 }));
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
-    useMachineCapabilitiesCache: () => ({ state: { status: 'idle' } }),
+    useMachineCapabilitiesCache: () => ({ state: { status: 'idle' }, refresh: machineCapabilitiesCacheRefreshMock }),
     prefetchMachineCapabilities: async () => {},
     prefetchMachineCapabilitiesIfStale: async () => {},
     getMachineCapabilitiesSnapshot: () => ({
@@ -675,8 +707,8 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(model?.simpleProps?.agentType).toBe('claude');
         expect(model?.simpleProps?.agentPickerOptions?.map((option: { id: string }) => option.id)).toEqual([
             'agent:claude',
-            'agent:codex',
             'agent:opencode',
+            'agent:codex',
         ]);
 
         await invokeHookAction(() => model?.simpleProps?.onAgentPickerSelect?.('agent:opencode'));
@@ -774,6 +806,9 @@ describe('useNewSessionScreenModel (installables)', () => {
         const detailScreen = await renderScreen(<>{customPresetDetailContent}</>);
         const modePreviewItems = detailScreen.findAllByTestId('agent-input-session-mode-option:review');
         expect(modePreviewItems).toHaveLength(1);
+        const previewTexts = detailScreen.findAll((node) => typeof node.props?.children === 'string')
+            .map((node) => node.props.children);
+        expect(previewTexts).toContain('Review');
     });
 
     it('applies backend-specific model and ACP mode selections from the engine picker detail pane', async () => {

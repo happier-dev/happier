@@ -42,6 +42,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     agentPickerSelectedOptionId?: React.ComponentProps<typeof AgentInput>['agentPickerSelectedOptionId'];
     onAgentPickerSelect?: React.ComponentProps<typeof AgentInput>['onAgentPickerSelect'];
     agentPickerApplyLabel?: React.ComponentProps<typeof AgentInput>['agentPickerApplyLabel'];
+    agentPickerProbe?: React.ComponentProps<typeof AgentInput>['agentPickerProbe'];
     permissionMode: React.ComponentProps<typeof AgentInput>['permissionMode'];
     handlePermissionModeChange: React.ComponentProps<typeof AgentInput>['onPermissionModeChange'];
     modelMode: React.ComponentProps<typeof AgentInput>['modelMode'];
@@ -163,6 +164,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                                             agentPickerSelectedOptionId={props.agentPickerSelectedOptionId}
                                             onAgentPickerSelect={props.onAgentPickerSelect}
                                             agentPickerApplyLabel={props.agentPickerApplyLabel}
+                                            agentPickerProbe={props.agentPickerProbe}
                                             attachments={agentInputAttachments}
                                             onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}
                                             hasSendableAttachments={hasSendableAttachments}

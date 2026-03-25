@@ -1,20 +1,15 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderHook, renderScreen, flushHookEffects } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import type { Router } from 'expo-router';
 
-const openMachinePathBrowserModalSpy = vi.hoisted(() => vi.fn<(params: unknown) => Promise<string | null>>(async () => '/repo/file.ts'));
-
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock();
 });
-
-vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
-    openMachinePathBrowserModal: (params: unknown) => openMachinePathBrowserModalSpy(params),
-}));
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -136,8 +131,6 @@ describe('useNewSessionAgentInputPresentation', () => {
             prefetch: vi.fn<Router['prefetch']>(),
         } as unknown as Router;
 
-        openMachinePathBrowserModalSpy.mockResolvedValueOnce('/repo/file.ts');
-
         const hook = await renderHook(() => useNewSessionAgentInputPresentation({
             theme: {
                 colors: {
@@ -209,25 +202,27 @@ describe('useNewSessionAgentInputPresentation', () => {
         const chip = hook.getCurrent().agentInputExtraActionChips.find((c) => c.key === 'new-session-link-file');
         expect(chip).toBeTruthy();
 
-        const items = chip?.collapsedAction?.({
-            tint: '#000',
-            dismiss: () => {},
-            blurInput: () => {},
-        }) as any;
-        const item = Array.isArray(items) ? items[0] : items;
-        expect(typeof item?.onPress).toBe('function');
+        expect(chip?.collapsedContentPopover).toBeTruthy();
+        const renderContent = chip?.collapsedContentPopover?.renderContent;
+        expect(typeof renderContent).toBe('function');
+        if (typeof renderContent !== 'function') {
+            throw new Error('Expected link-file chip collapsedContentPopover.renderContent to be a function');
+        }
 
-        await item.onPress();
-        expect(openMachinePathBrowserModalSpy).toHaveBeenCalled();
+        // Simulate selecting a file from the popover browser content.
+        const rendered = renderContent({ requestClose: () => {}, maxHeight: 320 }) as any;
+        expect(React.isValidElement(rendered)).toBe(true);
+        const props = (rendered as any).props ?? {};
+        expect(typeof props.onPickPath).toBe('function');
+        await act(async () => {
+            props.onPickPath('/repo/file.ts');
+        });
 
-        expect(setSessionPrompt).toHaveBeenCalled();
         const arg = setSessionPrompt.mock.calls.at(-1)?.[0];
         expect(typeof arg).toBe('function');
         expect(arg('hello')).toBe('hello @/repo/file.ts ');
 
         // The link-file chip must render a visible interactive chip in the action bar (not only an action-menu item).
-        openMachinePathBrowserModalSpy.mockClear();
-        openMachinePathBrowserModalSpy.mockResolvedValueOnce('/repo/file-2.ts');
         setSessionPrompt.mockClear();
 
         const chipUi = chip!.render({
@@ -248,10 +243,7 @@ describe('useNewSessionAgentInputPresentation', () => {
 
         await screen.pressByTestIdAsync('new-session-link-file-chip');
         await flushHookEffects({ cycles: 1, turns: 1 });
-
-        expect(openMachinePathBrowserModalSpy).toHaveBeenCalled();
-        const updater = setSessionPrompt.mock.calls.at(-1)?.[0];
-        expect(typeof updater).toBe('function');
-        expect(updater('hello')).toBe('hello @/repo/file-2.ts ');
+        // In the unified popover flow, pressing the chip toggles the central collapsed popover.
+        // (Selection is handled through the popover content callback above.)
     });
 });

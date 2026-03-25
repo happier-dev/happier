@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
 import { renderScreen } from '@/dev/testkit';
+import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -119,7 +120,7 @@ describe('useNewSessionPreflightModelsState', () => {
 
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
     const request = machineCapabilitiesInvokeMock.mock.calls[0]?.[1];
-    expect(request?.params?.timeoutMs).toBe(15_000);
+    expect(request?.params?.timeoutMs).toBe(NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS);
     const values = (latest?.modelOptions ?? []).map((option: any) => option.value);
     expect(values.slice(0, 2)).toEqual(['default', 'model-a']);
   });

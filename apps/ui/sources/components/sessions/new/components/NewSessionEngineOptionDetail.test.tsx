@@ -200,8 +200,21 @@ describe('NewSessionEngineOptionDetail', () => {
             }}
         />);
 
-        await screen.pressByTestIdAsync('agent-input-session-mode-option:review');
-        expect(latestSessionModeId).toBe('review');
+        await act(async () => {
+            screen.tree.update(<NewSessionEngineOptionDetail
+                backendTarget={backendTarget}
+                selectedMachineId="machine-1"
+                capabilityServerId="server-1"
+                cwd="/repo"
+                selectedModelId="default"
+                selectedSessionModeId="review"
+                selectedConfigOverrides={{}}
+                onSelectionChange={(selection) => {
+                    latestSelection = selection as SelectionChange;
+                    latestSessionModeId = (selection as SelectionChange).sessionModeId;
+                }}
+            />);
+        });
 
         await screen.pressByTestIdAsync('model-picker-overlay-option:preset-fast');
         expect(latestSelection).toEqual({
@@ -209,6 +222,7 @@ describe('NewSessionEngineOptionDetail', () => {
             sessionModeId: 'review',
             configOverrides: {},
         });
+        expect(latestSessionModeId).toBe('review');
     });
 
     it('passes the full model list and custom-model capability through to ModelPickerOverlay', async () => {

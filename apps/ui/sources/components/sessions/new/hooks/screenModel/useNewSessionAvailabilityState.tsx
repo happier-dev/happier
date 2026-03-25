@@ -54,7 +54,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     allProfiles: ReadonlyArray<AIBackendProfile>;
 }>) {
     const cliAvailability = useCLIDetection(params.selectedMachineId, { autoDetect: false, serverId: params.capabilityServerId });
-    const { state: selectedMachineCapabilities } = useDaemonScopedMachineCapabilitiesCache({
+    const { state: selectedMachineCapabilities, refresh: refreshSelectedMachineCapabilities } = useDaemonScopedMachineCapabilitiesCache({
         machineId: params.selectedMachineId,
         serverId: params.capabilityServerId,
         daemonStateVersion: params.selectedMachine?.daemonStateVersion ?? 0,
@@ -160,6 +160,46 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         return isAgentSelectable(entry.builtInAgentId ?? resolveProviderAgentIdForBackendTarget(entry.target));
     }, [isAgentSelectable]);
 
+    const selectedMachineOnline = React.useMemo(() => {
+        if (!params.selectedMachineId) return false;
+        const machine = params.selectedMachine;
+        if (!machine) return false;
+        return isMachineOnline(machine);
+    }, [
+        params.selectedMachineId,
+        params.selectedMachine?.active,
+        params.selectedMachine?.activeAt,
+        params.selectedMachine?.revokedAt,
+    ]);
+
+    const initialRefreshKey = React.useMemo(() => {
+        const machineId = String(params.selectedMachineId ?? '').trim();
+        if (!machineId) return null;
+        const serverId = String(params.capabilityServerId ?? '').trim() || 'active';
+        return `${serverId}:${machineId}`;
+    }, [params.capabilityServerId, params.selectedMachineId]);
+
+    const initialRefreshHandledKeyRef = React.useRef<string | null>(null);
+
+    React.useEffect(() => {
+        if (!initialRefreshKey) return;
+        if (!selectedMachineOnline) {
+            initialRefreshHandledKeyRef.current = null;
+            return;
+        }
+
+        // Guard against effect churn (e.g. refresh callback identity changes due to
+        // upstream server switching / hot reload / hook rebuilds). The initial “probe wave”
+        // should run once per (serverId,machineId) while the machine remains online.
+        if (initialRefreshHandledKeyRef.current === initialRefreshKey) return;
+        initialRefreshHandledKeyRef.current = initialRefreshKey;
+
+        return runAfterInteractionsWithFallback(() => {
+            cliAvailability.refresh();
+            refreshSelectedMachineCapabilities();
+        });
+    }, [cliAvailability.refresh, initialRefreshKey, refreshSelectedMachineCapabilities, selectedMachineOnline]);
+
     React.useEffect(() => {
         if (!params.selectedMachineId) return;
         if (wizardInstallableDeps.length === 0) return;
@@ -188,24 +228,6 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         params.selectedMachineId,
         params.settings,
         wizardInstallableDeps.length,
-    ]);
-
-    React.useEffect(() => {
-        if (cliAvailability.timestamp === 0) return;
-
-        const currentSelectable = params.selectedBackendEntry ? isBackendEntrySelectable(params.selectedBackendEntry) : false;
-        if (currentSelectable) return;
-
-        const nextEntry = params.resolvedBackendEntries.find((entry) => isBackendEntrySelectable(entry)) ?? null;
-        if (nextEntry) {
-            params.setBackendTarget(nextEntry.target);
-        }
-    }, [
-        cliAvailability.timestamp,
-        isBackendEntrySelectable,
-        params.resolvedBackendEntries,
-        params.selectedBackendEntry,
-        params.setBackendTarget,
     ]);
 
     const [hiddenCliWarningKeys, setHiddenCliWarningKeys] = React.useState<Record<string, boolean>>({});

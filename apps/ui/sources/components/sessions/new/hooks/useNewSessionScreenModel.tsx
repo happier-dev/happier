@@ -52,6 +52,7 @@ import { buildNewSessionProfileSelectionPopover } from '@/components/sessions/ne
 import { useNewSessionAgentPickerControls } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentPickerControls';
 import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/modules/resolveNewSessionCapabilityServerId';
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import { buildCliAvailabilityProbeState } from '@/components/sessions/new/modules/buildCliAvailabilityProbeState';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import {
     resolveNextSelectableBackendEntryForNewSession,
@@ -536,6 +537,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setDismissedCliWarnings: setDismissedCLIWarnings,
         allProfiles,
     });
+    const refreshCliAvailability = React.useCallback(() => {
+        void cliAvailability.refresh({ bypassCache: true });
+    }, [cliAvailability]);
     React.useEffect(() => {
         if (!useProfiles) {
             return;
@@ -1469,6 +1473,11 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentPickerOptions,
         agentPickerSelectedOptionId: selectedBackendEntry?.targetKey ?? selectedBackendTargetKey,
         onAgentPickerSelect: handleAgentPickerSelect,
+        agentPickerProbe: buildCliAvailabilityProbeState({
+            selectedMachineId,
+            cliAvailability,
+            onRefresh: refreshCliAvailability,
+        }),
         permissionMode,
         handlePermissionModeChange,
         modelMode,

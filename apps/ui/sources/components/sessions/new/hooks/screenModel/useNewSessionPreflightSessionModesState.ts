@@ -19,6 +19,7 @@ import {
     writeDynamicSessionModeProbeCacheSuccess,
 } from '@/sync/domains/sessionModes/dynamicSessionModeProbeCache';
 import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
 import { scheduleProbedResourceRetryAfterExpiry } from './probedResourceRetrySchedule';
 
 export function useNewSessionPreflightSessionModesState(params: Readonly<{
@@ -160,7 +161,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                         id: `cli.${agentType}` as any,
                         method: 'probeModes',
                         params: {
-                            timeoutMs: 15_000,
+                            timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
                             backendTarget,
                             ...(params.probeContext?.capabilityParams ? params.probeContext.capabilityParams : {}),
                             ...(cwd ? { cwd } : {}),

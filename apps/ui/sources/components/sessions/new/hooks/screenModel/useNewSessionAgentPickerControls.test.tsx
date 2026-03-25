@@ -92,11 +92,68 @@ describe('useNewSessionAgentPickerControls', () => {
         expect(hook.getCurrent().agentPickerOptions?.map((option) => ({
             id: option.id,
             disabled: option.disabled ?? false,
+            muted: (option as any).muted ?? false,
             subtitle: option.subtitle ?? null,
         }))).toEqual([
-            { id: 'agent:claude', disabled: false, subtitle: null },
-            { id: 'agent:codex', disabled: true, subtitle: 'newSession.aiBackendNotCompatibleWithSelectedProfile' },
+            { id: 'agent:claude', disabled: false, muted: false, subtitle: null },
+            { id: 'agent:codex', disabled: true, muted: true, subtitle: 'newSession.aiBackendNotCompatibleWithSelectedProfile' },
         ]);
+    });
+
+    it('keeps unavailable backends selectable (muted) and orders available entries first', async () => {
+        const setBackendTarget = vi.fn();
+
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [
+                {
+                    target: { kind: 'builtInAgent', agentId: 'claude' },
+                    targetKey: 'agent:claude',
+                    title: 'Claude',
+                    subtitle: null,
+                } as any,
+                {
+                    target: { kind: 'builtInAgent', agentId: 'codex' },
+                    targetKey: 'agent:codex',
+                    title: 'Codex',
+                    subtitle: null,
+                } as any,
+            ],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: (entry: any) => entry.targetKey !== 'agent:codex',
+            selectedBackendEntry: {
+                target: { kind: 'builtInAgent', agentId: 'claude' },
+                targetKey: 'agent:claude',
+                title: 'Claude',
+            } as any,
+            selectedBackendTargetKey: 'agent:claude',
+            setBackendTarget,
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+        }));
+
+        const options = hook.getCurrent().agentPickerOptions ?? [];
+        expect(options.map((option) => ({
+            id: option.id,
+            disabled: option.disabled ?? false,
+            muted: (option as any).muted ?? false,
+        }))).toEqual([
+            { id: 'agent:claude', disabled: false, muted: false },
+            { id: 'agent:codex', disabled: false, muted: true },
+        ]);
+
+        hook.getCurrent().handleAgentPickerSelect('agent:codex');
+        expect(setBackendTarget).toHaveBeenCalledWith({ kind: 'builtInAgent', agentId: 'codex' });
     });
 
     it('publishes engine detail selection changes immediately for the focused backend option', async () => {

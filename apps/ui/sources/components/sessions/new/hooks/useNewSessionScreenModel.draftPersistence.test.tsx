@@ -606,7 +606,18 @@ vi.mock('@/utils/sessions/recentPaths', () => ({
 }));
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
-    useCLIDetection: () => ({ available: { codex: true, claude: true } }),
+    useCLIDetection: () => ({
+        available: { codex: true, claude: true } as any,
+        login: {} as any,
+        authStatus: {} as any,
+        resolvedPath: {} as any,
+        resolvedCommand: {} as any,
+        resolutionSource: {} as any,
+        tmux: null,
+        isDetecting: false,
+        timestamp: 123,
+        refresh: vi.fn(),
+    }),
 }));
 
 vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
@@ -614,7 +625,7 @@ vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
 }));
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
-    useMachineCapabilitiesCache: () => ({ state: { status: 'idle' } }),
+    useMachineCapabilitiesCache: () => ({ state: { status: 'idle' }, refresh: vi.fn() }),
     prefetchMachineCapabilities: async () => {},
     prefetchMachineCapabilitiesIfStale: async () => {},
     getMachineCapabilitiesSnapshot: () => null,

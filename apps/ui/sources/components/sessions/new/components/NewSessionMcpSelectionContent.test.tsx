@@ -52,10 +52,23 @@ installNewSessionComponentsCommonModuleMocks({
 	                            id: 'server-playwright',
 	                            name: 'playwright',
 	                            title: 'playwright',
-	                            command: 'playwright',
+	                            transport: 'stdio',
+	                            stdio: { command: 'playwright', args: [] },
+	                            env: {},
+	                            createdAt: 1,
+	                            updatedAt: 2,
 	                        },
 	                    ],
-	                    bindings: [],
+	                    bindings: [
+	                        {
+	                            id: 'binding-all',
+	                            serverId: 'server-playwright',
+	                            enabled: true,
+	                            target: { t: 'allMachines' },
+	                            createdAt: 1,
+	                            updatedAt: 2,
+	                        },
+	                    ],
 	                    presets: [],
 	                } as any,
 	            },
@@ -95,6 +108,7 @@ vi.mock('@/components/settings/mcpServers/mcpServerUi', () => ({
     resolveAgentToolsDeliveryDescription: () => 'Tool delivery description',
     resolveAgentToolsDeliveryLabel: () => 'Tool delivery label',
     resolveAuthBadgeLabel: () => 'Auth',
+    resolveManagedServerAuthMode: () => 'Auth',
     resolveDetectedAvailabilityLabel: () => 'Detected',
     resolvePreviewScopeLabel: () => 'Scope',
 }));
@@ -119,6 +133,7 @@ describe('NewSessionMcpSelectionContent', () => {
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
         await renderScreen(<NewSessionMcpSelectionContent
+                    machineId="machine-1"
                     machineName="Builder"
                     directory="/repo"
                     agentType="claude"
@@ -174,8 +189,60 @@ describe('NewSessionMcpSelectionContent', () => {
         const titleEl = detectedGroup.title as React.ReactElement<any>;
         const actions = (titleEl.props as any)?.actions as React.ReactNode;
         expect(React.isValidElement(actions)).toBe(true);
-        expect((actions as React.ReactElement<any>).props.testID).toBe('new-session.mcp.refresh');
+        expect((actions as React.ReactElement<any>).props.testID).toBe('new-session.mcp.detected.refresh');
         expect((actions as React.ReactElement<any>).props.loading).toBe(true);
+    });
+
+    it('does not render preview rows when session context is unavailable', async () => {
+        capturedItems.length = 0;
+        capturedItemGroups.length = 0;
+
+        const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
+
+        await renderScreen(<NewSessionMcpSelectionContent
+                    machineId={null}
+                    machineName={null}
+                    directory=""
+                    agentType="claude"
+                    hasContext={false}
+                    preview={{
+                        ok: true,
+                        builtIn: [],
+                        managed: [],
+                        detected: [{
+                            key: 'detected:claude:sequential-thinking',
+                            name: 'sequential-thinking',
+                            transport: 'stdio',
+                            authMode: 'unknown',
+                            selected: true,
+                            selectable: false,
+                            availability: 'readOnly',
+                            sourceKind: 'detected',
+                            scopeKind: 'providerUser',
+                            provider: 'claude',
+                            enabled: true,
+                            envKeyCount: 0,
+                            headerKeyCount: 0,
+                            sourcePath: '/Users/test/.claude/config.json',
+                        }],
+                    }}
+                    selection={{
+                        v: 1,
+                        managedServersEnabled: true,
+                        forceIncludeServerIds: [],
+                        forceExcludeServerIds: [],
+                    }}
+                    loading={false}
+                    error={null}
+                    onSelectionChange={() => {}}
+                    onRefresh={() => {}}
+                    onOpenSettings={() => {}}
+                    onClose={() => {}}
+                    maxHeight={520}
+                />);
+
+        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.empty')).toBe(true);
+        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.detected.sequential-thinking')).toBe(false);
     });
 
     it('omits the non-actionable built-in delivery group while keeping managed and detected rows', async () => {
@@ -185,6 +252,7 @@ describe('NewSessionMcpSelectionContent', () => {
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
         await renderScreen(<NewSessionMcpSelectionContent
+                    machineId="machine-1"
                     machineName="Builder"
                     directory="/repo"
                     agentType="claude"
@@ -253,7 +321,9 @@ describe('NewSessionMcpSelectionContent', () => {
 
 	        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.built-in.happier')).toBe(false);
 	        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.managed-enabled')).toBe(true);
-	        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.row.server-playwright')).toBe(true);
+	        expect(capturedItems.filter((item) => item.testID === 'new-session.mcp.row.server-playwright')).toHaveLength(1);
+	        const managed = capturedItems.find((item) => item.testID === 'new-session.mcp.row.server-playwright');
+	        expect(managed?.selected).toBe(false);
 	        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.detected.sequential-thinking')).toBe(true);
 	        expect(capturedItemGroups.some((group) => group.title === 'settings.mcpServersSourceBuiltIn')).toBe(false);
 
@@ -261,13 +331,14 @@ describe('NewSessionMcpSelectionContent', () => {
 	        expect(detected?.subtitle).toBe('Scope · Auth');
 	    });
 
-    it('renders an explicit empty-state row when preview data resolves without any managed or detected servers', async () => {
+    it('does not render an extra empty-state row when Happier servers exist but preview resolves empty', async () => {
         capturedItems.length = 0;
         capturedItemGroups.length = 0;
 
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
         await renderScreen(<NewSessionMcpSelectionContent
+                    machineId="machine-1"
                     machineName="Builder"
                     directory="/repo"
                     agentType="claude"
@@ -294,11 +365,10 @@ describe('NewSessionMcpSelectionContent', () => {
                 />);
 
         const emptyItem = capturedItems.find((item) => item.testID === 'new-session.mcp.empty');
-        expect(emptyItem).toBeTruthy();
-        expect(emptyItem?.title).toBe('settings.mcpServersEmptyTitle');
+        expect(emptyItem).toBeFalsy();
         expect(capturedItems.some((item) => item.testID === 'new-session.mcp.loading')).toBe(false);
         expect(capturedItems.some((item) => item.testID === 'new-session.mcp.error')).toBe(false);
-        expect(capturedItemGroups.some((group) => group.title == null)).toBe(true);
+        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.row.server-playwright')).toBe(true);
     });
 
     it('collapses provider+Happier empty states into a single actionable row when no MCP servers exist anywhere', async () => {
@@ -324,6 +394,7 @@ describe('NewSessionMcpSelectionContent', () => {
         }));
         vi.doMock('@/components/settings/mcpServers/mcpServerUi', () => ({
             resolveAuthBadgeLabel: () => 'Auth',
+            resolveManagedServerAuthMode: () => 'Auth',
             resolveDetectedAvailabilityLabel: () => 'Detected',
             resolvePreviewScopeLabel: () => 'Scope',
         }));
@@ -392,6 +463,7 @@ describe('NewSessionMcpSelectionContent', () => {
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
         const screen = await renderScreen(<NewSessionMcpSelectionContent
+            machineId="machine-1"
             machineName="Builder"
             directory="/repo"
             agentType="claude"
@@ -445,8 +517,8 @@ describe('NewSessionMcpSelectionContent', () => {
         walk(rightElement);
 
         expect(foundTestIds).toEqual(expect.arrayContaining([
-            'new-session.mcp.refresh',
-            'new-session.mcp.happier-open-settings',
+            'new-session.mcp.happier.empty.refresh',
+            'new-session.mcp.happier.empty.open-settings',
         ]));
     });
 });

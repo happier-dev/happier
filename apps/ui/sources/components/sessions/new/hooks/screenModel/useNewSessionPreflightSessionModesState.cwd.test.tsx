@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { resetDynamicSessionModeProbeCacheForTests } from '@/sync/domains/sessionModes/dynamicSessionModeProbeCache';
 import { renderScreen } from '@/dev/testkit';
+import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -66,7 +67,7 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
     expect(captured[0]).toMatchObject({
       id: 'cli.opencode',
       method: 'probeModes',
-      params: expect.objectContaining({ timeoutMs: 15_000, cwd: '/repo' }),
+      params: expect.objectContaining({ timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS, cwd: '/repo' }),
     });
   });
 
@@ -107,7 +108,7 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
       id: 'cli.customAcp',
       method: 'probeModes',
       params: expect.objectContaining({
-        timeoutMs: 15_000,
+        timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
         cwd: '/repo',
         backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       }),
