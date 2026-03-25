@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { DaemonMcpServersPreviewResponse } from '@happier-dev/protocol';
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -12,7 +13,9 @@ import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScree
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const previewSpy = vi.hoisted(() => vi.fn(async (_machineId: string, _request: unknown, _options?: unknown) => ({
+type McpPreviewSpyFn = (_machineId: string, _request: unknown, _options?: unknown) => Promise<DaemonMcpServersPreviewResponse>;
+
+const previewSpy = vi.hoisted(() => vi.fn<McpPreviewSpyFn>(async (_machineId, _request, _options) => ({
     ok: true,
     builtIn: [{
         key: 'built-in:happier',
