@@ -12,13 +12,17 @@ import { setServerSessionListCache } from '@/sync/store/sessionListCache';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import {
-    createManagedConnectionSupervisor,
-    DEFAULT_MANAGED_CONNECTION_POLICY,
-    type ManagedConnectionSupervisor,
+    type ManagedConnectionState,
+    type ManagedConnectionTransport,
+    type TransportDisconnectEvent,
 } from '@happier-dev/connection-supervisor';
-import { createSyncSocketReadinessProbe } from '@/sync/api/session/connection/createSyncSocketReadinessProbe';
+import {
+    reportServerUnreachable,
+    startServerReachabilitySupervisor,
+    subscribeServerReachabilityState,
+} from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import {
     createConcurrentServerSocketTransport,
     type ConcurrentServerSocket,
@@ -43,11 +47,14 @@ type ManagedConcurrentServer = {
     serverName: string;
     credentials: AuthCredentials;
     socket: ConcurrentServerSocket | null;
+    socketTransport: ManagedConnectionTransport | null;
+    reachabilityUnsubscribe: (() => void) | null;
+    reachabilityState: ManagedConnectionState;
+    detachSocketTransportListeners: Array<() => void>;
     encryption: Encryption | null;
     refreshQueued: boolean;
     refreshInFlight: Promise<void> | null;
     refreshTimer: ReturnType<typeof setTimeout> | null;
-    connectionSupervisor: ManagedConnectionSupervisor;
 };
 
 const REFRESH_DEBOUNCE_MS = 600;
@@ -86,11 +93,16 @@ function normalizeServerUrl(url: string): string {
     return canonicalizeServerUrl(String(url ?? ''));
 }
 
-function createServerRequest(serverUrl: string): (path: string, init: RequestInit) => Promise<Response> {
+function createServerRequest(serverUrl: string, token: string): (path: string, init: RequestInit) => Promise<Response> {
     const normalized = normalizeServerUrl(serverUrl);
     return async (path: string, init: RequestInit) => {
         const requestPath = String(path ?? '').startsWith('/') ? String(path) : `/${String(path ?? '')}`;
-        return await runtimeFetch(`${normalized}${requestPath}`, init);
+        return await runtimeFetchWithServerReachability({
+            serverUrl: normalized,
+            token,
+            url: `${normalized}${requestPath}`,
+            init,
+        });
     };
 }
 
@@ -227,7 +239,7 @@ function clearConcurrentMachineListCache(serverIdRaw: string): void {
 
 async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<void> {
     const encryption = await getOrCreateEncryption(entry);
-    const request = createServerRequest(entry.serverUrl);
+    const request = createServerRequest(entry.serverUrl, entry.credentials.token);
     const sessionDataKeys = new Map<string, Uint8Array>();
     const machineDataKeys = new Map<string, Uint8Array>();
     let sessions: Session[] = [];
@@ -279,10 +291,6 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
             groupInactiveSessionsByProject: Boolean(storage.getState().settings.groupInactiveSessionsByProject),
             activeGroupingV1: storage.getState().settings.sessionListActiveGroupingV1,
             inactiveGroupingV1: storage.getState().settings.sessionListInactiveGroupingV1,
-            sessionTargetState: {
-                sessions: sessionsById,
-                machines: machinesById,
-            },
             serverScope: {
                 serverId: entry.id,
                 serverName: entry.serverName,
@@ -305,6 +313,7 @@ function isManagedServerActive(entry: ManagedConcurrentServer): boolean {
 
 function queueRefresh(entry: ManagedConcurrentServer): void {
     if (!isManagedServerActive(entry)) return;
+    if (entry.reachabilityState.phase !== 'online') return;
     if (entry.refreshTimer) return;
     entry.refreshTimer = setTimeout(() => {
         entry.refreshTimer = null;
@@ -314,6 +323,7 @@ function queueRefresh(entry: ManagedConcurrentServer): void {
 
 async function runRefresh(entry: ManagedConcurrentServer): Promise<void> {
     if (!isManagedServerActive(entry)) return;
+    if (entry.reachabilityState.phase !== 'online') return;
     if (entry.refreshInFlight) {
         entry.refreshQueued = true;
         return;
@@ -342,55 +352,96 @@ function stopManagedServer(serverId: string): void {
     if (entry.refreshTimer) {
         clearTimeout(entry.refreshTimer);
     }
+    entry.reachabilityUnsubscribe?.();
+    entry.reachabilityUnsubscribe = null;
     entry.socket = null;
-    void entry.connectionSupervisor.stop();
+    for (const detach of entry.detachSocketTransportListeners.splice(0)) {
+        detach();
+    }
+    const transport = entry.socketTransport;
+    entry.socketTransport = null;
+    void transport?.disconnect({ intentional: true });
+    void transport?.destroy();
     managedServers.delete(serverId);
 }
 
 function createManagedServer(target: ConcurrentTarget, credentials: AuthCredentials): ManagedConcurrentServer {
+    const normalizedServerUrl = normalizeServerUrl(target.serverUrl) || target.serverUrl;
     const entry: ManagedConcurrentServer = {
         id: target.id,
-        serverUrl: target.serverUrl,
+        serverUrl: normalizedServerUrl,
         serverName: target.serverName,
         credentials,
         socket: null,
+        socketTransport: null,
+        reachabilityUnsubscribe: null,
+        reachabilityState: {
+            phase: 'idle',
+            reason: null,
+            attempt: 0,
+            nextRetryAt: null,
+            lastConnectedAt: null,
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        },
+        detachSocketTransportListeners: [],
         encryption: null,
         refreshQueued: false,
         refreshInFlight: null,
         refreshTimer: null,
-        connectionSupervisor: createManagedConnectionSupervisor({
-            ...DEFAULT_MANAGED_CONNECTION_POLICY,
-            createTransport: () => {
-                const { socket, transport } = createConcurrentServerSocketTransport({
-                    serverUrl: target.serverUrl,
-                    token: credentials.token,
-                });
-                entry.socket = socket;
-                return transport;
-            },
-            probeReadiness: createSyncSocketReadinessProbe({
-                endpoint: target.serverUrl,
-                token: credentials.token,
-            }),
-            onConnected: async () => {
-                queueRefresh(entry);
-            },
-            onAuthFailed: async () => {
-                if (!isManagedServerActive(entry)) return;
-                updateConcurrentSessionListCache(entry.id, null);
-                updateConcurrentMachineListCache({
-                    serverId: entry.id,
-                    machines: null,
-                    status: 'signedOut',
-                });
-            },
-        }),
     };
     // NOTE: Do not refresh full snapshots on user-scoped socket `update` events.
     // Those events can be high-frequency (presence/activity), and full refresh loops are
     // expensive + noisy. Periodic refresh handles eventual consistency for non-active servers.
 
-    void entry.connectionSupervisor.start();
+    entry.reachabilityUnsubscribe = subscribeServerReachabilityState(normalizedServerUrl, (state) => {
+        if (!isManagedServerActive(entry)) return;
+        entry.reachabilityState = state;
+
+        if (state.phase === 'auth_failed') {
+            updateConcurrentSessionListCache(entry.id, null);
+            updateConcurrentMachineListCache({
+                serverId: entry.id,
+                machines: null,
+                status: 'signedOut',
+            });
+            void entry.socketTransport?.disconnect({ intentional: true });
+            return;
+        }
+
+        if (state.phase !== 'online') {
+            void entry.socketTransport?.disconnect({ intentional: true });
+            return;
+        }
+
+        if (!entry.socketTransport) {
+            const { socket, transport } = createConcurrentServerSocketTransport({
+                serverUrl: normalizedServerUrl,
+                token: credentials.token,
+            });
+            entry.socket = socket;
+            entry.socketTransport = transport;
+
+            entry.detachSocketTransportListeners = [
+                transport.onConnected(() => {
+                    queueRefresh(entry);
+                }),
+                transport.onDisconnected((event: TransportDisconnectEvent) => {
+                    if (event.intentional) return;
+                    reportServerUnreachable(normalizedServerUrl, event.error ?? new Error(event.reason ?? 'socket disconnect'));
+                }),
+                transport.onError((error: unknown) => {
+                    reportServerUnreachable(normalizedServerUrl, error);
+                }),
+            ];
+        }
+
+        if (entry.socketTransport.isConnected() !== true) {
+            void entry.socketTransport.connect();
+        }
+    });
+
+    void startServerReachabilitySupervisor({ serverUrl: normalizedServerUrl, token: credentials.token });
     return entry;
 }
 

@@ -7,6 +7,7 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 import { Session } from './session';
 import type { EnhancedMode } from './loop';
+import { hashClaudeEnhancedModeForQueue } from './remote/modeHash';
 import { readFile } from 'node:fs/promises';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -162,7 +163,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     path: '/tmp',
     logPath: '/tmp/log',
     sessionId: options?.sessionId ?? null,
-    messageQueue: new MessageQueue2<EnhancedMode>(() => 'mode'),
+    messageQueue: new MessageQueue2<EnhancedMode>(hashClaudeEnhancedModeForQueue),
     onModeChange: () => {},
     hookSettingsPath: '/tmp/hooks.json',
   });
@@ -560,6 +561,70 @@ describe.sequential('claudeRemoteLauncher', () => {
     const switchHandler = await switchHandlerReady;
     expect(await switchHandler({ to: 'local' })).toBe(true);
     await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
+
+  it('restarts the Claude runtime when the queued prompt mode hash changes, including across relaunch boundaries', async () => {
+    const firstSeen = createDeferred<any>();
+    const secondSeen = createDeferred<any>();
+    const thirdSeen = createDeferred<any>();
+
+    mockClaudeRemoteDispatch
+      .mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as any;
+        firstSeen.resolve(await dispatchOpts.nextMessage?.());
+        // Second call should return null (launcher buffers pending + relaunches).
+        expect(await dispatchOpts.nextMessage?.()).toBeNull();
+      })
+      .mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as any;
+        secondSeen.resolve(await dispatchOpts.nextMessage?.());
+        // After relaunch, a second mode change should also trigger buffering + relaunch.
+        expect(await dispatchOpts.nextMessage?.()).toBeNull();
+      })
+      .mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as any;
+        thirdSeen.resolve(await dispatchOpts.nextMessage?.());
+        await waitForAbort(dispatchOpts.signal);
+      });
+
+    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+    session.queue.push('one', { permissionMode: 'default', appendSystemPrompt: 'a' } satisfies EnhancedMode);
+    session.queue.push('two', { permissionMode: 'default', appendSystemPrompt: 'b' } satisfies EnhancedMode);
+    session.queue.push('three', { permissionMode: 'default', appendSystemPrompt: 'c' } satisfies EnhancedMode);
+    // Ensure nextMessage never deadlocks in a regression case where the launcher fails to restart.
+    // This doesn't affect the mode-hash behavior under test; it just guarantees eventual null.
+    session.queue.close();
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    const switchHandler = await switchHandlerReady;
+    try {
+      const unset = Symbol('unset');
+      let first: any = unset;
+      let second: any = unset;
+      let third: any = unset;
+      void firstSeen.promise.then((value) => { first = value; });
+      void secondSeen.promise.then((value) => { second = value; });
+      void thirdSeen.promise.then((value) => { third = value; });
+
+      await expect.poll(() => first, { timeout: 10_000 }).not.toBe(unset);
+      expect(first).not.toBeNull();
+      expect(first?.message).toContain('one');
+      expect(first?.message).not.toContain('two');
+
+      await expect.poll(() => second, { timeout: 10_000 }).not.toBe(unset);
+      expect(second).not.toBeNull();
+      expect(second?.message).toContain('two');
+      expect(second?.message).not.toContain('three');
+
+      await expect.poll(() => third, { timeout: 10_000 }).not.toBe(unset);
+      expect(third).not.toBeNull();
+      expect(third?.message).toContain('three');
+    } finally {
+      expect(await switchHandler({ to: 'local' })).toBe(true);
+      await expect(launcherPromise).resolves.toBe('switch');
+    }
   }, 30_000);
 
   it('persists the last assistant uuid into session metadata when observed in remote messages', async () => {

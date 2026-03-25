@@ -4,19 +4,22 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { observeServerTimestamp } from '@/sync/runtime/time';
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { StaleServerGenerationError } from '@/sync/http/client';
+import { serverFetch, StaleServerGenerationError } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
 import { storage } from '@/sync/domains/state/storage';
+import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import {
-    createManagedConnectionSupervisor,
-    DEFAULT_MANAGED_CONNECTION_POLICY,
     type ManagedConnectionState,
-    type ManagedConnectionSupervisor,
+    type ManagedConnectionTransport,
+    type TransportDisconnectEvent,
 } from '@happier-dev/connection-supervisor';
-import { createSyncSocketReadinessProbe } from '@/sync/api/session/connection/createSyncSocketReadinessProbe';
 import { createSyncSocketTransport } from '@/sync/api/session/connection/createSyncSocketTransport';
+import {
+    reportServerUnreachable,
+    startServerReachabilitySupervisor,
+    subscribeServerReachabilityState,
+} from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 
 function readSessionEncryptionModeFromLocalState(sessionId: string): 'plain' | 'e2ee' | null {
     const sid = String(sessionId ?? '').trim();
@@ -34,6 +37,8 @@ function readSessionEncryptionModeFromLocalState(sessionId: string): 'plain' | '
 }
 
 const GLOBAL_IN_FLIGHT_HTTP_REQUESTS_KEY = '__HAPPIER_GLOBAL_IN_FLIGHT_HTTP_REQUESTS_BY_KEY__';
+const GLOBAL_TOKEN_CACHE_KEY_BY_TOKEN_KEY = '__HAPPIER_GLOBAL_TOKEN_CACHE_KEY_BY_TOKEN__';
+const GLOBAL_TOKEN_CACHE_KEY_MAX_ENTRIES = 512;
 
 function getInFlightHttpRequestsHost(): Record<string, unknown> {
     // Vitest module isolation can evaluate the same module graph under separate `globalThis` realms.
@@ -45,10 +50,49 @@ function getInFlightHttpRequestsHost(): Record<string, unknown> {
     const p = typeof process !== 'undefined' ? (process as unknown) : null;
     if (p && typeof p === 'object') return p as Record<string, unknown>;
 
-    const gp = (g as any)?.process;
+    const gp = g.process;
     if (gp && typeof gp === 'object') return gp as Record<string, unknown>;
 
     return g;
+}
+
+function getGlobalTokenCacheKeyByToken(): Map<string, string> {
+    const host = getInFlightHttpRequestsHost();
+    const existing = host[GLOBAL_TOKEN_CACHE_KEY_BY_TOKEN_KEY];
+    // Cross-realm: `instanceof Map` can fail when the Map was created in a different JS realm.
+    if (existing && Object.prototype.toString.call(existing) === '[object Map]') {
+        return existing as Map<string, string>;
+    }
+    const created = new Map<string, string>();
+    host[GLOBAL_TOKEN_CACHE_KEY_BY_TOKEN_KEY] = created;
+    return created;
+}
+
+function getOrCreateTokenCacheKey(token: string): string {
+    // Avoid using the raw token in cache keys (accidental leaks in error/debug output).
+    const tokenCacheKeyByToken = getGlobalTokenCacheKeyByToken();
+    let key = tokenCacheKeyByToken.get(token);
+    if (key) {
+        // Refresh LRU ordering.
+        tokenCacheKeyByToken.delete(token);
+        tokenCacheKeyByToken.set(token, key);
+        return key;
+    }
+
+    const cryptoAny = (globalThis as any).crypto as { randomUUID?: () => string } | undefined;
+    key =
+        typeof cryptoAny?.randomUUID === 'function'
+            ? cryptoAny.randomUUID()
+            : `tk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+    tokenCacheKeyByToken.set(token, key);
+
+    while (tokenCacheKeyByToken.size > GLOBAL_TOKEN_CACHE_KEY_MAX_ENTRIES) {
+        const oldest = tokenCacheKeyByToken.keys().next();
+        if (oldest.done) break;
+        tokenCacheKeyByToken.delete(oldest.value);
+    }
+
+    return key;
 }
 
 function getGlobalInFlightHttpRequestsByKey(): Map<string, Promise<Response>> {
@@ -106,6 +150,7 @@ class ApiSocket {
 
     // State
     private socket: Socket | null = null;
+    private socketTransportKey: string | null = null;
     private config: SyncSocketConfig | null = null;
     private encryption: Encryption | null = null;
     private messageHandlers: Map<string, (data: any) => void> = new Map();
@@ -124,9 +169,12 @@ class ApiSocket {
         lastErrorMessage: null,
     };
     private inFlightHttpRequestsByKey: Map<string, Promise<Response>> = getGlobalInFlightHttpRequestsByKey();
-    private connectionSupervisor: ManagedConnectionSupervisor | null = null;
     private hasConnectedOnce = false;
     private pendingReconnectNotification = false;
+    private reachabilityUnsubscribe: (() => void) | null = null;
+    private reachabilityServerUrl: string | null = null;
+    private socketTransport: ManagedConnectionTransport | null = null;
+    private detachSocketTransportListeners: Array<() => void> = [];
 
     //
     // Initialization
@@ -146,47 +194,39 @@ class ApiSocket {
         if (!this.config) {
             return;
         }
+        const endpoint = this.config.endpoint;
+        const token = this.config.token;
+        const serverUrl = canonicalizeServerUrl(endpoint) || endpoint;
 
-        if (!this.connectionSupervisor) {
-            this.connectionSupervisor = createManagedConnectionSupervisor({
-                ...DEFAULT_MANAGED_CONNECTION_POLICY,
-                createTransport: () => {
-                    const { socket, transport } = createSyncSocketTransport({
-                        endpoint: this.config!.endpoint,
-                        token: this.config!.token,
-                        transports: resolveSocketIoTransports(),
-                    });
-                    this.socket = socket;
-                    this.installSocketEventHandlers(socket);
-                    return transport;
-                },
-                probeReadiness: async () => createSyncSocketReadinessProbe({
-                    endpoint: this.config!.endpoint,
-                    token: this.config!.token,
-                })(),
-                onStateChange: (state) => {
-                    this.applyManagedConnectionState(state);
-                },
-                onConnected: async () => {
-                    this.clearError();
-                    if (this.hasConnectedOnce && this.pendingReconnectNotification) {
-                        this.reconnectedListeners.forEach(listener => listener());
-                    }
-                    this.hasConnectedOnce = true;
-                    this.pendingReconnectNotification = false;
-                },
-                onAuthFailed: async ({ probe }) => {
-                    this.setError(new Error(probe.errorMessage ?? 'Authentication failed'));
-                    this.updateStatus('error');
-                },
+        if (this.reachabilityUnsubscribe && this.reachabilityServerUrl && this.reachabilityServerUrl !== serverUrl) {
+            this.reachabilityUnsubscribe();
+            this.reachabilityUnsubscribe = null;
+            this.reachabilityServerUrl = null;
+        }
+
+        if (!this.reachabilityUnsubscribe) {
+            this.reachabilityServerUrl = serverUrl;
+            this.reachabilityUnsubscribe = subscribeServerReachabilityState(serverUrl, (state) => {
+                this.applyManagedConnectionState(state);
+                this.handleReachabilityStateChange(state);
             });
         }
 
-        void this.connectionSupervisor.start();
+        void startServerReachabilitySupervisor({ serverUrl, token });
     }
 
     disconnect() {
-        void this.connectionSupervisor?.stop();
+        this.reachabilityUnsubscribe?.();
+        this.reachabilityUnsubscribe = null;
+        this.reachabilityServerUrl = null;
+        for (const detach of this.detachSocketTransportListeners.splice(0)) {
+            detach();
+        }
+        const transport = this.socketTransport;
+        this.socketTransport = null;
+        this.socketTransportKey = null;
+        void transport?.disconnect({ intentional: true });
+        void transport?.destroy();
         this.socket = null;
         this.updateStatus('disconnected');
     }
@@ -381,7 +421,7 @@ class ApiSocket {
         const requestKey = canDedupe
             // Intentionally exclude `snapshot.generation` from the de-dupe key so concurrent callers still share
             // a single in-flight fetch even if the active server generation changes while bootstrapping.
-            ? `${snapshot.serverId ?? ''}:${method}:${url}:token:${credentials.token}`
+            ? `${snapshot.serverId ?? ''}:${method}:${url}:tk:${getOrCreateTokenCacheKey(credentials.token)}`
             : null;
 
         let response: Response;
@@ -390,10 +430,14 @@ class ApiSocket {
             if (existing) {
                 response = await existing;
             } else {
-                const promise = runtimeFetch(url, {
-                    ...options,
-                    headers,
-                }) as Promise<Response>;
+                const promise = serverFetch(
+                    url,
+                    {
+                        ...options,
+                        headers,
+                    },
+                    { includeAuth: false },
+                ) as Promise<Response>;
                 this.inFlightHttpRequestsByKey.set(requestKey, promise);
                 try {
                     response = await promise;
@@ -404,10 +448,14 @@ class ApiSocket {
             // Always return a clone when de-duping to keep bodies readable per caller.
             response = response.clone();
         } else {
-            response = await runtimeFetch(url, {
-                ...options,
-                headers,
-            });
+            response = await serverFetch(
+                url,
+                {
+                    ...options,
+                    headers,
+                },
+                { includeAuth: false },
+            );
         }
 
         const current = getActiveServerSnapshot();
@@ -440,6 +488,9 @@ class ApiSocket {
         if (this.config && this.config.token !== newToken) {
             this.config.token = newToken;
 
+            const serverUrl = canonicalizeServerUrl(this.config.endpoint) || this.config.endpoint;
+            void startServerReachabilitySupervisor({ serverUrl, token: newToken });
+
             if (this.socket) {
                 this.disconnect();
                 this.connect();
@@ -456,6 +507,88 @@ class ApiSocket {
             this.currentStatus = status;
             this.statusListeners.forEach(listener => listener(status));
         }
+    }
+
+    private handleReachabilityStateChange(state: ManagedConnectionState): void {
+        if (!this.config) {
+            return;
+        }
+
+        if (state.phase !== 'online') {
+            if (this.hasConnectedOnce) {
+                this.pendingReconnectNotification = true;
+            }
+            void this.socketTransport?.disconnect({ intentional: true });
+            return;
+        }
+
+        try {
+            this.ensureSocketTransport();
+        } catch (error) {
+            this.setError(error instanceof Error ? error : new Error(String(error)));
+            this.updateStatus('error');
+            return;
+        }
+
+        if (!this.socketTransport || this.socketTransport.isConnected()) {
+            return;
+        }
+
+        this.updateStatus('connecting');
+        void this.socketTransport.connect().catch((error) => {
+            this.setError(error instanceof Error ? error : new Error(String(error)));
+            this.updateStatus('error');
+        });
+    }
+
+    private ensureSocketTransport(): void {
+        if (!this.config) return;
+        const key = `${this.config.endpoint}|${this.config.token}`;
+        if (this.socketTransport && this.socketTransportKey === key && this.socket) {
+            return;
+        }
+
+        for (const detach of this.detachSocketTransportListeners.splice(0)) {
+            detach();
+        }
+        void this.socketTransport?.disconnect({ intentional: true });
+        void this.socketTransport?.destroy();
+        this.socketTransport = null;
+        this.socket = null;
+
+        const { socket, transport } = createSyncSocketTransport({
+            endpoint: this.config.endpoint,
+            token: this.config.token,
+            transports: resolveSocketIoTransports(),
+        });
+        this.socket = socket;
+        this.socketTransport = transport;
+        this.socketTransportKey = key;
+        this.installSocketEventHandlers(socket);
+
+        this.detachSocketTransportListeners = [
+            transport.onConnected(() => {
+                this.clearError();
+                this.updateStatus('connected');
+                if (this.hasConnectedOnce && this.pendingReconnectNotification) {
+                    this.reconnectedListeners.forEach((listener) => listener());
+                }
+                this.hasConnectedOnce = true;
+                this.pendingReconnectNotification = false;
+            }),
+            transport.onDisconnected((event: TransportDisconnectEvent) => {
+                this.updateStatus('disconnected');
+                if (event.intentional) {
+                    return;
+                }
+                this.pendingReconnectNotification = true;
+                reportServerUnreachable(this.config!.endpoint, event.error ?? new Error(event.reason ?? 'socket disconnect'));
+            }),
+            transport.onError((error: unknown) => {
+                this.setError(error instanceof Error ? error : new Error(String(error)));
+                reportServerUnreachable(this.config!.endpoint, error);
+            }),
+        ];
     }
 
     private installSocketEventHandlers(socket: Socket) {
@@ -484,22 +617,19 @@ class ApiSocket {
         for (const listener of this.connectionStateListeners) {
             listener(state);
         }
-        if (state.phase === 'offline') {
-            this.pendingReconnectNotification =
-                state.reason !== 'manual_disconnect'
-                && state.reason !== 'intentional_shutdown';
-        } else if (state.phase === 'idle' || state.phase === 'shutting_down') {
-            this.pendingReconnectNotification = false;
-        }
         switch (state.phase) {
             case 'connecting':
                 this.updateStatus('connecting');
                 return;
-            case 'online':
-                this.updateStatus('connected');
-                return;
             case 'auth_failed':
                 this.updateStatus('error');
+                return;
+            case 'online':
+                if (this.socketTransport?.isConnected() === true) {
+                    this.updateStatus('connected');
+                } else if (this.currentStatus === 'disconnected') {
+                    this.updateStatus('connecting');
+                }
                 return;
             case 'offline':
             case 'idle':

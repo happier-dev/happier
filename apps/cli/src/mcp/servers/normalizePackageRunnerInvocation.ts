@@ -1,7 +1,6 @@
-import { accessSync, constants as fsConstants, statSync } from 'node:fs';
 import { basename } from 'node:path';
 
-import { managedPnpmBinPath } from '@/runtime/managedTools/pnpm/managedPnpm';
+import { ensureManagedPnpmCommand, resolveExistingPnpmCommand } from '@/runtime/managedTools/pnpm/managedPnpm';
 
 export type NormalizedPackageRunnerInvocation = Readonly<{
   command: string;
@@ -39,54 +38,38 @@ function hasPackageFlag(args: readonly string[]): boolean {
   return args.some((arg) => arg === '-p' || arg === '--package' || arg.startsWith('--package=') || arg.startsWith('-p='));
 }
 
-function resolveManagedOrOverridePnpmCommand(processEnv: NodeJS.ProcessEnv): string | null {
-  const rawOverride = typeof processEnv.HAPPIER_PNPM_BIN === 'string' ? processEnv.HAPPIER_PNPM_BIN.trim() : '';
-  if (rawOverride) {
-    try {
-      accessSync(rawOverride, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
-      if (!statSync(rawOverride).isFile()) {
-        return null;
-      }
-      return rawOverride;
-    } catch {
-      return null;
-    }
-  }
-
-  const managedPath = managedPnpmBinPath(processEnv);
-  try {
-    accessSync(managedPath, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
-    if (!statSync(managedPath).isFile()) {
-      return null;
-    }
-    return managedPath;
-  } catch {
-    return null;
-  }
-}
-
 export async function normalizePackageRunnerInvocation(params: Readonly<{
   command: string;
   args: readonly string[];
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<NormalizedPackageRunnerInvocation | null> {
   const processEnv = params.processEnv ?? process.env;
-  const pnpmCommand = resolveManagedOrOverridePnpmCommand(processEnv);
-  if (!pnpmCommand) return null;
-
   const normalized = basename(params.command).toLowerCase();
   const args = [...params.args];
 
+  const resolvePnpmCommand = async (): Promise<string | null> => {
+    const bootstrapAllowed = String(processEnv.HAPPIER_MANAGED_PNPM_BOOTSTRAP ?? '').trim() !== '0';
+    return bootstrapAllowed
+      ? await ensureManagedPnpmCommand(processEnv)
+      : resolveExistingPnpmCommand(processEnv);
+  };
+
   if (normalized === 'npx' || normalized === 'npx.cmd' || normalized === 'bunx' || normalized === 'bunx.cmd') {
+    const pnpmCommand = await resolvePnpmCommand();
+    if (!pnpmCommand) return null;
     return { command: pnpmCommand, args: ['dlx', ...normalizeNpxLikeArgs(args)], cwdPolicy: 'neutral' };
   }
 
   if (normalized === 'npm' || normalized === 'npm.cmd') {
     const subcommand = args[0] ?? '';
     if (subcommand === 'run') {
+      const pnpmCommand = await resolvePnpmCommand();
+      if (!pnpmCommand) return null;
       return { command: pnpmCommand, args, cwdPolicy: 'workspace' };
     }
     if (subcommand === 'exec') {
+      const pnpmCommand = await resolvePnpmCommand();
+      if (!pnpmCommand) return null;
       const execArgs = args.slice(1);
       if (hasPackageFlag(execArgs)) {
         return { command: pnpmCommand, args: ['dlx', ...normalizeNpxLikeArgs(execArgs)], cwdPolicy: 'neutral' };
@@ -98,12 +81,16 @@ export async function normalizePackageRunnerInvocation(params: Readonly<{
 
   if (normalized === 'yarn' || normalized === 'yarn.cmd' || normalized === 'yarnpkg' || normalized === 'yarnpkg.cmd') {
     if (args[0] === 'dlx') {
+      const pnpmCommand = await resolvePnpmCommand();
+      if (!pnpmCommand) return null;
       return { command: pnpmCommand, args: ['dlx', ...args.slice(1)], cwdPolicy: 'neutral' };
     }
     return null;
   }
 
   if (normalized === 'pnpm' || normalized === 'pnpm.cmd') {
+    const pnpmCommand = await resolvePnpmCommand();
+    if (!pnpmCommand) return null;
     const subcommand = args[0] ?? '';
     return {
       command: pnpmCommand,

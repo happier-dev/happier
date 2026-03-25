@@ -1,6 +1,12 @@
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import {
+    reportServerUnreachable,
+    ServerReachabilityWaitTimeoutError,
+    waitForServerReachable,
+} from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { readServerReachabilityWaitTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 
 export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -15,6 +21,13 @@ export class ServerFetchAbortedForServerSwitchError extends Error {
     constructor() {
         super('Aborted request due to an active server switch');
         this.name = 'ServerFetchAbortedForServerSwitchError';
+    }
+}
+
+export class ServerFetchConnectivityTimeoutError extends Error {
+    constructor() {
+        super('Timed out waiting for server reachability');
+        this.name = 'ServerFetchConnectivityTimeoutError';
     }
 }
 
@@ -188,6 +201,32 @@ export async function serverFetch(
 
     let response: Response | null = null;
     try {
+        if (isActiveOrigin && usedToken) {
+            try {
+                await waitForServerReachable({
+                    serverUrl: snapshot.serverUrl,
+                    token: usedToken,
+                    signal: requestController.signal,
+                    timeoutMs: readServerReachabilityWaitTimeoutMs(),
+                    acceptAuthFailed: true,
+                });
+            } catch (error) {
+                const aborted =
+                    requestController.signal.aborted || (error instanceof Error && error.name === 'AbortError');
+                if (aborted) {
+                    const reason = (requestController.signal as unknown as { reason?: unknown }).reason;
+                    const serverSwitchAbort = reason === 'server-switch' || abortSequence !== localAbortSequence;
+                    if (serverSwitchAbort) {
+                        throw new ServerFetchAbortedForServerSwitchError();
+                    }
+                }
+                if (error instanceof ServerReachabilityWaitTimeoutError) {
+                    throw new ServerFetchConnectivityTimeoutError();
+                }
+                throw error;
+            }
+        }
+
         for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
                 response = await runtimeFetch(requestUrl, {
@@ -211,7 +250,10 @@ export async function serverFetch(
                     if (serverSwitchAbort) {
                         throw new ServerFetchAbortedForServerSwitchError();
                     }
+                    // Caller aborts should not poison reachability state.
+                    throw error;
                 }
+                reportServerUnreachable(snapshot.serverUrl, error);
                 throw error;
             }
 

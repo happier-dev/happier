@@ -57,6 +57,8 @@ async function waitForMachineIds(params: { cliHomeDir: string; serverBaseUrl: st
 async function waitForSessionInfoMachineTarget(params: {
   page: Page;
   uiBaseUrl: string;
+  serverBaseUrl: string;
+  cliHomeDir: string;
   sessionId: string;
   expectedMachineId: string;
   timeoutMs?: number;
@@ -64,29 +66,61 @@ async function waitForSessionInfoMachineTarget(params: {
   const timeoutMs = params.timeoutMs ?? 180_000;
   const startedAt = Date.now();
   let lastUrl = params.page.url();
+  let lastServerMachineId = '';
+  let lastServerPath = '';
+  let lastServerHomeDir = '';
 
   await expect(params.page.getByTestId('session-handoff-modal')).toHaveCount(0, { timeout: 60_000 });
   const handoffProgressTitle = params.page.getByText('Handing off session', { exact: true });
   if (await handoffProgressTitle.count()) {
     await expect(handoffProgressTitle).toHaveCount(0, { timeout: timeoutMs });
   }
+  const progressModal = params.page.getByTestId('session-handoff-progress-modal');
+  if (await progressModal.count()) {
+    await expect(progressModal).toHaveCount(0, { timeout: timeoutMs });
+  }
+
+  const accessKey = await readCliAccessKey(params.cliHomeDir);
+  if (!accessKey?.token) {
+    throw new Error(`Timed out waiting for session ${params.sessionId} to point at machine ${params.expectedMachineId} (missing cli access token)`);
+  }
 
   while (Date.now() - startedAt < timeoutMs) {
-    await params.page.goto(`${params.uiBaseUrl}/session/${params.sessionId}/info`, { waitUntil: 'domcontentloaded' });
-    await expect(params.page.getByTestId('session-info-screen')).toHaveCount(1, { timeout: 60_000 });
-    await params.page.getByText('View Machine', { exact: true }).click();
-
     try {
-      await params.page.waitForURL((url) => url.pathname.endsWith(`/machine/${params.expectedMachineId}`), { timeout: 3_000 });
-      return;
+      const res = await fetchJson<any>(`${params.serverBaseUrl}/v2/sessions/${params.sessionId}`, {
+        headers: {
+          Authorization: `Bearer ${accessKey.token}`,
+        },
+        timeoutMs: 5_000,
+      });
+      const metadata = res.status === 200 && res.data && typeof res.data === 'object' ? (res.data as any).session?.metadata : null;
+      lastServerMachineId = typeof metadata?.machineId === 'string' ? metadata.machineId.trim() : '';
+      lastServerPath = typeof metadata?.path === 'string' ? metadata.path.trim() : '';
+      lastServerHomeDir = typeof metadata?.homeDir === 'string' ? metadata.homeDir.trim() : '';
+      const machineOk = lastServerMachineId === params.expectedMachineId;
+      const pathOk = lastServerPath.length > 0 && (!lastServerHomeDir || lastServerPath !== lastServerHomeDir);
+      if (machineOk && pathOk) {
+        await params.page.goto(`${params.uiBaseUrl}/session/${params.sessionId}/info`, { waitUntil: 'domcontentloaded' });
+        await expect(params.page.getByTestId('session-info-screen')).toHaveCount(1, { timeout: 60_000 });
+        const uiMachineIdRaw = await params.page
+          .getByTestId('session-info-machine-id')
+          .first()
+          .innerText()
+          .catch(() => '');
+        const uiMachineId = String(uiMachineIdRaw ?? '').trim();
+        if (uiMachineId === params.expectedMachineId) return;
+        lastUrl = `${params.page.url()}#uiMachineId=${encodeURIComponent(uiMachineId)}`;
+      }
     } catch {
-      lastUrl = params.page.url();
+      // ignore and retry
     }
 
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
   }
 
-  throw new Error(`Timed out waiting for session ${params.sessionId} to point at machine ${params.expectedMachineId} (lastUrl=${lastUrl})`);
+  throw new Error(
+    `Timed out waiting for session ${params.sessionId} to point at machine ${params.expectedMachineId} (lastUrl=${lastUrl} serverMachine=${lastServerMachineId || 'unknown'} serverPath=${lastServerPath || 'unknown'} serverHomeDir=${lastServerHomeDir || 'unknown'})`,
+  );
 }
 
 async function expectTransferredWorkspaceReadmeOnTarget(params: {
@@ -351,6 +385,8 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
     await waitForSessionInfoMachineTarget({
       page,
       uiBaseUrl,
+      serverBaseUrl: server.baseUrl,
+      cliHomeDir: sourceCliHomeDir,
       sessionId,
       expectedMachineId: targetMachineId,
       timeoutMs: 180_000,
@@ -540,6 +576,8 @@ test.describe('ui e2e: session handoff from header action menu via forced server
     await waitForSessionInfoMachineTarget({
       page,
       uiBaseUrl,
+      serverBaseUrl: server.baseUrl,
+      cliHomeDir: sourceCliHomeDir,
       sessionId,
       expectedMachineId: targetMachineId,
       timeoutMs: 180_000,
@@ -735,6 +773,8 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
     await waitForSessionInfoMachineTarget({
       page,
       uiBaseUrl,
+      serverBaseUrl: server.baseUrl,
+      cliHomeDir: sourceCliHomeDir,
       sessionId,
       expectedMachineId: sourceMachineId,
       timeoutMs: 180_000,

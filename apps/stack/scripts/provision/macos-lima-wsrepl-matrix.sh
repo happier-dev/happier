@@ -752,10 +752,12 @@ PY
     fi
     set +e
     if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+      HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
       HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
       HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
       HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
     else
+      HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
       HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
       HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
       HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
@@ -777,10 +779,12 @@ PY
     fi
     set +e
     if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+      HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
       HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
       HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
       HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
     else
+      HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
       HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
       HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
       run_host_happier daemon start >"${start_file}" 2>&1
@@ -816,20 +820,24 @@ PY
     set +e
     if [[ -n "${server_url}" ]]; then
       if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
         HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
         HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
         HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
       else
+        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
         HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
         HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
         HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
       fi
     else
       if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
         HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
         HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
         HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
       else
+        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
         HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
         HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
         run_host_happier daemon start >"${start_file}" 2>&1
@@ -1008,20 +1016,24 @@ PY
         set +e
         if [[ -n "${server_url}" ]]; then
           if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+            HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
             HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
             HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
             HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
           else
+            HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
             HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
             HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
             HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
           fi
         else
           if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+            HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
             HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
             HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
             HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
           else
+            HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
             HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
             HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
             run_host_happier daemon start >"${start_file}" 2>&1
@@ -1737,15 +1749,20 @@ if [[ -z "${HAPPIER_QA_SESSION_ID:-}" && -z "${HAPPIER_QA_CREATE_SESSION:-}" ]];
   export HAPPIER_QA_CREATE_SESSION="1"
 fi
 
-# Default the matrix to a deterministic engine choice (and allow override).
-if [[ -z "${HAPPIER_QA_PREFERRED_AGENT_ENGINES:-}" ]]; then
-  # Default to an engine that does not require a system-installed provider CLI inside the Lima guest.
-  export HAPPIER_QA_PREFERRED_AGENT_ENGINES="claude"
-fi
+  # Default the matrix to a deterministic engine choice (and allow override).
+  if [[ -z "${HAPPIER_QA_PREFERRED_AGENT_ENGINES:-}" ]]; then
+    # Default to an engine that does not require a system-installed provider CLI inside the Lima guest.
+    export HAPPIER_QA_PREFERRED_AGENT_ENGINES="claude"
+  fi
 
-if wsrepl_matrix_csv_has_value "${HAPPIER_QA_PREFERRED_AGENT_ENGINES:-}" "claude" && [[ -z "${HAPPIER_CLAUDE_PATH:-}" ]]; then
-  export HAPPIER_CLAUDE_PATH="${REPO_DIR}/packages/tests/src/fixtures/fake-claude-code-cli.js"
-fi
+  # The matrix needs a deterministic, non-authenticated provider CLI so session creation is stable.
+  # The daemon process does not consult the Playwright env, so we must inject any provider overrides
+  # into the daemon's own process environment (see restart_host_daemon_and_capture_logs below).
+  if wsrepl_matrix_csv_has_value "${HAPPIER_QA_PREFERRED_AGENT_ENGINES:-}" "claude"; then
+    if [[ -z "${HAPPIER_CLAUDE_PATH:-}" || ! -f "${HAPPIER_CLAUDE_PATH:-}" ]]; then
+      export HAPPIER_CLAUDE_PATH="${REPO_DIR}/packages/tests/src/fixtures/fake-claude-code-cli.js"
+    fi
+  fi
 
 # Default the Playwright source machine id once we know the host daemon machine id.
 #

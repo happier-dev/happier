@@ -793,6 +793,8 @@ function createLoopbackMachineTransferChannels() {
         workspaceReplicationSourceRootPath: '/repo',
       });
 
+      expect(result.handoffMetadataV2).not.toHaveProperty('workspaceReplicationHandoffBackTargetRootPath');
+
       const publishedTransferIds = published.listPublishedTransferIds();
       // Canonical V2: no transferred-bundles handshake transfer is published under the handoff id.
       expect(publishedTransferIds).not.toContain(String(result.handoffId));
@@ -1523,6 +1525,88 @@ function createLoopbackMachineTransferChannels() {
       const fetchedAfterRestart = await statusAfterRestart!({ handoffId });
       expect(fetchedAfterRestart.status.status).toBe('completed');
       expect(fetchedAfterRestart.status.phase).toBe('finalizing');
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('surfaces workspaceReplicationHandoffBackTargetRootPath when session metadata indicates a sync_changes handoff back to the prior source machine', async () => {
+    vi.resetModules();
+
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-start-v2-handoff-back-hint-'));
+    const published = await createPublishedDirectPeerPayloadRouter();
+    try {
+      vi.doMock('@/configuration', () => ({
+        configuration: {
+          activeServerDir,
+          activeServerId: 'server_test',
+          workspaceReplicationBlobPackTargetBytes: 1024 * 1024,
+          workspaceReplicationBlobPackMaxBlobs: 1024,
+          workspaceReplicationBlobPackMaxSingleBlobBytes: 1024 * 1024,
+        },
+      }));
+
+      const exportSessionBundle: ExportSessionBundle = async () => ({
+        providerBundle: {
+          providerId: 'claude' as const,
+          remoteSessionId: 'claude_session_1',
+          transcriptBase64: 'e30K',
+        },
+        targetPath: '/home/guest/wsrepl-large-replication-9',
+      });
+      const registered = new Map<string, (params: unknown) => Promise<any>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+          registered.set(method, handler);
+        },
+      } as any;
+
+      const { registerMachineSessionHandoffRpcHandlers: registerHandlers } = await import('./rpcHandlers.sessionHandoff');
+      registerHandlers({
+        rpcHandlerManager,
+        loadSessionMetadata: async () => ({
+          machineId: 'machine_source',
+          path: '/home/guest/wsrepl-large-replication-9',
+          flavor: 'claude',
+          claudeSessionId: 'claude_session_1',
+          handoffV1: {
+            v: 1,
+            sourceMachineId: 'machine_target',
+            targetMachineId: 'machine_source',
+            sourceWorkspaceRootPath: '/repo/./wsrepl-large',
+            targetWorkspaceRootPath: '/home/guest/wsrepl-large-replication-9',
+          },
+        }),
+        exportSessionBundle,
+        directPeerTransfer: {
+          publishTransfer: published.publishTransfer,
+          requestPayloadFile: published.requestPayloadFile as any,
+          clearPublishedTransfer: vi.fn(),
+        },
+      });
+
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      expect(start).toBeDefined();
+
+      const result = await start!({
+        sessionId: 'sess_handoff_back_hint',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        sessionStorageMode: 'persisted',
+        preferredTransportStrategies: ['direct_peer'],
+        negotiatedTransportStrategy: 'direct_peer',
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'replace_existing',
+          includeIgnoredMode: 'exclude',
+          ignoredIncludeGlobs: [],
+        },
+      });
+
+      expect(result.handoffMetadataV2).toMatchObject({
+        workspaceReplicationHandoffBackTargetRootPath: '/repo/wsrepl-large',
+      });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
     }

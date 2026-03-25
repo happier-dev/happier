@@ -315,7 +315,9 @@ export abstract class BasePermissionHandler {
             const derivedAllowTools =
                 Array.isArray(responseAllowedTools)
                     ? responseAllowedTools
-                    : (wantsDerivedAllowTools ? [makeToolIdentifier(request.tool, request.arguments)] : undefined);
+                    : (wantsDerivedAllowTools && typeof request.tool === 'string'
+                        ? [makeToolIdentifier(request.tool, request.arguments)]
+                        : undefined);
 
             const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedRequestEntry>(currentState.completedRequests);
             const completedEntry = Object.create(null) as AgentStateCompletedRequestEntry;
@@ -358,26 +360,6 @@ export abstract class BasePermissionHandler {
      * Setup RPC handler for permission responses.
      */
     protected setupRpcHandler(): void {
-        const finalizePermissionResponseForPending = (
-            response: PermissionResponse,
-            result: PermissionResult,
-            responseAllowedTools: readonly string[] | undefined,
-            updatedPermissions: unknown,
-            requestSource: Readonly<{ toolName: string; input: unknown }> | null,
-            updateAgentStateReason: string,
-            debugMessage: string,
-        ): void => {
-            this.finalizePermissionResponse({
-                response,
-                result,
-                responseAllowedTools,
-                updatedPermissions,
-                requestSource,
-                updateAgentStateReason,
-                debugMessage,
-            });
-        };
-
         this.session.rpcHandlerManager.registerHandler<PermissionResponse, void>(
             'permission',
             async (response) => {
@@ -386,6 +368,23 @@ export abstract class BasePermissionHandler {
                 const pending = this.pendingRequests.get(response.id);
                 const result = this.buildPermissionResult(response);
                 this.applyPermissionResponseAnswers(response, result);
+
+                const finalizePermissionRpcResponse = (params: Readonly<{
+                    requestSource: Readonly<{ toolName: string; input: unknown }> | null;
+                    updateAgentStateReason: string;
+                    debugMessage: string;
+                }>): void => {
+                    this.finalizePermissionResponse({
+                        response,
+                        result,
+                        responseAllowedTools,
+                        updatedPermissions,
+                        requestSource: params.requestSource,
+                        updateAgentStateReason: params.updateAgentStateReason,
+                        debugMessage: params.debugMessage,
+                    });
+                };
+
                 if (!pending) {
                     // Lifecycle mismatch / race: UI responded, but the in-memory pending promise is gone.
                     // Only finalize if we can still prove the request exists in agentState; otherwise
@@ -406,15 +405,11 @@ export abstract class BasePermissionHandler {
                     }
 
                     // Best-effort finalize so the UI doesn't leave a stuck permission prompt forever.
-                    finalizePermissionResponseForPending(
-                        response,
-                        result,
-                        responseAllowedTools,
-                        updatedPermissions,
-                        { toolName: requestFromState.tool, input: requestFromState.arguments },
-                        'permission response completion (stale)',
-                        'Permission response received without pending request; finalized agentState best-effort',
-                    );
+                    finalizePermissionRpcResponse({
+                        requestSource: { toolName: requestFromState.tool, input: requestFromState.arguments },
+                        updateAgentStateReason: 'permission response completion (stale)',
+                        debugMessage: 'Permission response received without pending request; finalized agentState best-effort',
+                    });
                     return;
                 }
 
@@ -422,15 +417,11 @@ export abstract class BasePermissionHandler {
                 this.pendingRequests.delete(response.id);
                 pending.resolve(result);
 
-                finalizePermissionResponseForPending(
-                    response,
-                    result,
-                    responseAllowedTools,
-                    updatedPermissions,
-                    { toolName: pending.toolName, input: pending.input },
-                    'permission response completion',
-                    `Permission ${response.approved ? 'approved' : 'denied'} for ${pending.toolName}`,
-                );
+                finalizePermissionRpcResponse({
+                    requestSource: { toolName: pending.toolName, input: pending.input },
+                    updateAgentStateReason: 'permission response completion',
+                    debugMessage: `Permission ${response.approved ? 'approved' : 'denied'} for ${pending.toolName}`,
+                });
             }
         );
     }

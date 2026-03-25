@@ -1,8 +1,11 @@
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { mkdir } from 'node:fs/promises';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import * as managedPnpm from '@/runtime/managedTools/pnpm/managedPnpm';
 
 import { normalizePackageRunnerInvocation } from './normalizePackageRunnerInvocation';
 
@@ -137,6 +140,20 @@ describe('normalizePackageRunnerInvocation', () => {
     });
   });
 
+  it('does not bootstrap managed pnpm for unsupported runner commands', async () => {
+    const ensureSpy = vi.spyOn(managedPnpm, 'ensureManagedPnpmCommand');
+
+    await expect(
+      normalizePackageRunnerInvocation({
+        command: 'unsupported-runner',
+        args: ['--help'],
+        processEnv,
+      }),
+    ).resolves.toBeNull();
+
+    expect(ensureSpy).not.toHaveBeenCalled();
+  });
+
   it('does not rewrite non-dlx yarn invocations whose semantics depend on yarn', async () => {
     await expect(
       normalizePackageRunnerInvocation({
@@ -178,6 +195,25 @@ describe('normalizePackageRunnerInvocation', () => {
   it('fails closed when HAPPIER_PNPM_BIN is set but invalid', async () => {
     processEnv = {
       HAPPIER_PNPM_BIN: join(rootDir, 'missing-pnpm'),
+      PATH: rootDir,
+    } as NodeJS.ProcessEnv;
+
+    await expect(
+      normalizePackageRunnerInvocation({
+        command: 'npx',
+        args: ['@scope/server'],
+        processEnv,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('fails closed when HAPPIER_PNPM_BIN points to an executable directory', async () => {
+    const pnpmDir = join(rootDir, 'pnpm-dir');
+    await mkdir(pnpmDir, { recursive: true });
+    await chmod(pnpmDir, 0o755);
+
+    processEnv = {
+      HAPPIER_PNPM_BIN: pnpmDir,
       PATH: rootDir,
     } as NodeJS.ProcessEnv;
 

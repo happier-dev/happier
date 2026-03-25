@@ -110,21 +110,22 @@ describe('session handoff schemas', () => {
       'finalize',
     ]);
 
-	    const handoffMetadataV2 = {
-	      providerBundleTransferPublication: {
-	        transferId: 'session-handoff:handoff_1:provider-bundle-file',
-	        sizeBytes: 12,
-	        manifestHash: 'sha256:manifest-hash',
-	        endpointCandidates: [
-	          {
-	            kind: 'http',
-	            url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_1',
-	            authorizationToken: 'test-token',
-	            expiresAt: 1,
-	          },
-	        ],
-	      },
+    const handoffMetadataV2 = {
+      providerBundleTransferPublication: {
+        transferId: 'session-handoff:handoff_1:provider-bundle-file',
+        sizeBytes: 12,
+        manifestHash: 'sha256:manifest-hash',
+        endpointCandidates: [
+          {
+            kind: 'http',
+            url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_1',
+            authorizationToken: 'test-token',
+            expiresAt: 1,
+          },
+        ],
+      },
       workspaceReplicationSourceRootPath: '/repo',
+      workspaceReplicationHandoffBackTargetRootPath: '/repo-target',
       workspaceReplicationManifestTransferPublication: {
         transferId: 'transfer_manifest_1',
       },

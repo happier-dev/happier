@@ -87,14 +87,6 @@ import {
   type SessionHandoffPrepareTargetJobRecordInput,
 } from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import {
-  assertSafeWorkspaceReplicationPackId,
-  createWorkspaceReplicationPackIdForDigests,
-} from '../../workspaces/replication/transport/workspaceReplicationPackId';
-import { createWorkspaceReplicationCasStore } from '../../workspaces/replication/cas/workspaceReplicationCasStore';
-import { createWorkspaceReplicationBaselineStore } from '../../workspaces/replication/baseline/workspaceReplicationBaselineStore';
-import { createWorkspaceReplicationSourceOfferFromManifest } from '../../workspaces/replication/transport/createWorkspaceReplicationSourceOffer';
-import { assertWorkspaceReplicationDigestsAllowedByManifest } from '../../workspaces/replication/transport/workspaceReplicationAllowedDigests';
-import {
   releaseSessionHandoffPrepareTargetJobLease,
   resolveSessionHandoffPrepareTargetJobLeaseTtlMs,
   startSessionHandoffPrepareTargetJobLeaseHeartbeat,
@@ -175,6 +167,39 @@ function buildStartPendingStatus(input: Readonly<{
 function resolveSessionHandoffTargetPathFromMetadata(metadata: Record<string, unknown>): string | null {
   const targetPath = typeof metadata.path === 'string' ? metadata.path.trim() : '';
   return targetPath.length > 0 ? targetPath : null;
+}
+
+function normalizeHandoffWorkspaceRootPath(raw: unknown): string | null {
+  const candidate = typeof raw === 'string' ? raw.trim() : '';
+  if (!candidate.startsWith('/')) return null;
+  if (candidate.includes('\0')) return null;
+  const segments = candidate.split('/').filter(Boolean).filter((segment) => segment !== '.');
+  if (segments.length === 0) return null;
+  if (segments.some((segment) => segment === '..')) return null;
+  return `/${segments.join('/')}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function resolveWorkspaceReplicationHandoffBackTargetRootPath(input: Readonly<{
+  metadata: Record<string, unknown>;
+  workspaceTransfer: SessionHandoffStartRequest['workspaceTransfer'] | undefined;
+  requestedTargetMachineId: string;
+}>): string | null {
+  if (input.workspaceTransfer?.enabled !== true) return null;
+  if (input.workspaceTransfer.strategy !== 'sync_changes') return null;
+
+  const handoff = asRecord(input.metadata.handoffV1);
+  if (!handoff) return null;
+
+  const priorSourceMachineId = typeof handoff.sourceMachineId === 'string' ? handoff.sourceMachineId.trim() : '';
+  if (!priorSourceMachineId) return null;
+  if (priorSourceMachineId !== input.requestedTargetMachineId) return null;
+
+  return normalizeHandoffWorkspaceRootPath(handoff.sourceWorkspaceRootPath);
 }
 
 function directPeerTransferUnavailable() {
@@ -1007,26 +1032,6 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 		      const workspaceReplicationMetadata = preparedWorkspaceTransfer.workspaceReplicationMetadata;
 		      const workspaceBlobProvider = preparedWorkspaceTransfer.workspaceBlobProvider;
 		      const workspaceTransferEnabled = input.request.workspaceTransfer?.enabled === true;
-          if (workspaceTransferEnabled && workspaceReplicationMetadata && workspaceBlobProvider) {
-            const casStore = createWorkspaceReplicationCasStore({
-              activeServerDir: configuration.activeServerDir,
-            });
-            const uniqueDigests = new Set<string>();
-            for (const entry of workspaceReplicationMetadata.manifest.entries) {
-              if (entry.kind !== 'file') continue;
-              if (uniqueDigests.has(entry.digest)) continue;
-              uniqueDigests.add(entry.digest);
-              if (await casStore.contains(entry.digest)) continue;
-              const blobPath = workspaceBlobProvider.getBlobFilePath(entry.digest);
-              if (!blobPath) {
-                throw new Error(`Missing workspace replication blob for digest ${entry.digest}`);
-              }
-              await casStore.commitFile({
-                digest: entry.digest,
-                sourcePath: blobPath,
-              });
-            }
-          }
           const persistedWorkspaceManifest =
             workspaceTransferEnabled && workspaceReplicationMetadata
               ? await sourceExportStore.writeWorkspaceReplicationManifestFile({
@@ -1048,6 +1053,13 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             ...(persistedWorkspaceManifest ? { workspaceManifest: persistedWorkspaceManifest } : {}),
           });
 
+          const workspaceReplicationHandoffBackTargetRootPathForRequest =
+            resolveWorkspaceReplicationHandoffBackTargetRootPath({
+              metadata: input.metadata,
+              workspaceTransfer: input.request.workspaceTransfer,
+              requestedTargetMachineId: input.request.targetMachineId,
+            }) ?? undefined;
+
 			      const handoffMetadataV2: SessionHandoffMetadataV2 | undefined =
 			        providerBundleTransferPublication || preparedWorkspaceTransfer.handoffMetadataV2
 			          ? {
@@ -1055,6 +1067,9 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 			              ...(preparedWorkspaceTransfer.handoffMetadataV2?.workspaceReplicationSourceRootPath
 			                ? { workspaceReplicationSourceRootPath: preparedWorkspaceTransfer.handoffMetadataV2.workspaceReplicationSourceRootPath }
 			                : { workspaceReplicationSourceRootPath: exported.targetPath }),
+			              ...(workspaceReplicationHandoffBackTargetRootPathForRequest
+			                ? { workspaceReplicationHandoffBackTargetRootPath: workspaceReplicationHandoffBackTargetRootPathForRequest }
+			                : {}),
 			              ...(preparedWorkspaceTransfer.handoffMetadataV2?.workspaceReplicationManifestTransferPublication
 			                ? { workspaceReplicationManifestTransferPublication: preparedWorkspaceTransfer.handoffMetadataV2.workspaceReplicationManifestTransferPublication }
 			                : (workspaceTransferEnabled
@@ -1127,34 +1142,18 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
                 sizeBytes: persistedSourceExport.workspaceManifest.sizeBytes,
               });
 
-		          assertWorkspaceReplicationDigestsAllowedByManifest(manifest, openBody.digests);
-	              const derivedBlobProvider: WorkspaceExportBlobProvider | undefined =
-	                persistedSourceExport?.workspaceSourceRootPath
-	                  ? {
-	                      getBlobFilePath: (digest) => {
-	                        const sourceRootPath = persistedSourceExport?.workspaceSourceRootPath;
-	                        if (!sourceRootPath) {
-	                          return null;
-	                        }
-	                        const fileEntry = manifest?.entries.find(
-	                          (entry): entry is Extract<WorkspaceManifest['entries'][number], { kind: 'file' }> =>
-	                            entry.kind === 'file' && entry.digest === digest,
-	                        );
-	                        if (!fileEntry) return null;
-	                        const rel = String(fileEntry.relativePath ?? '').trim();
-	                        if (!rel || rel.startsWith('/') || rel.startsWith('\\') || rel.includes('..')) {
-	                          return null;
-	                        }
-	                        return join(sourceRootPath, rel);
-	                      },
-	                    }
-	                  : undefined;
-		          const payloadSource = await createSessionHandoffWorkspaceReplicationBlobPackPayloadSource({
-		            activeServerDir: configuration.activeServerDir,
-		            packId: workspaceBlobPackTransfer.packId,
-		            digests: openBody.digests,
-		            ...(derivedBlobProvider ? { blobProvider: derivedBlobProvider } : {}),
-	          });
+              const sourceRootPath = persistedSourceExport.workspaceSourceRootPath;
+              if (!sourceRootPath) {
+                throw new ServerRoutedInvalidOpenRequestError('Workspace blob-pack source root path is missing');
+              }
+
+              const payloadSource = await workspaceReplicationAdapter.createBlobPackPayloadSourceFromManifest({
+                activeServerDir: configuration.activeServerDir,
+                packId: workspaceBlobPackTransfer.packId,
+                digests: openBody.digests,
+                sourceRootPath,
+                manifest,
+              });
 	          // Do not cache: the responder owns disposal for blob-pack payload sources, and cache reuse
 	          // can cause retries to attempt reusing a disposed file handle/path.
 	          return payloadSource;
@@ -1225,6 +1224,13 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       return workspaceTransferStrategyValidation;
     }
 
+    const workspaceReplicationHandoffBackTargetRootPath =
+      resolveWorkspaceReplicationHandoffBackTargetRootPath({
+        metadata,
+        workspaceTransfer: parsed.data.workspaceTransfer,
+        requestedTargetMachineId: parsed.data.targetMachineId,
+      }) ?? undefined;
+
     const handoffId = `handoff_${randomUUID()}`;
     const shouldDefer = shouldDeferSourcePreparation(parsed.data);
     const sourceStopState =
@@ -1287,6 +1293,9 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	        parsed.data.workspaceTransfer?.enabled === true
 	          ? {
 	              workspaceReplicationSourceRootPath: targetPath,
+	              ...(workspaceReplicationHandoffBackTargetRootPath
+	                ? { workspaceReplicationHandoffBackTargetRootPath: workspaceReplicationHandoffBackTargetRootPath }
+	                : {}),
 	              workspaceReplicationManifestTransferPublication: {
 	                transferId: buildSessionHandoffWorkspaceManifestTransferId({ handoffId }),
 	              },
@@ -2064,30 +2073,11 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             filePath: persistedSourceExport.workspaceManifest.filePath,
             sizeBytes: persistedSourceExport.workspaceManifest.sizeBytes,
           });
-          const offer = await createWorkspaceReplicationSourceOfferFromManifest({
+          await workspaceReplicationAdapter.persistBaselineFromManifest({
             activeServerDir: configuration.activeServerDir,
-            source: {
-              machineId: reverseScope.sourceMachineId,
-              rootPath: reverseScope.sourceWorkspaceRoot,
-            },
-            target: {
-              machineId: reverseScope.targetMachineId,
-              rootPath: reverseScope.targetWorkspaceRoot,
-            },
-            mode: reverseScope.mode,
-            manifest,
-          });
-
-          const baselineStore = createWorkspaceReplicationBaselineStore({
-            activeServerDir: configuration.activeServerDir,
-          });
-          await baselineStore.save({
             scope: reverseScope,
-            baseline: {
-              manifestFingerprint: offer.sourceFingerprint,
-              manifest: offer.manifest,
-              savedAtMs: Date.now(),
-            },
+            manifest,
+            savedAtMs: Date.now(),
           });
         }
       }
