@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 vi.mock('fs', async (importOriginal) => {
@@ -60,7 +60,7 @@ describe('startDaemonHeartbeatLoop workspace replication gc', () => {
         const paths = createWorkspaceReplicationPaths({ activeServerDir: configuration.activeServerDir });
         const digest = `sha256:${'d'.repeat(64)}`;
         const blobPath = resolveWorkspaceReplicationCasBlobPath({ casDirectory: paths.casDirectory, digest });
-        mkdirSync(join(paths.casDirectory, 'sha256'), { recursive: true });
+        mkdirSync(dirname(blobPath), { recursive: true });
         writeFileSync(blobPath, Buffer.from('stale', 'utf8'));
         const { utimes } = await import('node:fs/promises');
         await utimes(blobPath, 0, 0);

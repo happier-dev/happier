@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
+
 import { projectPath } from '@/projectPath';
 import { resolvePackagedRuntimeEntrypoint } from '@/runtime/resolvePackagedRuntimeEntrypoint';
 import { ensureJavaScriptRuntimeExecutable } from '@/runtime/js/ensureJavaScriptRuntimeExecutable';
@@ -12,16 +14,8 @@ export type DaemonLaunchSpec = Readonly<{
   env?: Record<string, string>;
 }>;
 
-function parseBooleanEnvLike(value: string | undefined): boolean | null {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (!normalized) return null;
-  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true;
-  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false;
-  return null;
-}
-
 function shouldAllowDaemonTsxFallback(): boolean {
-  const explicit = parseBooleanEnvLike(process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK);
+  const explicit = parseOptionalBooleanEnv(process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK);
   if (explicit !== null) return explicit;
   return process.env.HAPPIER_VARIANT === 'dev' || Boolean(
     process.env.HAPPIER_STACK_REPO_DIR ||

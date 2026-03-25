@@ -100,7 +100,7 @@ import {
   HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY,
   normalizeDaemonInitialPrompt,
 } from '@/agent/runtime/daemonInitialPrompt';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import { parseBooleanEnv, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { CatalogAgentId } from '@/backends/types';
 import { writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 
@@ -1257,16 +1257,7 @@ export async function startDaemon(): Promise<void> {
                 };
 
             const stopSessionCore = createStopSession({ pidToTrackedSession });
-
-        const resolveBoolEnv = (raw: string | undefined, fallback: boolean): boolean => {
-          const value = (raw ?? '').trim().toLowerCase();
-          if (!value) return fallback;
-          if (['1', 'true', 'yes', 'y', 'on'].includes(value)) return true;
-          if (['0', 'false', 'no', 'n', 'off'].includes(value)) return false;
-          return fallback;
-        };
-
-        const sessionRespawnEnabled = resolveBoolEnv(process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED, true);
+        const sessionRespawnEnabled = parseBooleanEnv(process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED, true);
         const sessionRespawnMaxAttempts = resolvePositiveIntEnv(
           process.env.HAPPIER_DAEMON_SESSION_RESPAWN_MAX_ATTEMPTS,
           10,
@@ -1384,7 +1375,7 @@ export async function startDaemon(): Promise<void> {
           startedAt: Date.now()
         };
 
-      const connectedServicesRefreshEnabled = resolveBoolEnv(process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED, true);
+      const connectedServicesRefreshEnabled = parseBooleanEnv(process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED, true);
       if (connectedServicesRefreshEnabled) {
         const refreshTickMs = resolvePositiveIntEnv(
           process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_TICK_MS,
@@ -1402,7 +1393,7 @@ export async function startDaemon(): Promise<void> {
           { min: 10_000, max: 30 * 60_000 },
         );
 
-        const restartPiOnAuthUpdate = resolveBoolEnv(
+        const restartPiOnAuthUpdate = parseBooleanEnv(
           process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_RESTART_PI_ENABLED,
           true,
         );

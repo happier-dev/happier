@@ -35,10 +35,6 @@ const DAEMON_SERVICE_SYSTEMD_UNIT_PREFIX = 'happier-daemon';
 const LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL = 'com.happier.cli.daemon';
 const LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME = 'happier-daemon.service';
 
-// Back-compat exports: older codepaths (and some downstream builds) may still import these legacy names.
-export const DAEMON_SERVICE_LAUNCHD_LABEL = LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL;
-export const DAEMON_SERVICE_SYSTEMD_UNIT_NAME = LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME;
-
 export function sanitizeServiceInstanceId(instanceIdRaw: string): string {
   const value = String(instanceIdRaw ?? '').trim();
   if (!value) {

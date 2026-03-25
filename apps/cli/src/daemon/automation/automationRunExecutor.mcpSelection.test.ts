@@ -94,7 +94,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/tmp/project',
-      agent: 'codex',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       mcpSelection: {
         v: 1,
         managedServersEnabled: false,

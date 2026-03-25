@@ -1,3 +1,5 @@
+import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
+
 function parseTimeoutMs(raw: unknown): number | null {
   const value = String(raw ?? '').trim();
   if (!value) return null;
@@ -12,14 +14,6 @@ function parsePositiveInt(raw: unknown): number | null {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return null;
   return parsed;
-}
-
-function parseBoolean(raw: unknown): boolean | null {
-  const value = String(raw ?? '').trim().toLowerCase();
-  if (!value) return null;
-  if (value === '1' || value === 'true' || value === 'yes' || value === 'y' || value === 'on') return true;
-  if (value === '0' || value === 'false' || value === 'no' || value === 'n' || value === 'off') return false;
-  return null;
 }
 
 function parseFloatValue(raw: unknown): number | null {
@@ -41,7 +35,7 @@ export function resolveConnectedServiceQuotasDaemonOptions(env: NodeJS.ProcessEn
   const parsed = parseTimeoutMs(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_FETCH_TIMEOUT_MS);
   const timeoutMs = parsed === null ? 15_000 : Math.max(1_000, Math.min(120_000, Math.trunc(parsed)));
 
-  const discoveryEnabled = parseBoolean(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_ENABLED);
+  const discoveryEnabled = parseOptionalBooleanEnv(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_ENABLED);
   const discoveryIntervalParsed = parsePositiveInt(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_INTERVAL_MS);
   const discoveryIntervalMs =
     discoveryIntervalParsed === null ? 15 * 60_000 : Math.max(5_000, Math.min(30 * 60_000, Math.trunc(discoveryIntervalParsed)));
