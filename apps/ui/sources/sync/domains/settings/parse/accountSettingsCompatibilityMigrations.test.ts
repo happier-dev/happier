@@ -122,4 +122,19 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
 
         expect(migrated.codexBackendMode).toBe('mcp');
     });
+
+    it('normalizes legacy codex backend mode aliases and whitespace when migrating a pre-v6 payload', () => {
+        const migrated = applyAccountSettingsCompatibilityMigrations({
+            input: {
+                codexBackendMode: '  mcp_resume  ',
+            },
+            settings: {
+                ...settingsDefaults,
+            },
+            inputSchemaVersion: 5,
+            supportedSchemaVersion: 6,
+        });
+
+        expect(migrated.codexBackendMode).toBe('acp');
+    });
 });

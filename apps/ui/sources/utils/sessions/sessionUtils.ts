@@ -164,6 +164,9 @@ export function listPendingTranscriptRequests(
 }
 
 function listPendingAgentRequests(session: Session, messages?: ReadonlyArray<Message>): PendingPermissionRequest[] {
+    if (session.active === false) {
+        return [];
+    }
     const requests = session.agentState?.requests;
     const completed = session.agentState?.completedRequests ?? null;
     const pending = new Map<string, PendingPermissionRequest>();

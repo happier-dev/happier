@@ -61,6 +61,14 @@ function findEncryptionModeSwitches(screen: Awaited<ReturnType<typeof renderSett
     return screen.findAllByTestId('settings-account-encryption-mode-switch');
 }
 
+function createReachabilityProbeResponse(): { ok: true; status: 200; json: () => Promise<{ ok: true }> } {
+    return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true }),
+    };
+}
+
 describe('Settings → Account (encryption mode toggle)', () => {
     afterEach(() => {
         vi.restoreAllMocks();
@@ -79,13 +87,20 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
+            const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
                     json: async () => createAccountFeaturesResponse({ encryptionAccountOptOutEnabled: false }),
                 };
             }
-            throw new Error(`Unexpected fetch: ${url} (${init?.method ?? 'GET'})`);
+            throw new Error(`Unexpected fetch: ${url} (${method})`);
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
@@ -116,6 +131,12 @@ describe('Settings → Account (encryption mode toggle)', () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
@@ -186,6 +207,12 @@ describe('Settings → Account (encryption mode toggle)', () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
@@ -253,6 +280,12 @@ describe('Settings → Account (encryption mode toggle)', () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
@@ -327,6 +360,12 @@ describe('Settings → Account (encryption mode toggle)', () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,

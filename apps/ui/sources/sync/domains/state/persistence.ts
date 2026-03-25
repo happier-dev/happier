@@ -8,7 +8,6 @@ import { Profile, profileDefaults, profileParse } from '../profiles/profile';
 import { isModelMode, isPermissionMode, type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { SecretStringSchema, type SecretString } from '../../encryption/secretSettings';
-import type { CodexBackendMode } from '@happier-dev/agents';
 import {
     readPersistedNewSessionCheckoutDraft,
     type NewSessionCheckoutCreationDraft,
@@ -23,6 +22,8 @@ import {
     AcpConfigOptionOverridesV1Schema,
     BackendTargetRefSchema,
     SessionMcpSelectionV1Schema,
+    normalizeCodexBackendMode,
+    type CodexBackendMode,
     type AcpConfigOptionOverridesV1,
     type BackendTargetRefV1,
     type SessionMcpSelectionV1,
@@ -217,7 +218,7 @@ function parseDraftAgentNewSessionOptionStateByAgentId(
 }
 
 function parseDraftCodexBackendMode(value: unknown): CodexBackendMode | null {
-    return value === 'mcp' || value === 'acp' || value === 'appServer' ? value : null;
+    return normalizeCodexBackendMode(value);
 }
 
 function parseDraftEntryIntent(value: unknown): NewSessionDraft['entryIntent'] {

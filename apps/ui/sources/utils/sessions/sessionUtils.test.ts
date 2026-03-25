@@ -220,6 +220,23 @@ describe('getSessionStatus', () => {
 });
 
 describe('listPendingPermissionRequests', () => {
+    it('returns an empty list when the session is inactive', async () => {
+        const { listPendingPermissionRequests } = await import('./sessionUtils');
+        const session = createBaseSession({
+            active: false,
+            presence: 123,
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: { tool: 'Bash', arguments: { command: 'ls' }, createdAt: 5 },
+                },
+                completedRequests: null,
+            },
+        });
+
+        expect(listPendingPermissionRequests(session)).toEqual([]);
+    });
+
     it('filters out requests that are user-action prompts (kind=user_action) and custom-tool fallbacks', async () => {
         const { listPendingPermissionRequests } = await import('./sessionUtils');
         const session = createBaseSession({
@@ -271,6 +288,8 @@ describe('listPendingPermissionRequests', () => {
         const { listPendingPermissionRequests } = await import('./sessionUtils');
         const session = createBaseSession({
             id: 's-transcript-perm',
+            active: false,
+            presence: 123,
             agentState: null,
         });
 
@@ -297,15 +316,7 @@ describe('listPendingPermissionRequests', () => {
                     },
                 },
             },
-        ] as any)).toEqual([
-            {
-                id: 'perm_tool_1',
-                tool: 'Bash',
-                kind: 'permission',
-                arguments: { command: 'printf hello > hello.txt' },
-                createdAt: 2,
-            },
-        ]);
+        ] as any)).toEqual([]);
     });
 
     it('reads pending transcript tool-call permissions from normalized stored session messages when no messages are passed', async () => {

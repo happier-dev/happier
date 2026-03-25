@@ -516,6 +516,27 @@ describe('persistence', () => {
             expect((draft as any)?.codexBackendMode).toBe('appServer');
         });
 
+        it('normalizes legacy codexBackendMode aliases and whitespace when hydrating drafts', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'codex',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    codexBackendMode: '  mcp_resume  ',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            const draft = loadNewSessionDraft();
+            expect((draft as any)?.codexBackendMode).toBe('acp');
+        });
+
         it('ignores the legacy sessionType field when hydrating a canonical draft', () => {
             store.set(
                 'new-session-draft-v1',

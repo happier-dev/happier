@@ -1,4 +1,4 @@
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, normalizeCodexBackendMode } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { z } from 'zod';
 
@@ -164,10 +164,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
     }
 
     if (inputSchemaVersion < 6) {
-        const rawCodexBackendMode = input.codexBackendMode;
-        if (rawCodexBackendMode === 'mcp' || rawCodexBackendMode === 'acp' || rawCodexBackendMode === 'appServer') {
-            next.codexBackendMode = rawCodexBackendMode;
-        } else if (next.codexBackendMode !== 'mcp' && next.codexBackendMode !== 'acp' && next.codexBackendMode !== 'appServer') {
+        const migrated = normalizeCodexBackendMode(input.codexBackendMode);
+        if (migrated) {
+            next.codexBackendMode = migrated;
+        } else if (!normalizeCodexBackendMode(next.codexBackendMode)) {
             next.codexBackendMode = 'appServer';
         }
     }
