@@ -52,13 +52,24 @@ export function getCleanEnv(): NodeJS.ProcessEnv {
     const actualPathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || pathKey
 
     if (env[actualPathKey]) {
+        const canonicalize = (value: string): string => {
+            try {
+                return realpathSync(value);
+            } catch {
+                return value;
+            }
+        };
+
         // Remove any path that contains the current working directory (local node_modules/.bin)
         const cleanPath = env[actualPathKey]!
             .split(pathSep)
             .filter(p => {
+                const normalizedCwd = canonicalize(cwd).replace(/\\/g, '/').toLowerCase()
                 const normalizedP = p.replace(/\\/g, '/').toLowerCase()
-                const normalizedCwd = cwd.replace(/\\/g, '/').toLowerCase()
-                return !normalizedP.startsWith(normalizedCwd)
+                if (normalizedP.startsWith(normalizedCwd)) return false;
+
+                const canonicalPath = canonicalize(p).replace(/\\/g, '/').toLowerCase()
+                return !canonicalPath.startsWith(normalizedCwd)
             })
             .join(pathSep)
         env[actualPathKey] = cleanPath
@@ -282,7 +293,7 @@ export function getDefaultClaudeCodePathForAgentSdk(): string {
     }
 
     const resolved = resolveProviderCliCommand('claude', {
-        processEnv: process.env,
+        processEnv: getCleanEnv(),
         isBunRuntime: isBun(),
         currentExecPath: process.execPath,
     });

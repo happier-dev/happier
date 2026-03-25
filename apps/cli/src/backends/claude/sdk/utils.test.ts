@@ -265,4 +265,36 @@ describe('Claude SDK utils - getDefaultClaudeCodePathForAgentSdk', () => {
 
     expect(getDefaultClaudeCodePathForAgentSdk()).toBe(jsClaude);
   });
+
+  it('does not pick a project-local node_modules/.bin/claude when a global install is available', () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const originalCwd = process.cwd();
+    const projectRoot = createTempRoot('happier-claude-sdk-project-root-');
+    const projectNodeBin = join(projectRoot, 'node_modules', '.bin');
+    mkdirSync(projectNodeBin, { recursive: true });
+    const localClaude = createUnixExecutable({
+      dir: projectNodeBin,
+      name: 'claude',
+      body: 'echo "local claude"',
+    });
+
+    const globalClaude = createUnixExecutable({
+      dir: binDir,
+      name: 'claude',
+      body: 'echo "global claude"',
+    });
+
+    process.env.PATH = `${projectNodeBin}:${binDir}`;
+
+    try {
+      process.chdir(projectRoot);
+      expect(getDefaultClaudeCodePathForAgentSdk()).toBe(globalClaude);
+      expect(getDefaultClaudeCodePathForAgentSdk()).not.toBe(localClaude);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
 });

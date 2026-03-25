@@ -442,7 +442,7 @@ export async function claudeRemoteAgentSdk(opts: {
             ...(startFrom && resumeSessionAt ? { resumeSessionAt } : {}),
             settingSources,
             permissionMode: mappedPermissionMode,
-            allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
+            allowDangerouslySkipPermissions: true,
             ...(resolvedEffort ? { effort: resolvedEffort } : {}),
             model: argOverrides.model ?? mode.model,
             fallbackModel: argOverrides.fallbackModel ?? mode.fallbackModel,

@@ -17,6 +17,7 @@ import { getToolName } from "./utils/getToolName";
 import { syncClaudePermissionModeFromMetadata } from "./utils/syncPermissionModeFromMetadata";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
+import type { MessageBatch } from '@/agent/runtime/waitForMessagesOrPending';
 import { resolveClaudeRemoteQueuedPromptWithReplaySeed } from '@/backends/claude/remote/resolveClaudeRemoteQueuedPromptWithReplaySeed';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
@@ -685,10 +686,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     }
 
     try {
-        let pending: {
-            message: string;
-            mode: EnhancedMode;
-        } | null = null;
+        let pending: MessageBatch<EnhancedMode, string> | null = null;
 
         // Track session ID to detect when it actually changes
         // This prevents context loss when mode changes (permission mode, model, etc.)
@@ -727,7 +725,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             let mode: EnhancedMode | null = null;
             let didReplaySeedBootstrap = false;
             try {
-                const waitForNextBatch = async (): Promise<any | null> => {
+                const waitForNextBatch = async (): Promise<MessageBatch<EnhancedMode, string> | null> => {
                     return await waitForMessagesOrPending({
                         messageQueue: session.queue,
                         abortSignal: controller.signal,
@@ -809,10 +807,12 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     },
                         nextMessage: async () => {
                             if (pending) {
-                                let p = pending;
+                                const p = pending;
                                 pending = null;
+                                modeHash = p.hash;
+                                mode = p.mode;
                                 permissionHandler.handleModeChange(p.mode.permissionMode);
-                                return p;
+                                return { message: p.message, mode: p.mode };
                             }
 
                                 const msg = await waitForNextBatch();
