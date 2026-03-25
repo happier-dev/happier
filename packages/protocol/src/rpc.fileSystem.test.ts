@@ -22,5 +22,11 @@ describe('RPC_METHODS file-system surface', () => {
     expect(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK).toBe('daemon.bulkTransfer.download.chunk');
     expect(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE).toBe('daemon.bulkTransfer.download.finalize');
     expect(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT).toBe('daemon.bulkTransfer.download.abort');
+
+    // Guardrail: legacy undeployed session file/attachment transfer families must not reappear
+    // as method literals in the canonical RPC method table.
+    const methodLiterals = Object.values(RPC_METHODS) as readonly string[];
+    expect(methodLiterals.some((literal) => literal.startsWith('daemon.sessionFiles.'))).toBe(false);
+    expect(methodLiterals.some((literal) => literal.startsWith('daemon.sessionAttachments.'))).toBe(false);
   });
 });
