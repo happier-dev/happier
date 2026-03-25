@@ -1,17 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 
-let syncSequence = 0;
-const DEFAULT_STALE_SWAP_DIR_AGE_MS = 60_000;
-
-function sleepSync(ms) {
-  if (!ms || ms <= 0) return;
-  const buf = new SharedArrayBuffer(4);
-  const arr = new Int32Array(buf);
-  Atomics.wait(arr, 0, 0, ms);
-}
-
-export function sanitizeBundledWorkspacePackageJson(raw) {
+function sanitizeBundledPackageJsonFallback(raw) {
   const {
     name,
     version,
@@ -26,6 +16,7 @@ export function sanitizeBundledWorkspacePackageJson(raw) {
     engines,
   } = raw ?? {};
 
+  // Keep this aligned with `packages/cli-common/src/workspaces/index.ts#sanitizeBundledPackageJson`.
   return {
     name,
     version,
@@ -40,6 +31,35 @@ export function sanitizeBundledWorkspacePackageJson(raw) {
     optionalDependencies,
     engines,
   };
+}
+
+let sanitizeBundledPackageJsonImpl = sanitizeBundledPackageJsonFallback;
+let readBundledWorkspacePackageNamesImpl = null;
+
+try {
+  const mod = await import('../../packages/cli-common/dist/workspaces/index.js');
+  if (mod && typeof mod.sanitizeBundledPackageJson === 'function') {
+    sanitizeBundledPackageJsonImpl = mod.sanitizeBundledPackageJson;
+  }
+  if (mod && typeof mod.readBundledWorkspacePackageNames === 'function') {
+    readBundledWorkspacePackageNamesImpl = mod.readBundledWorkspacePackageNames;
+  }
+} catch {
+  // Best-effort: local preflight sandboxes may not have `packages/cli-common/dist/**` available.
+}
+
+export function sanitizeBundledWorkspacePackageJson(raw) {
+  return sanitizeBundledPackageJsonImpl(raw);
+}
+
+let syncSequence = 0;
+const DEFAULT_STALE_SWAP_DIR_AGE_MS = 60_000;
+
+function sleepSync(ms) {
+  if (!ms || ms <= 0) return;
+  const buf = new SharedArrayBuffer(4);
+  const arr = new Int32Array(buf);
+  Atomics.wait(arr, 0, 0, ms);
 }
 
 function resolveSyncSwapSuffix(syncId) {
@@ -120,6 +140,45 @@ function removeStaleBundledWorkspaceSwapDirs(parentDir, targetBaseName, fsOps, o
   }
 }
 
+function readBundledWorkspacePackageNamesFromHostPackageJson(raw) {
+  if (readBundledWorkspacePackageNamesImpl) {
+    try {
+      return readBundledWorkspacePackageNamesImpl(raw);
+    } catch {
+      // Fall through to the local implementation.
+    }
+  }
+
+  const bundledDependencies = Array.isArray(raw?.bundledDependencies)
+    ? raw.bundledDependencies
+    : Array.isArray(raw?.bundleDependencies)
+      ? raw.bundleDependencies
+      : [];
+
+  return bundledDependencies
+    .filter((value) => typeof value === 'string' && value.startsWith('@happier-dev/'));
+}
+
+function resolveDefaultBundledWorkspacePackageNames(repoRoot, hostApps, readFileImpl = readFileSync) {
+  const repo = String(repoRoot ?? '').trim();
+  if (!repo) return [];
+
+  const out = new Set();
+  for (const hostApp of hostApps) {
+    try {
+      const hostPackageJsonPath = resolve(repo, 'apps', String(hostApp ?? '').trim(), 'package.json');
+      const raw = JSON.parse(readFileImpl(hostPackageJsonPath, 'utf8'));
+      for (const packageName of readBundledWorkspacePackageNamesFromHostPackageJson(raw)) {
+        const leaf = String(packageName).split('/').pop();
+        if (leaf) out.add(leaf);
+      }
+    } catch {
+      // Best-effort: some host apps may not exist in certain sandboxes.
+    }
+  }
+  return [...out];
+}
+
 export function rmDirSafeSync(targetDir, fsOps = {}, { retries = 5, delayMs = 25 } = {}) {
   const rm = fsOps.rmSync ?? rmSync;
   const path = String(targetDir ?? '').trim();
@@ -186,12 +245,12 @@ export function syncBundledWorkspacePackages(opts = {}) {
   const readFile = opts.readFileSync ?? readFileSync;
   const writeFile = opts.writeFileSync ?? writeFileSync;
   const syncId = opts.syncId;
-  const packages = Array.isArray(opts.packages) && opts.packages.length > 0
-    ? opts.packages
-    : ['agents', 'cli-common', 'connection-supervisor', 'protocol', 'transfers', 'release-runtime'];
   const hostApps = Array.isArray(opts.hostApps) && opts.hostApps.length > 0
     ? opts.hostApps
     : ['cli', 'stack'];
+  const packages = Array.isArray(opts.packages) && opts.packages.length > 0
+    ? opts.packages
+    : resolveDefaultBundledWorkspacePackageNames(repoRoot, hostApps, readFile);
 
   for (const pkg of packages) {
     const srcDist = resolve(repoRoot, 'packages', pkg, 'dist');

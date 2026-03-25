@@ -41,6 +41,52 @@ test('sanitizeBundledWorkspacePackageJson keeps publish-time runtime fields only
   });
 });
 
+test('syncBundledWorkspacePackages derives the default bundled workspace set from the CLI manifest', () => {
+  const cpCalls = [];
+
+  syncBundledWorkspacePackages({
+    repoRoot: '/repo',
+    hostApps: ['cli'],
+    existsSync: (candidate) => {
+      const text = String(candidate);
+      return (
+        text.endsWith('/apps/cli/package.json') ||
+        text.endsWith('/packages/custom-bundle/package.json') ||
+        text.endsWith('/packages/custom-bundle/dist') ||
+        text.endsWith('/apps/cli/node_modules/@happier-dev/custom-bundle/package.json') ||
+        text.endsWith('/apps/cli/node_modules/@happier-dev/custom-bundle/dist')
+      );
+    },
+    mkdirSync: () => {},
+    rmSync: () => {},
+    cpSync: (...args) => cpCalls.push(args),
+    renameSync: () => {},
+    readFileSync: (path) => {
+      const text = String(path);
+      if (text.endsWith('/apps/cli/package.json')) {
+        return JSON.stringify({
+          bundledDependencies: ['@happier-dev/custom-bundle', 'tweetnacl'],
+        });
+      }
+
+      if (text.endsWith('/packages/custom-bundle/package.json')) {
+        return JSON.stringify({
+          name: '@happier-dev/custom-bundle',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+        });
+      }
+
+      throw new Error(`unexpected read: ${text}`);
+    },
+    writeFileSync: () => {},
+  });
+
+  assert.equal(cpCalls.length, 1);
+  assert.equal(cpCalls[0][0], '/repo/packages/custom-bundle/dist');
+});
+
 test('rmDirSafeSync retries transient ENOTEMPTY errors before removing a directory', () => {
   assert.equal(typeof rmDirSafeSync, 'function');
 
