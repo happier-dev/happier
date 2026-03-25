@@ -1,5 +1,5 @@
 import { normalizeOpenCodeBackendMode } from '../providerSettings/definitions/opencode.js';
-import { resolveCodexRuntimeBackendMode } from '../providerSettings/definitions/codex.js';
+import { normalizeCodexBackendMode, resolveCodexRuntimeBackendMode } from '../providerSettings/definitions/codex.js';
 import { resolveAgentRuntimeControlSurface, resolveDefaultAgentRuntimeKind, type AgentRuntimeKind } from '../runtimeKinds.js';
 import type { AgentCoreRuntimeControlSurface, AgentId } from '../types.js';
 import { resolvePersistedCodexRuntimeIdentity } from './codexRuntimeIdentity.js';
@@ -9,14 +9,12 @@ export function normalizeAgentRuntimeKindOverride(params: Readonly<{
   agentId: AgentId;
   value: unknown;
 }>): AgentRuntimeKind | null {
+  if (params.agentId === 'codex') {
+    return normalizeCodexBackendMode(params.value);
+  }
+
   const normalized = typeof params.value === 'string' ? params.value.trim() : '';
   if (!normalized) return null;
-
-  if (params.agentId === 'codex') {
-    return normalized === 'mcp' || normalized === 'acp' || normalized === 'appServer'
-      ? normalized
-      : null;
-  }
 
   if (params.agentId === 'opencode') {
     return normalized === 'server' || normalized === 'acp'
@@ -83,7 +81,7 @@ export function resolveCodexSessionBackendMode(params: Readonly<{
   }
 
   const configuredKind = resolveAgentConfiguredRuntimeKind({ agentId: 'codex', accountSettings: params.accountSettings });
-  return configuredKind === 'mcp' || configuredKind === 'acp' || configuredKind === 'appServer' ? configuredKind : null;
+  return normalizeCodexBackendMode(configuredKind);
 }
 
 export function resolveOpenCodeSessionBackendMode(params: Readonly<{
@@ -108,7 +106,7 @@ export function resolveAgentRuntimeControlSurfaceForSession(params: Readonly<{
     const runtimeKind = resolvePersistedCodexRuntimeIdentity(params.metadata)?.backendMode
       ?? (() => {
         const configured = resolveAgentConfiguredRuntimeKind({ agentId: 'codex', accountSettings: params.accountSettings });
-        return configured === 'mcp' || configured === 'acp' || configured === 'appServer' ? configured : null;
+        return normalizeCodexBackendMode(configured);
       })();
     return resolveAgentRuntimeControlSurface('codex', runtimeKind);
   }

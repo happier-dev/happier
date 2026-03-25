@@ -32,6 +32,7 @@ describe('providerSessionBackends', () => {
   it('normalizes agent runtime-kind overrides for supported agents only', () => {
     expect(normalizeAgentRuntimeKindOverride({ agentId: 'codex', value: 'appServer' })).toBe('appServer');
     expect(normalizeAgentRuntimeKindOverride({ agentId: 'codex', value: 'acp' })).toBe('acp');
+    expect(normalizeAgentRuntimeKindOverride({ agentId: 'codex', value: '  mcp_resume  ' })).toBe('acp');
     expect(normalizeAgentRuntimeKindOverride({ agentId: 'opencode', value: 'server' })).toBe('server');
     expect(normalizeAgentRuntimeKindOverride({ agentId: 'opencode', value: 'acp' })).toBe('acp');
 
