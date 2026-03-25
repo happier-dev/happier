@@ -3,15 +3,15 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { resetScopedMachineDataKeyCacheForTests } from './serverScopedRpcPool';
 
-const ioSpy = vi.hoisted(() => vi.fn());
 const machineRpcSpy = vi.hoisted(() => vi.fn());
+const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
 const getCredentialsSpy = vi.hoisted(() => vi.fn());
 const createEncryptionSpy = vi.hoisted(() => vi.fn());
 const listServerProfilesSpy = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('socket.io-client', () => ({
-  io: (...args: unknown[]) => ioSpy(...args),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', () => ({
+  createEphemeralServerSocketClient: (...args: unknown[]) => createEphemeralSocketSpy(...args),
 }));
 
 vi.mock('@/sync/api/session/apiSocket', () => ({
@@ -42,8 +42,8 @@ describe('machineRpcWithServerScope (retry)', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.useFakeTimers();
-    ioSpy.mockReset();
     machineRpcSpy.mockReset();
+    createEphemeralSocketSpy.mockReset();
     getCredentialsSpy.mockReset();
     createEncryptionSpy.mockReset();
     listServerProfilesSpy.mockReset();
@@ -93,16 +93,14 @@ describe('machineRpcWithServerScope (retry)', () => {
         result: 'encrypted-result',
       });
 
-    ioSpy.mockImplementation(() => ({
-      on: (event: string, cb: () => void) => {
-        if (event === 'connect') cb();
-      },
-      off: vi.fn(),
+    const fakeSocket = {
       timeout: vi.fn(() => ({
         emitWithAck: emitWithAckSpy,
       })),
+      emit: vi.fn(),
       disconnect: vi.fn(),
-    }));
+    };
+    createEphemeralSocketSpy.mockResolvedValue(fakeSocket);
 
     const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
 
@@ -118,7 +116,7 @@ describe('machineRpcWithServerScope (retry)', () => {
     await assertion;
 
     expect(machineRpcSpy).not.toHaveBeenCalled();
-    expect(ioSpy).toHaveBeenCalledTimes(2);
+    expect(createEphemeralSocketSpy).toHaveBeenCalledTimes(2);
     expect(emitWithAckSpy).toHaveBeenCalledTimes(2);
     expect(emitWithAckSpy).toHaveBeenNthCalledWith(1, SOCKET_RPC_EVENTS.CALL, {
       method: 'machine-1:method-test',

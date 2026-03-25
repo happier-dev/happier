@@ -5,7 +5,7 @@ import { createServerScopedRpcSocketPool } from './serverScopedRpcSocketPool';
 
 type Listener = (...args: any[]) => void;
 
-function createFakeSocket(): Readonly<{
+function createFakeSocket(options: Readonly<{ disconnectEventDelayMs?: number }> = {}): Readonly<{
     socket: any;
     connectSpy: ReturnType<typeof vi.fn>;
     disconnectSpy: ReturnType<typeof vi.fn>;
@@ -38,6 +38,10 @@ function createFakeSocket(): Readonly<{
 
     const disconnectSpy = vi.fn(() => {
         socket.connected = false;
+        if (typeof options.disconnectEventDelayMs === 'number') {
+            setTimeout(() => emit('disconnect', 'io client disconnect'), Math.max(0, options.disconnectEventDelayMs));
+            return;
+        }
         emit('disconnect', 'io client disconnect');
     });
 
@@ -128,7 +132,8 @@ describe('serverScopedRpcSocketPool', () => {
 	        if (!capturedListener) {
 	            throw new Error('Expected reachability.subscribeNetworkAllowed to capture a listener');
 	        }
-	        capturedListener(false);
+	        const listenerFn: (allowed: boolean) => void = capturedListener as unknown as (allowed: boolean) => void;
+	        listenerFn(false);
 	        await vi.waitFor(() => {
 	            expect(disconnectSpy).toHaveBeenCalledTimes(1);
 	        });
@@ -136,4 +141,32 @@ describe('serverScopedRpcSocketPool', () => {
 	        await pool.stopAll();
 	        pool.resetForTests();
 	    });
+
+    it('does not report unreachable when an intentional disconnect emits asynchronously', async () => {
+        vi.useFakeTimers();
+        const ioSpy = vi.fn();
+        const { socket } = createFakeSocket({ disconnectEventDelayMs: 0 });
+        ioSpy.mockReturnValue(socket);
+        const reportUnreachableSpy = vi.fn();
+
+        const pool = createServerScopedRpcSocketPool({
+            createSocket: () => ioSpy(),
+            reachability: {
+                waitForReachable: async () => {},
+                startReachability: async () => {},
+                reportUnreachable: reportUnreachableSpy,
+                subscribeNetworkAllowed: () => () => {},
+            },
+            readIdleDisconnectMs: () => 5_000,
+        });
+
+        const c1: ScopedSocketClient = await pool.acquire({ serverUrl: 'https://server.example.test', token: 't', timeoutMs: 1000 });
+        c1.disconnect();
+
+        await pool.stopAll();
+        await vi.runAllTimersAsync();
+        expect(reportUnreachableSpy).not.toHaveBeenCalled();
+
+        pool.resetForTests();
+    });
 });

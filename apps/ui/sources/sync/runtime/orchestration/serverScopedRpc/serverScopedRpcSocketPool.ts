@@ -45,6 +45,8 @@ type PoolEntry = {
     idleDisconnectTimer: ReturnType<typeof setTimeout> | null;
 };
 
+const INTENTIONAL_DISCONNECT_FLAG_RESET_MS = 1_000;
+
 const GLOBAL_TOKEN_CACHE_KEY_BY_TOKEN_KEY = '__HAPPIER_GLOBAL_SCOPED_RPC_TOKEN_CACHE_KEY_BY_TOKEN__';
 const GLOBAL_TOKEN_CACHE_KEY_MAX_ENTRIES = 512;
 
@@ -203,7 +205,12 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         } catch {
             // ignore
         }
-        entry.intentionalDisconnect = false;
+        // socket.io-client disconnect events are not guaranteed to be synchronous; keep the
+        // intentional disconnect flag set briefly so we don't report an expected disconnect
+        // as an unreachable server signal.
+        setTimeout(() => {
+            entry.intentionalDisconnect = false;
+        }, INTENTIONAL_DISCONNECT_FLAG_RESET_MS);
     };
 
     const scheduleIdleDisconnect = (entry: PoolEntry): void => {
