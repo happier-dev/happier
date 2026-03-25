@@ -8,6 +8,16 @@ import {
 
 type ProcessLike = Pick<EventEmitter, 'on' | 'removeListener'>;
 
+function clampTerminationTimeoutMs(rawValue: unknown, fallbackMs: number, maxMs: number): number {
+  const raw = Number.parseInt(String(rawValue ?? ''), 10);
+  const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : fallbackMs;
+  return Math.max(250, Math.min(maxMs, configured));
+}
+
+function readRunnerTerminationTimeoutMs(env?: NodeJS.ProcessEnv): number {
+  return clampTerminationTimeoutMs(env?.HAPPIER_RUNNER_TERMINATION_TIMEOUT_MS, 10_000, 60_000);
+}
+
 export type RunnerTerminationHandlerRegistration = Readonly<{
   requestTermination: (event: RunnerTerminationEvent) => void;
   whenTerminated: Promise<Readonly<{ event: RunnerTerminationEvent; outcome: RunnerTerminationOutcome }>>;
@@ -32,12 +42,23 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
     resolveWhenTerminated = resolve;
   });
 
+  const terminationTimeoutMs = readRunnerTerminationTimeoutMs(process.env);
+
   const terminate = (event: RunnerTerminationEvent) => {
     if (terminated) return;
     terminated = true;
 
     const outcome = computeRunnerTerminationOutcome(event);
-    Promise.resolve(params.onTerminate(event, outcome))
+    const terminationWork = Promise.resolve(params.onTerminate(event, outcome));
+    const completion = new Promise<void>((resolve) => {
+      const timer = setTimeout(() => resolve(), terminationTimeoutMs);
+      terminationWork.finally(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
+    completion
       .catch(() => undefined)
       .finally(() => {
         resolveWhenTerminated({ event, outcome });

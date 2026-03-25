@@ -9,6 +9,43 @@ function createFakeProcess() {
 }
 
 describe('registerRunnerTerminationHandlers', () => {
+  it('forces process exit even if onTerminate hangs (bounded by env timeout)', async () => {
+    vi.useFakeTimers();
+    const previousTimeout = process.env.HAPPIER_RUNNER_TERMINATION_TIMEOUT_MS;
+    process.env.HAPPIER_RUNNER_TERMINATION_TIMEOUT_MS = '250';
+
+    const fakeProcess = createFakeProcess();
+    const exit = vi.fn();
+    const onTerminate = vi.fn(async () => await new Promise<void>(() => undefined));
+
+    const handlers = registerRunnerTerminationHandlers({
+      process: fakeProcess,
+      exit,
+      onTerminate,
+    });
+
+    try {
+      fakeProcess.emit('SIGTERM');
+
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(exit).toHaveBeenCalledWith(0);
+      await expect(handlers.whenTerminated).resolves.toEqual(
+        expect.objectContaining({
+          event: expect.objectContaining({ kind: 'signal', signal: 'SIGTERM' }),
+        }),
+      );
+    } finally {
+      handlers.dispose();
+      if (previousTimeout === undefined) {
+        delete process.env.HAPPIER_RUNNER_TERMINATION_TIMEOUT_MS;
+      } else {
+        process.env.HAPPIER_RUNNER_TERMINATION_TIMEOUT_MS = previousTimeout;
+      }
+      vi.useRealTimers();
+    }
+  });
+
   it('invokes onTerminate once for unhandledRejection and exits non-zero', async () => {
     const fakeProcess = createFakeProcess();
     const exit = vi.fn();

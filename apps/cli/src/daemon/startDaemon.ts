@@ -1335,14 +1335,26 @@ export async function startDaemon(): Promise<void> {
       onHappySessionWebhook,
       controlToken,
     });
+    const directPeerFeatureEnabled = parseBooleanEnv(
+      process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED,
+      true,
+    );
+    const directPeerServerEnabled = directPeerFeatureEnabled && parseBooleanEnv(
+      process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED,
+      true,
+    );
     let directPeerRegistry: ReturnType<typeof createDirectPeerTransferRegistry> | null = null;
-    const { port: directPeerPort, stop: stopDirectPeerServer } = await startDirectPeerTransferServer({
-      readPublishedTransfer: (input) => directPeerRegistry?.readPublishedTransfer(input) ?? null,
-      resolveOnDemandTransfer: async (input) => await directPeerRegistry?.resolveOnDemandTransferOnOpen(input) ?? null,
-    });
-    directPeerRegistry = createDirectPeerTransferRegistry({
-      advertisedPort: directPeerPort,
-    });
+    let stopDirectPeerServer: () => Promise<void> = async () => {};
+    if (directPeerServerEnabled) {
+      const { port: directPeerPort, stop } = await startDirectPeerTransferServer({
+        readPublishedTransfer: (input) => directPeerRegistry?.readPublishedTransfer(input) ?? null,
+        resolveOnDemandTransfer: async (input) => await directPeerRegistry?.resolveOnDemandTransferOnOpen(input) ?? null,
+      });
+      stopDirectPeerServer = stop;
+      directPeerRegistry = createDirectPeerTransferRegistry({
+        advertisedPort: directPeerPort,
+      });
+    }
 
     // Persist daemon.state.json after the control server is available so:
     // - `happier daemon status` can reliably detect the running process, and
