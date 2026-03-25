@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 export default React.memo(function ProfileEditScreen() {
@@ -116,30 +117,18 @@ export default React.memo(function ProfileEditScreen() {
         );
     }, [profile.isBuiltIn]);
 
-    React.useEffect(() => {
-        const addListener = (navigation as any)?.addListener;
-        if (typeof addListener !== 'function') {
-            return;
-        }
-
-        const subscription = addListener.call(navigation, 'beforeRemove', (e: any) => {
-            if (!isDirtyRef.current) return;
-
-            e.preventDefault();
-
-            fireAndForget((async () => {
-                const decision = await confirmDiscard();
-                if (decision === 'discard') {
-                    isDirtyRef.current = false;
-                    (navigation as any).dispatch(e.data.action);
-                } else if (decision === 'save') {
-                    saveRef.current?.();
-                }
-            })(), { tag: 'ProfileEditScreen.beforeRemove' });
-        });
-
-        return () => subscription?.remove?.();
-    }, [confirmDiscard, navigation]);
+    useUnsavedChangesBeforeRemoveGuard({
+        navigation,
+        isDirtyRef,
+        requestDecision: confirmDiscard,
+        onSave: () => saveRef.current?.() ?? false,
+        continueOnSave: false,
+        onContinue: (action) => {
+            if (!action) return;
+            (navigation as any)?.dispatch?.(action);
+        },
+        tag: 'ProfileEditScreen.beforeRemove',
+    });
 
     const handleSave = (savedProfile: AIBackendProfile): boolean => {
         if (!savedProfile.name || savedProfile.name.trim() === '') {

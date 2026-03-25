@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import {
@@ -31,6 +32,8 @@ import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServer
 import { parseImportedMcpServerJson } from '@/sync/domains/settings/mcpServers/parseImportedMcpServerJson';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
+import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 
 function createDefaultServerName(existingNames: ReadonlySet<string>): string {
     if (!existingNames.has('server')) return 'server';
@@ -101,6 +104,8 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
+    const ignoreBeforeRemoveRef = React.useRef(false);
+    const isDirtyRef = React.useRef(false);
     const machines = useAllMachines();
     const [secrets, setSecrets] = useSettingMutable('secrets');
 
@@ -129,6 +134,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
 
     const [draftServer, setDraftServer] = React.useState<McpServerCatalogEntryV1>(() => existingServer ?? createDraftServer(existingNames));
     const [draftBindings, setDraftBindings] = React.useState<McpServerBindingV1[]>(() => existingBindings);
+    const [isDirty, setIsDirty] = React.useState(false);
     const [activeTab, setActiveTab] = React.useState<'configure' | 'importJson' | 'quickInstall'>(() => {
         if (serverId) return 'configure';
         if (addMode === 'import-json') return 'importJson';
@@ -148,8 +154,28 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         if (existingServer) {
             setDraftServer(existingServer);
             setDraftBindings(existingBindings);
+            setIsDirty(false);
         }
     }, [existingBindings, existingServer]);
+
+    React.useEffect(() => {
+        isDirtyRef.current = isDirty;
+    }, [isDirty]);
+
+    React.useEffect(() => {
+        // Match profile edit behavior: disable iOS gesture navigation while the draft is dirty.
+        const setOptions = (navigation as any)?.setOptions;
+        if (typeof setOptions !== 'function') return;
+        setOptions({ gestureEnabled: !isDirty });
+    }, [isDirty, navigation]);
+
+    React.useEffect(() => {
+        const setOptions = (navigation as any)?.setOptions;
+        if (typeof setOptions !== 'function') return;
+        return () => {
+            setOptions({ gestureEnabled: true });
+        };
+    }, [navigation]);
 
     React.useEffect(() => {
         if (selectedMachineId && machines.some((machine) => machine.id === selectedMachineId)) return;
@@ -204,18 +230,18 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         }));
     }, [machines, theme.colors.textSecondary]);
 
-    const handleSave = React.useCallback(() => {
+    const commitDraft = React.useCallback((): boolean => {
         const parsedServer = McpServerCatalogEntryV1Schema.safeParse(draftServer);
         if (!parsedServer.success) {
             Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
-            return;
+            return false;
         }
         const parsedBindings: McpServerBindingV1[] = [];
         for (const binding of draftBindings) {
             const parsed = McpServerBindingV1Schema.safeParse(binding);
             if (!parsed.success) {
                 Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
-                return;
+                return false;
             }
             parsedBindings.push(parsed.data);
         }
@@ -223,14 +249,24 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         try {
             const next = upsertMcpServerWithBindingsV1(normalizedSettings, parsedServer.data, parsedBindings);
             setMcpSettings(next as any);
-            safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
+            setIsDirty(false);
+            return true;
         } catch (error) {
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError'));
+            return false;
         }
     }, [draftBindings, draftServer, navigation, normalizedSettings, router, setMcpSettings]);
 
+    const saveAndClose = React.useCallback(() => {
+        const didSave = commitDraft();
+        if (!didSave) return;
+        ignoreBeforeRemoveRef.current = true;
+        safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
+    }, [commitDraft, navigation, router]);
+
     const handleDeleteOrCancel = React.useCallback(async () => {
         if (!serverId) {
+            ignoreBeforeRemoveRef.current = true;
             safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
             return;
         }
@@ -244,6 +280,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
 
         const next = deleteMcpServerCatalogEntryV1(normalizedSettings, serverId);
         setMcpSettings(next as any);
+        ignoreBeforeRemoveRef.current = true;
         safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
     }, [draftServer.name, navigation, normalizedSettings, router, serverId, setMcpSettings]);
 
@@ -266,6 +303,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         }
         setSecrets(materialized.nextSecrets);
         setMcpSettings(materialized.nextSettings as any);
+        ignoreBeforeRemoveRef.current = true;
         safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
     }, [importInputMappings, importParseResult.servers, navigation, normalizedSettings, router, secrets, selectedMachineId, setMcpSettings, setSecrets]);
 
@@ -300,8 +338,66 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         }
         setSecrets(nextSecrets);
         setMcpSettings(nextSettings as any);
+        ignoreBeforeRemoveRef.current = true;
         safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
     }, [navigation, normalizedSettings, quickInstallInputMappingsByPreset, router, secrets, selectedMachineId, selectedQuickInstallDrafts, setMcpSettings, setSecrets]);
+
+    const requestUnsavedChangesDecision = React.useCallback(async () => {
+        return await promptUnsavedChangesAlert(
+            (title, message, buttons) => Modal.alert(title, message, buttons),
+            {
+                title: t('common.discardChanges'),
+                message: t('common.unsavedChangesWarning'),
+                discardText: t('common.discard'),
+                saveText: t('common.save'),
+                keepEditingText: t('common.keepEditing'),
+            },
+        );
+    }, []);
+
+    const continueNavigation = React.useCallback((action: unknown) => {
+        const nav: any = navigation;
+        if (action && typeof nav?.dispatch === 'function') {
+            nav.dispatch(action);
+            return;
+        }
+        safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
+    }, [navigation, router]);
+
+    useUnsavedChangesBeforeRemoveGuard({
+        navigation,
+        ignoreRef: ignoreBeforeRemoveRef,
+        isDirtyRef,
+        requestDecision: requestUnsavedChangesDecision,
+        onSave: commitDraft,
+        onContinue: continueNavigation,
+        tag: 'McpServerEditorScreen.beforeRemove',
+    });
+
+    const renderHeaderRight = React.useCallback(() => {
+        if (activeTab !== 'configure') return null;
+        return (
+            <Pressable
+                onPress={saveAndClose}
+                disabled={!isDirty || saveDisabled}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.save')}
+                hitSlop={12}
+                style={({ pressed }) => ({
+                    opacity: !isDirty || saveDisabled ? 0.35 : pressed ? 0.7 : 1,
+                    padding: 4,
+                })}
+            >
+                <Ionicons name="checkmark" size={24} color={theme.colors.header.tint} />
+            </Pressable>
+        );
+    }, [activeTab, isDirty, saveAndClose, saveDisabled, theme.colors.header.tint]);
+
+    React.useEffect(() => {
+        const setOptions = (navigation as any)?.setOptions;
+        if (typeof setOptions !== 'function') return;
+        setOptions({ headerRight: renderHeaderRight });
+    }, [navigation, renderHeaderRight]);
 
     if (serverId && !existingServer) {
         return (
@@ -344,9 +440,15 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                     machines={machines}
                     secrets={secrets}
                     onChangeSecrets={setSecrets}
-                    onChangeServer={(updater) => setDraftServer((current) => updater(current))}
-                    onChangeBindings={(updater) => setDraftBindings((current) => updater(current))}
-                    onSave={handleSave}
+                    onChangeServer={(updater) => {
+                        setIsDirty(true);
+                        setDraftServer((current) => updater(current));
+                    }}
+                    onChangeBindings={(updater) => {
+                        setIsDirty(true);
+                        setDraftBindings((current) => updater(current));
+                    }}
+                    onSave={saveAndClose}
                     onDelete={() => { void handleDeleteOrCancel(); }}
                     saveDisabled={saveDisabled}
                     isExistingServer={Boolean(serverId)}

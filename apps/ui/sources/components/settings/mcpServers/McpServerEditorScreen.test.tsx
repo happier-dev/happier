@@ -11,13 +11,28 @@ import {
 import { createPartialStorageModuleMock } from '@/dev/testkit/createPartialStorageModuleMock';
 import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import type { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+type PromptUnsavedChangesAlertArgs = Parameters<
+    typeof promptUnsavedChangesAlert
+>;
+type PromptUnsavedChangesAlertReturn = ReturnType<
+    typeof promptUnsavedChangesAlert
+>;
+
 const setMcpSettingsSpy = vi.fn();
 const modalAlertSpy = vi.fn();
+const modalConfirmSpy = vi.fn(async (..._args: any[]) => true);
 const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
+const navigationDispatchSpy = vi.fn();
+const navigationSetOptionsSpy = vi.fn();
+const navigationBeforeRemoveHandlers: Array<(event: any) => void | Promise<void>> = [];
+const promptUnsavedChangesAlertSpy = vi.hoisted(
+    () => vi.fn<typeof promptUnsavedChangesAlert>(),
+);
 let liveMcpSettings: {
     v: 1;
     strictMode: boolean;
@@ -77,6 +92,12 @@ function resetLiveSettings() {
     liveSettingListeners.clear();
     setMcpSettingsSpy.mockReset();
     modalAlertSpy.mockReset();
+    modalConfirmSpy.mockReset();
+    navigationDispatchSpy.mockReset();
+    navigationSetOptionsSpy.mockReset();
+    navigationBeforeRemoveHandlers.length = 0;
+    promptUnsavedChangesAlertSpy.mockReset();
+    promptUnsavedChangesAlertSpy.mockResolvedValue('discard');
 }
 
 function updateLiveSecrets(next: SavedSecret[]) {
@@ -91,6 +112,7 @@ const mcpServersCommonModuleMockOptions = {
             confirmResult: true,
             spies: {
                 alert: modalAlertSpy,
+                confirm: (...args) => modalConfirmSpy(...args) as any,
             },
         }).module;
     },
@@ -109,7 +131,17 @@ const mcpServersCommonModuleMockOptions = {
                 back: routerBackSpy,
                 replace: routerReplaceSpy,
             },
-            navigation: { canGoBack: () => false },
+            navigation: {
+                canGoBack: () => false,
+                dispatch: navigationDispatchSpy,
+                setOptions: navigationSetOptionsSpy,
+                addListener: (event: string, handler: (evt: any) => void | Promise<void>) => {
+                    if (event === 'beforeRemove') {
+                        navigationBeforeRemoveHandlers.push(handler);
+                    }
+                    return () => {};
+                },
+            },
         });
 
         return {
@@ -156,6 +188,10 @@ const mcpServersCommonModuleMockOptions = {
 };
 
 installMcpServersCommonModuleMocks(mcpServersCommonModuleMockOptions);
+
+vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
+    promptUnsavedChangesAlert: (...args: PromptUnsavedChangesAlertArgs) => promptUnsavedChangesAlertSpy(...args),
+}));
 
 vi.mock('@/components/ui/forms/InlineAddExpander', () => ({
     InlineAddExpander: (props: any) =>
@@ -205,6 +241,75 @@ beforeEach(() => {
 });
 
 describe('McpServerEditorScreen', () => {
+    it('prompts to discard unsaved changes when navigating away via the navigation back action', async () => {
+        const screen = await renderEditorScreen();
+
+        const initialHeaderRightCall = navigationSetOptionsSpy.mock.calls
+            .map((call) => call[0])
+            .find((options) => options && typeof options === 'object' && 'headerRight' in options) as any;
+        expect(initialHeaderRightCall).toBeTruthy();
+
+        await act(async () => {
+            screen.changeTextByTestId('mcp.server.editor.name', 'server_edited');
+        });
+
+        expect(navigationBeforeRemoveHandlers.length).toBeGreaterThan(0);
+
+        const lastHeaderRightCall = navigationSetOptionsSpy.mock.calls
+            .map((call) => call[0])
+            .filter((options) => options && typeof options === 'object' && 'headerRight' in options)
+            .at(-1) as any;
+        const headerRight = lastHeaderRightCall?.headerRight as (() => React.ReactElement | null) | undefined;
+        expect(typeof headerRight).toBe('function');
+        const headerRightNode = headerRight?.();
+        expect(React.isValidElement(headerRightNode)).toBe(true);
+        expect((headerRightNode as any).props.disabled).toBe(false);
+
+        const preventDefaultSpy = vi.fn();
+        const action = { type: 'GO_BACK' };
+
+        const beforeRemove = navigationBeforeRemoveHandlers[navigationBeforeRemoveHandlers.length - 1];
+
+        await act(async () => {
+            await beforeRemove?.({
+                preventDefault: preventDefaultSpy,
+                data: { action },
+            });
+            await flushHookEffects({ cycles: 1, turns: 3 });
+        });
+
+        expect(preventDefaultSpy).toHaveBeenCalled();
+        expect(promptUnsavedChangesAlertSpy).toHaveBeenCalled();
+        expect(navigationDispatchSpy).toHaveBeenCalledWith(action);
+    });
+
+    it('saves the draft before completing navigation when the user chooses save in the unsaved-changes prompt', async () => {
+        promptUnsavedChangesAlertSpy.mockResolvedValueOnce('save');
+
+        const screen = await renderEditorScreen();
+
+        await act(async () => {
+            screen.changeTextByTestId('mcp.server.editor.name', 'server_edited');
+        });
+
+        const preventDefaultSpy = vi.fn();
+        const action = { type: 'GO_BACK' };
+        const beforeRemove = navigationBeforeRemoveHandlers[navigationBeforeRemoveHandlers.length - 1];
+
+        await act(async () => {
+            await beforeRemove?.({
+                preventDefault: preventDefaultSpy,
+                data: { action },
+            });
+            await flushHookEffects({ cycles: 1, turns: 3 });
+        });
+
+        expect(preventDefaultSpy).toHaveBeenCalled();
+        expect(promptUnsavedChangesAlertSpy).toHaveBeenCalled();
+        expect(setMcpSettingsSpy).toHaveBeenCalled();
+        expect(navigationDispatchSpy).toHaveBeenCalledWith(action);
+    });
+
     it('falls back to the MCP settings screen after delete when there is no back stack entry', async () => {
         const screen = await renderEditorScreen();
 
