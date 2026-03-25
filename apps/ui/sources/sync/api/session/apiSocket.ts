@@ -219,6 +219,10 @@ class ApiSocket {
         this.reachabilityUnsubscribe?.();
         this.reachabilityUnsubscribe = null;
         this.reachabilityServerUrl = null;
+        // Intentional disconnects (app backgrounding, server switch, logout) must not be treated as a "reconnect".
+        // Reset these flags so the next successful connect becomes a new baseline (no onReconnected callback).
+        this.hasConnectedOnce = false;
+        this.pendingReconnectNotification = false;
         for (const detach of this.detachSocketTransportListeners.splice(0)) {
             detach();
         }
