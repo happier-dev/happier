@@ -7,6 +7,7 @@ import { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } from '@/
 import { upsertServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { getStorage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import type { FeatureDecisionScopeParams } from './useFeatureDecision';
 
 const initialStorageState = getStorage().getState();
 
@@ -88,14 +89,22 @@ describe('useFeatureDecision', () => {
             featureToggles: { 'execution.runs': true },
         });
 
+        const initialProps: Readonly<{ scope?: FeatureDecisionScopeParams }> = { scope: undefined };
+
         const hook = await renderHook(
-            ({ scope }: Readonly<{ scope?: Parameters<typeof useFeatureDecision>[1] }>) => useFeatureDecision('execution.runs', scope),
+            ({ scope }: Readonly<{ scope?: FeatureDecisionScopeParams }>) => useFeatureDecision('execution.runs', scope),
             {
-                initialProps: { scope: { scopeKind: 'runtime' } },
+                // Start at the default (main selection) scope, then change scopes across rerenders.
+                // This would have crashed with the audit-reported conditional-hook implementation.
+                initialProps,
             },
         );
 
         expect(hook.getCurrent()?.state).toBe('enabled');
+
+        await expect(hook.rerender({ scope: { scopeKind: 'runtime' } })).resolves.toMatchObject({
+            state: 'enabled',
+        });
 
         await expect(hook.rerender({ scope: { scopeKind: 'spawn', serverId: 'test-spawn-server' } })).resolves.toMatchObject({
             state: 'enabled',

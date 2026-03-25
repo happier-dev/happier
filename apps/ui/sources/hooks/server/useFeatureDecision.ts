@@ -19,16 +19,18 @@ export function useFeatureDecision(featureId: FeatureId, scope?: FeatureDecision
     const settings = useSettings();
     const scopeKind = scope?.scopeKind ?? 'main_selection';
     const selection = useEffectiveServerSelection();
+    const hasMainSelectionServerIds = selection.serverIds.length > 0;
     const snapshotStrategy = resolveFeatureDecisionSnapshotStrategy({
         featureId,
         settings,
         scopeKind,
-        hasMainSelectionServerIds: selection.serverIds.length > 0,
+        hasMainSelectionServerIds,
     });
     const runtimeSnapshot = useServerFeaturesRuntimeSnapshot({ enabled: snapshotStrategy.runtimeEnabled });
-    const spawnServerId = scope?.scopeKind === 'spawn'
-        ? (typeof scope.serverId === 'string' ? scope.serverId.trim() : '')
-        : '';
+    const spawnServerId =
+        scope && scope.scopeKind === 'spawn' && typeof scope.serverId === 'string'
+            ? scope.serverId.trim()
+            : '';
     const spawnSnapshot = useServerFeaturesSnapshotForServerId(spawnServerId, {
         enabled: snapshotStrategy.spawnEnabled,
     });
@@ -56,7 +58,7 @@ export function useFeatureDecision(featureId: FeatureId, scope?: FeatureDecision
                 });
             }
 
-            if (selection.serverIds.length === 0) {
+            if (!hasMainSelectionServerIds) {
                 // Web same-origin / empty server-profile bootstraps still need to resolve feature state.
                 return resolveRuntimeFeatureDecisionFromSnapshot({
                     featureId,
@@ -72,6 +74,6 @@ export function useFeatureDecision(featureId: FeatureId, scope?: FeatureDecision
                 snapshot: mainSelectionSnapshot,
             });
         },
-        [featureId, mainSelectionSnapshot, runtimeSnapshot, scopeKind, selection.serverIds.length, settings, spawnServerId, spawnSnapshot],
+        [featureId, hasMainSelectionServerIds, mainSelectionSnapshot, runtimeSnapshot, scopeKind, settings, spawnServerId, spawnSnapshot],
     );
 }
