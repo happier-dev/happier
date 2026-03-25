@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import {
     installWebHmrOptOutForCurrentWebTab,
@@ -196,6 +196,54 @@ describe('webHmrOptOut', () => {
         expect(FakeWebSocket.instances).toEqual(['ws://example.com/socket.io']);
     });
 
+    test('installWebHmrOptOutWebSocketGuard uses a silent open WebSocket stub to avoid reload loops', async () => {
+        const store = new Map<string, string>([['happier.web.hmrOptOut', 'disabled']]);
+        const sessionStorage = {
+            getItem: (k: string) => store.get(k) ?? null,
+            setItem: (k: string, v: string) => void store.set(k, v),
+            removeItem: (k: string) => void store.delete(k),
+        };
+
+        class FakeWebSocket {
+            static instances: string[] = [];
+            static OPEN = 1;
+            static CLOSED = 3;
+            constructor(public url: string | URL, _protocols?: string | string[]) {
+                FakeWebSocket.instances.push(String(url));
+            }
+        }
+
+        const globalTarget = {
+            WebSocket: FakeWebSocket,
+        };
+
+        installWebHmrOptOutWebSocketGuard({
+            pageUrl: new URL('https://example.com/app'),
+            sessionStorage,
+            globalTarget,
+        });
+
+        const PatchedWebSocket = globalTarget.WebSocket as unknown as new (url: string) => any;
+        const blocked = new PatchedWebSocket('ws://example.com/hot');
+
+        const onOpen = vi.fn();
+        const onError = vi.fn();
+        const onClose = vi.fn();
+
+        blocked.onopen = onOpen;
+        blocked.onerror = onError;
+        blocked.onclose = onClose;
+
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+        expect(onOpen).toHaveBeenCalled();
+        expect(onError).not.toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
+        expect(typeof blocked.send).toBe('function');
+        expect(typeof blocked.close).toBe('function');
+        expect(blocked.readyState).toBe(FakeWebSocket.OPEN);
+    });
+
     test('installWebHmrOptOutForWebTab disables via happier_hmr=0 and persists per-tab state', () => {
         const store = new Map<string, string>();
         const sessionStorage = {
@@ -222,6 +270,46 @@ describe('webHmrOptOut', () => {
         expect(globalThis.__HAPPIER_WEB_HMR_OPT_OUT__).toBe(true);
         expect(store.get('happier.web.hmrOptOut')).toBe('disabled');
         expect(replaced.at(-1)).toBe('https://example.com/new?x=1');
+    });
+
+    test('installWebHmrOptOutForWebTab still disables when history.replaceState throws', () => {
+        const store = new Map<string, string>();
+        const sessionStorage = {
+            getItem: (k: string) => store.get(k) ?? null,
+            setItem: (k: string, v: string) => void store.set(k, v),
+            removeItem: (k: string) => void store.delete(k),
+        };
+
+        const history = {
+            replaceState: () => {
+                throw new Error('replaceState failed');
+            },
+        };
+
+        class FakeWebSocket {
+            static instances: string[] = [];
+            constructor(public url: string | URL, _protocols?: string | string[]) {
+                FakeWebSocket.instances.push(String(url));
+            }
+        }
+
+        const originalWebSocket = (globalThis as any).WebSocket;
+        try {
+            (globalThis as any).WebSocket = FakeWebSocket;
+
+            const disabled = installWebHmrOptOutForWebTab({
+                url: new URL('https://example.com/new?happier_hmr=0&x=1'),
+                sessionStorage,
+                history,
+            });
+
+            expect(disabled).toBe(true);
+            expect(globalThis.__HAPPIER_WEB_HMR_OPT_OUT__).toBe(true);
+            expect(store.get('happier.web.hmrOptOut')).toBe('disabled');
+            expect(!!globalThis.__HAPPIER_WEB_HMR_OPT_OUT_WEBSOCKET_GUARD__).toBe(true);
+        } finally {
+            (globalThis as any).WebSocket = originalWebSocket;
+        }
     });
 
     test('installWebHmrOptOutForCurrentWebTab disables via happier_hmr=0 before Expo runtime initializes', () => {

@@ -142,7 +142,7 @@ function createBlockedWebSocket({
     nativeWebSocket: WebSocketCtorLike;
 }) {
     const listeners = new Map<string, Set<(event: unknown) => void>>();
-    const closedValue = nativeWebSocket.CLOSED ?? 3;
+    const openValue = nativeWebSocket.OPEN ?? 1;
 
     const addListener = (type: string, listener: (event: unknown) => void) => {
         const existing = listeners.get(type) ?? new Set<(event: unknown) => void>();
@@ -160,7 +160,7 @@ function createBlockedWebSocket({
 
     const blocked = {
         url: String(socketUrl),
-        readyState: closedValue,
+        readyState: openValue,
         bufferedAmount: 0,
         extensions: '',
         protocol: '',
@@ -187,33 +187,22 @@ function createBlockedWebSocket({
             return undefined;
         },
         close() {
-            const closeEvent = {
-                type: 'close',
-                code: 4001,
-                reason: 'Happier web HMR opt-out',
-                wasClean: true,
-            };
-            blocked.onclose?.(closeEvent);
-            dispatch('close', closeEvent);
+            return undefined;
         },
     };
 
     queueMicrotask(() => {
-        const errorEvent = {
-            type: 'error',
-            message: 'Blocked Expo dev reload socket for this tab',
+        // IMPORTANT:
+        // This socket stub must behave like a successful, stable connection.
+        // Expo's HMRClient treats WebSocket close/error as a "Metro disconnected" state and will
+        // aggressively call `window.location.reload()` to recover (which defeats our per-tab opt-out).
+        // By emitting a single open event (and never emitting error/close), we keep bundle splitting
+        // register-entrypoints calls from crashing without allowing any update messages through.
+        const openEvent = {
+            type: 'open',
         };
-        blocked.onerror?.(errorEvent);
-        dispatch('error', errorEvent);
-
-        const closeEvent = {
-            type: 'close',
-            code: 4001,
-            reason: 'Happier web HMR opt-out',
-            wasClean: true,
-        };
-        blocked.onclose?.(closeEvent);
-        dispatch('close', closeEvent);
+        blocked.onopen?.(openEvent);
+        dispatch('open', openEvent);
     });
 
     return blocked;
@@ -297,18 +286,27 @@ export function installWebHmrOptOutForWebTab({
         sessionStorage.setItem(WEB_HMR_OPT_OUT_SESSION_STORAGE_KEY, res.nextSessionValue);
     }
 
-    if (res.shouldStripQueryParam) {
-        const nextUrl = new URL(url.toString());
-        if (stripWebHmrOptOutQueryParam(nextUrl)) {
-            history.replaceState(null, '', nextUrl.toString());
-        }
-    }
-
+    // IMPORTANT:
+    // Treat query-param stripping as best-effort only. Some environments can throw from replaceState
+    // (or other history shims) even when the URL is same-origin. We still want the opt-out decision
+    // and WebSocket guard to be applied reliably for this tab.
     globalThis.__HAPPIER_WEB_HMR_OPT_OUT__ = res.disabled;
     installWebHmrOptOutWebSocketGuard({
         pageUrl: url,
         sessionStorage,
     });
+
+    if (res.shouldStripQueryParam) {
+        try {
+            const nextUrl = new URL(url.toString());
+            if (stripWebHmrOptOutQueryParam(nextUrl)) {
+                history.replaceState(null, '', nextUrl.toString());
+            }
+        } catch {
+            // Best-effort: ok to keep the query param if history is unavailable/broken.
+        }
+    }
+
     return res.disabled;
 }
 
