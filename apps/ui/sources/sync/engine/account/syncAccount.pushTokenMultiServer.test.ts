@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PermissionStatus } from 'expo-modules-core';
+
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
 vi.mock('expo-notifications', () => ({
     getPermissionsAsync: vi.fn(),
@@ -8,13 +11,11 @@ vi.mock('expo-notifications', () => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Platform: {
-                                OS: 'ios',
-                            },
-                        }
-    );
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'ios',
+        },
+    });
 });
 
 vi.mock('expo-constants', () => ({
@@ -42,15 +43,28 @@ afterEach(() => {
 describe('registerPushTokenIfAvailable (multi-server)', () => {
     it('registers for all saved servers with credentials', async () => {
         const Notifications = await import('expo-notifications');
-        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ status: 'granted' } as any);
-        vi.mocked(Notifications.requestPermissionsAsync).mockResolvedValue({ status: 'granted' } as any);
-        vi.mocked(Notifications.getExpoPushTokenAsync).mockResolvedValue({ data: 'ExponentPushToken[secret-token]' } as any);
+        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
+            status: PermissionStatus.GRANTED,
+            expires: 'never',
+            granted: true,
+            canAskAgain: false,
+        } satisfies Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>);
+        vi.mocked(Notifications.requestPermissionsAsync).mockResolvedValue({
+            status: PermissionStatus.GRANTED,
+            expires: 'never',
+            granted: true,
+            canAskAgain: false,
+        } satisfies Awaited<ReturnType<typeof Notifications.requestPermissionsAsync>>);
+        vi.mocked(Notifications.getExpoPushTokenAsync).mockResolvedValue({
+            type: 'expo',
+            data: 'ExponentPushToken[secret-token]',
+        } satisfies Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>);
 
         const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
             ok: true,
             json: async () => ({ success: true }),
         }));
-        vi.stubGlobal('fetch', fetchSpy as any);
+        vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
         const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
         const defaultServer = upsertServerProfile({ serverUrl: 'https://remote-a.example.test', name: 'Primary' });
@@ -71,7 +85,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
 
         const { registerPushTokenIfAvailable } = await import('./syncAccount');
         await registerPushTokenIfAvailable({
-            credentials: { token: 't_primary', secret: 's' } as any,
+            credentials: { token: 't_primary', secret: 's' } satisfies AuthCredentials,
             log,
         });
 
