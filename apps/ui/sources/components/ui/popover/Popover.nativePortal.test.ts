@@ -116,6 +116,120 @@ describe('Popover (native portal)', () => {
         expect(style.width).toBe(30);
     });
 
+    it('falls back to deriving portal-root-relative anchor coordinates from window measurements when measureLayout is unavailable', async () => {
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            _id: 'portal-root',
+            measureInWindow: (cb: any) => queueMicrotask(() => cb(50, 100, 390, 844)),
+        };
+
+        const anchorRef = {
+            current: {
+                // Simulate an anchor node without `measureLayout` (some RN host components).
+                measureInWindow: (cb: any) => queueMicrotask(() => cb(70, 150, 30, 40)),
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        tree = (await renderScreen(React.createElement(
+                    OverlayPortalProvider,
+                    null,
+                    React.createElement(
+                        PopoverPortalTargetContextProvider,
+                        {
+                            value: { rootRef: { current: portalRootNode } as any, layout: { width: 390, height: 844 } },
+                            children: React.createElement(Popover, {
+                                open: true,
+                                anchorRef,
+                                placement: 'bottom',
+                                portal: { native: true },
+                                backdrop: false,
+                                children: () => React.createElement(PopoverChild),
+                            } as any),
+                        } as any,
+                    ),
+                    React.createElement(OverlayPortalHost),
+                ))).tree;
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        const container = tree ? findPopoverContentView(tree) : null;
+        const style = flattenTestStyle(container?.props?.style);
+
+        // Portal-root-relative anchor rect = window(anchor) - window(portalRoot):
+        // x = 70-50=20, y = 150-100=50.
+        // placement=bottom => top = y + height + gap (default gap=8)
+        expect(style.left).toBe(20);
+        expect(style.top).toBe(98);
+        expect(style.width).toBe(30);
+    });
+
+    it('can derive portal-root-relative anchor coordinates from the boundary window rect when the portal root cannot be measured', async () => {
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            _id: 'portal-root',
+            // Simulate a portal root that cannot be measured (common in cross-root / modal presentations).
+            // The popover should still be able to derive portal-relative coordinates via the boundary.
+        };
+
+        const boundaryRef = {
+            current: {
+                measureInWindow: (cb: any) => queueMicrotask(() => cb(50, 100, 390, 844)),
+            },
+        } as any;
+
+        const anchorRef = {
+            current: {
+                // Simulate an anchor node without `measureLayout`.
+                measureInWindow: (cb: any) => queueMicrotask(() => cb(70, 150, 30, 40)),
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        tree = (await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(
+                PopoverPortalTargetContextProvider,
+                {
+                    value: { rootRef: { current: portalRootNode } as any, layout: { width: 390, height: 844 } },
+                    children: React.createElement(Popover, {
+                        open: true,
+                        anchorRef,
+                        boundaryRef,
+                        placement: 'bottom',
+                        portal: { native: true },
+                        backdrop: false,
+                        children: () => React.createElement(PopoverChild),
+                    } as any),
+                } as any,
+            ),
+            React.createElement(OverlayPortalHost),
+        ))).tree;
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        const container = tree ? findPopoverContentView(tree) : null;
+        const style = flattenTestStyle(container?.props?.style);
+
+        // Portal-relative anchor rect = window(anchor) - window(boundary):
+        // x = 70-50=20, y = 150-100=50.
+        // placement=bottom => top = y + height + gap (default gap=8)
+        expect(style.left).toBe(20);
+        expect(style.top).toBe(98);
+        expect(style.width).toBe(30);
+    });
+
     it('does not mix window-relative boundary measurements with portal-root-relative anchor measurements (prevents off-screen menus)', async () => {
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');

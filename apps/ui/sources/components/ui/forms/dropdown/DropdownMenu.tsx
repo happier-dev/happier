@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Popover, type PopoverPlacement } from '@/components/ui/popover';
-import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { FloatingOverlay, type FloatingOverlayArrow } from '@/components/ui/overlays/FloatingOverlay';
 import { t } from '@/text';
 import type { SelectableRowVariant } from '@/components/ui/lists/SelectableRow';
 import { SelectableMenuResults } from '@/components/ui/forms/dropdown/SelectableMenuResults';
@@ -127,20 +127,46 @@ export type DropdownMenuProps = Readonly<{
     matchTriggerWidth?: boolean;
     popoverBoundaryRef?: React.RefObject<any> | null;
     /**
+     * Optional: anchor the popover to an external ref instead of the internal trigger host.
+     * Useful for context menus that open from right-click/long-press on a row.
+     */
+    popoverAnchorRef?: React.RefObject<any> | null;
+    /**
      * Web-only: controls where the popover portal is mounted.
      * Defaults to Popover's behavior (which prefers the modal portal target when inside a modal).
      * Set to 'body' to allow menus to escape overflow-clipped modals.
      */
     popoverPortalWebTarget?: 'body' | 'modal' | 'boundary';
     overlayStyle?: ViewStyle;
-    /** When false, category titles like "General" are not rendered. */
+    /** When true, category titles like "General" are rendered (default false). */
     showCategoryTitles?: boolean;
+    /** Extra bottom padding under the results list (defaults to 0; uses menu padding when `search` is enabled). */
+    resultsPaddingBottom?: number;
     /** Render rows using the app `Item` component for perfect icon/typography parity. */
     rowKind?: 'selectableRow' | 'item';
     /** Pass-through props for `rowKind="item"` menu rows (excluding computed fields). */
     itemRowProps?: Partial<
         Omit<ItemProps, 'title' | 'subtitle' | 'icon' | 'rightElement' | 'selected' | 'disabled' | 'showChevron' | 'showDivider' | 'onPress'>
     >;
+    /**
+     * When true, the menu can open with no highlighted row (native touch-first context menus).
+     * This avoids the first item looking "selected" on open.
+     */
+    allowEmptySelection?: boolean;
+    /**
+     * Optional arrow pointing back to the anchor (recommended for context menus).
+     * When `true`, uses a default size. The arrow placement follows the resolved popover placement.
+     */
+    overlayArrow?: boolean | Readonly<{ size?: number }>;
+    /**
+     * Optional portal alignment override for top/bottom placements (horizontal).
+     * Defaults to Popover's behavior (and DropdownMenu's historical 'start').
+     */
+    popoverAnchorAlign?: 'start' | 'center' | 'end';
+    /**
+     * Optional portal alignment override for left/right placements (vertical).
+     */
+    popoverAnchorAlignVertical?: 'start' | 'center' | 'end';
     /**
      * Make the menu visually connect to the trigger (no gap; squared top corners; no top border).
      * Intended for "dropdown" inputs where the menu should feel like a single control.
@@ -162,6 +188,7 @@ export type DropdownMenuProps = Readonly<{
 export function DropdownMenu(props: DropdownMenuProps) {
     const { theme } = useUnistyles();
     const anchorRef = React.useRef<View>(null);
+    const resolvedAnchorRef = props.popoverAnchorRef ?? anchorRef;
 
     const rowVariant: SelectableRowVariant = props.variant ?? 'slim';
     const resolvedTriggerDensity = useResolvedItemDensity(props.itemTrigger?.itemProps?.density);
@@ -170,12 +197,21 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const maxWidthCap = props.maxWidthCap ?? (matchTriggerWidth ? 1024 : 320);
     const emptyLabel = props.emptyLabel === undefined ? t('commandPalette.noCommandsFound') : props.emptyLabel;
     const contentPadding = rowVariant === 'slim' ? 12 : 16;
+    const resultsPaddingBottom = typeof props.resultsPaddingBottom === 'number'
+        ? props.resultsPaddingBottom
+        : (props.search ? contentPadding : 0);
     const edgePadding = React.useMemo(() => {
+        // Popover `edgePadding` is implemented as container padding (transparent background).
+        // For left/right menus this creates visible empty space above/below the overlay, which looks
+        // like a "mystery bottom padding" on context menus. Disable edge padding for side placements.
+        const placement = props.placement ?? 'bottom';
+        if (placement === 'left' || placement === 'right') return 0;
+
         // When the menu is meant to visually "connect" to the trigger, horizontal edge padding
         // creates an inset that makes the popover look misaligned. Keep vertical breathing room.
         if (props.connectToTrigger || matchTriggerWidth) return { vertical: 8, horizontal: 0 } as const;
         return { vertical: 8, horizontal: 8 } as const;
-    }, [matchTriggerWidth, props.connectToTrigger]);
+    }, [matchTriggerWidth, props.connectToTrigger, props.placement]);
 
     const selectableItems = React.useMemo((): SelectableMenuItem[] => {
         return props.items.map((item) => ({
@@ -293,6 +329,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
         onRequestClose,
         initialSelectedId: props.selectedId ?? null,
         onCreateItem: props.onCreateItem ?? null,
+        allowEmptySelection: props.allowEmptySelection ?? false,
         createItemFactory: createItemDisplay
             ? ((query) => {
                 const display = createItemDisplay(query);
@@ -338,6 +375,13 @@ export function DropdownMenu(props: DropdownMenuProps) {
         });
     }, [closeOnSelect, handleCreate, handleKeyPress, props]);
 
+    const overlayArrowCfg = React.useMemo((): Omit<Exclude<FloatingOverlayArrow, boolean>, 'placement'> | null => {
+        const arrow = props.overlayArrow;
+        if (!arrow) return null;
+        if (arrow === true) return { size: 12 } as const;
+        return { size: typeof arrow.size === 'number' ? arrow.size : 12 } as const;
+    }, [props.overlayArrow]);
+
     return (
         <View
             ref={anchorRef}
@@ -351,7 +395,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
             {props.open ? (
                 <Popover
                     open={props.open}
-                    anchorRef={anchorRef}
+                    anchorRef={resolvedAnchorRef}
                     placement={props.placement ?? 'bottom'}
                     gap={props.gap ?? 0}
                     maxHeightCap={props.maxHeightCap ?? 320}
@@ -361,16 +405,18 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         web: props.popoverPortalWebTarget ? { target: props.popoverPortalWebTarget } : true,
                         native: true,
                         matchAnchorWidth: matchTriggerWidth,
-                        anchorAlignVertical: 'start',
+                        anchorAlign: props.popoverAnchorAlign,
+                        anchorAlignVertical: props.popoverAnchorAlignVertical ?? 'start',
                     }}
                     boundaryRef={props.popoverBoundaryRef}
                     onRequestClose={onRequestClose}
                 >
-                    {({ maxHeight, maxWidth }) => (
+                    {({ maxHeight, maxWidth, placement }) => (
                         <FloatingOverlay
                             maxHeight={maxHeight}
                             edgeFades={{ top: true, bottom: true }}
                             edgeIndicators={{ size: 14, opacity: 0.35 }}
+                            arrow={overlayArrowCfg ? { placement, size: overlayArrowCfg.size } : false}
                             containerStyle={[
                                 // Dropdowns should be shadow-only (no borders).
                                 { borderWidth: 0, borderColor: 'transparent' } as any,
@@ -414,7 +460,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                 </View>
                             ) : null}
 
-                            <View style={{ paddingBottom: contentPadding }}>
+                            <View style={{ paddingBottom: resultsPaddingBottom }}>
                                 <SelectableMenuResults
                                     categories={filteredCategories}
                                     selectedIndex={selectedIndex}
@@ -429,7 +475,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                     }}
                                     rowVariant={rowVariant}
                                     emptyLabel={emptyLabel}
-                                    showCategoryTitles={props.showCategoryTitles}
+                                    showCategoryTitles={props.showCategoryTitles ?? false}
                                     rowKind={props.rowKind}
                                     itemProps={props.itemRowProps}
                                 />

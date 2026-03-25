@@ -256,6 +256,39 @@ describe('DropdownMenu', () => {
         expect(selectableResults?.props?.rowKind).toBe('item');
     });
 
+    it('uses popoverAnchorRef when provided', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const externalAnchorRef = { current: 'external-anchor' } as any;
+
+        const screen = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+            popoverAnchorRef: externalAnchorRef,
+        }));
+
+        const popover = screen.findByType('Popover' as any);
+        expect(popover?.props?.anchorRef).toBe(externalAnchorRef);
+    });
+
+    it('defaults showCategoryTitles to false', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+        }));
+
+        const selectableResults = screen.findByType('SelectableMenuResults' as any);
+        expect(selectableResults?.props?.showCategoryTitles).toBe(false);
+    });
+
     it('does not add a default chevron right element to selectable items', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
 

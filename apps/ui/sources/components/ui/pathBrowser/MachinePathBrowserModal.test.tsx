@@ -6,6 +6,7 @@ import {
     getPathBrowserRowTestId,
     getPathBrowserToggleTestId,
     PATH_BROWSER_CONFIRM_TEST_ID,
+    PATH_BROWSER_CREATE_FOLDER_TEST_ID,
     PATH_BROWSER_MODAL_TEST_ID,
 } from './pathBrowserTestIds';
 import { flushHookEffects, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
@@ -33,7 +34,7 @@ const listMachineFileBrowserRootsMock = vi.hoisted(() => vi.fn<(params: unknown)
 })));
 const listMachineFileBrowserDirectoryEntriesMock = vi.hoisted(() => vi.fn<(params: { directoryPath: string }) => Promise<{
     ok: true;
-    entries: Array<{ name: string; path: string; type: 'directory' }>;
+    entries: Array<{ name: string; path: string; type: 'directory' | 'file' }>;
     truncated: boolean;
 }>>(async (params: { directoryPath: string }) => {
     if (params.directoryPath === '/') {
@@ -57,6 +58,22 @@ const listMachineFileBrowserDirectoryEntriesMock = vi.hoisted(() => vi.fn<(param
     };
 }));
 const flatListScrollToIndexMock = vi.hoisted(() => vi.fn());
+const machineCreateDirectoryMock = vi.hoisted(() => vi.fn<(machineId: string, path: string, options?: unknown) => Promise<{ success: true } | { success: false; error: string }>>(
+    async () => ({ success: true as const }),
+));
+const machineRipgrepMock = vi.hoisted(() => vi.fn<(machineId: string, args: readonly string[], cwd?: string, options?: unknown) => Promise<{
+    success: boolean;
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+    error?: string;
+}>>(async () => ({
+    success: true,
+    stdout: '',
+    exitCode: 0,
+})));
+const modalPromptMock = vi.hoisted(() => vi.fn<(...args: any[]) => Promise<string | null>>(async () => null));
+const modalAlertMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -124,11 +141,44 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
     // Render icon + rightElement so tests can locate nested toggle pressables by testID.
     Item: (props: any) => React.createElement('Item', props, props.icon ?? null, props.rightElement ?? null, props.subtitle ?? null),
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useLocalSetting: (key: string) => {
+        if (key === 'uiItemDensity') return 'comfortable';
+        if (key === 'uiFontScale') return 1;
+        return null;
+    },
+}));
+
+vi.mock('@/components/ui/popover', () => ({
+    Popover: (props: any) => {
+        if (!props.open) return null;
+        return React.createElement('Popover', props, props.children({ maxHeight: 400, maxWidth: 520, placement: 'bottom' }));
+    },
+}));
+
+vi.mock('@/modal', () => ({
+    Modal: {
+        prompt: (...args: any[]) => modalPromptMock(...args),
+        alert: (...args: any[]) => modalAlertMock(...args),
+        confirm: vi.fn(),
+    },
+}));
+
+vi.mock('@/sync/ops/machines', () => ({
+    machineCreateDirectory: (machineId: string, path: string, options?: unknown) => machineCreateDirectoryMock(machineId, path, options),
+}));
+
+vi.mock('@/sync/ops/machineRipgrep', () => ({
+    machineRipgrep: (machineId: string, args: readonly string[], cwd?: string, options?: unknown) =>
+        machineRipgrepMock(machineId, args, cwd, options),
 }));
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
@@ -150,6 +200,10 @@ describe('MachinePathBrowserModal', () => {
         listMachineFileBrowserRootsMock.mockClear();
         listMachineFileBrowserDirectoryEntriesMock.mockClear();
         flatListScrollToIndexMock.mockClear();
+        machineCreateDirectoryMock.mockClear();
+        machineRipgrepMock.mockClear();
+        modalPromptMock.mockClear();
+        modalAlertMock.mockClear();
     });
 
     it('expands the machine root and confirms the selected folder', async () => {
@@ -183,6 +237,164 @@ describe('MachinePathBrowserModal', () => {
         ]));
         expect(onResolve).toHaveBeenCalledWith('/Users');
         expect(onClose).toHaveBeenCalled();
+    });
+
+    it('supports a scoped popover view rooted at a specific directory without listing machine roots', async () => {
+        const onPickPath = vi.fn();
+        const onRequestClose = vi.fn();
+        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
+
+        listMachineFileBrowserRootsMock.mockClear();
+        listMachineFileBrowserDirectoryEntriesMock.mockReset();
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValueOnce({
+            ok: true as const,
+            entries: [
+                { name: 'README.md', path: '/repo/README.md', type: 'file' as const },
+            ],
+            truncated: false,
+        });
+
+        const screen = await renderScreen(
+            <MachinePathBrowserView
+                machineId="machine-1"
+                rootDirectoryPath="/repo"
+                includeFiles
+                selectionMode="file"
+                variant="popover"
+                interaction="immediate"
+                maxHeight={320}
+                onPickPath={onPickPath}
+                onRequestClose={onRequestClose}
+            />,
+        );
+
+        await waitForTestId(screen, getPathBrowserRowTestId('/repo/README.md'));
+        await screen.pressByTestIdAsync(getPathBrowserRowTestId('/repo/README.md'));
+
+        expect(listMachineFileBrowserRootsMock).not.toHaveBeenCalled();
+        expect(listMachineFileBrowserDirectoryEntriesMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            directoryPath: '/repo',
+            includeFiles: true,
+        }));
+        expect(onPickPath).toHaveBeenCalledWith('/repo/README.md');
+        expect(onRequestClose).not.toHaveBeenCalled();
+        expect(screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID)).toBeNull();
+    });
+
+    it('can search deep paths on the machine when scoped, not just already-loaded nodes', async () => {
+        vi.useFakeTimers();
+        const onPickPath = vi.fn();
+        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
+
+        listMachineFileBrowserRootsMock.mockClear();
+        listMachineFileBrowserDirectoryEntriesMock.mockReset();
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValueOnce({
+            ok: true as const,
+            entries: [
+                { name: 'apps', path: '/repo/apps', type: 'directory' as const },
+            ],
+            truncated: false,
+        });
+        machineRipgrepMock.mockResolvedValueOnce({
+            success: true,
+            exitCode: 0,
+            stdout: 'apps/ui/README.md\napps/ui/src/index.ts\n',
+        });
+
+        const screen = await renderScreen(
+            <MachinePathBrowserView
+                machineId="machine-1"
+                rootDirectoryPath="/repo"
+                includeFiles
+                selectionMode="file"
+                variant="popover"
+                interaction="immediate"
+                maxHeight={320}
+                onPickPath={onPickPath}
+            />,
+        );
+
+        await act(async () => {
+            screen.changeTextByTestId('path-browser-search', 'readme');
+        });
+        await act(async () => {
+            vi.advanceTimersByTime(200);
+        });
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(machineRipgrepMock).toHaveBeenCalledWith(
+            'machine-1',
+            expect.arrayContaining(['--files']),
+            '/repo',
+            expect.anything(),
+        );
+
+        await waitForTestId(screen, getPathBrowserRowTestId('/repo/apps/ui/README.md'));
+        await screen.pressByTestIdAsync(getPathBrowserRowTestId('/repo/apps/ui/README.md'));
+
+        expect(onPickPath).toHaveBeenCalledWith('/repo/apps/ui/README.md');
+        vi.useRealTimers();
+    });
+
+    it('can search deep paths on the machine within the selected directory when not scoped', async () => {
+        vi.useFakeTimers();
+        const onPickPath = vi.fn();
+        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
+
+        listMachineFileBrowserRootsMock.mockClear();
+        listMachineFileBrowserDirectoryEntriesMock.mockReset();
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValueOnce({
+            ok: true as const,
+            entries: [
+                { name: 'Users', path: '/Users', type: 'directory' as const },
+            ],
+            truncated: false,
+        });
+
+        machineRipgrepMock.mockResolvedValueOnce({
+            success: true,
+            exitCode: 0,
+            stdout: 'leeroy/.ssh/config\n',
+        });
+
+        const screen = await renderScreen(
+            <MachinePathBrowserView
+                machineId="machine-1"
+                includeFiles={false}
+                selectionMode="directory"
+                variant="modal"
+                interaction="confirm"
+                onPickPath={onPickPath}
+            />,
+        );
+
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+        await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
+        await screen.pressByTestIdAsync(getPathBrowserRowTestId('/Users'));
+
+        await act(async () => {
+            screen.changeTextByTestId('path-browser-search', 'ssh');
+        });
+        await act(async () => {
+            vi.advanceTimersByTime(200);
+        });
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(machineRipgrepMock).toHaveBeenCalledWith(
+            'machine-1',
+            expect.arrayContaining(['--files']),
+            '/Users',
+            expect.anything(),
+        );
+
+        await waitForTestId(screen, getPathBrowserRowTestId('/Users/leeroy/.ssh'));
+        await screen.pressByTestIdAsync(getPathBrowserRowTestId('/Users/leeroy/.ssh'));
+        await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
+
+        expect(onPickPath).toHaveBeenCalledWith('/Users/leeroy/.ssh');
+        vi.useRealTimers();
     });
 
     it('renders nested directories when expanding a child folder', async () => {
@@ -405,5 +617,92 @@ describe('MachinePathBrowserModal', () => {
         });
         expect(footerButtons.length).toBeGreaterThanOrEqual(2);
         expect(footerButtons.every((node) => node.props.size === 'normal')).toBe(true);
+    });
+
+    it('creates a folder under the selected directory via the header action', async () => {
+        modalPromptMock.mockResolvedValueOnce('new-folder');
+        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
+
+        const screen = await renderScreen(<MachinePathBrowserModal
+            machineId="machine-1"
+            onResolve={vi.fn()}
+            onClose={vi.fn()}
+        />);
+
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+
+        await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
+        await screen.pressByTestIdAsync(getPathBrowserRowTestId('/Users'));
+
+        await screen.pressByTestIdAsync(PATH_BROWSER_CREATE_FOLDER_TEST_ID);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(machineCreateDirectoryMock).toHaveBeenCalledWith(
+            'machine-1',
+            '/Users/new-folder',
+            expect.anything(),
+        );
+    });
+
+    it('opens a context menu on right click and creates a folder in the clicked directory', async () => {
+        modalPromptMock.mockResolvedValueOnce('child');
+        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
+
+        const screen = await renderScreen(<MachinePathBrowserModal
+            machineId="machine-1"
+            onResolve={vi.fn()}
+            onClose={vi.fn()}
+        />);
+
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+
+        const usersRow = await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
+        const preventDefault = vi.fn();
+        const stopPropagation = vi.fn();
+        await act(async () => {
+            invokeTestInstanceHandler(usersRow, 'onContextMenu', { preventDefault, stopPropagation });
+        });
+
+        expect(preventDefault).toHaveBeenCalled();
+        expect(stopPropagation).toHaveBeenCalled();
+
+        await waitForTestId(screen, 'dropdown-option-create-folder');
+        await screen.pressByTestIdAsync('dropdown-option-create-folder');
+
+        expect(machineCreateDirectoryMock).toHaveBeenCalledWith(
+            'machine-1',
+            '/Users/child',
+            expect.anything(),
+        );
+    });
+
+    it('opens a context menu on long press and creates a folder in the pressed directory', async () => {
+        modalPromptMock.mockResolvedValueOnce('child');
+        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
+
+        const screen = await renderScreen(<MachinePathBrowserModal
+            machineId="machine-1"
+            onResolve={vi.fn()}
+            onClose={vi.fn()}
+        />);
+
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+
+        const usersRow = await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
+        await act(async () => {
+            invokeTestInstanceHandler(usersRow, 'onLongPress');
+        });
+
+        await waitForTestId(screen, 'dropdown-option-create-folder');
+        await screen.pressByTestIdAsync('dropdown-option-create-folder');
+
+        expect(machineCreateDirectoryMock).toHaveBeenCalledWith(
+            'machine-1',
+            '/Users/child',
+            expect.anything(),
+        );
     });
 });

@@ -30,9 +30,16 @@ export function useSelectableMenu(params: {
     initialSelectedId?: string | null;
     onCreateItem?: ((query: string) => void) | null;
     createItemFactory?: ((query: string) => Omit<SelectableMenuItem, 'id'>) | null;
+    /**
+     * When true, the menu can start with no highlighted item (`selectedIndex = -1`).
+     * This is useful for touch-first context menus on native where an initial highlight
+     * reads as a "selected" row even before the user interacts.
+     */
+    allowEmptySelection?: boolean;
 }) {
     const [searchQuery, setSearchQuery] = useState('');
-    const [selectedIndex, setSelectedIndex] = useState(0);
+    const allowEmptySelection = params.allowEmptySelection === true;
+    const [selectedIndex, setSelectedIndex] = useState<number>(() => (allowEmptySelection ? -1 : 0));
     const inputRef = useRef<TextInput>(null);
 
     const allItemsRaw = useMemo(() => params.items, [params.items]);
@@ -77,8 +84,15 @@ export function useSelectableMenu(params: {
         for (let i = 0; i < allItems.length; i += 1) {
             if (!allItems[i]?.disabled) return i;
         }
-        return 0;
-    }, [allItems]);
+        return allowEmptySelection ? -1 : 0;
+    }, [allItems, allowEmptySelection]);
+
+    const lastEnabledIndex = useCallback((): number => {
+        for (let i = allItems.length - 1; i >= 0; i -= 1) {
+            if (!allItems[i]?.disabled) return i;
+        }
+        return allowEmptySelection ? -1 : 0;
+    }, [allItems, allowEmptySelection]);
 
     const isEnabledIndex = useCallback((idx: number) => {
         const item = allItems[idx];
@@ -86,11 +100,12 @@ export function useSelectableMenu(params: {
     }, [allItems]);
 
     const clampToEnabled = useCallback((idx: number): number => {
-        if (allItems.length === 0) return 0;
+        if (allowEmptySelection && idx === -1) return -1;
+        if (allItems.length === 0) return allowEmptySelection ? -1 : 0;
         if (idx < 0 || idx >= allItems.length) return firstEnabledIndex();
         if (isEnabledIndex(idx)) return idx;
         return firstEnabledIndex();
-    }, [allItems.length, firstEnabledIndex, isEnabledIndex]);
+    }, [allItems.length, allowEmptySelection, firstEnabledIndex, isEnabledIndex]);
 
     // Initialize / reset selection when the query or available items change.
     useEffect(() => {
@@ -102,11 +117,15 @@ export function useSelectableMenu(params: {
                 return;
             }
         }
-        setSelectedIndex(firstEnabledIndex());
-    }, [allItems, firstEnabledIndex, isEnabledIndex, params.initialSelectedId, searchQuery]);
+        setSelectedIndex(allowEmptySelection ? -1 : firstEnabledIndex());
+    }, [allItems, allowEmptySelection, firstEnabledIndex, isEnabledIndex, params.initialSelectedId, searchQuery]);
 
     const moveSelection = useCallback((dir: -1 | 1) => {
         if (allItems.length === 0) return;
+        if (allowEmptySelection && selectedIndex === -1) {
+            setSelectedIndex(dir === 1 ? firstEnabledIndex() : lastEnabledIndex());
+            return;
+        }
         let next = selectedIndex;
         for (let step = 0; step < allItems.length; step += 1) {
             next = Math.min(allItems.length - 1, Math.max(0, next + dir));
@@ -115,7 +134,7 @@ export function useSelectableMenu(params: {
                 return;
             }
         }
-    }, [allItems.length, isEnabledIndex, selectedIndex]);
+    }, [allItems.length, allowEmptySelection, firstEnabledIndex, isEnabledIndex, lastEnabledIndex, selectedIndex]);
 
     const handleKeyPress = useCallback((key: string, onActivate: (item: SelectableMenuItem) => void) => {
         switch (key) {
@@ -129,7 +148,7 @@ export function useSelectableMenu(params: {
                 moveSelection(-1);
                 break;
             case 'Enter':
-                if (isEnabledIndex(selectedIndex) && allItems[selectedIndex]) {
+                if (selectedIndex >= 0 && isEnabledIndex(selectedIndex) && allItems[selectedIndex]) {
                     onActivate(allItems[selectedIndex]!);
                 }
                 break;

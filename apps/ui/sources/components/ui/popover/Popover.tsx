@@ -221,6 +221,25 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 if (relative) {
                     anchorRect = relative;
                     anchorIsPortalRelative = true;
+                } else {
+                    // Some host components (or cross-root trees) don't support `measureLayout`.
+                    // In portal mode we must keep anchor + boundary in the *same* coordinate space,
+                    // so derive portal-root-relative coordinates from window measurements.
+                    const portalRootWindowRect = await measureInWindow(portalRootNode);
+                    const anchorWindowRect = await measureInWindow(anchorNode);
+                    // If the portal root cannot be measured (can happen with react-native-screens
+                    // modal presentations), fall back to the boundary rect as the origin.
+                    const boundaryWindowRect = boundaryNode ? await measureInWindow(boundaryNode) : null;
+                    const originWindowRect = portalRootWindowRect ?? boundaryWindowRect;
+                    if (originWindowRect && anchorWindowRect) {
+                        anchorRect = {
+                            x: anchorWindowRect.x - originWindowRect.x,
+                            y: anchorWindowRect.y - originWindowRect.y,
+                            width: anchorWindowRect.width,
+                            height: anchorWindowRect.height,
+                        };
+                        anchorIsPortalRelative = true;
+                    }
                 }
             }
 
@@ -244,6 +263,18 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                     const rootRect = await measureInWindow(portalRootNode);
                     if (rootRect?.width && rootRect?.height) {
                         return { x: 0, y: 0, width: rootRect.width, height: rootRect.height };
+                    }
+
+                    // As a last resort, try to derive portal-relative boundary geometry from window
+                    // measurements when `measureLayout` is not available on the boundary node.
+                    const boundaryWindowRect = boundaryNode ? await measureInWindow(boundaryNode) : null;
+                    if (rootRect && boundaryWindowRect) {
+                        return {
+                            x: boundaryWindowRect.x - rootRect.x,
+                            y: boundaryWindowRect.y - rootRect.y,
+                            width: boundaryWindowRect.width,
+                            height: boundaryWindowRect.height,
+                        };
                     }
 
                     return null;

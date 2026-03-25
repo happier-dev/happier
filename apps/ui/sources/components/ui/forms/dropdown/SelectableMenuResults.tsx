@@ -190,7 +190,7 @@ export function SelectableMenuResults(props: {
         // and prevent row-position context from leaking into the popover.
         return (
             <ItemGroupRowPositionBoundary>
-                <ItemGroupSelectionContext.Provider value={{ selectableItemCount: 2 }}>
+                <ItemGroupSelectionContext.Provider value={{ selectableItemCount: allItems.length }}>
                     {content}
                 </ItemGroupSelectionContext.Provider>
             </ItemGroupRowPositionBoundary>

@@ -17,6 +17,8 @@ export type FilesystemBrowserRowProps = Readonly<{
     rightElement?: React.ReactNode;
     onPress?: () => void;
     onDoublePress?: () => void;
+    onLongPress?: () => void;
+    onContextMenu?: (event: unknown) => void;
     selected?: boolean;
     testID?: string;
     density?: ItemProps['density'];
@@ -86,6 +88,8 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                 selected={props.selected}
                 onPress={props.onPress}
                 onDoublePress={props.onDoublePress}
+                onLongPress={props.onLongPress}
+                onContextMenu={props.onContextMenu}
                 showDivider={showDivider}
                 style={[
                     {
