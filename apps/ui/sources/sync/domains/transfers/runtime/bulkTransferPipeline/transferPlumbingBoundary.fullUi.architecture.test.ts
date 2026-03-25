@@ -50,11 +50,20 @@ describe('bulkTransferPipeline (architecture)', () => {
             if (filePath.includes('/bulkTransferPipeline/')) {
                 continue;
             }
+            // Allow the low-level chunk-transfer plumbing to depend on its own internals without
+            // tripping the "feature code must not import plumbing directly" guard.
+            if (filePath.includes('/sync/domains/files/transfers/')) {
+                continue;
+            }
             const source = await readFile(filePath, 'utf8');
             // Prevent bypass via relative imports, dynamic imports, or require().
             assertDoesNotImportModule(source, 'chunkTransferClient', filePath);
+            assertDoesNotImportModule(source, 'transferChunkEncryption', filePath);
             assertDoesNotImportModule(source, 'sessionFileTransferRpcCaller', filePath);
             assertDoesNotImportModule(source, 'mergeTransferChunks', filePath);
+            // Prevent bypass via importing other low-level transfer plumbing that is not part of
+            // the feature-facing pipeline (for example local upload readers).
+            assertDoesNotImportModule(source, 'sync/domains/files/transfers', filePath);
             assertDoesNotImportModule(source, 'uploadBulkPayloadFromFile', filePath);
             assertDoesNotImportModule(source, 'downloadBulkPayloadToFile', filePath);
             assertDoesNotImportModule(source, 'uploadBulkJsonPayload', filePath);
@@ -63,6 +72,13 @@ describe('bulkTransferPipeline (architecture)', () => {
             assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonSessionAttachments', filePath);
             assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonPromptAssets', filePath);
             assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonPromptRegistries', filePath);
+            // Prevent bypass via direct base64 file writes. These must remain behind the
+            // centralized policy/fallback choke point (and/or the bulk transfer pipeline).
+            if (!filePath.endsWith('/sync/runtime/sessionMachineRpcFallback.ts')) {
+                assertDoesNotContainToken(source, 'RPC_METHODS.WRITE_FILE', filePath);
+                // Prevent bypass via raw method strings (no chunk-loop reimplementation outside the pipeline).
+                assertDoesNotContainToken(source, 'daemon.bulkTransfer.', filePath);
+            }
             // Prevent bypass via direct DAEMON_BULK_TRANSFER init/chunk/finalize loops outside the pipeline.
             assertDoesNotContainToken(source, 'DAEMON_BULK_TRANSFER_', filePath);
         }

@@ -92,6 +92,62 @@ describe('bulkTransferPipeline', () => {
         });
     });
 
+    it('fails closed when the payload exceeds the server-routed limit even when a direct machine target is available', () => {
+        expect(resolveBulkTransferPolicyAndRoute({
+            serverId: 'server-1',
+            machineTargetAvailable: true,
+            sessionRpcAvailable: true,
+            transferSizeBytes: 512,
+            serverFeatures: createServerFeaturesResponse({
+                capabilities: {
+                    machines: {
+                        transfer: {
+                            serverRouted: {
+                                maxBytes: 256,
+                            },
+                        },
+                    },
+                },
+            }),
+        })).toEqual({
+            kind: 'unavailable',
+            response: {
+                success: false,
+                error: 'File exceeds the server-routed transfer size limit',
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            },
+        });
+    });
+
+    it('fails closed when transfer is disabled even when a direct machine target is available', () => {
+        expect(resolveBulkTransferPolicyAndRoute({
+            serverId: 'server-1',
+            machineTargetAvailable: true,
+            sessionRpcAvailable: true,
+            transferSizeBytes: 1,
+            serverFeatures: createServerFeaturesResponse({
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: false,
+                            serverRouted: {
+                                enabled: true,
+                            },
+                        },
+                    },
+                },
+            }),
+        })).toEqual({
+            kind: 'unavailable',
+            response: {
+                success: false,
+                error: 'Server-routed transfer is disabled on the selected server',
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            },
+        });
+    });
+
     it('uploads a file-backed payload and closes the reader after finalizing', async () => {
         const close = vi.fn(async () => {});
         const readBytes = vi.fn(async (offset: number, length: number) =>
@@ -454,6 +510,48 @@ describe('bulkTransferPipeline', () => {
             if (previous === undefined) {
                 delete process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
             } else {
+                process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = previous;
+            }
+        }
+    });
+
+    it('rejects oversized JSON payloads without calling JSON.stringify (preflight avoids unbounded memory)', async () => {
+        const previous = process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
+        process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = '1';
+
+            const original = JSON.stringify;
+            try {
+                // If `uploadBulkJsonPayload` still stringifies before enforcing the limit, this test will fail.
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                JSON.stringify = (() => {
+                    throw new Error('JSON.stringify should not be called for oversized payloads');
+                }) as any;
+
+            const init = vi.fn(async () => ({
+                success: true as const,
+                uploadId: 'upload-json-should-not-init',
+                chunkSizeBytes: 4096,
+                recipientPublicKeyBase64: Buffer.alloc(32, 7).toString('base64'),
+            }));
+
+            await expect(uploadBulkJsonPayload({
+                payload: { a: 'b' },
+                init,
+                sendChunk: async () => ({ success: true as const }),
+                finalize: async () => ({ success: true as const }),
+                parseResponse: () => null,
+            })).resolves.toEqual({
+                ok: false,
+                error: expect.stringContaining('exceeds'),
+            });
+
+            expect(init).not.toHaveBeenCalled();
+            } finally {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                JSON.stringify = original as any;
+                if (previous === undefined) {
+                    delete process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
+                } else {
                 process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = previous;
             }
         }

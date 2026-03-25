@@ -6,6 +6,7 @@ import {
     rebaseTransferRequestPathToMachineTarget,
 } from '@/sync/runtime/sessionMachineRpcFallback';
 import { createSessionFileTransferRpcCaller } from '@/sync/domains/transfers/runtime/sessionFileTransferRpcCaller';
+import { mergeTransferChunks } from '@/sync/domains/transfers/runtime/mergeTransferChunks';
 
 import {
     type BulkTransferFileDestination,
@@ -18,6 +19,17 @@ import {
 } from './uploadBulkPayloadFromFile';
 
 type SessionRpcFailure = Readonly<{ success: false; error: string; errorCode?: string }>;
+
+type SessionStatFileRequest = Readonly<{ path: string }>;
+
+type SessionStatFileResponse =
+    | Readonly<{
+        success: true;
+        exists: boolean;
+        kind?: 'file' | 'directory' | 'other';
+        sizeBytes?: number;
+      }>
+    | SessionRpcFailure;
 
 type SessionFileDownloadInitResponse =
     | Readonly<{
@@ -80,16 +92,6 @@ export type SessionWriteFileRpcRequest = Readonly<{
 export type SessionWriteFileRpcResponse =
     | Readonly<{ success: true; hash: string }>
     | SessionRpcFailure;
-
-function concatChunks(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array {
-    const output = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const chunk of chunks) {
-        output.set(chunk, offset);
-        offset += chunk.byteLength;
-    }
-    return output;
-}
 
 export async function callDaemonSessionWriteFileRpc(params: Readonly<{
     sessionId: string;
@@ -178,8 +180,35 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
     signal?: AbortSignal | null;
     onProgress?: ((progress: Readonly<{ downloadedBytes: number; totalBytes: number }>) => void) | null;
 }>): Promise<Readonly<{ ok: true; name: string; sizeBytes: number }> | Readonly<{ ok: false; error: string }>> {
+    let sessionRpcTransferSizeBytes: number | null = null;
+    if (!params.request.asZip) {
+        const statClient = createSessionFileTransferRpcCaller({
+            sessionId: params.sessionId,
+        });
+        const stat = await statClient.call<SessionStatFileResponse, SessionStatFileRequest>({
+            request: { path: params.request.path },
+            machineMethod: RPC_METHODS.STAT_FILE,
+            sessionMethod: RPC_METHODS.STAT_FILE,
+            toMachineRequest: rebasePathRequestToMachineTarget,
+        });
+        if (stat.success !== true) {
+            return { ok: false, error: stat.error };
+        }
+        if (!stat.exists) {
+            return { ok: false, error: 'File does not exist' };
+        }
+        if (stat.kind && stat.kind !== 'file') {
+            return { ok: false, error: 'Path is not a file' };
+        }
+        if (typeof stat.sizeBytes !== 'number' || !Number.isFinite(stat.sizeBytes) || stat.sizeBytes < 0) {
+            return { ok: false, error: 'Unable to resolve file size' };
+        }
+        sessionRpcTransferSizeBytes = Math.floor(stat.sizeBytes);
+    }
+
     const transferClient = createSessionFileTransferRpcCaller({
         sessionId: params.sessionId,
+        ...(sessionRpcTransferSizeBytes !== null ? { sessionRpcTransferSizeBytes } : {}),
     });
 
     return await downloadBulkPayloadToFile({
@@ -249,11 +278,43 @@ export async function downloadDaemonSessionFileToBase64(params: Readonly<{
     maxBytes: number;
     signal?: AbortSignal | null;
 }>): Promise<Readonly<{ ok: true; contentBase64: string }> | Readonly<{ ok: false; error: string; errorCode?: string }>> {
+    const statClient = createSessionFileTransferRpcCaller({
+        sessionId: params.sessionId,
+    });
+    const stat = await statClient.call<SessionStatFileResponse, SessionStatFileRequest>({
+        request: { path: params.path },
+        machineMethod: RPC_METHODS.STAT_FILE,
+        sessionMethod: RPC_METHODS.STAT_FILE,
+        toMachineRequest: rebasePathRequestToMachineTarget,
+    });
+    if (stat.success !== true) {
+        return { ok: false, error: stat.error, ...(stat.errorCode ? { errorCode: stat.errorCode } : {}) };
+    }
+    if (!stat.exists) {
+        return { ok: false, error: 'File does not exist', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE };
+    }
+    if (stat.kind && stat.kind !== 'file') {
+        return { ok: false, error: 'Path is not a file', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE };
+    }
+    if (typeof stat.sizeBytes !== 'number' || !Number.isFinite(stat.sizeBytes) || stat.sizeBytes < 0) {
+        return { ok: false, error: 'Unable to resolve file size', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE };
+    }
+
+    const fileSizeBytes = Math.floor(stat.sizeBytes);
+    if (fileSizeBytes > params.maxBytes) {
+        return {
+            ok: false,
+            error: 'File exceeds the inline file read size limit',
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        };
+    }
+
     const chunks: Uint8Array[] = [];
     let bufferedBytes = 0;
 
     const transferClient = createSessionFileTransferRpcCaller({
         sessionId: params.sessionId,
+        sessionRpcTransferSizeBytes: fileSizeBytes,
     });
 
     try {
@@ -330,7 +391,7 @@ export async function downloadDaemonSessionFileToBase64(params: Readonly<{
             };
         }
 
-        const bytes = concatChunks(chunks, bufferedBytes);
+        const bytes = mergeTransferChunks(chunks);
         return {
             ok: true,
             contentBase64: encodeBase64(bytes, 'base64'),
