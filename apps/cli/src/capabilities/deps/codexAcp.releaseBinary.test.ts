@@ -338,6 +338,47 @@ describe('codexAcp release-binary installer', () => {
     );
   });
 
+  it('ignores legacy npm-style managed installs on Windows when only a .exe shim is present and no managed JS runtime exists', async () => {
+    if (!ORIGINAL_PLATFORM_DESCRIPTOR) {
+      throw new Error('Expected process.platform to be configurable for this test');
+    }
+
+    Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'win32' });
+
+    const previousManagedNodeBin = process.env.HAPPIER_MANAGED_NODE_BIN;
+    const previousNodePath = process.env.HAPPIER_NODE_PATH;
+    const previousJsRuntimePath = process.env.HAPPIER_JS_RUNTIME_PATH;
+
+    try {
+      delete process.env.HAPPIER_MANAGED_NODE_BIN;
+      delete process.env.HAPPIER_NODE_PATH;
+      delete process.env.HAPPIER_JS_RUNTIME_PATH;
+
+      const home = await mkdtemp(join(tmpdir(), 'happier-codex-acp-legacy-win-exe-home-'));
+      tempDirs.add(home);
+      process.env.HAPPIER_HOME_DIR = home;
+
+      const { codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
+      const legacyExePath = join(codexAcpInstallDir(), 'node_modules', '.bin', 'codex-acp.exe');
+      await mkdir(dirname(legacyExePath), { recursive: true });
+      await writeFile(legacyExePath, 'MZ', 'utf8');
+
+      await expect(getCodexAcpDepStatus()).resolves.toEqual(
+        expect.objectContaining({
+          installed: false,
+          binPath: null,
+        }),
+      );
+    } finally {
+      if (previousManagedNodeBin === undefined) delete process.env.HAPPIER_MANAGED_NODE_BIN;
+      else process.env.HAPPIER_MANAGED_NODE_BIN = previousManagedNodeBin;
+      if (previousNodePath === undefined) delete process.env.HAPPIER_NODE_PATH;
+      else process.env.HAPPIER_NODE_PATH = previousNodePath;
+      if (previousJsRuntimePath === undefined) delete process.env.HAPPIER_JS_RUNTIME_PATH;
+      else process.env.HAPPIER_JS_RUNTIME_PATH = previousJsRuntimePath;
+    }
+  });
+
   it('treats legacy npm-style managed installs as runnable when a managed JS runtime exists', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-codex-acp-legacy-managed-node-home-'));
     tempDirs.add(home);

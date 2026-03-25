@@ -49,10 +49,6 @@ function isLegacyCodexAcpShimRunnable(candidatePath: string, processEnv: NodeJS.
   const legacyPaths = codexAcpLegacyBinPaths();
   if (!legacyPaths.includes(candidatePath as (typeof legacyPaths)[number])) return true;
 
-  if (process.platform === 'win32' && basename(candidatePath).toLowerCase().endsWith('.exe')) {
-    return true;
-  }
-
   return hasJavaScriptRuntimeForLegacyCodexAcpShim(processEnv);
 }
 
