@@ -78,7 +78,7 @@ describe('capabilities.invoke(cli.* probeModes)', () => {
     });
 
     expect(probeSpy).toHaveBeenCalledTimes(1);
-    expect(probeSpy).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 15_000 }));
+    expect(probeSpy).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 30_000 }));
   });
 
   it('forwards backendTarget to probeAgentModesBestEffort for cli.customAcp', async () => {

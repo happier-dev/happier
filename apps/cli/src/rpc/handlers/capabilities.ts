@@ -26,7 +26,7 @@ import { applyAgentRuntimeKindOverrideToAccountSettings } from '@happier-dev/age
 import { BackendTargetRefSchema, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import { invokeProviderCliInstall as invokeSharedProviderCliInstall } from '@/runtime/managedTools/invokeProviderCliInstall';
 
-const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 15_000;
+const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
 
 function titleCase(value: string): string {
     if (!value) return value;
