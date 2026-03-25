@@ -93,6 +93,26 @@ describe('serverFetch connectivity supervision', () => {
         expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);
     });
 
+    it('marks connectivity timeouts as non-retryable (prevents nested backoff loops)', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        vi.spyOn(Math, 'random').mockReturnValue(0);
+        process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
+
+        installDefaultActiveServerMocks();
+        installTokenStorageMock();
+        installRuntimeFetchMock();
+
+        const { serverFetch } = await import('./client');
+        const promise = serverFetch('/v1/account/profile');
+        const assertion = expect(promise).rejects.toMatchObject({
+            name: 'ServerFetchConnectivityTimeoutError',
+            retryable: false,
+        });
+        await vi.advanceTimersByTimeAsync(5);
+        await assertion;
+    });
+
     it('still gates reachability when includeAuth=false but a bearer Authorization header is provided', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(0);
@@ -169,6 +189,38 @@ describe('serverFetch connectivity supervision', () => {
         await firstAssertion;
         await secondAssertion;
 
+        const healthCalls = runtimeFetchMock.mock.calls.filter(([input]) => String(input).endsWith('/health'));
+        expect(healthCalls).toHaveLength(1);
+    });
+
+    it('does not get retried by default backoff when reachability times out', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        vi.spyOn(Math, 'random').mockReturnValue(0);
+        process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
+
+        installDefaultActiveServerMocks();
+        installTokenStorageMock();
+        const runtimeFetchMock = installRuntimeFetchMock();
+
+        const { createBackoff } = await import('@/utils/timing/time');
+        const backoff = createBackoff({
+            minDelay: 1,
+            maxDelay: 1,
+            maxFailureCount: 3,
+            onError: () => {},
+            onRetry: () => {},
+        });
+
+        const { serverFetch } = await import('./client');
+        const promise = backoff(() => serverFetch('/v1/account/profile'));
+        const assertion = expect(promise).rejects.toMatchObject({ name: 'ServerFetchConnectivityTimeoutError' });
+
+        await vi.advanceTimersByTimeAsync(5);
+        await assertion;
+
+        // If the error were treated as retryable, the backoff loop would schedule a retry and re-run the probe.
+        await vi.advanceTimersByTimeAsync(10);
         const healthCalls = runtimeFetchMock.mock.calls.filter(([input]) => String(input).endsWith('/health'));
         expect(healthCalls).toHaveLength(1);
     });

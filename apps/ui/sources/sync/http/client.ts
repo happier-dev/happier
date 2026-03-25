@@ -25,6 +25,8 @@ export class ServerFetchAbortedForServerSwitchError extends Error {
 }
 
 export class ServerFetchConnectivityTimeoutError extends Error {
+    public readonly retryable = false;
+
     constructor() {
         super('Timed out waiting for server reachability');
         this.name = 'ServerFetchConnectivityTimeoutError';
@@ -151,11 +153,6 @@ export async function serverFetch(
     const headers = new Headers(init?.headers ?? {});
     let usedToken: string | null = null;
     if (options.includeAuth !== false) {
-        if (isCrossOrigin) {
-            throw new Error(
-                `Refused authenticated request to ${absoluteRequestUrl!.origin}; active server is ${activeServerUrl!.origin}`,
-            );
-        }
         const credentials = await TokenStorage.getCredentials();
         if (credentials?.token) {
             usedToken = credentials.token;
@@ -168,11 +165,27 @@ export async function serverFetch(
     if (!usedToken && explicitAuthHeader.startsWith('Bearer ')) {
         usedToken = explicitAuthHeader.slice(7).trim() || null;
     }
-    if (isCrossOrigin && explicitAuthHeader.trim().length > 0) {
-        // Prevent accidental token leakage when passing absolute URLs.
-        throw new Error(
-            `Refused authenticated request to ${absoluteRequestUrl!.origin}; active server is ${activeServerUrl!.origin}`,
-        );
+    const hasAuthorization = explicitAuthHeader.trim().length > 0;
+    if (hasAuthorization) {
+        // Fail-closed: if we have any Authorization header, we must be able to validate same-origin
+        // to avoid accidentally sending credentials to an unexpected host (or the current web origin).
+        if (!absoluteRequestUrl || !activeServerUrl) {
+            throw new Error(
+                `Refused authenticated request because request/active server URL is not a valid absolute URL ` +
+                `(requestUrl=${requestUrl}, activeServerUrl=${snapshot.serverUrl})`,
+            );
+        }
+        if ((absoluteRequestUrl.protocol !== 'http:' && absoluteRequestUrl.protocol !== 'https:') || (activeServerUrl.protocol !== 'http:' && activeServerUrl.protocol !== 'https:')) {
+            throw new Error(
+                `Refused authenticated request because request/active server URL is not http(s) ` +
+                `(requestUrl=${requestUrl}, activeServerUrl=${snapshot.serverUrl})`,
+            );
+        }
+        if (absoluteRequestUrl.origin !== activeServerUrl.origin) {
+            throw new Error(
+                `Refused authenticated request to ${absoluteRequestUrl.origin}; active server is ${activeServerUrl.origin}`,
+            );
+        }
     }
 
     const requestController = new AbortController();
