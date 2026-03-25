@@ -528,7 +528,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         }
 
         return hiddenItems;
-    }, [allowCreateActions, hiddenToolbarActions, onSelectUploadMenuItem, uploadMenuConfig.items, uploadShouldBeVisible]);
+    }, [hiddenToolbarActions, onSelectUploadMenuItem, uploadActionsAvailable, uploadMenuConfig.items, uploadShouldBeVisible]);
 
     const renderToolbarIconButton = React.useCallback((action: ToolbarActionConfig) => {
         if (action.id === 'repository-tree-upload') {
@@ -541,67 +541,45 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                     onSelect={onSelectUploadMenuItem}
                     matchTriggerWidth={uploadMenuConfig.matchTriggerWidth}
                     trigger={({ toggle }) => (
-                        <Pressable
+                        <FileBrowserToolbarIconButton
                             testID="repository-tree-upload"
-                            accessibilityRole="button"
                             accessibilityLabel={action.accessibilityLabel}
                             onPress={toggle}
-                            style={[
-                                styles.iconButton,
-                                action.selected ? { backgroundColor: theme.colors.surface, borderColor: theme.colors.textLink } : null,
-                                action.disabled ? { opacity: 0.35 } : null,
-                            ]}
-                            hitSlop={10}
+                            selected={action.selected}
                             disabled={action.disabled}
                         >
                             {action.icon}
-                        </Pressable>
+                        </FileBrowserToolbarIconButton>
                     )}
                 />
             );
         }
 
         return (
-            <Pressable
+            <FileBrowserToolbarIconButton
                 key={action.id}
                 testID={action.id}
-                accessibilityRole="button"
                 accessibilityLabel={action.accessibilityLabel}
                 onPress={action.onPress}
-                style={[
-                    styles.iconButton,
-                    action.selected ? { backgroundColor: theme.colors.surface, borderColor: theme.colors.textLink } : null,
-                    action.disabled ? { opacity: 0.35 } : null,
-                ]}
-                hitSlop={10}
+                selected={action.selected}
                 disabled={action.disabled}
             >
                 {action.icon}
-            </Pressable>
+            </FileBrowserToolbarIconButton>
         );
-    }, [onSelectUploadMenuItem, styles.iconButton, theme.colors.surface, theme.colors.textLink, uploadMenuConfig.matchTriggerWidth, uploadMenuItems, uploadMenuOpen]);
+    }, [onSelectUploadMenuItem, uploadMenuConfig.matchTriggerWidth, uploadMenuItems, uploadMenuOpen]);
 
     return (
         <View style={{ flex: 1 }}>
             {showSearchBar ? (
-                <View
+                <FileBrowserToolbar
                     testID="repository-tree-toolbar"
-                    style={styles.toolbar}
-                    onLayout={(event) => {
-                        const width = event?.nativeEvent?.layout?.width;
-                        if (typeof width === 'number' && Number.isFinite(width) && width > 0) {
-                            setToolbarWidth(width);
-                        }
-                    }}
+                    searchTestID="repository-tree-search"
+                    searchPlaceholder={t('files.searchPlaceholder')}
+                    searchValue={searchQuery}
+                    onSearchValueChange={setSearchQuery}
+                    onWidthChange={setToolbarWidth}
                 >
-                    <TextInput
-                        testID="repository-tree-search"
-                        placeholder={t('files.searchPlaceholder')}
-                        placeholderTextColor={theme.colors.textSecondary}
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        style={styles.searchInput}
-                    />
                     {visibleToolbarActions.map(renderToolbarIconButton)}
                     {overflowMenuItems.length > 0 ? (
                         <ItemRowActions
@@ -611,22 +589,19 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                             compactThreshold={Number.POSITIVE_INFINITY}
                             compactActionIds={[]}
                             renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => (
-                                <Pressable
-                                    testID={testID}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={accessibilityLabel}
+                                <FileBrowserToolbarIconButton
+                                    testID={testID ?? 'repository-tree-toolbar-overflow'}
+                                    accessibilityLabel={accessibilityLabel ?? t('common.moreActions')}
                                     accessibilityHint={accessibilityHint}
                                     accessibilityState={{ expanded: open }}
                                     onPress={toggle}
-                                    style={styles.iconButton}
-                                    hitSlop={10}
                                 >
                                     <Ionicons name="ellipsis-horizontal" size={16} color={theme.colors.textSecondary} />
-                                </Pressable>
+                                </FileBrowserToolbarIconButton>
                             )}
                         />
                     ) : null}
-                </View>
+                </FileBrowserToolbar>
             ) : null}
             {Platform.OS === 'web' ? (
                 <>

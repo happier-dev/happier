@@ -5,7 +5,7 @@ import { createRepositoryTreeUploadMenuConfig } from './createRepositoryTreeUplo
 describe('createRepositoryTreeUploadMenuConfig', () => {
     it('keeps the upload menu content-sized instead of matching the icon trigger width', () => {
         const config = createRepositoryTreeUploadMenuConfig({
-            allowCreateActions: true,
+            uploadActionsAvailable: true,
             isWeb: true,
         });
 
@@ -14,7 +14,7 @@ describe('createRepositoryTreeUploadMenuConfig', () => {
 
     it('disables folder upload outside web while keeping file upload enabled', () => {
         const config = createRepositoryTreeUploadMenuConfig({
-            allowCreateActions: true,
+            uploadActionsAvailable: true,
             isWeb: false,
         });
 
