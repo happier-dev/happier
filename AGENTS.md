@@ -287,6 +287,9 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
   - `apps/cli` uses `apps/cli/src/backends/<providerId>` for executable provider wiring (CLI historical naming).
   - Internal workspaces use `src/providers/<providerId>` (e.g. `packages/*/src/providers/<providerId>`).
   - UI uses `apps/ui/sources/agents/providers/<providerId>`.
+  - `backends/` is **reserved** for `apps/cli` only — do not introduce new `backends/**` folders in `packages/*` or `apps/ui`.
+  - **Protocol layout invariant**: provider-specific executable logic/policy/defaults must live under `packages/protocol/src/providers/<providerId>/**` (avoid scattering provider folders inside other protocol domains).
+  - **Protocol structure rule**: never add `packages/protocol/src/**/providers/<providerId>/**` or `packages/protocol/src/**/backends/<providerId>/**`. Keep a single `packages/protocol/src/providers/<providerId>/**` tree and re-export provider wire/schema from there when domain code needs it.
 - Avoid compatibility shims for renames/moves by default. When restructuring, update all imports directly so the final structure is canonical.
 - Split crowded folders by domain (for example: `runtime/`, `session/`, `spawn/`, `permission/`) instead of accumulating many cross-cutting files at one level.
 - Keep files single-purpose. If a file starts owning multiple responsibilities, extract cohesive modules with explicit names.
