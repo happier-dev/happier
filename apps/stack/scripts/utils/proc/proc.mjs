@@ -41,15 +41,12 @@ function sanitizeLogFileToken(raw) {
 }
 
 export function spawnProc(label, cmd, args, env, options = {}) {
-  const { silent = false, teeFile, teeLabel, ...spawnOptions } = options ?? {};
-  const child = spawn(cmd, args, {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: false,
-    // Create a new process group so we can kill the whole tree reliably on shutdown.
-    detached: process.platform !== 'win32',
-    ...spawnOptions,
-  });
+  const {
+    silent = false,
+    teeFile,
+    teeLabel,
+    ...spawnOptions
+  } = options ?? {};
 
   const outState = { buf: '' };
   const errState = { buf: '' };
@@ -76,6 +73,15 @@ export function spawnProc(label, cmd, args, env, options = {}) {
     if (t) return `[${t}] `;
     return outPrefix;
   })();
+
+  const child = spawn(cmd, args, {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: false,
+    // Create a new process group so we can kill the whole tree reliably on shutdown.
+    detached: process.platform !== 'win32',
+    ...spawnOptions,
+  });
 
   child.stdout?.on('data', (d) => {
     if (!silent) writeWithPrefix(process.stdout, outPrefix, outState, d);

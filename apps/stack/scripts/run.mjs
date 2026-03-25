@@ -49,6 +49,7 @@ import { applyRuntimeServerLightSqliteEnv } from './utils/server/apply_runtime_s
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { resolveCliRuntimeLaunchSpec } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 import { resolveServerRuntimeLaunchSpec } from './runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
+import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog.mjs';
 
 /**
  * Run the local stack in "production-like" mode:
@@ -326,6 +327,15 @@ async function main() {
       ports: { server: serverPort },
       runtimeSnapshotId: runtimeSnapshot?.snapshotId ?? null,
     }).catch(() => {});
+    spawnStackOwnerDeathWatchdog({
+      rootDir,
+      stackName,
+      baseDir: autostart.baseDir,
+      envPath,
+      runtimeStatePath,
+      ownerPid: process.pid,
+      env: baseEnv,
+    });
   }
 
   // Server

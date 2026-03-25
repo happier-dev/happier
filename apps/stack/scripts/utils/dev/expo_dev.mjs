@@ -236,7 +236,11 @@ export function buildExpoDevEnv({
       })
     : apiServerUrl;
 
+  // The UI prefers EXPO_PUBLIC_HAPPIER_SERVER_URL. Keep legacy aliases in sync to avoid
+  // accidental precedence from a leaked shell env var (or from older tooling).
+  env.EXPO_PUBLIC_HAPPIER_SERVER_URL = effectiveApiServerUrl;
   env.EXPO_PUBLIC_HAPPY_SERVER_URL = effectiveApiServerUrl;
+  env.EXPO_PUBLIC_SERVER_URL = effectiveApiServerUrl;
   if (stackMode) {
     env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
   }

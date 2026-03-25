@@ -36,6 +36,7 @@ import { isSandboxed } from './utils/env/sandbox.mjs';
 import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
+import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog.mjs';
 
  /**
   * Dev mode stack:
@@ -277,6 +278,15 @@ async function main() {
       ownerPid: process.pid,
       ports: startServer ? { server: serverPort } : {},
     }).catch(() => {});
+    spawnStackOwnerDeathWatchdog({
+      rootDir,
+      stackName,
+      baseDir: autostart.baseDir,
+      envPath,
+      runtimeStatePath,
+      ownerPid: process.pid,
+      env: baseEnv,
+    });
   }
 
   // Start server (only if not already healthy)

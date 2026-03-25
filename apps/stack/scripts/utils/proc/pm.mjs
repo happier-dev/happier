@@ -77,7 +77,7 @@ function extractLocalImportSpecifiersFromJs(text) {
   return Array.from(out);
 }
 
-async function assertNoMissingLocalImports({ distDir, entryPath }) {
+async function assertNoMissingLocalImports({ distDir, entryPath, label = 'dist build' }) {
   const root = resolve(distDir);
   const entry = resolve(entryPath);
 
@@ -125,9 +125,9 @@ async function assertNoMissingLocalImports({ distDir, entryPath }) {
       .map((m) => `- ${m.spec} (from ${m.from})`)
       .join('\n');
     throw new Error(
-      `[local] happier-cli dist build looks partial (missing local imports).\n` +
+      `[local] ${label} looks partial (missing local imports).\n` +
         `Entrypoint: ${entryPath}\n` +
-        `Missing (${missing.length}):\n${preview}`
+        `Missing (${missing.length}):\n${preview}`,
     );
   }
 }
@@ -580,7 +580,32 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
   if (expectedFiles.length === 0) return { built: false, reason: 'no-expected-files' };
 
   const missingBefore = expectedFiles.filter((p) => !existsSync(p));
-  if (missingBefore.length === 0) return { built: false, reason: 'already-built' };
+
+  const distDir = join(pkgDir, 'dist');
+  const distRoot = resolve(distDir);
+  const distEntrypoints = expectedFiles
+    .filter((p) => /\.(?:mjs|cjs|js)$/.test(p))
+    .filter((p) => {
+      const abs = resolve(p);
+      return abs === distRoot || abs.startsWith(distRoot + sep);
+    });
+
+  const label = pkgJson?.name ? `${pkgJson.name} dist build` : 'dist build';
+  let needsRebuildForPartialDist = false;
+  if (missingBefore.length === 0 && distEntrypoints.length > 0) {
+    for (const entryPath of distEntrypoints) {
+      try {
+        await assertNoMissingLocalImports({ distDir, entryPath, label });
+      } catch {
+        needsRebuildForPartialDist = true;
+        break;
+      }
+    }
+  }
+
+  if (missingBefore.length === 0 && !needsRebuildForPartialDist) {
+    return { built: false, reason: 'already-built' };
+  }
 
   const buildScript = pkgJson?.scripts?.build;
   if (!buildScript) {
@@ -606,6 +631,12 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
         missingAfter.map((p) => `- ${p}`).join('\n') +
         '\nFix: ensure the package build generates the files referenced by package.json exports/main/types.',
     );
+  }
+
+  if (distEntrypoints.length > 0) {
+    for (const entryPath of distEntrypoints) {
+      await assertNoMissingLocalImports({ distDir, entryPath, label });
+    }
   }
 
   return { built: true, reason: 'rebuilt' };
