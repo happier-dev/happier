@@ -35,6 +35,16 @@ export function resolveSocketMaxHttpBufferSizeFromEnv(env: Record<string, string
     return parsed;
 }
 
+export const DEFAULT_SOCKET_FAST_DISCONNECT_LOG_THRESHOLD_MS = 1_000;
+
+export function resolveSocketFastDisconnectLogThresholdMsFromEnv(env: Record<string, string | undefined>): number {
+    const raw = (env.HAPPIER_SOCKET_FAST_DISCONNECT_LOG_THRESHOLD_MS ?? env.HAPPY_SOCKET_FAST_DISCONNECT_LOG_THRESHOLD_MS ?? '').trim();
+    if (!raw) return DEFAULT_SOCKET_FAST_DISCONNECT_LOG_THRESHOLD_MS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_SOCKET_FAST_DISCONNECT_LOG_THRESHOLD_MS;
+    return parsed;
+}
+
 export function startSocket(app: Fastify) {
     const socketAdapter = getSocketAdapterFromEnv(process.env, "memory");
     const shouldEnableRedisAdapter = isRedisStreamsEnabled(process.env, socketAdapter);
@@ -43,6 +53,7 @@ export function startSocket(app: Fastify) {
         process.env,
     );
     const machineTransferFeatureEnv = readMachineTransferFeatureEnv(process.env);
+    const fastDisconnectLogThresholdMs = resolveSocketFastDisconnectLogThresholdMsFromEnv(process.env);
 
     const instanceId = process.env.HAPPIER_INSTANCE_ID?.trim() || process.env.HAPPY_INSTANCE_ID?.trim() || randomUUID();
 
@@ -146,6 +157,7 @@ export function startSocket(app: Fastify) {
     });
 
     io.on("connection", async (socket) => {
+        const connectedAtMs = Date.now();
         const remoteAddress = socket.handshake.address;
         const remotePort =
             typeof (socket.conn as unknown as { remotePort?: unknown } | undefined)?.remotePort === 'number'
@@ -244,6 +256,9 @@ export function startSocket(app: Fastify) {
             eventRouter.removeConnection(userId, connection);
             decrementWebSocketConnection(connection.connectionType);
 
+            const durationMs = Math.max(0, Date.now() - connectedAtMs);
+            const isFastDisconnect = fastDisconnectLogThresholdMs > 0 && durationMs <= fastDisconnectLogThresholdMs;
+
             log(
                 {
                     module: 'websocket',
@@ -253,11 +268,12 @@ export function startSocket(app: Fastify) {
                     sessionId: sessionId || 'none',
                     machineId: machineId || 'none',
                     reason,
-                    remoteAddress,
-                    userAgent,
-                    transport,
+                    durationMs,
+                    ...(isFastDisconnect ? { remoteAddress, userAgent, transport } : null),
                 },
-                `User disconnected: ${userId} (reason=${String(reason)}, socketId=${socket.id}, clientType=${metadata.clientType}, remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
+                isFastDisconnect
+                    ? `User disconnected: ${userId} (reason=${String(reason)}, durationMs=${durationMs}, socketId=${socket.id}, clientType=${metadata.clientType}, remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`
+                    : `User disconnected: ${userId} (reason=${String(reason)}, durationMs=${durationMs}, socketId=${socket.id}, clientType=${metadata.clientType})`,
             );
 
             // Broadcast daemon offline status
