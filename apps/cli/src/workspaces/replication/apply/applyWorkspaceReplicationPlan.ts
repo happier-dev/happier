@@ -32,6 +32,9 @@ export async function applyWorkspaceReplicationPlan(params: Readonly<{
     });
 
     if (params.strategy === 'sync_changes') {
+        if (!params.currentTargetManifest) {
+            throw new Error('Missing currentTargetManifest for sync_changes');
+        }
         const preparedTarget = await prepareWorkspaceSyncTargetPath({
             targetPath: params.targetPath,
             conflictPolicy: params.conflictPolicy,
@@ -40,7 +43,7 @@ export async function applyWorkspaceReplicationPlan(params: Readonly<{
 
         try {
             const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
-                currentManifest: params.currentTargetManifest ?? { entries: [] },
+                currentManifest: params.currentTargetManifest,
                 nextManifest: params.sourceOffer.manifest,
                 sourceControllerMetadata: params.sourceOffer.sourceControllerMetadata ?? null,
             });

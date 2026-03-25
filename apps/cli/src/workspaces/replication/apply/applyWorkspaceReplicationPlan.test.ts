@@ -173,6 +173,41 @@ describe('applyWorkspaceReplicationPlan', () => {
     }
   });
 
+  it('rejects sync_changes when currentTargetManifest is missing (no silent empty-manifest default)', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-apply-plan-missing-target-manifest-active-'));
+    const targetRoot = await mkdtemp(join(tmpdir(), 'happier-replication-apply-plan-missing-target-manifest-target-'));
+    const sourceFilePath = join(activeServerDir, 'README.md');
+    const payload = Buffer.from('new readme\n', 'utf8');
+    const digest = createSha256Digest(payload);
+
+    try {
+      const { createWorkspaceReplicationCasStore } = await import('../cas/workspaceReplicationCasStore');
+      const { applyWorkspaceReplicationPlan } = await import('./applyWorkspaceReplicationPlan');
+
+      await writeFile(sourceFilePath, payload);
+      const casStore = createWorkspaceReplicationCasStore({ activeServerDir });
+      await casStore.commitFile({
+        digest,
+        sourcePath: sourceFilePath,
+      });
+
+      await expect(applyWorkspaceReplicationPlan({
+        activeServerDir,
+        targetPath: targetRoot,
+        strategy: 'sync_changes',
+        conflictPolicy: 'replace_existing',
+        sourceOffer: createSourceOffer({
+          digest,
+          sizeBytes: payload.byteLength,
+          relativePath: 'README.md',
+        }),
+      })).rejects.toThrow(/currentTargetManifest/i);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+      await rm(targetRoot, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to a writable local path when sync_changes targets an uncreatable parent tree', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-apply-plan-active-'));
     const root = await mkdtemp(join(tmpdir(), 'happier-replication-apply-plan-uncreatable-'));
