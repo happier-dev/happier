@@ -1,4 +1,4 @@
-import { accessSync, constants as fsConstants, existsSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, statSync } from 'node:fs';
 import { chmod, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
@@ -21,6 +21,7 @@ function resolveManagedPnpmBinaryName(): string {
 }
 
 const STALE_PNPM_BOOTSTRAP_LOCK_MAX_AGE_MS = 5 * 60 * 1000;
+const MANAGED_PNPM_BOOTSTRAP_ENV_VAR = 'HAPPIER_MANAGED_PNPM_BOOTSTRAP';
 
 export function managedPnpmInstallDir(processEnv: NodeJS.ProcessEnv = process.env): string {
   return join(resolveHappyHomeDirFromEnvironment(processEnv), 'tools', 'pnpm');
@@ -30,17 +31,22 @@ export function managedPnpmBinPath(processEnv: NodeJS.ProcessEnv = process.env):
   return join(managedPnpmInstallDir(processEnv), 'current', 'bin', resolveManagedPnpmBinaryName());
 }
 
+function isExecutableFile(path: string): boolean {
+  try {
+    if (!statSync(path).isFile()) return false;
+    accessSync(path, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function resolveExistingManagedOrOverridePnpmCommand(processEnv: NodeJS.ProcessEnv): string | null {
   const override = readPnpmOverride(processEnv);
   if (override) return override;
 
   const managedPath = managedPnpmBinPath(processEnv);
-  try {
-    accessSync(managedPath, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
-    return managedPath;
-  } catch {
-    return null;
-  }
+  return isExecutableFile(managedPath) ? managedPath : null;
 }
 
 export function readRawPnpmOverride(processEnv: NodeJS.ProcessEnv = process.env): string | null {
@@ -51,12 +57,7 @@ export function readRawPnpmOverride(processEnv: NodeJS.ProcessEnv = process.env)
 function readPnpmOverride(processEnv: NodeJS.ProcessEnv): string | null {
   const raw = readRawPnpmOverride(processEnv);
   if (!raw) return null;
-  try {
-    accessSync(raw, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
-    return raw;
-  } catch {
-    return null;
-  }
+  return isExecutableFile(raw) ? raw : null;
 }
 
 function resolveCommandOnPath(command: string, processEnv: NodeJS.ProcessEnv): string | null {
@@ -73,6 +74,7 @@ function resolveCommandOnPath(command: string, processEnv: NodeJS.ProcessEnv): s
     if (!existsSync(candidate)) continue;
     // On Unix, verify the file is executable
     try {
+      if (!statSync(candidate).isFile()) continue;
       accessSync(candidate, fsConstants.X_OK);
       return candidate;
     } catch {
@@ -154,6 +156,13 @@ export function resolveExistingPnpmCommand(processEnv: NodeJS.ProcessEnv = proce
   return resolveCommandOnPath('pnpm', processEnv);
 }
 
+function shouldBootstrapManagedPnpm(processEnv: NodeJS.ProcessEnv): boolean {
+  const raw = typeof processEnv[MANAGED_PNPM_BOOTSTRAP_ENV_VAR] === 'string'
+    ? String(processEnv[MANAGED_PNPM_BOOTSTRAP_ENV_VAR]).trim()
+    : '';
+  return raw !== '0';
+}
+
 async function installManagedPnpm(
   processEnv: NodeJS.ProcessEnv,
   deps: EnsureManagedPnpmDeps,
@@ -229,6 +238,10 @@ export async function ensureManagedPnpmCommand(
 
   const existing = resolveExistingManagedOrOverridePnpmCommand(processEnv);
   if (existing) return existing;
+
+  if (!shouldBootstrapManagedPnpm(processEnv)) {
+    return resolveCommandOnPath('pnpm', processEnv);
+  }
 
   try {
     return await installManagedPnpm(processEnv, deps);

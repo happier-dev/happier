@@ -146,4 +146,16 @@ describe('managedPnpm bootstrap race protection', () => {
       setTimeoutSpy.mockRestore();
     }
   }, 60000);
+
+  it('does not bootstrap managed pnpm when HAPPIER_MANAGED_PNPM_BOOTSTRAP is disabled', async () => {
+    testEnv = {
+      ...testEnv,
+      HAPPIER_MANAGED_PNPM_BOOTSTRAP: '0',
+    };
+
+    const command = await ensureManagedPnpmCommand(testEnv);
+    expect(command).toBeNull();
+
+    expect(existsSync(managedPnpmBinPath(testEnv))).toBe(false);
+  });
 });
