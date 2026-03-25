@@ -80,7 +80,6 @@ export const WorkspaceReplicationJobResumeContextSchema = z
         conflictPolicy: z.enum(['create_sibling_copy', 'replace_existing']),
       })
       .strip(),
-    blobPackPlanningMode: z.enum(['missing_only', 'stable_full_offer']).optional(),
   })
   .strip();
 

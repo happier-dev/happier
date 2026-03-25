@@ -70,7 +70,7 @@ describe('workspaceReplicationJobStore', () => {
     }
   });
 
-  it('round-trips durable resume context for restart-safe execution reconstruction', async () => {
+  it('strips legacy transport-specific resume context fields while preserving the durable apply resume context', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-jobs-resume-context-'));
 
     try {
@@ -80,7 +80,7 @@ describe('workspaceReplicationJobStore', () => {
         activeServerDir,
       });
 
-      await store.write({
+      const recordWithLegacyResumeContextField = {
         schemaVersion: 1,
         jobId: 'job_resume_context_1',
         correlationId: 'corr_resume_context_1',
@@ -106,7 +106,10 @@ describe('workspaceReplicationJobStore', () => {
           warnings: [],
           blockingDivergenceCandidates: [],
         },
-      });
+      } as const;
+
+      // This fixture intentionally contains a legacy transport-specific resume field that must be stripped.
+      await store.write(recordWithLegacyResumeContextField as any);
 
       await expect(store.read('job_resume_context_1')).resolves.toMatchObject({
         jobId: 'job_resume_context_1',
@@ -116,9 +119,10 @@ describe('workspaceReplicationJobStore', () => {
             strategy: 'sync_changes',
             conflictPolicy: 'replace_existing',
           },
-          blobPackPlanningMode: 'stable_full_offer',
         },
       });
+      const loaded = await store.read('job_resume_context_1');
+      expect(loaded?.resumeContext).not.toHaveProperty('blobPackPlanningMode');
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }
