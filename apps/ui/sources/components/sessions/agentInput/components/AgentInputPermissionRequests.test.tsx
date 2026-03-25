@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import type { AgentInputPermissionRequests as AgentInputPermissionRequestsComponent } from './AgentInputPermissionRequests';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -80,7 +81,7 @@ describe('AgentInputPermissionRequests', () => {
             onLayout: () => {},
             onScroll: () => {},
             fadeVisibility: { top: false, bottom: false },
-        } as any));
+        } satisfies React.ComponentProps<typeof AgentInputPermissionRequestsComponent>));
 
         expect(screen.findByTestId('agentInput.permissionRequests.chrome')).toBeTruthy();
 
@@ -93,5 +94,32 @@ describe('AgentInputPermissionRequests', () => {
         expect(screen.findByTestId('agentInput.permissionRequests.divider:p2')).toBeTruthy();
         expect(screen.findByTestId('agentInput.permissionRequests.divider:u1')).toBeTruthy();
     });
-});
 
+    it('does not render when approvals are disabled due to inactive session', async () => {
+        const { AgentInputPermissionRequests } = await import('./AgentInputPermissionRequests');
+        capturedPermissionPromptCardProps.length = 0;
+        capturedUserActionPromptCardProps.length = 0;
+
+        const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, {
+            sessionId: 's1',
+            permissionRequests: [
+                { id: 'p1', kind: 'permission', tool: 'execute', arguments: { command: 'pwd' } },
+            ],
+            userActionRequests: [],
+            permissionLocationsById: new Map(),
+            metadata: null,
+            canApprovePermissions: false,
+            disabledReason: 'inactive',
+            maxHeightPx: 200,
+            clampedHeightPx: 200,
+            onContentSizeChange: () => {},
+            onLayout: () => {},
+            onScroll: () => {},
+            fadeVisibility: { top: false, bottom: false },
+        } satisfies React.ComponentProps<typeof AgentInputPermissionRequestsComponent>));
+
+        expect(screen.findByTestId('agentInput.permissionRequests.chrome')).toBeNull();
+        expect(capturedPermissionPromptCardProps).toHaveLength(0);
+    });
+
+});
