@@ -45,6 +45,27 @@ describe('createSessionModeOverrideSynchronizer', () => {
     expect(setSessionMode).toHaveBeenCalledWith('plan');
   });
 
+  it('treats modeId="default" as a clear-override marker (no runtime call, no retry)', async () => {
+    const setSessionMode = vi.fn(async (_modeId: string) => {});
+
+    const sync = createSessionModeOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () => ({ acpSessionModeOverrideV1: { v: 1, updatedAt: 22, modeId: 'default' } } as any),
+      },
+      runtime: { setSessionMode },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    await Promise.resolve();
+    expect(setSessionMode).not.toHaveBeenCalled();
+
+    // Should not keep attempting to apply "default" on subsequent syncs.
+    sync.syncFromMetadata();
+    await Promise.resolve();
+    expect(setSessionMode).not.toHaveBeenCalled();
+  });
+
   it('retries the same override when runtime apply fails', async () => {
     let attempt = 0;
     const setSessionMode = vi.fn(async (_modeId: string) => {

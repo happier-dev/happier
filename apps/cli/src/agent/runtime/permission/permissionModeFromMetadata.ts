@@ -24,6 +24,10 @@ export function resolveSessionModeOverrideFromMetadataSnapshot(opts: {
     resolveMetadataStringOverrideV1(opts.metadata ?? null, SESSION_MODE_OVERRIDE_KEY, 'modeId') ??
     resolveMetadataStringOverrideV1(opts.metadata ?? null, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY, 'modeId');
   if (!resolved) return null;
+  // "default" is a UI sentinel meaning "clear override" while still carrying an updatedAt signal.
+  // Normalize it to an empty string so call sites can treat it as "no agent mode selected",
+  // while override synchronizers still receive a monotonic updatedAt for clearing.
+  if (resolved.value === 'default') return { modeId: '', updatedAt: resolved.updatedAt };
   return { modeId: resolved.value, updatedAt: resolved.updatedAt };
 }
 

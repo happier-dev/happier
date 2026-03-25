@@ -48,6 +48,14 @@ describe('resolveSessionModeOverrideFromMetadataSnapshot', () => {
     expect(fn({ metadata: { sessionModeOverrideV1: { v: 1, updatedAt: 14, modeId: 'plan' } } as any }))
       .toEqual({ modeId: 'plan', updatedAt: 14 });
   });
+
+  it('normalizes modeId="default" to an empty string (clear override sentinel)', () => {
+    const fn = (permissionModeFromMetadata as any).resolveSessionModeOverrideFromMetadataSnapshot;
+    expect(typeof fn).toBe('function');
+
+    expect(fn({ metadata: { sessionModeOverrideV1: { v: 1, updatedAt: 15, modeId: 'default' } } as any }))
+      .toEqual({ modeId: '', updatedAt: 15 });
+  });
 });
 
 describe('computePendingSessionModeOverrideApplication', () => {
