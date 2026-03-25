@@ -206,6 +206,39 @@ describe('bootstrapAccountSettingsContext', () => {
     );
   });
 
+  it('normalizes legacy mcp_resume codex backend mode when migrating schemaVersion < 6', async () => {
+    const nowMs = 1_000_000;
+    const applySideEffects = vi.fn();
+
+    await bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'auto',
+      nowMs,
+      ttlMs: 60_000,
+      agentId: 'codex',
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => ({
+          version: 2,
+          cachedAt: nowMs - 1_000,
+          settingsContent: { t: 'plain', v: { schemaVersion: 5, codexBackendMode: '  mcp_resume  ' } },
+          settingsVersion: 123,
+        }),
+        writeCache: async () => {},
+        fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
+        decryptCiphertext: async () => null,
+        applySideEffects,
+      },
+    });
+
+    expect(applySideEffects).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settings: expect.objectContaining({ schemaVersion: 6, codexBackendMode: 'acp' }),
+      }),
+    );
+  });
+
   it('rejects disabled configured ACP backend targets during bootstrap side effects', async () => {
     const nowMs = 1_000_000;
 

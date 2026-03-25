@@ -86,6 +86,16 @@ describe('providerSettings', () => {
     ).toEqual({ codexBackendMode: 'mcp' });
   });
 
+  it('normalizes the legacy mcp_resume env override onto canonical ACP', () => {
+    expect(
+      resolveProviderSpawnExtrasForRuntime({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'appServer' },
+        processEnv: { HAPPIER_CODEX_BACKEND_MODE: '  mcp_resume  ' },
+      }),
+    ).toEqual({ codexBackendMode: 'acp' });
+  });
+
   it('builds Claude outgoing meta defaults from account settings', () => {
     const extras = resolveProviderOutgoingMessageMetaExtras({
       agentId: 'claude',

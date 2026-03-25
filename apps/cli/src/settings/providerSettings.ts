@@ -1,7 +1,6 @@
 import type { AgentId } from '@happier-dev/agents';
 import { getProviderSettingsDefinition } from '@happier-dev/agents';
-
-type CodexBackendModeOverride = 'mcp' | 'acp' | 'appServer';
+import { normalizeCodexBackendMode, type CodexBackendMode } from '@happier-dev/protocol';
 
 export function resolveProviderOutgoingMessageMetaExtras(params: Readonly<{
   agentId: AgentId;
@@ -44,18 +43,8 @@ function hasExplicitCodexAcpEnvOverride(processEnv: NodeJS.ProcessEnv): boolean 
   return typeof raw === 'string' && raw.trim().length > 0;
 }
 
-function readExplicitCodexBackendModeFromEnv(processEnv: NodeJS.ProcessEnv): CodexBackendModeOverride | null {
-  const raw = typeof processEnv.HAPPIER_CODEX_BACKEND_MODE === 'string'
-    ? processEnv.HAPPIER_CODEX_BACKEND_MODE.trim()
-    : '';
-  if (raw === 'mcp' || raw === 'acp' || raw === 'appServer') {
-    return raw;
-  }
-  return null;
-}
-
-function isCodexBackendModeOverride(value: unknown): value is CodexBackendModeOverride {
-  return value === 'mcp' || value === 'acp' || value === 'appServer';
+function readExplicitCodexBackendModeFromEnv(processEnv: NodeJS.ProcessEnv): CodexBackendMode | null {
+  return normalizeCodexBackendMode(processEnv.HAPPIER_CODEX_BACKEND_MODE);
 }
 
 export function resolveProviderSpawnExtrasForRuntime(params: Readonly<{
@@ -80,8 +69,9 @@ export function resolveProviderSpawnExtrasForRuntime(params: Readonly<{
     return rest;
   }
 
-  if (params.agentId === 'codex' && isCodexBackendModeOverride(extras.codexBackendMode)) {
-    return { codexBackendMode: extras.codexBackendMode };
+  if (params.agentId === 'codex') {
+    const normalized = normalizeCodexBackendMode(extras.codexBackendMode);
+    if (normalized) return { codexBackendMode: normalized };
   }
 
   return extras;

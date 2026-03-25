@@ -3,6 +3,7 @@ import axios from 'axios';
 import type { AgentId } from '@happier-dev/agents';
 import {
   accountSettingsParse,
+  normalizeCodexBackendMode,
   type AccountSettings,
   type BackendTargetRefV1,
 } from '@happier-dev/protocol';
@@ -43,14 +44,11 @@ export type AccountSettingsContext = Readonly<{
 function migrateAccountSettingsForCodexAppServerDefault(settings: AccountSettings): AccountSettings {
   const schemaVersion = settings.schemaVersion;
   if (!Number.isFinite(schemaVersion) || schemaVersion >= 6) return settings;
-  const existingCodexBackendMode = settings.codexBackendMode;
+  const existingCodexBackendMode = normalizeCodexBackendMode(settings.codexBackendMode);
   return {
     ...settings,
     schemaVersion: 6,
-    codexBackendMode:
-      existingCodexBackendMode === 'mcp' || existingCodexBackendMode === 'acp' || existingCodexBackendMode === 'appServer'
-        ? existingCodexBackendMode
-        : 'appServer',
+    codexBackendMode: existingCodexBackendMode ?? 'appServer',
   };
 }
 
