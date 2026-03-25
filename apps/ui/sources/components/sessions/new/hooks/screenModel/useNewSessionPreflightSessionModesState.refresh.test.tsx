@@ -106,4 +106,51 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
         await hook.unmount();
         vi.useRealTimers();
     });
+
+    it('does not enter a render loop when probeContext identity churns but cached values are stable by content', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicSessionModeProbeCacheForTests();
+
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+        machineCapabilitiesInvokeMock.mockRejectedValue(new Error('unexpected probe call'));
+
+        let readCall = 0;
+        vi.doMock('@/sync/domains/sessionModes/dynamicSessionModeProbeCache', async () => {
+            const actual = await vi.importActual<typeof import('@/sync/domains/sessionModes/dynamicSessionModeProbeCache')>(
+                '@/sync/domains/sessionModes/dynamicSessionModeProbeCache',
+            );
+            return {
+                ...actual,
+                readDynamicSessionModeProbeCache: (_key: string) => {
+                    readCall++;
+                    return {
+                        kind: 'success' as const,
+                        updatedAt: 123,
+                        expiresAt: Date.now() + 60_000,
+                        value: {
+                            availableModes: [{ id: `mode${readCall}`, name: `Mode ${readCall}` }],
+                        },
+                    };
+                },
+            };
+        });
+
+        const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+        const hook = await renderHook(() => useNewSessionPreflightSessionModesState({
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            cwd: '/repo',
+            probeContext: {
+                cacheKeySuffixParts: ['appServer'],
+                capabilityParams: { runtimeKindOverride: 'appServer' },
+            },
+        } as any));
+
+        expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode1')).toBe(true);
+        await hook.unmount();
+    });
 });

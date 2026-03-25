@@ -279,4 +279,52 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         await hook.unmount();
         vi.useRealTimers();
     });
+
+    it('does not enter a render loop when probeContext identity churns but cached values are stable by content', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+        machineCapabilitiesInvokeMock.mockRejectedValue(new Error('unexpected probe call'));
+
+        let readCall = 0;
+        vi.doMock('@/sync/domains/models/dynamicModelProbeCache', async () => {
+            const actual = await vi.importActual<typeof import('@/sync/domains/models/dynamicModelProbeCache')>(
+                '@/sync/domains/models/dynamicModelProbeCache',
+            );
+            return {
+                ...actual,
+                readDynamicModelProbeCache: (_key: string) => {
+                    readCall++;
+                    return {
+                        kind: 'success' as const,
+                        updatedAt: 123,
+                        expiresAt: Date.now() + 60_000,
+                        value: {
+                            availableModels: [{ id: `m${readCall}`, name: `Model ${readCall}` }],
+                            supportsFreeform: false,
+                        },
+                    };
+                },
+            };
+        });
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+        const hook = await renderHook(() => useNewSessionPreflightModelsState({
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            cwd: '/repo',
+            probeContext: {
+                cacheKeySuffixParts: ['appServer'],
+                capabilityParams: { runtimeKindOverride: 'appServer' },
+            },
+        } as any));
+
+        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(true);
+        await hook.unmount();
+    });
 });
