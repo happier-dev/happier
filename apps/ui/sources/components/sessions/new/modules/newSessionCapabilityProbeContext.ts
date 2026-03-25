@@ -9,6 +9,38 @@ export type NewSessionCapabilityProbeContext = Readonly<{
     capabilityParams?: Readonly<Record<string, unknown>> | null;
 }>;
 
+const MAX_CACHED_RUNTIME_KINDS = 32;
+const probeContextByRuntimeKind = new Map<string, NewSessionCapabilityProbeContext>();
+
+function getOrCreateProbeContextForRuntimeKind(runtimeKind: string): NewSessionCapabilityProbeContext {
+    const key = runtimeKind.trim();
+    const existing = probeContextByRuntimeKind.get(key);
+    if (existing) {
+        probeContextByRuntimeKind.delete(key);
+        probeContextByRuntimeKind.set(key, existing);
+        return existing;
+    }
+
+    const cacheKeySuffixParts = Object.freeze([key]);
+    const capabilityParams = Object.freeze({
+        runtimeKindOverride: key,
+    }) as Readonly<Record<string, unknown>>;
+
+    const created: NewSessionCapabilityProbeContext = Object.freeze({
+        cacheKeySuffixParts,
+        capabilityParams,
+    });
+
+    probeContextByRuntimeKind.set(key, created);
+    while (probeContextByRuntimeKind.size > MAX_CACHED_RUNTIME_KINDS) {
+        const oldest = probeContextByRuntimeKind.keys().next();
+        if (oldest.done) break;
+        probeContextByRuntimeKind.delete(oldest.value);
+    }
+
+    return created;
+}
+
 export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     backendTarget: BackendTargetRefV1;
     settings: Settings;
@@ -20,11 +52,5 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     });
     if (!runtimeKind) return null;
 
-    return {
-        cacheKeySuffixParts: [runtimeKind],
-        capabilityParams: {
-            runtimeKindOverride: runtimeKind,
-        },
-    };
+    return getOrCreateProbeContextForRuntimeKind(runtimeKind);
 }
-
