@@ -53,6 +53,7 @@ export async function scanWorkspaceManifestWithDigestCache(params: Readonly<{
   workspaceRoot: string;
   safeFilterPolicy?: WorkspaceManifestSafeFilterPolicy;
   scmRegistry?: ScmBackendRegistry;
+  assertCanContinue?: () => void | Promise<void>;
   onFileScanned?: (file: ScannedWorkspaceFile) => void | Promise<void>;
 }>) {
   const digestCacheStore = createWorkspaceReplicationDigestCacheStore({
@@ -65,6 +66,7 @@ export async function scanWorkspaceManifestWithDigestCache(params: Readonly<{
     workspaceRoot: params.workspaceRoot,
     safeFilterPolicy: params.safeFilterPolicy,
     scmRegistry: params.scmRegistry,
+    assertCanContinue: params.assertCanContinue,
     resolveCachedFileDigest(file) {
       const cachedEntry = cached?.entries[file.relativePath];
       if (!cachedEntry || !matchesCachedDigestEntry(file, cachedEntry)) {
@@ -74,10 +76,12 @@ export async function scanWorkspaceManifestWithDigestCache(params: Readonly<{
     },
     async onFileScanned(file) {
       nextEntries[file.relativePath] = toDigestCacheEntry(file);
+      await params.assertCanContinue?.();
       await params.onFileScanned?.(file);
     },
   });
 
+  await params.assertCanContinue?.();
   await digestCacheStore.save({
     relationshipId: params.relationshipId,
     entries: nextEntries,

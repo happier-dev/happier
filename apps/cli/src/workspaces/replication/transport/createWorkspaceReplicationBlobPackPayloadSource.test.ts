@@ -10,6 +10,25 @@ function createSha256Digest(payload: Buffer): string {
 }
 
 describe('createWorkspaceReplicationBlobPackPayloadSource', () => {
+  it('fails closed with a typed error when a requested digest is missing from CAS', async () => {
+    const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-blob-pack-missing-'));
+
+    try {
+      const { createWorkspaceReplicationBlobPackPayloadSource } = await import('./createWorkspaceReplicationBlobPackPayloadSource');
+
+      await expect(createWorkspaceReplicationBlobPackPayloadSource({
+        activeServerDir: sourceActiveServerDir,
+        packId: 'pack_missing',
+        digests: ['sha256:0000000000000000000000000000000000000000000000000000000000000000'],
+      })).rejects.toMatchObject({
+        name: 'WorkspaceReplicationError',
+        code: 'missing_cas_blob',
+      });
+    } finally {
+      await rm(sourceActiveServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed when the packId contains path traversal segments', async () => {
     const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-blob-pack-source-'));
     const sourceFilePath = join(sourceActiveServerDir, 'source.txt');

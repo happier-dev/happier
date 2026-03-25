@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 describe('workspaceReplicationJobLease', () => {
   it('acquires a lease when none exists', async () => {
@@ -113,6 +113,57 @@ describe('workspaceReplicationJobLease', () => {
         }),
       });
     } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('steals an unexpired lease when the lease owner pid is no longer alive', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-lease-dead-pid-'));
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number) => {
+      if (pid === 424242) {
+        const error = new Error('No such process') as NodeJS.ErrnoException;
+        error.code = 'ESRCH';
+        throw error;
+      }
+      return true as never;
+    }) as typeof process.kill);
+
+    try {
+      const { tryAcquireWorkspaceReplicationJobLease } = await import('./workspaceReplicationJobLease');
+
+      await expect(tryAcquireWorkspaceReplicationJobLease({
+        activeServerDir,
+        jobId: 'job_lease_dead_pid_1',
+        ownerId: 'cli-daemon:424242',
+        nowMs: 1000,
+        ttlMs: 10_000,
+      })).resolves.toMatchObject({
+        acquired: true,
+        lease: expect.objectContaining({
+          ownerId: 'cli-daemon:424242',
+          attempt: 1,
+          expiresAtMs: 11_000,
+        }),
+      });
+
+      await expect(tryAcquireWorkspaceReplicationJobLease({
+        activeServerDir,
+        jobId: 'job_lease_dead_pid_1',
+        ownerId: 'owner_b',
+        nowMs: 2000,
+        ttlMs: 10_000,
+      })).resolves.toMatchObject({
+        acquired: true,
+        lease: expect.objectContaining({
+          ownerId: 'owner_b',
+          attempt: 2,
+          acquiredAtMs: 2000,
+          renewedAtMs: 2000,
+          expiresAtMs: 12_000,
+        }),
+      });
+    } finally {
+      killSpy.mockRestore();
       await rm(activeServerDir, { recursive: true, force: true });
     }
   });

@@ -2,13 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { createWorkspaceReplicationPaths, resolveWorkspaceReplicationJobStagingDirectory } from './workspaceReplicationPaths';
+import { createWorkspaceReplicationPaths } from './workspaceReplicationPaths';
 import { isCliDaemonOwnedLeaseStealable } from './leaseOwnerPid';
 
-export type WorkspaceReplicationJobLeaseRecord = Readonly<{
-  // A unique lease id (per acquisition) for diagnostics and future strengthening.
+export type WorkspaceReplicationScopeLeaseRecord = Readonly<{
   leaseId?: string;
-  // Monotonic attempt counter (per job) that increments when a lease is stolen after expiry.
   attempt?: number;
   ownerId: string;
   acquiredAtMs: number;
@@ -16,13 +14,15 @@ export type WorkspaceReplicationJobLeaseRecord = Readonly<{
   expiresAtMs: number;
 }>;
 
-// Keep crash/restart stall bounded by default; the active runner heartbeats while executing.
 const DEFAULT_LEASE_TTL_MS = 60 * 1000;
 const MIN_LEASE_TTL_MS = 5_000;
 const MAX_LEASE_TTL_MS = 60 * 60 * 1000;
 
-export function resolveWorkspaceReplicationJobLeaseTtlMs(): number {
-  const raw = process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_LEASE_TTL_MS;
+const RELATIONSHIP_ID_REGEX = /^rel_[A-Za-z0-9_-]+$/u;
+const DIRECTION_ID_REGEX = /^dir_[A-Za-z0-9_-]+$/u;
+
+export function resolveWorkspaceReplicationScopeLeaseTtlMs(): number {
+  const raw = process.env.HAPPIER_WORKSPACE_REPLICATION_SCOPE_LEASE_TTL_MS;
   if (!raw) {
     return DEFAULT_LEASE_TTL_MS;
   }
@@ -35,24 +35,30 @@ export function resolveWorkspaceReplicationJobLeaseTtlMs(): number {
 
 function resolveLeasePaths(input: Readonly<{
   activeServerDir: string;
-  jobId: string;
+  relationshipId: string;
+  directionId: string;
 }>) {
+  if (!RELATIONSHIP_ID_REGEX.test(input.relationshipId)) {
+    throw new Error(`Invalid workspace replication relationship id: ${input.relationshipId}`);
+  }
+  if (!DIRECTION_ID_REGEX.test(input.directionId)) {
+    throw new Error(`Invalid workspace replication direction id: ${input.directionId}`);
+  }
+
   const paths = createWorkspaceReplicationPaths({ activeServerDir: input.activeServerDir });
-  const jobStagingDirectory = resolveWorkspaceReplicationJobStagingDirectory({
-    stagingDirectory: paths.stagingDirectory,
-    jobId: input.jobId,
-  });
-  const leaseDirectory = join(jobStagingDirectory, 'lease');
+  const leaseRootDirectory = join(paths.rootDirectory, 'scope-leases');
+  const leaseDirectory = join(leaseRootDirectory, `${input.relationshipId}__${input.directionId}`, 'lease');
   const leaseFilePath = join(leaseDirectory, 'lease.json');
+
   return {
     paths,
-    jobStagingDirectory,
+    leaseRootDirectory,
     leaseDirectory,
     leaseFilePath,
   } as const;
 }
 
-async function readLeaseRecord(filePath: string): Promise<WorkspaceReplicationJobLeaseRecord | null> {
+async function readLeaseRecord(filePath: string): Promise<WorkspaceReplicationScopeLeaseRecord | null> {
   try {
     const raw = await readFile(filePath, 'utf8');
     const parsed = JSON.parse(raw) as unknown;
@@ -64,6 +70,7 @@ async function readLeaseRecord(filePath: string): Promise<WorkspaceReplicationJo
     const attempt = typeof value.attempt === 'number' && Number.isFinite(value.attempt) && value.attempt >= 1
       ? Math.floor(value.attempt)
       : undefined;
+
     if (
       typeof value.ownerId !== 'string'
       || value.ownerId.trim().length === 0
@@ -73,6 +80,7 @@ async function readLeaseRecord(filePath: string): Promise<WorkspaceReplicationJo
     ) {
       return null;
     }
+
     return {
       ...(leaseId ? { leaseId } : {}),
       ...(attempt ? { attempt } : {}),
@@ -86,14 +94,10 @@ async function readLeaseRecord(filePath: string): Promise<WorkspaceReplicationJo
   }
 }
 
-async function writeLeaseRecord(filePath: string, record: WorkspaceReplicationJobLeaseRecord): Promise<void> {
-  await writeFile(filePath, `${JSON.stringify(record)}\n`, 'utf8');
-}
-
 async function writeLeaseRecordAtomic(input: Readonly<{
   leaseDirectory: string;
   leaseFilePath: string;
-  record: WorkspaceReplicationJobLeaseRecord;
+  record: WorkspaceReplicationScopeLeaseRecord;
 }>): Promise<void> {
   const tmpPath = join(input.leaseDirectory, `lease.${randomUUID()}.tmp`);
   await writeFile(tmpPath, `${JSON.stringify(input.record)}\n`, 'utf8');
@@ -102,31 +106,20 @@ async function writeLeaseRecordAtomic(input: Readonly<{
 
 function isLeaseAlreadyExistsError(error: unknown): boolean {
   const nodeError = error as NodeJS.ErrnoException;
-  // POSIX: EEXIST/ENOTEMPTY. Windows can surface EPERM for directory renames into existing.
   return nodeError?.code === 'EEXIST' || nodeError?.code === 'ENOTEMPTY' || nodeError?.code === 'EPERM';
 }
 
-export async function removeWorkspaceReplicationJobStagingDirectory(input: Readonly<{
+export async function tryAcquireWorkspaceReplicationScopeLease(input: Readonly<{
   activeServerDir: string;
-  jobId: string;
-}>): Promise<void> {
-  const resolved = resolveLeasePaths(input);
-  await rm(resolved.jobStagingDirectory, { recursive: true, force: true }).catch(() => undefined);
-}
-
-export async function tryAcquireWorkspaceReplicationJobLease(input: Readonly<{
-  activeServerDir: string;
-  jobId: string;
+  relationshipId: string;
+  directionId: string;
   ownerId: string;
   nowMs: number;
   ttlMs?: number;
-}>): Promise<Readonly<{
-  acquired: boolean;
-  lease: WorkspaceReplicationJobLeaseRecord | null;
-}>> {
-  const ttlMs = input.ttlMs ?? resolveWorkspaceReplicationJobLeaseTtlMs();
+}>): Promise<Readonly<{ acquired: boolean; lease: WorkspaceReplicationScopeLeaseRecord | null }>> {
+  const ttlMs = input.ttlMs ?? resolveWorkspaceReplicationScopeLeaseTtlMs();
   const resolved = resolveLeasePaths(input);
-  await mkdir(resolved.jobStagingDirectory, { recursive: true });
+  await mkdir(resolved.leaseRootDirectory, { recursive: true });
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const existing = await readLeaseRecord(resolved.leaseFilePath);
@@ -137,12 +130,10 @@ export async function tryAcquireWorkspaceReplicationJobLease(input: Readonly<{
     }
     const previousAttempt = existing?.attempt ?? 0;
     if (existing) {
-      // Expired lease: clear it before attempting to acquire so we can compute attempt/run metadata
-      // from the prior record rather than dropping back to a missing-file retry.
       await rm(resolved.leaseDirectory, { recursive: true, force: true }).catch(() => undefined);
     }
 
-    const nextLease: WorkspaceReplicationJobLeaseRecord = {
+    const nextLease: WorkspaceReplicationScopeLeaseRecord = {
       leaseId: randomUUID(),
       attempt: previousAttempt + 1,
       ownerId: input.ownerId,
@@ -151,17 +142,13 @@ export async function tryAcquireWorkspaceReplicationJobLease(input: Readonly<{
       expiresAtMs: input.nowMs + ttlMs,
     };
 
-    // Acquire is made atomic by fully writing a temp lease directory and then renaming it into place.
-    // This avoids a mkdir-write gap where another runner could mis-detect a missing lease record and
-    // delete an in-progress acquisition.
     const tempLeaseDirectory = `${resolved.leaseDirectory}.tmp-${randomUUID()}`;
-    await mkdir(tempLeaseDirectory, { recursive: false });
-    await writeLeaseRecord(join(tempLeaseDirectory, 'lease.json'), nextLease);
+    await mkdir(tempLeaseDirectory, { recursive: true });
+    await writeFile(join(tempLeaseDirectory, 'lease.json'), `${JSON.stringify(nextLease)}\n`, 'utf8');
     try {
       await rename(tempLeaseDirectory, resolved.leaseDirectory);
       return { acquired: true, lease: nextLease };
     } catch (error) {
-      // Another runner holds the lease directory.
       if (!isLeaseAlreadyExistsError(error)) {
         await rm(tempLeaseDirectory, { recursive: true, force: true }).catch(() => undefined);
         throw error;
@@ -174,7 +161,6 @@ export async function tryAcquireWorkspaceReplicationJobLease(input: Readonly<{
       return { acquired: false, lease: locked };
     }
 
-    // Stale/corrupt lease: best-effort cleanup and retry once.
     await rm(resolved.leaseDirectory, { recursive: true, force: true }).catch(() => undefined);
   }
 
@@ -182,25 +168,25 @@ export async function tryAcquireWorkspaceReplicationJobLease(input: Readonly<{
   return { acquired: false, lease: existing };
 }
 
-export async function renewWorkspaceReplicationJobLease(input: Readonly<{
+export async function renewWorkspaceReplicationScopeLease(input: Readonly<{
   activeServerDir: string;
-  jobId: string;
+  relationshipId: string;
+  directionId: string;
   ownerId: string;
   nowMs: number;
   ttlMs?: number;
-}>): Promise<Readonly<{ renewed: boolean; lease: WorkspaceReplicationJobLeaseRecord | null }>> {
-  const ttlMs = input.ttlMs ?? resolveWorkspaceReplicationJobLeaseTtlMs();
+}>): Promise<Readonly<{ renewed: boolean; lease: WorkspaceReplicationScopeLeaseRecord | null }>> {
+  const ttlMs = input.ttlMs ?? resolveWorkspaceReplicationScopeLeaseTtlMs();
   const resolved = resolveLeasePaths(input);
   const existing = await readLeaseRecord(resolved.leaseFilePath);
   if (!existing || existing.ownerId !== input.ownerId) {
     return { renewed: false, lease: existing };
   }
-  // Fail closed: once a lease has expired, the owner must re-acquire via the atomic acquire path.
-  // This prevents a paused/zombie runner from extending a lease after TTL and masking a stalled job.
   if (existing.expiresAtMs <= input.nowMs) {
     return { renewed: false, lease: existing };
   }
-  const next: WorkspaceReplicationJobLeaseRecord = {
+
+  const next: WorkspaceReplicationScopeLeaseRecord = {
     ...existing,
     renewedAtMs: input.nowMs,
     expiresAtMs: input.nowMs + ttlMs,
@@ -213,9 +199,10 @@ export async function renewWorkspaceReplicationJobLease(input: Readonly<{
   return { renewed: true, lease: next };
 }
 
-export async function releaseWorkspaceReplicationJobLease(input: Readonly<{
+export async function releaseWorkspaceReplicationScopeLease(input: Readonly<{
   activeServerDir: string;
-  jobId: string;
+  relationshipId: string;
+  directionId: string;
   ownerId: string;
 }>): Promise<void> {
   const resolved = resolveLeasePaths(input);

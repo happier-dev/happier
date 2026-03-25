@@ -13,6 +13,12 @@ import {
   tryAcquireWorkspaceReplicationJobLease,
 } from '../state/workspaceReplicationJobLease';
 import { startWorkspaceReplicationJobLeaseHeartbeat } from '../state/workspaceReplicationJobLeaseHeartbeat';
+import {
+  releaseWorkspaceReplicationScopeLease,
+  resolveWorkspaceReplicationScopeLeaseTtlMs,
+  tryAcquireWorkspaceReplicationScopeLease,
+} from '../state/workspaceReplicationScopeLease';
+import { startWorkspaceReplicationScopeLeaseHeartbeat } from '../state/workspaceReplicationScopeLeaseHeartbeat';
 
 const CHECKPOINT_ORDER: readonly WorkspaceReplicationJobRecord['status']['checkpoint'][] = [
   'job_created',
@@ -184,6 +190,17 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     nowMs: () => resolveNowMs(params.now),
   });
 
+  const scopeRelationshipId = current.relationshipId;
+  const scopeDirectionId = current.directionId;
+  if (!scopeRelationshipId || !scopeDirectionId) {
+    throw new Error(`Workspace replication job is missing relationship scope: ${params.jobId}`);
+  }
+
+  const scopeLeaseOwnerId = `${leaseOwnerId}:${params.jobId}`;
+  const scopeLeaseTtlMs = resolveWorkspaceReplicationScopeLeaseTtlMs();
+  let scopeLeaseAcquired = false;
+  let scopeLeaseHeartbeat: Readonly<{ stop: () => Promise<void> }> | null = null;
+
   const stopIfLeaseLost = async (): Promise<WorkspaceReplicationJobRecord | null> => {
     const nowMs = resolveNowMs(params.now);
     let renewed: Awaited<ReturnType<typeof renewWorkspaceReplicationJobLease>>;
@@ -220,6 +237,50 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
   };
 
   try {
+    const scopeLeaseAttempt = await tryAcquireWorkspaceReplicationScopeLease({
+      activeServerDir: params.activeServerDir,
+      relationshipId: scopeRelationshipId,
+      directionId: scopeDirectionId,
+      ownerId: scopeLeaseOwnerId,
+      nowMs: resolveNowMs(params.now),
+      ttlMs: scopeLeaseTtlMs,
+    });
+
+    if (!scopeLeaseAttempt.acquired) {
+      const nowMs = resolveNowMs(params.now);
+      const updated = await runWorkspaceReplicationJob({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        run: async (record) => ({
+          ...record,
+          awaitingRecoveryAtMs: record.awaitingRecoveryAtMs ?? nowMs,
+          lastErrorMessage: record.lastErrorMessage ?? 'Workspace replication scope is locked by another job',
+          status: {
+            ...record.status,
+            status: 'awaiting_recovery',
+            phase: 'planning',
+            checkpoint: record.status.checkpoint,
+          },
+        }),
+      });
+      await removeWorkspaceReplicationJobStagingDirectory({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
+      });
+      return updated;
+    }
+
+    scopeLeaseAcquired = true;
+    scopeLeaseHeartbeat = startWorkspaceReplicationScopeLeaseHeartbeat({
+      activeServerDir: params.activeServerDir,
+      relationshipId: scopeRelationshipId,
+      directionId: scopeDirectionId,
+      ownerId: scopeLeaseOwnerId,
+      ttlMs: scopeLeaseTtlMs,
+      nowMs: () => resolveNowMs(params.now),
+    });
+
     const acquiredLease = leaseAttempt.lease;
     if (acquiredLease?.attempt && acquiredLease.leaseId) {
       await runWorkspaceReplicationJob({
@@ -843,6 +904,15 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
 
     return latest;
   } finally {
+    await scopeLeaseHeartbeat?.stop().catch(() => undefined);
+    if (scopeLeaseAcquired) {
+      await releaseWorkspaceReplicationScopeLease({
+        activeServerDir: params.activeServerDir,
+        relationshipId: scopeRelationshipId,
+        directionId: scopeDirectionId,
+        ownerId: scopeLeaseOwnerId,
+      }).catch(() => undefined);
+    }
     await heartbeat.stop().catch(() => undefined);
     await releaseWorkspaceReplicationJobLease({
       activeServerDir: params.activeServerDir,

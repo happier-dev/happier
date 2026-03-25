@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('workspaceReplicationGc (restart recovery)', () => {
-    it('marks non-terminal jobs pending (resumable) and clears the job lease directory after restart', async () => {
+    it('marks non-terminal jobs awaiting_recovery (restart required) and clears the job lease directory after restart', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-recovery-'));
         try {
             const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
@@ -56,11 +56,13 @@ describe('workspaceReplicationGc (restart recovery)', () => {
             expect(persisted).toMatchObject({
                 jobId: 'job_recovery_pending',
                 updatedAtMs: nowMs,
+                awaitingRecoveryAtMs: nowMs,
                 status: {
-                    status: 'pending',
+                    status: 'awaiting_recovery',
                 },
             });
             expect(persisted?.status.warnings ?? []).toContain('recovered_after_daemon_restart');
+            expect(persisted?.lastErrorMessage?.toLowerCase()).toContain('daemon');
             await expect(access(join(leaseDir, 'lease.json'))).rejects.toThrow();
         } finally {
             await rm(activeServerDir, { recursive: true, force: true });
@@ -234,6 +236,7 @@ describe('workspaceReplicationGc (restart recovery)', () => {
             const persisted = await jobStore.read('job_recovery_ok');
             expect(persisted?.updatedAtMs).toBe(nowMs);
             expect(persisted?.status.warnings ?? []).toContain('recovered_after_daemon_restart');
+            expect(persisted?.status.status).toBe('awaiting_recovery');
 
             const rawInvalid = await readFile(join(paths.jobsDirectory, 'job_invalid.json'), 'utf8');
             expect(rawInvalid).toBe('{not-json');

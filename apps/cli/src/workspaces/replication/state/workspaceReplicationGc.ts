@@ -143,9 +143,13 @@ export async function recoverWorkspaceReplicationJobsAfterRestart(params: Readon
         : {
           ...record,
           updatedAtMs,
+          awaitingRecoveryAtMs: record.awaitingRecoveryAtMs ?? updatedAtMs,
+          ...(record.lastErrorMessage
+            ? {}
+            : { lastErrorMessage: 'Workspace replication requires restart after daemon restart' }),
           status: {
             ...record.status,
-            status: 'pending',
+            status: 'awaiting_recovery',
             warnings: record.status.warnings.includes('recovered_after_daemon_restart')
               ? record.status.warnings
               : [...record.status.warnings, 'recovered_after_daemon_restart'],

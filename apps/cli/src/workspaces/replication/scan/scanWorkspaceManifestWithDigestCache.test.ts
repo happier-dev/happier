@@ -85,4 +85,50 @@ describe('scanWorkspaceManifestWithDigestCache', () => {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
+
+  it('aborts scanning when assertCanContinue throws (cancellation/lease-loss)', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-scan-cache-abort-'));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-workspace-abort-'));
+    await writeFile(join(workspaceRoot, 'a.txt'), 'a\n');
+    await writeFile(join(workspaceRoot, 'b.txt'), 'b\n');
+
+    try {
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { scanWorkspaceManifestWithDigestCache } = await import('./scanWorkspaceManifestWithDigestCache');
+
+      const relationships = createWorkspaceReplicationRelationshipStore({
+        activeServerDir,
+      });
+      const relationship = await relationships.ensureRelationship({
+        sourceMachineId: 'machine_a',
+        sourceWorkspaceRoot: workspaceRoot,
+        targetMachineId: 'machine_b',
+        targetWorkspaceRoot: '/copy',
+        mode: 'one_way_safe',
+      });
+
+      let scannedCount = 0;
+      let shouldCancel = false;
+
+      await expect(scanWorkspaceManifestWithDigestCache({
+        activeServerDir,
+        relationshipId: relationship.relationshipId,
+        workspaceRoot,
+        assertCanContinue() {
+          if (shouldCancel) {
+            throw new Error('cancelled');
+          }
+        },
+        onFileScanned() {
+          scannedCount += 1;
+          shouldCancel = true;
+        },
+      })).rejects.toThrow('cancelled');
+
+      expect(scannedCount).toBe(1);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });

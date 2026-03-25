@@ -79,4 +79,44 @@ describe('scanWorkspaceManifestIntoCas', () => {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
+
+  it('aborts scanning when assertCanContinue throws (cancellation/lease-loss)', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-scan-cas-abort-'));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-scan-workspace-abort-'));
+    await writeFile(join(workspaceRoot, 'a.txt'), 'a\n');
+    await writeFile(join(workspaceRoot, 'b.txt'), 'b\n');
+
+    try {
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { scanWorkspaceManifestIntoCas } = await import('./scanWorkspaceManifestIntoCas');
+
+      const relationships = createWorkspaceReplicationRelationshipStore({
+        activeServerDir,
+      });
+      const relationship = await relationships.ensureRelationship({
+        sourceMachineId: 'machine_a',
+        sourceWorkspaceRoot: workspaceRoot,
+        targetMachineId: 'machine_b',
+        targetWorkspaceRoot: '/copy',
+        mode: 'one_way_safe',
+      });
+
+      let calls = 0;
+      await expect(scanWorkspaceManifestIntoCas({
+        activeServerDir,
+        relationshipId: relationship.relationshipId,
+        workspaceRoot,
+        assertCanContinue() {
+          calls += 1;
+          if (calls > 1) {
+            throw new Error('cancelled');
+          }
+        },
+      })).rejects.toThrow('cancelled');
+      expect(calls).toBeGreaterThan(0);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });

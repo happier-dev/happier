@@ -10,6 +10,7 @@ import {
 } from '@/machines/transfer/transferPayloadSource';
 
 import { createWorkspaceReplicationCasStore } from '../cas/workspaceReplicationCasStore';
+import { WorkspaceReplicationError } from '../workspaceReplicationError';
 import {
   createWorkspaceReplicationBlobPackBlobRecordHeaderBuffer,
   createWorkspaceReplicationBlobPackEndMarkerBuffer,
@@ -57,7 +58,11 @@ export async function createWorkspaceReplicationBlobPackPayloadSource(input: Rea
           ? String((error as { code?: unknown }).code ?? '')
           : '';
         if (code === 'ENOENT') {
-          throw new Error(`Missing workspace replication CAS blob: ${digest}`);
+          throw new WorkspaceReplicationError({
+            code: 'missing_cas_blob',
+            message: `Missing workspace replication CAS blob: ${digest}`,
+            cause: error,
+          });
         }
         throw error;
       });

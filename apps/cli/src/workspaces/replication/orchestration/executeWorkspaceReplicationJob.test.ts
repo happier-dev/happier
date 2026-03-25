@@ -7,6 +7,98 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceReplicationSourceOffer } from '../transport/createWorkspaceReplicationSourceOffer';
 
 describe('executeWorkspaceReplicationJob', () => {
+  it('fails closed and does not call handlers when the replication scope lease is held', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-job-scope-lease-'));
+
+    try {
+      const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { tryAcquireWorkspaceReplicationScopeLease } = await import('../state/workspaceReplicationScopeLease');
+      const { executeWorkspaceReplicationJob } = await import('./executeWorkspaceReplicationJob');
+
+      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+
+      const scope = {
+        sourceMachineId: 'machine-source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine-target',
+        targetWorkspaceRoot: '/target',
+        mode: 'one_way_safe' as const,
+      };
+      const relationship = await relationships.ensureRelationship(scope);
+
+      const offer: WorkspaceReplicationSourceOffer = {
+        offerId: 'offer_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        sourceFingerprint: 'fp_1',
+        manifest: { entries: [], fingerprint: 'fp_1' },
+        blobIndex: [],
+      };
+
+      await jobStore.write({
+        schemaVersion: 1,
+        jobId: 'job_scope_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        offerId: offer.offerId,
+        mode: 'one_way_safe',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'pending',
+          phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      const held = await tryAcquireWorkspaceReplicationScopeLease({
+        activeServerDir,
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        ownerId: 'other-owner',
+        nowMs: 1,
+        ttlMs: 60_000,
+      });
+      expect(held.acquired).toBe(true);
+
+      const transferMissingBlobsToTargetCas = vi.fn();
+      const applyPlan = vi.fn();
+      const commitBaseline = vi.fn();
+
+      const result = await executeWorkspaceReplicationJob({
+        activeServerDir,
+        jobStore,
+        relationships,
+        jobId: 'job_scope_1',
+        now: () => 2,
+        resolveSourceOfferById: async () => offer,
+        transferMissingBlobsToTargetCas,
+        applyPlan,
+        commitBaseline,
+      });
+
+      expect(result.status.status).toBe('awaiting_recovery');
+      expect(result.lastErrorMessage).toMatch(/scope/i);
+      expect(transferMissingBlobsToTargetCas).not.toHaveBeenCalled();
+      expect(applyPlan).not.toHaveBeenCalled();
+      expect(commitBaseline).not.toHaveBeenCalled();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('runs the job through checkpoints and persists a completed status', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-job-'));
 
