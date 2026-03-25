@@ -81,7 +81,8 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(true);
 
         await act(async () => {
-            hook.getCurrent().probe.onRefresh();
+            expect(hook.getCurrent().probe.onRefresh).toBeDefined();
+            hook.getCurrent().probe.onRefresh?.();
         });
         await flushHookEffects();
 
