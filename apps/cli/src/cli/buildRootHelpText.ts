@@ -1,21 +1,26 @@
 import chalk from 'chalk';
 
+import { listRootHelpCommands } from './commandSurfaceManifest';
+
+const HELP_LABEL_WIDTH = 27;
+
+function formatHelpEntry(label: string, description: string): string {
+  return `  ${label.padEnd(HELP_LABEL_WIDTH)} ${description}`;
+}
+
 export function buildRootHelpText(): string {
+  const helpEntries = listRootHelpCommands();
   return `
 ${chalk.bold('happier')} - AI CLI On the Go
 
 ${chalk.bold('Usage:')}
-\t  happier [options]         Start the default backend with mobile control
-\t  happier auth              Manage authentication
-\t  happier codex             Start Codex mode
-\t  happier opencode          Start OpenCode mode (ACP)
-\t  happier gemini            Start Gemini mode (ACP)
-  happier connect           Connect AI vendor API keys
-  happier notify            Send push notification
-  happier install           Install provider CLIs and helpers
-  happier daemon            Manage background service that allows
-                            to spawn new sessions away from your computer
-  happier doctor            System diagnostics & troubleshooting
+${helpEntries.map((entry) => {
+    const label = entry.rootHelpLabel ?? '';
+    const description = entry.rootHelpDescription ?? '';
+    const firstLine = formatHelpEntry(label, description);
+    if (!entry.rootHelpDetail) return firstLine;
+    return `${firstLine}\n${formatHelpEntry('', entry.rootHelpDetail)}`;
+  }).join('\n')}
 
 ${chalk.bold('Examples:')}
   happier                    Start session

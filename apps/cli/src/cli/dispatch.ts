@@ -3,6 +3,7 @@ import { logger } from '@/ui/logger';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { commandRegistry } from '@/cli/commandRegistry';
 import { buildRootHelpText } from '@/cli/buildRootHelpText';
+import { isTmuxAllowedCommand } from '@/cli/commandSurfaceManifest';
 import { maybePassthroughProviderCliInfoRequest } from '@/cli/providerCliPassthrough';
 import { readStartedByArg } from '@/cli/readStartedByArg';
 import { requireCatalogEntry, resolveCatalogAgentIdForCliSubcommand } from '@/backends/catalog';
@@ -65,8 +66,7 @@ export async function dispatchCli(params: Readonly<{
       const idx = args.indexOf('--tmux');
       if (idx !== -1) args.splice(idx, 1);
     } else {
-      const disallowed = new Set(['doctor', 'auth', 'connect', 'notify', 'daemon', 'install', 'uninstall', 'logout', 'attach', 'self', 'server', 'session']);
-      if (subcommand && disallowed.has(subcommand)) {
+      if (subcommand && !isTmuxAllowedCommand(subcommand)) {
         console.error(chalk.red('Error:'), '--tmux can only be used when starting a session.');
         process.exit(1);
       }

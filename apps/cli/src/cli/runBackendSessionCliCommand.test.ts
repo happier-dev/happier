@@ -84,7 +84,7 @@ describe('runBackendSessionCliCommand', () => {
 	    const whenRefreshed = new Promise<any>(() => {});
 
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
-      source: 'none',
+      source: 'cache',
 	      settings: cachedSettings,
       settingsVersion: 0,
       loadedAtMs: Date.now(),
@@ -148,7 +148,7 @@ describe('runBackendSessionCliCommand', () => {
     let refreshed = false;
     const whenRefreshed = new Promise<any>(() => {});
     const bootstrapSpy = vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
-      source: 'none',
+      source: 'cache',
       settings: cachedSettings,
       settingsVersion: 0,
       loadedAtMs: Date.now(),
