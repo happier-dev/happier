@@ -21,8 +21,7 @@ export const agent = {
   },
   getAcpForkContinuationHandler: async () => (await import('@/backends/opencode/acp/forkContinuationHandler')).openCodeAcpForkContinuationHandler,
   getProviderNativeForkHandler: async () => (await import('@/backends/opencode/server/providerNativeForkHandler')).openCodeProviderNativeForkHandler,
-  getPreflightModelsProbeAdapter: async () => {
-    return (await import('@/backends/opencode/preflight/openCodePreflightModelsProbeAdapter')).openCodePreflightModelsProbeAdapter;
-  },
+  getPreflightSessionControlsProbeAdapter: async () =>
+    (await import('@/backends/opencode/preflight/openCodePreflightSessionControlsProbeAdapter')).openCodePreflightSessionControlsProbeAdapter,
   checklists,
 } satisfies AgentCatalogEntry;

@@ -28,23 +28,74 @@ function buildUrl(baseUrl: string, path: string, query?: Record<string, string |
   return url.toString();
 }
 
+function redactOpenCodeUrlForError(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    if (url.searchParams.has('directory')) {
+      url.searchParams.set('directory', '<redacted>');
+    }
+    return url.toString();
+  } catch {
+    // Best-effort redaction for non-URL strings.
+    return String(rawUrl ?? '').replace(/([?&]directory=)[^&#]*/gu, '$1<redacted>');
+  }
+}
+
+function resolveOpenCodeServerHttpTimeoutMs(env: NodeJS.ProcessEnv): number | null {
+  const raw = env.HAPPIER_OPENCODE_SERVER_HTTP_TIMEOUT_MS;
+  const defaultTimeoutMs = 60_000;
+  if (typeof raw !== 'string') return defaultTimeoutMs;
+  const parsed = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return defaultTimeoutMs;
+  // Fail closed on absurdly low timeouts: these tend to create flakey control-plane polling and
+  // false-negative health probes under normal load.
+  const clamped = Math.min(120_000, Math.trunc(parsed));
+  if (clamped < 1000) return defaultTimeoutMs;
+  return clamped;
+}
+
 async function fetchJson<T>(params: {
   url: string;
   method: 'GET' | 'POST';
   headers: Record<string, string>;
   body?: unknown;
+  timeoutMs?: number | null;
 }): Promise<T> {
-  const response = await fetch(params.url, {
-    method: params.method,
-    headers: {
-      ...params.headers,
-      ...(params.body !== undefined ? { 'content-type': 'application/json' } : {}),
-    },
-    body: params.body !== undefined ? JSON.stringify(params.body) : undefined,
-  });
+  const timeoutMs = typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) ? params.timeoutMs : null;
+  const ctrl = timeoutMs ? new AbortController() : null;
+  let timedOut = false;
+  const timer = timeoutMs
+    ? setTimeout(() => {
+        timedOut = true;
+        ctrl?.abort();
+      }, timeoutMs)
+    : null;
+  timer?.unref?.();
+
+  let response: Response;
+  try {
+    response = await fetch(params.url, {
+      method: params.method,
+      headers: {
+        ...params.headers,
+        ...(params.body !== undefined ? { 'content-type': 'application/json' } : {}),
+      },
+      body: params.body !== undefined ? JSON.stringify(params.body) : undefined,
+      ...(ctrl ? { signal: ctrl.signal } : {}),
+    });
+  } catch (error) {
+    if (timedOut && timeoutMs) {
+      throw new Error(`OpenCode HTTP ${params.method} ${redactOpenCodeUrlForError(params.url)} timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(`OpenCode HTTP ${params.method} ${params.url} failed: ${response.status} ${response.statusText}${text ? `\n${text}` : ''}`);
+    throw new Error(
+      `OpenCode HTTP ${params.method} ${redactOpenCodeUrlForError(params.url)} failed: ${response.status} ${response.statusText}${text ? `\n${text}` : ''}`
+    );
   }
   if (response.status === 204) return undefined as unknown as T;
   return (await response.json()) as T;
@@ -145,6 +196,7 @@ async function sleepUntilOrAbort(ms: number, signal: AbortSignal): Promise<void>
 
 export async function createOpenCodeServerRuntimeClient(params: Readonly<{ directory: string; messageBuffer: MessageBuffer; baseUrlOverride?: string | null; env?: NodeJS.ProcessEnv }>): Promise<OpenCodeServerRuntimeClient> {
   const env = params.env ?? process.env;
+  const httpTimeoutMs = resolveOpenCodeServerHttpTimeoutMs(env);
   const baseUrlOverrideRaw = typeof params.baseUrlOverride === 'string' ? params.baseUrlOverride.trim() : '';
   const envUrlRaw = typeof env.HAPPIER_OPENCODE_SERVER_URL === 'string' ? env.HAPPIER_OPENCODE_SERVER_URL.trim() : '';
   const usingManagedServer = baseUrlOverrideRaw.length === 0 && envUrlRaw.length === 0;
@@ -159,8 +211,9 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
 
   const probeHealth = async (candidateBaseUrl: string): Promise<boolean> => {
     try {
+      const probeTimeoutMs = httpTimeoutMs ? Math.min(2_000, httpTimeoutMs) : 900;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 900);
+      const timer = setTimeout(() => ctrl.abort(), probeTimeoutMs);
       timer.unref?.();
       const res = await fetch(buildUrl(candidateBaseUrl, '/global/health'), { method: 'GET', headers, signal: ctrl.signal }).catch(() => null);
       clearTimeout(timer);
@@ -256,6 +309,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
       url: buildUrl(baseUrl, '/global/health'),
       method: 'GET',
       headers,
+      timeoutMs: Math.min(2_000, httpTimeoutMs ?? 2_000),
     });
   } catch (error) {
     logger.debug('[OpenCodeServer] Health probe failed (non-fatal)', error);
@@ -276,6 +330,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         url: buildUrl(baseUrl, '/session', { directory: resolveDirectory() }),
         method: 'GET',
         headers,
+        timeoutMs: httpTimeoutMs,
       });
       return Array.isArray(raw) ? raw : [];
     },
@@ -287,6 +342,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         body: {
           ...(Array.isArray(opts?.permission) ? { permission: opts?.permission } : {}),
         },
+        timeoutMs: httpTimeoutMs,
       });
     },
     sessionGet: async ({ sessionId }) => {
@@ -294,6 +350,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         url: buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}`, { directory: resolveDirectory() }),
         method: 'GET',
         headers,
+        timeoutMs: httpTimeoutMs,
       });
     },
     sessionMessagesList: async ({ sessionId }) => {
@@ -301,6 +358,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         url: buildUrl(currentBaseUrl, `/session/${encodeURIComponent(sessionId)}/message`, { directory: resolveDirectory() }),
         method: 'GET',
         headers,
+        timeoutMs: httpTimeoutMs,
       }));
       return Array.isArray(raw) ? raw : [];
     },
@@ -312,6 +370,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         }),
         method: 'GET',
         headers,
+        timeoutMs: httpTimeoutMs,
       }));
       return Array.isArray(raw) ? raw : [];
     },
@@ -320,6 +379,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         url: buildUrl(currentBaseUrl, '/session/status', { directory: resolveDirectory() }),
         method: 'GET',
         headers,
+        timeoutMs: httpTimeoutMs,
       }));
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
       return raw as Record<string, { type?: string }>;
@@ -329,6 +389,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         url: buildUrl(baseUrl, '/global/config'),
         method: 'GET',
         headers,
+        timeoutMs: httpTimeoutMs,
       });
     },
     agentsList: async () => {
@@ -336,6 +397,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         url: buildUrl(baseUrl, '/agent'),
         method: 'GET',
         headers,
+        timeoutMs: httpTimeoutMs,
       });
       return Array.isArray(agents) ? agents as any : [];
     },
@@ -344,6 +406,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         url: buildUrl(baseUrl, '/provider'),
         method: 'GET',
         headers,
+        timeoutMs: httpTimeoutMs,
       });
       const all = providers && typeof providers === 'object' && !Array.isArray(providers) ? (providers as any).all : null;
       return Array.isArray(all) ? all as any : [];
@@ -359,6 +422,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
           name: serverName,
           config,
         },
+        timeoutMs: httpTimeoutMs,
       });
     },
     mcpDisconnect: async ({ name }) => {
@@ -369,6 +433,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         method: 'POST',
         headers,
         body: {},
+        timeoutMs: httpTimeoutMs,
       });
     },
     sessionPromptAsync: async ({ sessionId, messageId, parts, agent, model, config }) => {
@@ -383,6 +448,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
           ...(config ? { config } : {}),
           parts,
         },
+        timeoutMs: httpTimeoutMs,
       }));
     },
     sessionAbort: async ({ sessionId }) => {
@@ -391,6 +457,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         method: 'POST',
         headers,
         body: {},
+        timeoutMs: httpTimeoutMs,
       });
     },
     sessionFork: async ({ sessionId, messageId }) => {
@@ -399,6 +466,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         method: 'POST',
         headers,
         body: messageId ? { messageID: messageId } : {},
+        timeoutMs: httpTimeoutMs,
       });
     },
     questionReply: async ({ requestId, answers }) => {
@@ -407,6 +475,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         method: 'POST',
         headers,
         body: { answers },
+        timeoutMs: httpTimeoutMs,
       });
     },
     questionReject: async ({ requestId }) => {
@@ -415,6 +484,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         method: 'POST',
         headers,
         body: {},
+        timeoutMs: httpTimeoutMs,
       });
     },
     permissionReply: async ({ requestId, reply }) => {
@@ -423,23 +493,32 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         method: 'POST',
         headers,
         body: { reply },
+        timeoutMs: httpTimeoutMs,
       });
     },
     permissionList: async () => {
-      const raw = await fetchJson<unknown>({
-        url: buildUrl(baseUrl, '/permission', { directory: resolveDirectory() }),
+      const raw = await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<unknown>({
+        url: buildUrl(currentBaseUrl, '/permission', { directory: resolveDirectory() }),
         method: 'GET',
         headers,
-      });
-      return Array.isArray(raw) ? raw : [];
+        timeoutMs: httpTimeoutMs,
+      }));
+      if (!Array.isArray(raw)) {
+        throw new Error('OpenCode permission list returned invalid data');
+      }
+      return raw;
     },
     questionList: async () => {
-      const raw = await fetchJson<unknown>({
-        url: buildUrl(baseUrl, '/question', { directory: resolveDirectory() }),
+      const raw = await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<unknown>({
+        url: buildUrl(currentBaseUrl, '/question', { directory: resolveDirectory() }),
         method: 'GET',
         headers,
-      });
-      return Array.isArray(raw) ? raw : [];
+        timeoutMs: httpTimeoutMs,
+      }));
+      if (!Array.isArray(raw)) {
+        throw new Error('OpenCode question list returned invalid data');
+      }
+      return raw;
     },
     subscribeGlobalEvents: async ({ signal, onEvent }) => {
       if (disposed) return;

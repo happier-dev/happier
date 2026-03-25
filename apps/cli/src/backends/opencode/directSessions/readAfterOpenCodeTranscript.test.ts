@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readAfterOpenCodeTranscript } from './readAfterOpenCodeTranscript';
+import { encodeOpenCodeDirectAfterCursor } from './openCodeDirectAfterCursor';
 
 function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -181,21 +182,12 @@ describe('readAfterOpenCodeTranscript', () => {
       return jsonResponse({});
     }) as any;
 
-    const limited = await readAfterOpenCodeTranscript({
-      source: { kind: 'opencodeServer', baseUrl: null, directory: null },
-      remoteSessionId: 'sess-1',
-      cursor: 'tail',
-      maxBytes: 1,
-      maxItems: 100,
-    });
-
-    expect(limited.items).toHaveLength(0);
-    expect(limited.truncated).toBe(false);
+    const cursor = encodeOpenCodeDirectAfterCursor({ v: 1, kind: 'opencodeAfter', nextIndex: 0 });
 
     const after = await readAfterOpenCodeTranscript({
       source: { kind: 'opencodeServer', baseUrl: null, directory: null },
       remoteSessionId: 'sess-1',
-      cursor: limited.nextCursor ?? 'tail',
+      cursor,
       maxBytes: 140,
       maxItems: 100,
     });

@@ -556,7 +556,7 @@ describe('createOpenCodeServerRuntime', () => {
       directory: '/tmp',
       payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'hi' } },
     });
-    client.__emit({
+    await client.__emit({
       directory: '/tmp',
       payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
     });
@@ -597,7 +597,7 @@ describe('createOpenCodeServerRuntime', () => {
       directory: '/tmp',
       payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'ok' } },
     });
-    client.__emit({
+    await client.__emit({
       directory: '/tmp',
       payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
     });
@@ -620,7 +620,7 @@ describe('createOpenCodeServerRuntime', () => {
       directory: '/tmp',
       payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_2', partID: 'part_2', delta: 'ok' } },
     });
-    client.__emit({
+    await client.__emit({
       directory: '/tmp',
       payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
     });
@@ -1044,7 +1044,7 @@ describe('createOpenCodeServerRuntime', () => {
       directory: '/tmp',
       payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_sendprompt_non_resume_1', partID: 'part_sendprompt_non_resume_1', delta: 'ok' } },
     });
-    client.__emit({
+    await client.__emit({
       directory: '/tmp',
       payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
     });
@@ -3551,6 +3551,152 @@ describe('createOpenCodeServerRuntime', () => {
     });
 
     await expect(promptPromise).resolves.toBeUndefined();
+  });
+
+  it('fails closed when permission polling fails before turn completion', async () => {
+    vi.useFakeTimers();
+    process.env.HAPPIER_OPENCODE_SERVER_ACTIVE_CONTROL_POLL_INTERVAL_MS = '25';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = '25';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES = '1';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS = '250';
+
+    const client = createFakeClient();
+    client.permissionList.mockImplementation(async () => {
+      throw new Error('permission list failed');
+    });
+    const session = createFakeSession();
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-permission-failure' });
+    const promptOutcome = promptPromise.then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    );
+
+    await vi.advanceTimersByTimeAsync(300);
+
+    const outcome = await promptOutcome;
+    expect(outcome.status).toBe('rejected');
+    expect(String((outcome as { error: { message?: unknown } }).error.message)).toContain('permission list failed');
+
+    vi.useRealTimers();
+    delete process.env.HAPPIER_OPENCODE_SERVER_ACTIVE_CONTROL_POLL_INTERVAL_MS;
+    delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+    delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES;
+    delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS;
+  });
+
+  it('fails closed when question polling fails before turn completion', async () => {
+    vi.useFakeTimers();
+    process.env.HAPPIER_OPENCODE_SERVER_ACTIVE_CONTROL_POLL_INTERVAL_MS = '25';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = '25';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES = '1';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS = '250';
+
+    const client = createFakeClient();
+    client.questionList.mockImplementation(async () => {
+      throw new Error('question list failed');
+    });
+    const session = createFakeSession();
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-question-failure' });
+    const promptOutcome = promptPromise.then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    );
+
+    await vi.advanceTimersByTimeAsync(300);
+
+    const outcome = await promptOutcome;
+    expect(outcome.status).toBe('rejected');
+    expect(String((outcome as { error: { message?: unknown } }).error.message)).toContain('question list failed');
+
+    vi.useRealTimers();
+    delete process.env.HAPPIER_OPENCODE_SERVER_ACTIVE_CONTROL_POLL_INTERVAL_MS;
+    delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+    delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES;
+    delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS;
+  });
+
+  it('fails closed when question polling repeatedly fails even if permission polling succeeds', async () => {
+    vi.useFakeTimers();
+    process.env.HAPPIER_OPENCODE_SERVER_ACTIVE_CONTROL_POLL_INTERVAL_MS = '25';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = '25';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES = '2';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS = '250';
+
+    const client = createFakeClient();
+    client.permissionList.mockImplementation(async () => []);
+    client.questionList.mockImplementation(async () => {
+      throw new Error('question list failed');
+    });
+    const session = createFakeSession();
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-question-failure-with-perms-ok' });
+    const promptOutcome = promptPromise.then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    );
+
+    const outcome = await Promise.race([
+      promptOutcome,
+      (async () => {
+        await vi.advanceTimersByTimeAsync(600);
+        return { status: 'timeout' as const };
+      })(),
+    ]);
+
+    expect(outcome.status).toBe('rejected');
+    if (outcome.status === 'rejected') {
+      expect(String((outcome as { error: { message?: unknown } }).error.message)).toContain('question list failed');
+    }
+
+    vi.useRealTimers();
+    delete process.env.HAPPIER_OPENCODE_SERVER_ACTIVE_CONTROL_POLL_INTERVAL_MS;
+    delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+    delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES;
+    delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS;
   });
 
 	  it('emits a single tool-call when tool updates gain additional input fields (e.g. command)', async () => {

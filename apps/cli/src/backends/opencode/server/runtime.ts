@@ -88,6 +88,20 @@ function normalizeEnvVar(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+class OpenCodeControlPlaneRequestListError extends Error {
+  readonly requestKind: 'permission' | 'question';
+
+  readonly cause: unknown;
+
+  constructor(requestKind: 'permission' | 'question', cause: unknown) {
+    const detail = extractOpenCodeErrorText(cause);
+    super(detail ? `OpenCode ${requestKind} list failed: ${detail}` : `OpenCode ${requestKind} list failed`);
+    this.name = 'OpenCodeControlPlaneRequestListError';
+    this.requestKind = requestKind;
+    this.cause = cause;
+  }
+}
+
 export type OpenCodeServerRuntimeDeps = Readonly<{
   createClient?: typeof createOpenCodeServerRuntimeClient;
 }>;
@@ -627,28 +641,36 @@ export function createOpenCodeServerRuntime(params: {
     return Math.max(100, Math.min(300_000, configured));
   })();
 
-  let controlPlaneFailureCount = 0;
-  let controlPlaneFirstFailureAtMs: number | null = null;
+  type ControlPlaneFailureKind = 'status' | 'permission' | 'question' | 'messages';
+  type ControlPlaneFailureState = { count: number; firstFailureAtMs: number | null };
 
-  const resetControlPlaneFailures = () => {
-    controlPlaneFailureCount = 0;
-    controlPlaneFirstFailureAtMs = null;
+  const controlPlaneFailures: Record<ControlPlaneFailureKind, ControlPlaneFailureState> = {
+    status: { count: 0, firstFailureAtMs: null },
+    permission: { count: 0, firstFailureAtMs: null },
+    question: { count: 0, firstFailureAtMs: null },
+    messages: { count: 0, firstFailureAtMs: null },
   };
 
-  const maybeAbortTurnOnControlPlaneFailure = (error: unknown) => {
+  const resetControlPlaneFailures = (kind: ControlPlaneFailureKind) => {
+    controlPlaneFailures[kind].count = 0;
+    controlPlaneFailures[kind].firstFailureAtMs = null;
+  };
+
+  const maybeAbortTurnOnControlPlaneFailure = (kind: ControlPlaneFailureKind, error: unknown) => {
     if (!turnDeferred) return;
     if (!turnPromptActive) return;
 
+    const state = controlPlaneFailures[kind];
     const nowMs = Date.now();
-    if (controlPlaneFirstFailureAtMs == null) {
-      controlPlaneFirstFailureAtMs = nowMs;
-      controlPlaneFailureCount = 0;
+    if (state.firstFailureAtMs == null) {
+      state.firstFailureAtMs = nowMs;
+      state.count = 0;
     }
-    controlPlaneFailureCount += 1;
+    state.count += 1;
 
-    const exceededConsecutive = controlPlaneFailureCount >= controlPlaneMaxConsecutiveFailures;
-    const exceededGrace = Number.isFinite(nowMs) && controlPlaneFirstFailureAtMs != null
-      ? nowMs - controlPlaneFirstFailureAtMs >= controlPlaneFailureGraceMs
+    const exceededConsecutive = state.count >= controlPlaneMaxConsecutiveFailures;
+    const exceededGrace = Number.isFinite(nowMs) && state.firstFailureAtMs != null
+      ? nowMs - state.firstFailureAtMs >= controlPlaneFailureGraceMs
       : false;
 
     if (!exceededConsecutive && !exceededGrace) return;
@@ -674,8 +696,20 @@ export function createOpenCodeServerRuntime(params: {
 
   const listPendingPermissionRequests = async (): Promise<OpenCodePermissionRequest[]> => {
     const c = await ensureClient();
-    const raw = await c.permissionList().catch(() => []);
-    if (!Array.isArray(raw)) return [];
+    let raw: unknown;
+    try {
+      raw = await c.permissionList();
+    } catch (error) {
+      const failure = new OpenCodeControlPlaneRequestListError('permission', error);
+      maybeAbortTurnOnControlPlaneFailure('permission', failure);
+      throw failure;
+    }
+    if (!Array.isArray(raw)) {
+      const failure = new OpenCodeControlPlaneRequestListError('permission', new Error('OpenCode permission list returned invalid data'));
+      maybeAbortTurnOnControlPlaneFailure('permission', failure);
+      throw failure;
+    }
+    resetControlPlaneFailures('permission');
     return raw
       .map((item) => parsePermissionRequest(item))
       .filter((item): item is OpenCodePermissionRequest => Boolean(item))
@@ -684,8 +718,20 @@ export function createOpenCodeServerRuntime(params: {
 
   const listPendingQuestionRequests = async (): Promise<OpenCodeQuestionRequest[]> => {
     const c = await ensureClient();
-    const raw = await c.questionList().catch(() => []);
-    if (!Array.isArray(raw)) return [];
+    let raw: unknown;
+    try {
+      raw = await c.questionList();
+    } catch (error) {
+      const failure = new OpenCodeControlPlaneRequestListError('question', error);
+      maybeAbortTurnOnControlPlaneFailure('question', failure);
+      throw failure;
+    }
+    if (!Array.isArray(raw)) {
+      const failure = new OpenCodeControlPlaneRequestListError('question', new Error('OpenCode question list returned invalid data'));
+      maybeAbortTurnOnControlPlaneFailure('question', failure);
+      throw failure;
+    }
+    resetControlPlaneFailures('question');
     return raw
       .map((item) => parseQuestionRequest(item))
       .filter((item): item is OpenCodeQuestionRequest => Boolean(item))
@@ -701,9 +747,9 @@ export function createOpenCodeServerRuntime(params: {
     let statuses: unknown;
     try {
       statuses = await c.sessionStatusList();
-      resetControlPlaneFailures();
+      resetControlPlaneFailures('status');
     } catch (error) {
-      maybeAbortTurnOnControlPlaneFailure(error);
+      maybeAbortTurnOnControlPlaneFailure('status', error);
       return;
     }
     const map = statuses && typeof statuses === 'object' && !Array.isArray(statuses) ? (statuses as any as Record<string, unknown>) : null;
@@ -738,8 +784,14 @@ export function createOpenCodeServerRuntime(params: {
       if (!turnAssistantBackfillIdleAttempted) {
         await backfillAssistantTextFromControlPlaneBestEffort();
       }
-      const permissions = await listPendingPermissionRequests();
-      const questions = await listPendingQuestionRequests();
+      let permissions: OpenCodePermissionRequest[];
+      let questions: OpenCodeQuestionRequest[];
+      try {
+        permissions = await listPendingPermissionRequests();
+        questions = await listPendingQuestionRequests();
+      } catch (error) {
+        return;
+      }
       const handledPerms = handledPermissionIds ?? new Set<string>();
       const handledQs = handledQuestionIds ?? new Set<string>();
       const inFlightPerms = inFlightPermissionIds ?? new Set<string>();
@@ -989,7 +1041,7 @@ export function createOpenCodeServerRuntime(params: {
     try {
       raw = await c.sessionMessagesList({ sessionId });
     } catch (error) {
-      maybeAbortTurnOnControlPlaneFailure(error);
+      maybeAbortTurnOnControlPlaneFailure('messages', error);
       return;
     }
 
@@ -1202,7 +1254,16 @@ export function createOpenCodeServerRuntime(params: {
         (hasMeaningfulInput || Boolean(commandHint) || status === 'completed' || status === 'error');
 
       if (shouldEmitToolCallNow) {
+        try {
           await flushAndClearStreamWriters({ reason: 'tool-call-boundary' });
+        } catch (error) {
+          logger.debug('[OpenCodeServer] tool-call boundary transcript flush failed (non-fatal)', {
+            error,
+            sessionId: part.sessionID,
+            messageId: messageID,
+            callId,
+          });
+        }
         toolCallSentByCallId.add(callKey);
         params.session.sendAgentMessage(
           provider,
@@ -1901,8 +1962,14 @@ export function createOpenCodeServerRuntime(params: {
 
       const pollControlPlaneOnce = async () => {
         if (controlAbort.signal.aborted) return;
-        const perms = await listPendingPermissionRequests();
-        const qs = await listPendingQuestionRequests();
+        let perms: OpenCodePermissionRequest[];
+        let qs: OpenCodeQuestionRequest[];
+        try {
+          perms = await listPendingPermissionRequests();
+          qs = await listPendingQuestionRequests();
+        } catch (error) {
+          return;
+        }
         await pollIdleStatusFromControlPlaneBestEffort();
         await backfillAssistantTextFromControlPlaneBestEffort();
         const permIds = handledPermissionIds ?? new Set<string>();
