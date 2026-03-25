@@ -425,6 +425,8 @@ export function createOpenCodeServerRuntime(params: {
     if (!turnDeferred) return;
     const d = turnDeferred;
     turnDeferred = null;
+    // Turns can be rejected from background callbacks; attach a handler to avoid unhandledRejection warnings.
+    void d.promise.catch(() => undefined);
     resetTurnEventState();
     beginFreshTurnChangeCollection();
     d.reject(error);
@@ -694,6 +696,22 @@ export function createOpenCodeServerRuntime(params: {
     return true;
   };
 
+  const abortTurnFailClosedDueToPermissionProtocolError = (error: unknown) => {
+    if (!turnDeferred) return;
+    if (!turnPromptActive) return;
+
+    setThinking(false);
+    void flushAndClearStreamWriters({ reason: 'abort', interruptedReason: 'permission_protocol_error' }).finally(() => {
+      params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
+    });
+    const detail = extractOpenCodeErrorText(error);
+    const message = detail
+      ? `OpenCode permission request could not be validated. For safety, the turn was aborted.\n\nDetails: ${detail}`
+      : 'OpenCode permission request could not be validated. For safety, the turn was aborted.';
+    params.session.sendAgentMessage(provider, { type: 'message', message });
+    rejectTurn(error ?? new Error('OpenCode permission request could not be validated'));
+  };
+
   const listPendingPermissionRequests = async (): Promise<OpenCodePermissionRequest[]> => {
     const c = await ensureClient();
     let raw: unknown;
@@ -709,11 +727,26 @@ export function createOpenCodeServerRuntime(params: {
       maybeAbortTurnOnControlPlaneFailure('permission', failure);
       throw failure;
     }
+    const parsed: OpenCodePermissionRequest[] = [];
+    for (const item of raw) {
+      const rec = asRecord(item);
+      const itemSessionId = normalizeString(rec?.sessionID);
+      if (!itemSessionId) {
+        const failure = new OpenCodeControlPlaneRequestListError('permission', new Error('OpenCode permission list contained a malformed request (missing sessionID)'));
+        abortTurnFailClosedDueToPermissionProtocolError(failure);
+        return [];
+      }
+      if (itemSessionId !== sessionId && !sidechainIdByRemoteSessionId.has(itemSessionId)) continue;
+      const req = parsePermissionRequest(item);
+      if (!req) {
+        const failure = new OpenCodeControlPlaneRequestListError('permission', new Error('OpenCode permission list contained a malformed request'));
+        abortTurnFailClosedDueToPermissionProtocolError(failure);
+        return [];
+      }
+      parsed.push(req);
+    }
     resetControlPlaneFailures('permission');
-    return raw
-      .map((item) => parsePermissionRequest(item))
-      .filter((item): item is OpenCodePermissionRequest => Boolean(item))
-      .filter((item) => item.sessionID === sessionId || sidechainIdByRemoteSessionId.has(item.sessionID));
+    return parsed;
   };
 
   const listPendingQuestionRequests = async (): Promise<OpenCodeQuestionRequest[]> => {
@@ -1477,12 +1510,34 @@ export function createOpenCodeServerRuntime(params: {
       return;
     }
 
-    const decision = await params.permissionHandler.handleToolCall(req.id, req.permission, {
-      permission: req.permission,
-      patterns: req.patterns,
-      always: req.always,
-      metadata: req.metadata,
-    });
+    let decision: Awaited<ReturnType<typeof params.permissionHandler.handleToolCall>>;
+    try {
+      decision = await params.permissionHandler.handleToolCall(req.id, req.permission, {
+        permission: req.permission,
+        patterns: req.patterns,
+        always: req.always,
+        metadata: req.metadata,
+      });
+    } catch (error) {
+      logger.debug('[OpenCodeServer] permission handler threw; rejecting permission request (fail-closed)', {
+        requestId: req.id,
+        permission: req.permission,
+        sessionId: req.sessionID,
+      }, error);
+      params.session.sendAgentMessage(provider, {
+        type: 'message',
+        message: 'Permission request handling failed. For safety, the request was rejected.',
+      });
+      try {
+        await c.permissionReply({ requestId: req.id, reply: 'reject' });
+      } catch (replyError) {
+        logger.debug('[OpenCodeServer] failed to reject permission request after handler error (non-fatal)', {
+          requestId: req.id,
+          sessionId: req.sessionID,
+        }, replyError);
+      }
+      return;
+    }
 
     if (decision.decision === 'approved_for_session') {
       // Happier owns "always allow" persistence and scope. Always reply "once" to OpenCode so
@@ -1637,8 +1692,37 @@ export function createOpenCodeServerRuntime(params: {
 
     if (type === 'permission.asked') {
       const req = parsePermissionRequest(props);
-      if (!req) return;
-      handlePermissionAskedBestEffort(req);
+      if (req) {
+        handlePermissionAskedBestEffort(req);
+        return;
+      }
+
+      const rec = asRecord(props);
+      const requestId = normalizeString(rec?.id);
+      const rawSessionId = normalizeString(rec?.sessionID);
+      const belongsToThisRuntime = rawSessionId && (rawSessionId === sessionId || sidechainIdByRemoteSessionId.has(rawSessionId));
+      if (belongsToThisRuntime && requestId) {
+        void (async () => {
+          params.session.sendAgentMessage(provider, {
+            type: 'message',
+            message: 'OpenCode emitted a malformed permission request. For safety, it was rejected.',
+          });
+          const c = await ensureClient();
+          await c.permissionReply({ requestId, reply: 'reject' });
+        })().catch((error) => {
+          logger.debug('[OpenCodeServer] failed to reject malformed permission request (non-fatal)', {
+            requestId,
+            sessionId: rawSessionId,
+          }, error);
+          abortTurnFailClosedDueToPermissionProtocolError(error);
+        });
+        return;
+      }
+
+      if (belongsToThisRuntime) {
+        const failure = new Error('OpenCode emitted a malformed permission request (missing id)');
+        abortTurnFailClosedDueToPermissionProtocolError(failure);
+      }
       return;
     }
 
@@ -1891,6 +1975,9 @@ export function createOpenCodeServerRuntime(params: {
       const model = selectedModel ?? undefined;
       const config = Object.keys(configOverrides).length > 0 ? { ...configOverrides } : undefined;
       turnDeferred = createDeferred<void>();
+      // A turn can be aborted from a background poll/SSE callback before sendPromptWithMeta reaches its await.
+      // Attach a handler immediately so Node does not treat the rejection as unhandled.
+      void turnDeferred.promise.catch(() => undefined);
       const thisTurnDeferred = turnDeferred;
       turnPromptActive = true;
       turnActivitySeen = false;

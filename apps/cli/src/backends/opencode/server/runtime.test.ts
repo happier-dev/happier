@@ -5,7 +5,15 @@ import { buildChangeTitleInstruction } from '@/agent/runtime/changeTitleInstruct
 import { logger } from '@/ui/logger';
 
 import { createOpenCodeServerRuntime } from './runtime';
+import type { OpenCodeServerRuntimeClient } from './client';
 import type { OpenCodeGlobalEvent } from './types';
+import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
+
+function createFakePermissionHandler() {
+  return {
+    handleToolCall: vi.fn(async () => ({ decision: 'approved' as const })),
+  } satisfies Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
+}
 
 function createFakeClient() {
   let onEvent: ((evt: OpenCodeGlobalEvent) => void) | null = null;
@@ -192,10 +200,10 @@ describe('createOpenCodeServerRuntime', () => {
           env: { HAPPIER_TEST_MCP: '1' },
         },
       },
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({});
@@ -232,10 +240,10 @@ describe('createOpenCodeServerRuntime', () => {
           args: ['--help'],
         },
       },
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({});
@@ -272,10 +280,10 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({});
@@ -323,7 +331,7 @@ describe('createOpenCodeServerRuntime', () => {
   });
 
   it('applies the OpenCode session directory on resume (uses sessionGet.directory)', async () => {
-    const client = createFakeClient() as any;
+    const client = createFakeClient();
     client.sessionGet = vi.fn(async ({ sessionId }: { sessionId: string }) => ({ id: sessionId, directory: '/correct' }));
 
     const session = createFakeSession();
@@ -332,10 +340,10 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({ resumeId: 'ses_remote' });
@@ -344,7 +352,7 @@ describe('createOpenCodeServerRuntime', () => {
   });
 
   it('applies the OpenCode session directory after sessionCreate when available', async () => {
-    const client = createFakeClient() as any;
+    const client = createFakeClient();
     client.sessionCreate = vi.fn(async () => ({ id: 'ses_1', directory: '/created' }));
 
     const session = createFakeSession();
@@ -353,10 +361,10 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({});
@@ -365,7 +373,7 @@ describe('createOpenCodeServerRuntime', () => {
   });
 
   it('creates a session with the safe-yolo ruleset when permission mode is safe-yolo', async () => {
-    const client = createFakeClient() as any;
+    const client = createFakeClient();
     client.sessionCreate = vi.fn(async () => ({ id: 'ses_1' }));
 
     const session = createFakeSession();
@@ -374,7 +382,7 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
       getPermissionMode: () => 'safe-yolo',
     }, {
@@ -406,7 +414,7 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
       getPermissionMode: () => 'read-only',
     }, {
@@ -521,10 +529,10 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({});
@@ -849,7 +857,7 @@ describe('createOpenCodeServerRuntime', () => {
   });
 
   it('backfills vendor-assigned user messageID for the first prompt after resume', async () => {
-    const client = createFakeClient() as any;
+    const client = createFakeClient();
     const session = createFakeSession();
     session.__getMetadata().opencodeSessionId = 'ses_remote';
 
@@ -883,10 +891,10 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({ resumeId: 'ses_remote' });
@@ -915,7 +923,7 @@ describe('createOpenCodeServerRuntime', () => {
   });
 
   it('backfills the first resumed sendPrompt call so native diff collection can resolve the resumed user message id', async () => {
-    const client = createFakeClient() as any;
+    const client = createFakeClient();
     const session = createFakeSession();
     session.__getMetadata().opencodeSessionId = 'ses_remote';
 
@@ -955,10 +963,10 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({ resumeId: 'ses_remote' });
@@ -966,7 +974,7 @@ describe('createOpenCodeServerRuntime', () => {
 
     const promptPromise = runtime.sendPrompt('first after resume');
     await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
-    const firstCall = client.sessionPromptAsync.mock.calls[0]?.[0] as any;
+    const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
     expect(firstCall.messageId).toBeUndefined();
 
     client.__emit({
@@ -1022,10 +1030,10 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({});
@@ -1086,10 +1094,10 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({});
@@ -1170,10 +1178,10 @@ describe('createOpenCodeServerRuntime', () => {
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
       onThinkingChange: vi.fn(),
     }, {
-      createClient: async () => client as any,
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
     });
 
     await runtime.startOrLoad({});
@@ -1414,6 +1422,89 @@ describe('createOpenCodeServerRuntime', () => {
     await expect.poll(() => client.permissionReply.mock.calls.length).toBe(1);
     expect(client.permissionReply).toHaveBeenCalledWith({ requestId: 'perm_yolo', reply: 'once' });
     expect(permissionHandler.handleToolCall).not.toHaveBeenCalled();
+  });
+
+  it('fails closed (reject) when permission handler throws during permission.asked', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const permissionHandler = { handleToolCall: vi.fn(async () => { throw new Error('permission ui crashed'); }) } as any;
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler,
+      onThinkingChange: vi.fn(),
+      getPermissionMode: () => 'default',
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'permission.asked',
+        properties: {
+          id: 'perm_throw',
+          sessionID: 'ses_1',
+          permission: 'edit',
+          patterns: ['AGENTS.md'],
+          always: ['*'],
+          metadata: {},
+        },
+      },
+    });
+
+    await expect.poll(() => client.permissionReply.mock.calls.length).toBe(1);
+    expect(client.permissionReply).toHaveBeenCalledWith({ requestId: 'perm_throw', reply: 'reject' });
+    expect(permissionHandler.handleToolCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed (reject) when permission.asked payload is malformed (no UI prompt)', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const permissionHandler = { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any;
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler,
+      onThinkingChange: vi.fn(),
+      getPermissionMode: () => 'default',
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'permission.asked',
+        properties: {
+          id: 'perm_malformed',
+          sessionID: 'ses_1',
+          // permission omitted (protocol drift / malformed payload)
+          patterns: ['AGENTS.md'],
+          always: ['*'],
+          metadata: {},
+        },
+      },
+    });
+
+    await expect.poll(() => client.permissionReply.mock.calls.length).toBe(1);
+    expect(client.permissionReply).toHaveBeenCalledWith({ requestId: 'perm_malformed', reply: 'reject' });
+    expect(permissionHandler.handleToolCall).not.toHaveBeenCalled();
+    expect((session.sendAgentMessage as any).mock.calls.some((call: any[]) =>
+      call?.[0] === 'opencode' && call?.[1]?.type === 'message'
+    )).toBe(true);
   });
 
   it('does not resolve a turn on session.idle until some provider activity is observed after prompt_async', async () => {
@@ -3597,6 +3688,51 @@ describe('createOpenCodeServerRuntime', () => {
     delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
     delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES;
     delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS;
+  });
+
+  it('fails closed when permission polling returns a malformed request row for this session', async () => {
+    const client = createFakeClient();
+    client.permissionList.mockResolvedValue([
+      // Missing `id` => cannot be safely handled; must fail-closed.
+      { sessionID: 'ses_1', permission: 'edit', patterns: ['AGENTS.md'], always: ['*'], metadata: {} },
+    ] as any);
+    const session = createFakeSession();
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-permission-malformed' });
+    const promptOutcome = promptPromise.then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    );
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'hi' } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+    });
+
+    const outcome = await promptOutcome;
+    expect(outcome.status).toBe('rejected');
+    expect((session.sendAgentMessage as any).mock.calls.some((call: any[]) =>
+      call?.[0] === 'opencode' && call?.[1]?.type === 'message'
+    )).toBe(true);
   });
 
   it('fails closed when question polling fails before turn completion', async () => {
