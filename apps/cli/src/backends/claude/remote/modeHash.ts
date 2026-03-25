@@ -29,6 +29,10 @@ function resolveClaudeRemoteSettingSourcesOverrideForAgentSdk(mode: EnhancedMode
 
 export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
     const agentSdkEnabled = mode.claudeRemoteAgentSdkEnabled === true;
+    const normalizedReasoningEffort = (() => {
+        const raw = typeof mode.reasoningEffort === 'string' ? mode.reasoningEffort.trim() : '';
+        return raw.length > 0 ? raw : null;
+    })();
     const effectiveAgentModeId = (() => {
         const raw = typeof mode.agentModeId === 'string' ? mode.agentModeId.trim() : '';
         if (raw) return raw;
@@ -50,6 +54,7 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
             fallbackModel: mode.fallbackModel,
             customSystemPrompt: mode.customSystemPrompt,
             appendSystemPrompt: mode.appendSystemPrompt,
+            reasoningEffort: normalizedReasoningEffort,
             claudeRemoteDisableTodos: mode.claudeRemoteDisableTodos,
         });
     }
@@ -67,6 +72,7 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
         claudeRemoteStrictMcpServerConfig: mode.claudeRemoteStrictMcpServerConfig,
         claudeRemoteAdvancedOptionsJson: mode.claudeRemoteAdvancedOptionsJson,
         // Restart-required (SDK has no dynamic setter)
+        reasoningEffort: normalizedReasoningEffort,
         fallbackModel: mode.fallbackModel,
         customSystemPrompt: mode.customSystemPrompt,
         appendSystemPrompt: mode.appendSystemPrompt,

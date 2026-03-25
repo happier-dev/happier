@@ -57,6 +57,22 @@ describe('hashClaudeEnhancedModeForQueue', () => {
         expect(next).not.toBe(base);
     });
 
+    it('changes when reasoningEffort changes (Agent SDK enabled)', () => {
+        const base = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSourcesV2: ['project'],
+            reasoningEffort: 'low',
+        }));
+
+        const next = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSourcesV2: ['project'],
+            reasoningEffort: 'max',
+        }));
+
+        expect(next).not.toBe(base);
+    });
+
     it('changes when claudeRemoteDisableTodos changes (Agent SDK disabled)', () => {
         const base = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: false,
@@ -66,6 +82,22 @@ describe('hashClaudeEnhancedModeForQueue', () => {
         const next = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: false,
             claudeRemoteDisableTodos: true,
+        }));
+
+        expect(next).not.toBe(base);
+    });
+
+    it('changes when reasoningEffort changes (Agent SDK disabled)', () => {
+        const base = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: false,
+            model: 'claude-opus-4-6',
+            reasoningEffort: 'low',
+        }));
+
+        const next = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: false,
+            model: 'claude-opus-4-6',
+            reasoningEffort: 'max',
         }));
 
         expect(next).not.toBe(base);
