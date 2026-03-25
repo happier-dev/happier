@@ -9,6 +9,7 @@ import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicMod
 import { parsePreflightModelListFromProbeModelsResult } from '@/sync/domains/models/parsePreflightModelListFromProbeModelsResult';
 import {
     DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS,
+    DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS,
     readDynamicModelProbeCache,
     runDynamicModelProbeDedupe,
     writeDynamicModelProbeCacheError,
@@ -41,6 +42,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     const preflightModelsRef = React.useRef<PreflightModelList | null>(null);
     const refreshedAtRef = React.useRef<number | null>(null);
     const lastScopeKeyRef = React.useRef<string | null>(null);
+    const staticFallbackRetryRef = React.useRef<Readonly<{ scopeKey: string | null; attempts: number }> | null>(null);
 
     const onRefresh = React.useCallback(() => {
         setRefreshNonce((n) => n + 1);
@@ -205,6 +207,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             const commitNowMs = Date.now();
             const list = attempt?.list ?? null;
             if (list && attempt?.cacheable !== false) {
+                staticFallbackRetryRef.current = { scopeKey: probeScopeKey, attempts: 0 };
                 writeDynamicModelProbeCacheSuccess(preflightModelsKey, list, commitNowMs);
                 setPreflightModels(list);
                 setRefreshedAt(commitNowMs);
@@ -217,6 +220,17 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 setPreflightModels(list);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
+                const state = staticFallbackRetryRef.current;
+                const scopeKey = probeScopeKey;
+                const attempts = state && state.scopeKey === scopeKey ? state.attempts : 0;
+                // Cap fast retries to avoid hammering the CLI when the provider genuinely cannot
+                // return a dynamic list right now (for example: logged out / offline).
+                if (attempts < 2) {
+                    staticFallbackRetryRef.current = { scopeKey, attempts: attempts + 1 };
+                    retryTimeout = setTimeout(() => {
+                        setRefreshNonce((n) => n + 1);
+                    }, DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS);
+                }
                 return;
             }
 

@@ -10,6 +10,12 @@ import {
 
 const machineCapabilitiesInvokeMock = vi.fn();
 
+function assertRefreshFn(value: unknown): asserts value is () => void {
+    if (typeof value !== 'function') {
+        throw new Error('Expected probe.onRefresh to be a function');
+    }
+}
+
 describe('useNewSessionPreflightSessionModesState (refresh)', () => {
     it('forces a refresh probe without clearing existing options', async () => {
         vi.resetModules();
@@ -42,8 +48,11 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
         expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode1')).toBe(true);
 
+        const onRefresh = hook.getCurrent().probe?.onRefresh;
+        assertRefreshFn(onRefresh);
+
         await act(async () => {
-            hook.getCurrent().probe.onRefresh();
+            onRefresh();
         });
         await flushHookEffects();
 

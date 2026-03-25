@@ -10,6 +10,9 @@ export type DynamicModelProbeCacheEntry =
 
 export const DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS = 24 * 60 * 60_000;
 export const DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS = 60_000;
+// When dynamic model probing temporarily falls back to a static list (no per-model options),
+// retry quickly so users don't have to manually hit refresh to see things like Thinking/Speed.
+export const DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS = 2_000;
 
 const PERSIST_KEY = 'dynamic-model-probe-cache-v1';
 const PERSIST_VERSION = 4;

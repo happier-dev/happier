@@ -5,16 +5,13 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { AgentInputEngineDetail } from '@/components/sessions/agentInput/components/AgentInputEngineDetail';
-import { OptionPickerOverlay } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { useNewSessionPreflightConfigOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState';
 import {
     useNewSessionPreflightModelsState,
 } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
-import { useNewSessionPreflightSessionModesState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState';
 import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/acp/configOptionsControl';
 import { t } from '@/text';
-import { View } from 'react-native';
 
 export type NewSessionEngineOptionDetailProps = Readonly<{
     backendTarget: BackendTargetRefV1;
@@ -52,13 +49,6 @@ function resolveEffectiveModelLabel(
 
 export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetailProps) {
     const { modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
-        backendTarget: props.backendTarget,
-        selectedMachineId: props.selectedMachineId,
-        capabilityServerId: props.capabilityServerId,
-        cwd: props.cwd ?? null,
-        probeContext: props.capabilityProbeContext ?? null,
-    });
-    const { modeOptions, probe: modeProbe } = useNewSessionPreflightSessionModesState({
         backendTarget: props.backendTarget,
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
@@ -165,80 +155,48 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         }) ?? null;
     }, [modelOptions, props.backendTarget, selectedConfigOverrides, selectedModelId]);
 
-    const sessionModePickerEffectiveLabel = React.useMemo(() => {
-        const matched = modeOptions.find((opt) => opt.id === selectedSessionModeId) ?? null;
-        return matched?.name ?? (selectedSessionModeId === 'default' ? t('common.default') : selectedSessionModeId);
-    }, [modeOptions, selectedSessionModeId]);
-
     return (
-        <View style={{ gap: 10 }}>
-            {modeOptions.length > 0 ? (
-                <OptionPickerOverlay
-                    title={t('agentInput.mode.sectionTitle')}
-                    effectiveLabel={sessionModePickerEffectiveLabel}
-                    options={modeOptions.map((opt) => ({
-                        value: opt.id,
-                        label: opt.name,
-                        description: opt.description,
-                    }))}
-                    selectedValue={selectedSessionModeId}
-                    emptyText={t('common.default')}
-                    canEnterCustomValue={false}
-                    optionTestIDPrefix="agent-input-session-mode-option"
-                    probe={{
-                        phase: modeProbe.phase,
-                        onRefresh: modeProbe.onRefresh,
-                    }}
-                    onSelect={(modeId) => {
-                        publishSelection({
-                            ...selectionRef.current,
-                            sessionModeId: modeId,
-                        });
-                    }}
-                />
-            ) : null}
-
-            <AgentInputEngineDetail
-                modelOptions={modelOptions}
-                selectedModelId={selectedModelId}
-                effectiveModelLabel={effectiveModelLabel}
-                modelNotes={[]}
-                modelEmptyText={t('agentInput.model.configureInCli')}
-                canEnterCustomModel={canEnterCustomModel}
-                modelProbe={modelProbe}
-                onSelectModel={(modelId) => {
-                    publishSelection({
-                        ...selectionRef.current,
-                        modelId,
-                    });
-                }}
-                onSubmitCustomValue={canEnterCustomModel ? (modelId) => {
-                    publishSelection({
-                        ...selectionRef.current,
-                        modelId,
-                    });
-                } : undefined}
-                selectedModelOptionControls={selectedModelOptionControls}
-                onSelectModelOptionValue={(configId, valueId) => {
-                    publishSelection({
-                        ...selectionRef.current,
-                        configOverrides: {
-                            ...selectionRef.current.configOverrides,
-                            [configId]: valueId,
-                        },
-                    });
-                }}
-                configControls={configControls}
-                onSelectConfigValue={(configId, valueId) => {
-                    publishSelection({
-                        ...selectionRef.current,
-                        configOverrides: {
-                            ...selectionRef.current.configOverrides,
-                            [configId]: valueId,
-                        },
-                    });
-                }}
-            />
-        </View>
+        <AgentInputEngineDetail
+            modelOptions={modelOptions}
+            selectedModelId={selectedModelId}
+            effectiveModelLabel={effectiveModelLabel}
+            modelNotes={[]}
+            modelEmptyText={t('agentInput.model.configureInCli')}
+            canEnterCustomModel={canEnterCustomModel}
+            modelProbe={modelProbe}
+            onSelectModel={(modelId) => {
+                publishSelection({
+                    ...selectionRef.current,
+                    modelId,
+                });
+            }}
+            onSubmitCustomValue={canEnterCustomModel ? (modelId) => {
+                publishSelection({
+                    ...selectionRef.current,
+                    modelId,
+                });
+            } : undefined}
+            selectedModelOptionControls={selectedModelOptionControls}
+            onSelectModelOptionValue={(configId, valueId) => {
+                publishSelection({
+                    ...selectionRef.current,
+                    configOverrides: {
+                        ...selectionRef.current.configOverrides,
+                        [configId]: valueId,
+                    },
+                });
+            }}
+            configControls={configControls}
+            onSelectConfigValue={(configId, valueId) => {
+                publishSelection({
+                    ...selectionRef.current,
+                    configOverrides: {
+                        ...selectionRef.current.configOverrides,
+                        [configId]: valueId,
+                    },
+                });
+            }}
+            sectionOrder={['model', 'config']}
+        />
     );
 }
