@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 
 import type { Metadata } from '@/api/types';
 import { buildCodexAgentRuntimeDescriptor, type CodexBackendMode } from '@happier-dev/agents';
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import { normalizeCodexBackendMode, type DirectSessionsSource } from '@happier-dev/protocol';
 import { inferCodexDirectSessionsSourceFromHome } from '../directSessions/resolveCodexHomeEntriesForDirectSessionsSource';
 
 function resolveCodexDirectSource(params: Readonly<{
@@ -109,9 +109,7 @@ export function maybeUpdateCodexSessionIdMetadata(params: {
 }): void {
   const raw = params.getCodexThreadId();
   const next = typeof raw === 'string' ? raw.trim() : '';
-  const backendMode = params.backendMode === 'mcp' || params.backendMode === 'acp' || params.backendMode === 'appServer'
-    ? params.backendMode
-    : null;
+  const backendMode = normalizeCodexBackendMode(params.backendMode);
   if (!next) return;
 
   const directSource = resolveCodexDirectSource(params);
