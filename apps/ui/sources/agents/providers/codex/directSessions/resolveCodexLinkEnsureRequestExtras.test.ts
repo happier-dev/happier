@@ -109,6 +109,13 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
 
         expect(
             resolveCodexLinkEnsureRequestExtras({
+                source: { kind: 'codexHome', home: 'user' },
+                candidate: { details: { codexBackendMode: '  mcp_resume  ' } },
+            }),
+        ).toEqual({ codexBackendMode: 'acp' });
+
+        expect(
+            resolveCodexLinkEnsureRequestExtras({
                 source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex' },
                 candidate: { details: { cwd: '/repo/fallback-home' } },
             }),

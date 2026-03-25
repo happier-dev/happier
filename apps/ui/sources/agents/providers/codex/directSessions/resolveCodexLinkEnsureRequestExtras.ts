@@ -1,4 +1,5 @@
 import { buildCodexAgentRuntimeDescriptor, readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
+import { normalizeCodexBackendMode } from '@happier-dev/protocol';
 
 import type { DirectBrowseLinkEnsureRequestExtras } from '@/agents/registry/registryUiBehavior';
 
@@ -10,13 +11,9 @@ function readCandidateCodexRuntimeDescriptor(details: Record<string, unknown> | 
 function readCodexBackendMode(details: Record<string, unknown> | undefined): 'mcp' | 'acp' | 'appServer' | null {
     const runtimeDescriptor = readSessionMetadataRuntimeDescriptor({ agentRuntimeDescriptorV1: details?.agentRuntimeDescriptorV1 }, 'codex')
         ?? readSessionMetadataRuntimeDescriptor({ agentRuntimeDescriptorV1: details?.runtimeDescriptor }, 'codex');
-    const runtimeMode = runtimeDescriptor?.backendMode;
-    if (runtimeMode === 'mcp' || runtimeMode === 'acp' || runtimeMode === 'appServer') {
-        return runtimeMode;
-    }
-
-    const mode = details?.codexBackendMode;
-    return mode === 'mcp' || mode === 'acp' || mode === 'appServer' ? mode : null;
+    const runtimeMode = normalizeCodexBackendMode(runtimeDescriptor?.backendMode);
+    if (runtimeMode) return runtimeMode;
+    return normalizeCodexBackendMode(details?.codexBackendMode);
 }
 
 function buildCanonicalRuntimeDescriptor(params: Readonly<{
@@ -35,9 +32,7 @@ function buildCanonicalRuntimeDescriptor(params: Readonly<{
     }
 
     return buildCodexAgentRuntimeDescriptor({
-        backendMode: runtimeDescriptor.backendMode === 'mcp' || runtimeDescriptor.backendMode === 'acp' || runtimeDescriptor.backendMode === 'appServer'
-            ? runtimeDescriptor.backendMode
-            : 'appServer',
+        backendMode: normalizeCodexBackendMode(runtimeDescriptor.backendMode) ?? 'appServer',
         vendorSessionId: typeof runtimeDescriptor.vendorSessionId === 'string' ? runtimeDescriptor.vendorSessionId : null,
         homePath: params.source.homePath ?? null,
         home: params.source.home,

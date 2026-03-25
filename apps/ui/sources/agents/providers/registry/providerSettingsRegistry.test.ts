@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { describe, expect, it } from 'vitest';
 import type { SettingDefinitionMap } from '@happier-dev/protocol';
+import { getAllProviderSettingsDefinitions } from '@happier-dev/agents';
 
 import { AGENT_IDS } from '@/agents/catalog/catalog';
 import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
@@ -135,6 +136,19 @@ describe('assertProviderSettingsPluginsValid', () => {
 describe('getProviderSettingsPlugin', () => {
     it('resolves plugins case-insensitively', () => {
         expect(getProviderSettingsPlugin('CLAUDE' as any)).not.toBeNull();
+    });
+
+    it('covers shared provider-settings definitions from @happier-dev/agents', () => {
+        for (const def of getAllProviderSettingsDefinitions()) {
+            const plugin = getProviderSettingsPlugin(def.providerId);
+            expect(plugin, `missing UI provider settings plugin for ${def.providerId}`).not.toBeNull();
+            if (!plugin) continue;
+
+            const pluginKeys = new Set(Object.keys(plugin.settings));
+            for (const key of Object.keys(def.fields)) {
+                expect(pluginKeys.has(key), `missing provider setting "${key}" for ${def.providerId}`).toBe(true);
+            }
+        }
     });
 
     it('has a plugin entry for every registered backend', () => {
