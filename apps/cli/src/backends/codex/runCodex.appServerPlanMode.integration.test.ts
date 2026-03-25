@@ -284,6 +284,7 @@ describe('runCodex app-server startup plan mode', () => {
       path: root,
       host: 'localhost',
       flavor: 'codex',
+      codexSessionId: 'thread-existing',
       permissionMode: 'default',
       permissionModeUpdatedAt: 1,
       modelOverrideV1: { v: 1, updatedAt: 3, modelId: 'gpt-5.4' },
@@ -292,7 +293,7 @@ describe('runCodex app-server startup plan mode', () => {
         updatedAt: 4,
         overrides: {
           reasoning_effort: { updatedAt: 4, value: 'high' },
-          speed: { updatedAt: 5, value: 'fast' },
+          service_tier: { updatedAt: 5, value: 'fast' },
         },
       },
       sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
@@ -351,7 +352,7 @@ describe('runCodex app-server startup plan mode', () => {
         expect.objectContaining({
           method: 'thread/resume',
           params: expect.objectContaining({
-            threadId: 'thread-overrides',
+            threadId: 'thread-existing',
             model: 'gpt-5.4',
             serviceTier: 'fast',
             persistExtendedHistory: true,
@@ -448,7 +449,7 @@ describe('runCodex app-server startup plan mode', () => {
         updatedAt: 4,
         overrides: {
           reasoning_effort: { updatedAt: 4, value: 'high' },
-          speed: { updatedAt: 5, value: 'fast' },
+          service_tier: { updatedAt: 5, value: 'fast' },
         },
       },
       sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
