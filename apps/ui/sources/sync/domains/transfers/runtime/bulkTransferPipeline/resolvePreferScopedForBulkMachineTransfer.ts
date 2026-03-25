@@ -2,7 +2,7 @@ import { readServerEnabledBit } from '@happier-dev/protocol';
 
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 
-import { shouldPreferScopedMachineRpcForBulkTransfer } from './index';
+import { shouldPreferScopedMachineRpcForBulkTransfer } from './shouldPreferScopedMachineRpcForBulkTransfer';
 
 export async function resolvePreferScopedForBulkMachineTransfer(params: Readonly<{
     machineId: string;

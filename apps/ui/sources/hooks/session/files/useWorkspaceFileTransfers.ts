@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 
 import { openLocalUploadSourceReader } from '@/sync/domains/files/transfers/localUploadSourceReader';
 import { resolveKeepBothTargetPath } from '@/sync/domains/files/resolveKeepBothTargetPath';
-import { downloadDaemonSessionFileToDestination, uploadDaemonSessionFileFromReader } from '@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionFiles';
+import { downloadDaemonSessionFileToDestination, uploadDaemonSessionFileFromReader } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
 import { sessionStatFile } from '@/sync/ops';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { resolveLocalUploadSourceSizeBytes } from '@/sync/domains/files/transfers/localUploadSourceReader';

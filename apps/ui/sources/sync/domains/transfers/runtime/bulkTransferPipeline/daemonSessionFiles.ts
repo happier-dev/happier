@@ -125,29 +125,35 @@ export async function uploadDaemonSessionFileFromReader(params: Readonly<{
     return await uploadBulkPayloadFromFile<SessionFileUploadFinalizeResponse>({
         fileReader: params.fileReader,
         init: async () =>
-            await transferClient.call<SessionFileUploadInitResponse, SessionFileUploadInitRequest>({
-                request: params.request,
-                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT,
-                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT,
+            await transferClient.call<
+                SessionFileUploadInitResponse,
+                SessionFileUploadInitRequest & { t: 'session_file_upload_v1' }
+            >({
+                request: {
+                    ...params.request,
+                    t: 'session_file_upload_v1',
+                },
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
+                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
                 toMachineRequest: rebaseTransferRequestPathToMachineTarget,
             }),
         sendChunk: async (request) =>
             await transferClient.call<SessionFileUploadChunkResponse, typeof request>({
                 request,
-                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_CHUNK,
-                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_CHUNK,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
+                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK,
             }),
         finalize: async (request) =>
             await transferClient.call<SessionFileUploadFinalizeResponse, typeof request>({
                 request,
-                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_FINALIZE,
-                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_FINALIZE,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
+                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE,
             }),
         abort: async (request) =>
             await transferClient.call<SessionFileUploadAbortResponse, typeof request>({
                 request,
-                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_ABORT,
-                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_ABORT,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT,
+                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT,
             }),
         onProgress: params.onProgress
             ? (progress) => {
@@ -181,15 +187,16 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
         init: async (request) => {
             const init = await transferClient.call<
                 SessionFileDownloadInitResponse,
-                Readonly<{ path: string; asZip: boolean; recipientPublicKeyBase64: string }>
+                Readonly<{ t: 'session_file_download_v1'; path: string; asZip: boolean; recipientPublicKeyBase64: string }>
             >({
                 request: {
+                    t: 'session_file_download_v1',
                     path: params.request.path,
                     asZip: params.request.asZip,
                     recipientPublicKeyBase64: request.recipientPublicKeyBase64,
                 },
-                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT,
-                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
+                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
                 toMachineRequest: rebaseTransferRequestPathToMachineTarget,
             });
             if (init.success === true && params.onInit) {
@@ -199,8 +206,8 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
                         request: {
                             downloadId: init.downloadId,
                         },
-                        machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT,
-                        sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT,
+                        machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
+                        sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
                     });
                     return sideEffect;
                 }
@@ -210,20 +217,20 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
         readChunk: async (request) =>
             await transferClient.call<SessionFileDownloadChunkResponse, typeof request>({
                 request,
-                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK,
-                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
+                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
             }),
         finalize: async (request) =>
             await transferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
                 request,
-                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE,
-                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
+                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
             }),
         abort: async (request) =>
             await transferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
                 request,
-                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT,
-                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT,
+                machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
+                sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
             }),
         signal: params.signal ?? null,
         onProgress: params.onProgress
@@ -268,14 +275,15 @@ export async function downloadDaemonSessionFileToBase64(params: Readonly<{
             init: async (request) => {
                 const init = await transferClient.call<
                     SessionFileDownloadInitResponse,
-                    Readonly<{ path: string; recipientPublicKeyBase64: string }>
+                    Readonly<{ t: 'session_file_download_v1'; path: string; recipientPublicKeyBase64: string }>
                 >({
                     request: {
+                        t: 'session_file_download_v1',
                         path: params.path,
                         recipientPublicKeyBase64: request.recipientPublicKeyBase64,
                     },
-                    machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT,
-                    sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT,
+                    machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
+                    sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
                     toMachineRequest: rebaseTransferRequestPathToMachineTarget,
                 });
                 if (init.success === true && init.sizeBytes > params.maxBytes) {
@@ -283,8 +291,8 @@ export async function downloadDaemonSessionFileToBase64(params: Readonly<{
                         request: {
                             downloadId: init.downloadId,
                         },
-                        machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT,
-                        sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT,
+                        machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
+                        sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
                     });
                     return {
                         success: false,
@@ -297,20 +305,20 @@ export async function downloadDaemonSessionFileToBase64(params: Readonly<{
             readChunk: async (request) =>
                 await transferClient.call<SessionFileDownloadChunkResponse, typeof request>({
                     request,
-                    machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK,
-                    sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK,
+                    machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
+                    sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
                 }),
             finalize: async (request) =>
                 await transferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
                     request,
-                    machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE,
-                    sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE,
+                    machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
+                    sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
                 }),
             abort: async (request) =>
                 await transferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
                     request,
-                    machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT,
-                    sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT,
+                    machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
+                    sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
                 }),
             signal: params.signal ?? null,
         });

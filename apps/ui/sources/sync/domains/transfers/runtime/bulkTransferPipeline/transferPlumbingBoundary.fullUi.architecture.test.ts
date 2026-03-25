@@ -55,6 +55,10 @@ describe('bulkTransferPipeline (architecture)', () => {
             assertDoesNotImportModule(source, 'chunkTransferClient', filePath);
             assertDoesNotImportModule(source, 'sessionFileTransferRpcCaller', filePath);
             assertDoesNotImportModule(source, 'mergeTransferChunks', filePath);
+            assertDoesNotImportModule(source, 'uploadBulkPayloadFromFile', filePath);
+            assertDoesNotImportModule(source, 'downloadBulkPayloadToFile', filePath);
+            assertDoesNotImportModule(source, 'uploadBulkJsonPayload', filePath);
+            assertDoesNotImportModule(source, 'downloadBulkJsonPayload', filePath);
             assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonSessionFiles', filePath);
             assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonSessionAttachments', filePath);
             assertDoesNotImportModule(source, 'bulkTransferPipeline/daemonPromptAssets', filePath);

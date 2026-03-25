@@ -1,6 +1,6 @@
 import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
 import { openLocalUploadSourceReader, resolveLocalUploadSourceSizeBytes } from '@/sync/domains/files/transfers/localUploadSourceReader';
-import { uploadDaemonSessionAttachmentFromReader } from '@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionAttachments';
+import { uploadDaemonSessionAttachmentFromReader } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 
 export type AttachmentsUploadLocation = 'workspace' | 'os_temp';

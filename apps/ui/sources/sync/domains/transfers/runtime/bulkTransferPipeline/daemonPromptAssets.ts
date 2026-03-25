@@ -21,7 +21,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
-import { downloadBulkJsonPayload, uploadBulkJsonPayload } from './index';
+import { downloadBulkJsonPayload } from './downloadBulkJsonPayload';
+import { uploadBulkJsonPayload } from './uploadBulkJsonPayload';
 import { resolvePreferScopedForBulkMachineTransfer } from './resolvePreferScopedForBulkMachineTransfer';
 
 type MachinePromptAssetsTransferOpts = Readonly<{
