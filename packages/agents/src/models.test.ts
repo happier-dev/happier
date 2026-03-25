@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { getAgentModelConfig, getAgentStaticModels } from './models.js';
+import { AGENT_IDS } from './types.js';
+import { AGENT_MODEL_CONFIG, getAgentModelConfig, getAgentStaticModels } from './models.js';
 
 describe('agent model config', () => {
+  it('covers every canonical agent', () => {
+    expect(Object.keys(AGENT_MODEL_CONFIG).sort()).toEqual([...AGENT_IDS].sort());
+    for (const agentId of AGENT_IDS) {
+      expect(getAgentModelConfig(agentId)).toBeDefined();
+    }
+  });
+
   it('uses the same name and description contract for static models as dynamic models', () => {
     const claude = getAgentModelConfig('claude');
     const gemini = getAgentModelConfig('gemini');
@@ -21,7 +29,7 @@ describe('agent model config', () => {
     });
     expect(claude.staticModels?.map((model) => model.id)).toEqual(claude.allowedModes);
     expect(gemini.staticModels?.map((model) => model.id)).toEqual(gemini.allowedModes);
-    expect(claudeModels[0]).toEqual({
+    expect(claudeModels[0]).toMatchObject({
       id: 'claude-opus-4-6',
       name: 'Opus 4.6',
       description: expect.any(String),

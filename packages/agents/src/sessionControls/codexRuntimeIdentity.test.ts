@@ -50,6 +50,12 @@ describe('resolvePersistedCodexRuntimeIdentity', () => {
     })).toEqual({ backendMode: 'acp' });
   });
 
+  it('normalizes legacy mcp_resume codex metadata onto acp', () => {
+    expect(resolvePersistedCodexRuntimeIdentity({
+      affinity: { backendMode: '  mcp_resume  ' },
+    })).toEqual({ backendMode: 'acp' });
+  });
+
   it('falls back to legacy codexBackendMode metadata', () => {
     expect(resolvePersistedCodexRuntimeIdentity({ codexBackendMode: 'acp' })).toEqual({ backendMode: 'acp' });
   });

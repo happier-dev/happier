@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { AGENT_IDS } from '../types.js';
 import {
   getProviderCliRuntimeSpec,
   PROVIDER_CLI_RUNTIME_SPECS,
@@ -101,19 +102,6 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
   });
 
   it('covers every built-in provider', () => {
-    expect(Object.keys(PROVIDER_CLI_RUNTIME_SPECS).sort()).toEqual([
-      'auggie',
-      'claude',
-      'codex',
-      'copilot',
-      'customAcp',
-      'gemini',
-      'kilo',
-      'kimi',
-      'kiro',
-      'opencode',
-      'pi',
-      'qwen',
-    ]);
+    expect(Object.keys(PROVIDER_CLI_RUNTIME_SPECS).sort()).toEqual([...AGENT_IDS].sort());
   });
 });

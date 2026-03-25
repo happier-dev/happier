@@ -1,6 +1,6 @@
 import { readAgentRuntimeDescriptorV1ForProvider } from '@happier-dev/protocol';
 
-import type { CodexBackendMode } from '../providerSettings/definitions/codex.js';
+import { normalizeCodexBackendMode, type CodexBackendMode } from '../providerSettings/definitions/codex.js';
 import {
   buildCodexRuntimeDescriptorProviderExtra,
   readCodexRuntimeDescriptorProviderExtra,
@@ -49,10 +49,6 @@ function normalizeTrimmedString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed || null;
-}
-
-function normalizeCodexBackendMode(value: unknown): CodexBackendMode | null {
-  return value === 'mcp' || value === 'acp' || value === 'appServer' ? value : null;
 }
 
 function normalizeCodexHome(value: unknown): 'user' | 'connectedService' | null {

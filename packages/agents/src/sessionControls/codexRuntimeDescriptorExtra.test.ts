@@ -44,4 +44,20 @@ describe('codexRuntimeDescriptorExtra', () => {
       homePath: '/tmp/codex-home',
     });
   });
+
+  it('normalizes whitespace-padded codex backend modes when reading provider extras', () => {
+    expect(readCodexRuntimeDescriptorProviderExtra({
+      v: 1,
+      runtimeAffinity: {
+        backendMode: '  appServer  ',
+      },
+    })).toEqual({
+      backendMode: 'appServer',
+      vendorSessionId: null,
+      home: null,
+      connectedServiceId: null,
+      connectedServiceProfileId: null,
+      homePath: null,
+    });
+  });
 });

@@ -1,19 +1,11 @@
 export type { ConnectedServiceId } from '@happier-dev/protocol';
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import { SESSION_PERMISSION_MODES, type ConnectedServiceId } from '@happier-dev/protocol';
 import type { AnyAgentRuntimeKindsManifest } from './runtimeKinds.js';
 
 export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'kiro', 'customAcp', 'pi', 'copilot'] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 
-export const PERMISSION_MODES = [
-    'default',
-    'acceptEdits',
-    'bypassPermissions',
-    'plan',
-    'read-only',
-    'safe-yolo',
-    'yolo',
-] as const;
+export const PERMISSION_MODES = SESSION_PERMISSION_MODES;
 
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 

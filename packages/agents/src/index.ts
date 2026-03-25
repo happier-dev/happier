@@ -95,6 +95,11 @@ export {
 } from './sessionModes.js';
 
 export {
+  normalizeCodexBackendMode,
+  type CodexBackendMode,
+} from './providerSettings/index.js';
+
+export {
   getAgentAdvancedModeCapabilities,
   type AgentAdvancedModeCapabilities,
   type AgentRuntimeModeSwitchKind,

@@ -1,10 +1,25 @@
 import type { AgentId } from './types.js';
+import { resolveClaudeEffortLevelsForModelId } from './providers/claude/effort.js';
 
 export type AgentModelNonAcpApplyScope = 'spawn_only' | 'next_prompt';
+export type AgentModelOptionValueId = string;
+export type AgentModelOption = Readonly<{
+  id: string;
+  name: string;
+  description?: string;
+  type: string;
+  currentValue: AgentModelOptionValueId;
+  options?: ReadonlyArray<Readonly<{
+    value: AgentModelOptionValueId;
+    name: string;
+    description?: string;
+  }>>;
+}>;
 export type AgentModelDescriptor = Readonly<{
   id: string;
   name: string;
   description?: string;
+  modelOptions?: readonly AgentModelOption[];
 }>;
 
 export type AgentModelConfig = Readonly<{
@@ -49,7 +64,30 @@ export type AgentModelConfig = Readonly<{
   staticModels?: readonly AgentModelDescriptor[];
 }>;
 
-const CLAUDE_STATIC_MODELS = Object.freeze([
+function toTitleCase(value: string): string {
+  if (!value) return value;
+  return value.slice(0, 1).toUpperCase() + value.slice(1);
+}
+
+function withClaudeEffortModelOptions(model: AgentModelDescriptor): AgentModelDescriptor {
+  const levels = resolveClaudeEffortLevelsForModelId(model.id);
+  if (levels.length === 0) return model;
+
+  const options = levels.map((level) => ({ value: level, name: toTitleCase(level) }));
+  return {
+    ...model,
+    modelOptions: [{
+      id: 'reasoning_effort',
+      name: 'Thinking',
+      type: 'select',
+      // Claude defaults to high effort when unset; reflect that as the baseline UI value.
+      currentValue: 'high',
+      options,
+    }],
+  };
+}
+
+const CLAUDE_STATIC_MODELS = Object.freeze(([
   {
     id: 'claude-opus-4-6',
     name: 'Opus 4.6',
@@ -75,7 +113,7 @@ const CLAUDE_STATIC_MODELS = Object.freeze([
     name: 'Sonnet 4.5',
     description: 'Prior Sonnet generation alias for compatibility with existing Claude setups.',
   },
-] satisfies readonly AgentModelDescriptor[]);
+] satisfies readonly AgentModelDescriptor[]).map(withClaudeEffortModelOptions));
 
 const GEMINI_STATIC_MODELS = Object.freeze([
   {
@@ -158,6 +196,7 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     supportsSelection: true,
     supportsFreeform: true,
     nonAcpApplyScope: 'next_prompt',
+    dynamicProbe: 'static-only',
     defaultMode: 'default',
     allowedModes: [
       ...CLAUDE_STATIC_MODELS.map((model) => model.id),

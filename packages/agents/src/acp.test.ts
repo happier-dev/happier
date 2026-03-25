@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { getBuiltInAcpConfig, hasBuiltInAcpConfig } from './acp.js';
+import { BUILT_IN_ACP_CONFIG, getBuiltInAcpConfig, hasBuiltInAcpConfig } from './acp.js';
 import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
 
 describe('built-in ACP config', () => {
+  it('keeps the built-in ACP allowlist explicit and drift-free', () => {
+    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['customAcp', 'kiro']);
+  });
+
   it('exposes Custom ACP as a built-in generic ACP agent family', () => {
     expect(hasBuiltInAcpConfig('customAcp')).toBe(true);
     expect(getBuiltInAcpConfig('customAcp')).toMatchObject({

@@ -1,4 +1,4 @@
-import type { CodexBackendMode } from '../providerSettings/definitions/codex.js';
+import { normalizeCodexBackendMode, type CodexBackendMode } from '../providerSettings/definitions/codex.js';
 import { readSessionMetadataRuntimeDescriptor } from './agentRuntimeDescriptor.js';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -28,10 +28,6 @@ export type CodexSpawnRuntimeAffinityCompatFields = Readonly<{
   experimentalCodexAcp?: true;
   codexBackendMode?: CodexBackendMode;
 }>;
-
-function normalizeCodexBackendMode(value: unknown): CodexBackendMode | null {
-  return value === 'mcp' || value === 'acp' || value === 'appServer' ? value : null;
-}
 
 function readCodexRuntimeDescriptorV1BackendMode(value: unknown): CodexBackendMode | null {
   const descriptor = asRecord(value);

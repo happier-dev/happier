@@ -15,11 +15,14 @@ describe('resolveCodexRuntimeBackendMode', () => {
     })).toBe('appServer');
   });
 
-  it('falls back to the legacy ACP flag only when no canonical backend mode is present', () => {
+  it('falls back to the legacy ACP flag only when neither canonical mode nor a default mode is present', () => {
+    expect(resolveCodexRuntimeBackendMode({
+      experimentalCodexAcp: true,
+    })).toBe('acp');
     expect(resolveCodexRuntimeBackendMode({
       experimentalCodexAcp: true,
       defaultBackendMode: 'mcp',
-    })).toBe('acp');
+    })).toBe('mcp');
   });
 
   it('uses the provided fallback backend mode when neither canonical mode nor legacy flag is set', () => {
@@ -45,8 +48,8 @@ describe('resolveCodexSpawnExtrasFromSettings', () => {
     });
   });
 
-  it('maps the legacy mcp_resume setting onto canonical ACP extras', () => {
-    expect(resolveCodexSpawnExtrasFromSettings({ codexBackendMode: 'mcp_resume' })).toEqual({
+  it('maps the legacy mcp_resume setting onto canonical ACP extras even when persisted with whitespace', () => {
+    expect(resolveCodexSpawnExtrasFromSettings({ codexBackendMode: '  mcp_resume  ' })).toEqual({
       codexBackendMode: 'acp',
       experimentalCodexAcp: true,
     });

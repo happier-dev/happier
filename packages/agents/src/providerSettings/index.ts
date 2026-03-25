@@ -17,6 +17,7 @@ export {
   CODEX_PROVIDER_FIELDS,
   CODEX_PROVIDER_SETTINGS_DEFAULTS,
   buildCodexProviderSettingsShape,
+  normalizeCodexBackendMode,
   resolveCodexSpawnExtrasFromSettings,
 } from './definitions/codex.js';
 

@@ -18,6 +18,12 @@ describe('providerSessionBackends', () => {
 
   it('resolves the configured runtime kind for runtime-kind capable agents', () => {
     expect(resolveAgentConfiguredRuntimeKind({ agentId: 'codex', accountSettings: null })).toBe('appServer');
+    expect(resolveAgentConfiguredRuntimeKind({
+      agentId: 'codex',
+      // Legacy toggle should not override the default backend mode now that `codexBackendMode`
+      // exists and defaults to appServer.
+      accountSettings: { experimentalCodexAcp: true },
+    })).toBe('appServer');
     expect(resolveAgentConfiguredRuntimeKind({ agentId: 'codex', accountSettings: { codexBackendMode: 'mcp' } })).toBe('mcp');
     expect(resolveAgentConfiguredRuntimeKind({ agentId: 'opencode', accountSettings: { opencodeBackendMode: 'acp' } })).toBe('acp');
     expect(resolveAgentConfiguredRuntimeKind({ agentId: 'claude', accountSettings: { anything: 'x' } })).toBeNull();

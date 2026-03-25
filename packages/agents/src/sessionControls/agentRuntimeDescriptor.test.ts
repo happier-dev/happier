@@ -106,6 +106,27 @@ describe('readSessionMetadataRuntimeDescriptor', () => {
     });
   });
 
+  it('normalizes legacy codex backend aliases from generic runtime descriptors', () => {
+    expect(readSessionMetadataRuntimeDescriptor({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: '  mcp_resume  ',
+          vendorSessionId: 'thread_legacy',
+        },
+      },
+    }, 'codex')).toEqual({
+      providerId: 'codex',
+      backendMode: 'acp',
+      vendorSessionId: 'thread_legacy',
+      home: null,
+      connectedServiceId: null,
+      connectedServiceProfileId: null,
+      homePath: null,
+    });
+  });
+
   it('does not retain stale connected-service fields when the canonical codex home resolves to user', () => {
     expect(readSessionMetadataRuntimeDescriptor({
       agentRuntimeDescriptorV1: {

@@ -1,27 +1,22 @@
 import { z } from 'zod';
-import { buildSettingArtifacts, type SettingDefinitionMap } from '@happier-dev/protocol';
+import {
+  buildSettingArtifacts,
+  normalizeCodexBackendMode as normalizeCanonicalCodexBackendMode,
+  type CodexBackendMode as CanonicalCodexBackendMode,
+  type SettingDefinitionMap,
+} from '@happier-dev/protocol';
 
 import type { ProviderSettingsDefinition } from '../types.js';
 
-export type CodexBackendMode = 'mcp' | 'acp' | 'appServer';
-
-function normalizeCodexBackendMode(value: unknown): CodexBackendMode | null {
-  if (value === 'mcp') return 'mcp';
-  if (value === 'appServer') return 'appServer';
-  if (value === 'acp' || value === 'mcp_resume') return 'acp';
-  return null;
-}
+export type CodexBackendMode = CanonicalCodexBackendMode;
+export const normalizeCodexBackendMode = normalizeCanonicalCodexBackendMode;
 
 export const CODEX_PROVIDER_FIELDS = {
   codexBackendMode: {
     // Back-compat: `mcp_resume` was a legacy fork that has been removed. Treat it as ACP.
     schema: z
       .enum(['mcp', 'mcp_resume', 'acp', 'appServer'])
-      .transform((value): CodexBackendMode => {
-        if (value === 'mcp') return 'mcp';
-        if (value === 'appServer') return 'appServer';
-        return 'acp';
-      }),
+      .transform((value): CodexBackendMode => normalizeCodexBackendMode(value) ?? 'acp'),
     default: 'appServer' satisfies CodexBackendMode,
     description: 'Preferred Codex backend mode',
     storageScope: 'account',
@@ -44,8 +39,10 @@ export function resolveCodexRuntimeBackendMode(params: Readonly<{
 }>): CodexBackendMode | null {
   const explicitMode = normalizeCodexBackendMode(params.codexBackendMode);
   if (explicitMode) return explicitMode;
+  const fallback = normalizeCodexBackendMode(params.defaultBackendMode);
+  if (fallback) return fallback;
   if (params.experimentalCodexAcp === true) return 'acp';
-  return normalizeCodexBackendMode(params.defaultBackendMode);
+  return null;
 }
 
 export function resolveCodexSpawnExtrasFromSettings(settings: Readonly<Record<string, unknown>>): Readonly<{
