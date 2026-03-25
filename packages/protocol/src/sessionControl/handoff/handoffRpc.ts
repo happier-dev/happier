@@ -21,14 +21,14 @@ export {
   type SessionHandoffPrepareTargetResultGetRequest,
   type SessionHandoffPrepareTargetResultGetResponse,
   type SessionHandoffPrepareTargetResponse,
-  type SessionHandoffProviderBundle,
   type SessionHandoffMetadataV2,
+  type SessionHandoffProviderBundleTransferPublication,
   type SessionHandoffResumePlan,
   type SessionHandoffStartRequest,
   type SessionHandoffStartResponse,
   type SessionHandoffStatusGetRequest,
   type SessionHandoffWorkspaceTransfer,
-  SessionHandoffProviderBundleSchema,
+  type SessionHandoffWorkspaceReplicationManifestTransferPublication,
   SessionHandoffMetadataV2Schema,
   SessionHandoffWorkspaceTransferSchema,
 } from './handoffSchemas.js';
@@ -42,6 +42,10 @@ export type {
   SessionHandoffProgressCheckpoint,
   SessionHandoffProgressWarningCode,
   SessionHandoffStatus,
+} from './handoffStatus.js';
+export {
+  SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE,
+  resolveSessionHandoffProgressTimeline,
 } from './handoffStatus.js';
 export {
   SessionHandoffCodexAffinitySchema,
@@ -69,4 +73,4 @@ export {
   type TransferChunkEnvelope,
   type TransferEndpointCandidate,
   type TransferStreamEnvelope,
-} from './transferStream.js';
+} from '../../machineTransfer/transferStream.js';

@@ -39,6 +39,23 @@ export const SessionHandoffProgressCheckpointSchema = z.enum([
 ]);
 export type SessionHandoffProgressCheckpoint = z.infer<typeof SessionHandoffProgressCheckpointSchema>;
 
+export const SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE = [
+  'stage_target',
+  'import_session',
+  'finalize',
+] as const satisfies readonly SessionHandoffProgressCheckpoint[];
+
+export function resolveSessionHandoffProgressTimeline(
+  checkpoint: SessionHandoffProgressCheckpoint | null | undefined,
+): readonly SessionHandoffProgressCheckpoint[] {
+  return checkpoint === 'scan_source'
+    || checkpoint === 'plan'
+    || checkpoint === 'transfer_blobs'
+    || checkpoint === 'apply'
+      ? SessionHandoffProgressCheckpointSchema.options
+      : SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE;
+}
+
 export const SessionHandoffProgressWarningCodeSchema = z.enum([
   'blocking_divergence_detected',
   'problematic_source_entries',
@@ -68,7 +85,7 @@ export const SessionHandoffProgressSchema = z
       phaseDetail: z.string().min(1).optional(),
     }).strict().optional(),
     resumable: z.boolean(),
-    warnings: z.array(SessionHandoffProgressWarningCodeSchema).optional(),
+    warnings: z.array(SessionHandoffProgressWarningCodeSchema).readonly().optional(),
   })
   .strict();
 export type SessionHandoffProgress = z.infer<typeof SessionHandoffProgressSchema>;
@@ -92,7 +109,7 @@ export const SessionHandoffStatusSchema = z
     progress: SessionHandoffProgressSchema.optional(),
     workspacePreflightSummary: SessionHandoffWorkspacePreflightSummarySchema.optional(),
     transportStrategy: SessionHandoffTransportStrategySchema.nullable().optional(),
-    recoveryActions: z.array(SessionHandoffRecoveryActionSchema).default([]),
+    recoveryActions: z.array(SessionHandoffRecoveryActionSchema).readonly().default(() => []),
   })
   .strict();
 export type SessionHandoffStatus = z.infer<typeof SessionHandoffStatusSchema>;

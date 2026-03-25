@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { CODEX_BACKEND_MODES, type CodexBackendMode } from '../providers/codex/backendMode.js';
+
 /**
  * Session metadata override payloads (V1).
  *
@@ -91,7 +93,7 @@ export function createCodexRuntimeDescriptorV1Schema(zod: typeof z) {
   return zod
     .object({
       v: zod.literal(1),
-      backendMode: zod.enum(['mcp', 'acp', 'appServer']),
+      backendMode: zod.enum(CODEX_BACKEND_MODES),
     })
     .passthrough();
 }
@@ -100,7 +102,7 @@ export const CodexRuntimeDescriptorV1Schema = createCodexRuntimeDescriptorV1Sche
 export type CodexRuntimeDescriptorV1 = z.infer<typeof CodexRuntimeDescriptorV1Schema>;
 
 export function buildCodexRuntimeDescriptorV1(params: Readonly<{
-  backendMode: 'mcp' | 'acp' | 'appServer';
+  backendMode: CodexBackendMode;
 }>): CodexRuntimeDescriptorV1 {
   return {
     v: 1,
@@ -108,7 +110,7 @@ export function buildCodexRuntimeDescriptorV1(params: Readonly<{
   };
 }
 
-export function readCodexRuntimeDescriptorV1BackendMode(value: unknown): 'mcp' | 'acp' | 'appServer' | null {
+export function readCodexRuntimeDescriptorV1BackendMode(value: unknown): CodexBackendMode | null {
   const parsed = CodexRuntimeDescriptorV1Schema.safeParse(value);
   return parsed.success ? parsed.data.backendMode : null;
 }

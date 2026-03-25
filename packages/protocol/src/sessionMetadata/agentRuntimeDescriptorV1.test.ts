@@ -192,4 +192,32 @@ describe('agentRuntimeDescriptorV1', () => {
       serverBaseUrlExplicit: true,
     });
   });
+
+  it('normalizes legacy codex backend aliases from provider extras', () => {
+    expect(readCanonicalAgentRuntimeDescriptorV1ForProvider({
+      v: 1,
+      providerId: 'codex',
+      provider: {
+        backendMode: 'mcp',
+        vendorSessionId: 'thread_legacy',
+        providerExtra: {
+          owner: 'codex',
+          schemaId: 'codex.agentRuntimeDescriptorExtra',
+          v: 1,
+          runtimeAffinity: {
+            backendMode: '  mcp_resume  ',
+            vendorSessionId: 'thread_runtime',
+          },
+        },
+      },
+    }, 'codex')).toEqual({
+      providerId: 'codex',
+      backendMode: 'acp',
+      vendorSessionId: 'thread_runtime',
+      home: null,
+      connectedServiceId: null,
+      connectedServiceProfileId: null,
+      homePath: null,
+    });
+  });
 });

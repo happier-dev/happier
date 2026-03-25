@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringsV1.js';
+import { CLAUDE_MEMORY_SUMMARIZER_BACKEND_ID } from '../providers/claude/memoryDefaults.js';
 
 const MemoryDefaultScopeV1Schema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('global') }).passthrough(),
@@ -10,7 +11,7 @@ const MemoryDefaultScopeV1Schema = z.discriminatedUnion('type', [
 
 export const MemoryHintsSettingsV1Schema = z
   .object({
-    summarizerBackendId: z.string().trim().min(1).default('claude'),
+    summarizerBackendId: z.string().trim().min(1).default(CLAUDE_MEMORY_SUMMARIZER_BACKEND_ID),
     summarizerModelId: z.string().trim().min(1).default('default'),
     summarizerPermissionMode: z.enum(['no_tools', 'read_only']).default('no_tools'),
     windowSizeMessages: z.number().int().min(5).max(500).default(40),

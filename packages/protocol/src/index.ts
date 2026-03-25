@@ -177,6 +177,12 @@ export {
 } from './push/readyNotificationContent.js';
 
 export {
+  CODEX_BACKEND_MODES,
+  normalizeCodexBackendMode,
+  type CodexBackendMode,
+} from './providers/codex/backendMode.js';
+
+export {
   ActivityWebhookPayloadV1Schema,
   ActivityWebhookTopicSchema,
   buildActivityWebhookPayload,
@@ -1049,17 +1055,11 @@ export {
   SessionHandoffPrepareTargetResponseSchema,
   SessionHandoffProgressCheckpointSchema,
   SessionHandoffProgressWarningCodeSchema,
-  SessionHandoffProviderBundleSchema,
   SessionHandoffStartRequestSchema,
   SessionHandoffStartResponseSchema,
   SessionHandoffStatusGetRequestSchema,
   SessionHandoffStatusSchema,
   SessionHandoffMetadataV2Schema,
-  MachineTransferReceiveEnvelopeSchema,
-  MachineTransferSendEnvelopeSchema,
-  TransferChunkEnvelopeSchema,
-  TransferEndpointCandidateSchema,
-  TransferStreamEnvelopeSchema,
   type SessionHandoffAbortRequest,
   type SessionHandoffAbortResponse,
   type SessionHandoffCodexAffinity,
@@ -1071,7 +1071,7 @@ export {
   type SessionHandoffPrepareTargetRequest,
   type SessionHandoffPrepareTargetResponse,
   type SessionHandoffMetadataV2,
-  type SessionHandoffProviderBundle,
+  type SessionHandoffProviderBundleTransferPublication,
   type SessionHandoffProgressCheckpoint,
   type SessionHandoffProgressWarningCode,
   type SessionHandoffResumePlan,
@@ -1084,12 +1084,23 @@ export {
   type SessionHandoffWorkspaceTransferPathSafety,
   type SessionHandoffWorkspaceTransferPathSafetyReasonCode,
   type SessionHandoffWorkspaceTransfer,
+  type SessionHandoffWorkspaceReplicationManifestTransferPublication,
+  evaluateSessionHandoffWorkspaceTransferSourcePathSafety,
+  resolveSessionHandoffProgressTimeline,
+} from './sessionControl/handoff/handoffRpc.js';
+
+export {
+  MachineTransferReceiveEnvelopeSchema,
+  MachineTransferSendEnvelopeSchema,
+  TransferChunkEnvelopeSchema,
+  TransferEndpointCandidateSchema,
+  TransferStreamEnvelopeSchema,
   type MachineTransferReceiveEnvelope,
   type MachineTransferSendEnvelope,
+  type TransferChunkEnvelope,
   type TransferEndpointCandidate,
   type TransferStreamEnvelope,
-  evaluateSessionHandoffWorkspaceTransferSourcePathSafety,
-} from './sessionControl/handoff/handoffRpc.js';
+} from './machineTransfer/transferStream.js';
 
 export {
   EphemeralTaskKindSchema,

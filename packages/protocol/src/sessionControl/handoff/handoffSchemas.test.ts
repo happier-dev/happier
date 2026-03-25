@@ -17,7 +17,7 @@ describe('session handoff schemas', () => {
     expect(typeof mod.SessionHandoffStatusSchema).toBe('object');
     expect(typeof mod.SessionHandoffProgressCheckpointSchema).toBe('object');
     expect(typeof mod.SessionHandoffProgressWarningCodeSchema).toBe('object');
-    expect(typeof mod.SessionHandoffProviderBundleSchema).toBe('object');
+    expect(typeof mod.resolveSessionHandoffProgressTimeline).toBe('function');
     expect(typeof mod.SessionHandoffMetadataV2Schema).toBe('object');
     expect(typeof mod.TransferEndpointCandidateSchema).toBe('object');
     expect(typeof mod.TransferStreamEnvelopeSchema).toBe('object');
@@ -95,20 +95,35 @@ describe('session handoff schemas', () => {
       }).success,
     ).toBe(true);
 
-    const handoffMetadataV2 = {
-      providerBundleTransferPublication: {
-        transferId: 'session-handoff:handoff_1:provider-bundle-file',
-        sizeBytes: 12,
-        manifestHash: 'sha256:manifest-hash',
-        endpointCandidates: [
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_1?token=test-token',
-            authorizationToken: 'test-token',
-            expiresAt: 1,
-          },
-        ],
-      },
+    expect(mod.resolveSessionHandoffProgressTimeline('scan_source')).toEqual([
+      'scan_source',
+      'plan',
+      'transfer_blobs',
+      'stage_target',
+      'apply',
+      'import_session',
+      'finalize',
+    ]);
+    expect(mod.resolveSessionHandoffProgressTimeline('import_session')).toEqual([
+      'stage_target',
+      'import_session',
+      'finalize',
+    ]);
+
+	    const handoffMetadataV2 = {
+	      providerBundleTransferPublication: {
+	        transferId: 'session-handoff:handoff_1:provider-bundle-file',
+	        sizeBytes: 12,
+	        manifestHash: 'sha256:manifest-hash',
+	        endpointCandidates: [
+	          {
+	            kind: 'http',
+	            url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_1',
+	            authorizationToken: 'test-token',
+	            expiresAt: 1,
+	          },
+	        ],
+	      },
       workspaceReplicationSourceRootPath: '/repo',
       workspaceReplicationManifestTransferPublication: {
         transferId: 'transfer_manifest_1',
@@ -142,15 +157,15 @@ describe('session handoff schemas', () => {
         negotiatedTransportStrategy: 'direct_peer',
         sourceSessionStorageMode: 'persisted',
         targetPath: '/repo',
-        endpointCandidates: [
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_1?token=test-token',
-            authorizationToken: 'test-token',
-            expiresAt: 1,
-          },
-        ],
-        handoffMetadataV2,
+	        endpointCandidates: [
+	          {
+	            kind: 'http',
+	            url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_1',
+	            authorizationToken: 'test-token',
+	            expiresAt: 1,
+	          },
+	        ],
+	        handoffMetadataV2,
       }).success,
     ).toBe(true);
 
@@ -185,19 +200,29 @@ describe('session handoff schemas', () => {
     ).toBe(true);
 
     expect(
-      mod.SessionHandoffProviderBundleSchema.safeParse({
-        providerId: 'claude',
-        remoteSessionId: 'claude_session_1',
-        transcriptBase64: 'e30K',
-      }).success,
-    ).toBe(true);
-
-    expect(
       mod.TransferStreamEnvelopeSchema.safeParse({
         transferId: 'transfer_1',
         kind: 'chunk',
         sequence: 0,
         payloadBase64: 'aGVsbG8=',
+      }).success,
+    ).toBe(true);
+
+    // Open envelopes must always include the recipient public key so the responder can encrypt
+    // chunks without relying on undeployed legacy behavior.
+    expect(
+      mod.TransferStreamEnvelopeSchema.safeParse({
+        transferId: 'transfer_1',
+        kind: 'open',
+        manifestHash: 'sha256:test',
+      }).success,
+    ).toBe(false);
+    expect(
+      mod.TransferStreamEnvelopeSchema.safeParse({
+        transferId: 'transfer_1',
+        kind: 'open',
+        manifestHash: 'sha256:test',
+        recipientPublicKeyBase64: 'aGVsbG8=',
       }).success,
     ).toBe(true);
   });
@@ -207,20 +232,71 @@ describe('session handoff schemas', () => {
     expect(mod).not.toHaveProperty('error');
     if ('error' in mod) return;
 
-    expect(
-      mod.TransferEndpointCandidateSchema.safeParse({
-        kind: 'http',
-        url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_1',
-        authorizationToken: 'token',
-        expiresAt: 1,
-      }).success,
-    ).toBe(true);
+	    expect(
+	      mod.TransferEndpointCandidateSchema.safeParse({
+	        kind: 'http',
+	        url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_1',
+	        authorizationToken: 'token',
+	        expiresAt: 1,
+	      }).success,
+	    ).toBe(true);
+
+	    expect(
+	      mod.TransferEndpointCandidateSchema.safeParse({
+	        kind: 'https',
+	        url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_1',
+	        expiresAt: 1,
+	      }).success,
+	    ).toBe(false);
+	  });
+
+  it('rejects unbounded transfer metadata (ids, candidate lists, open payloads)', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
 
     expect(
-      mod.TransferEndpointCandidateSchema.safeParse({
-        kind: 'https',
-        url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_1',
-        expiresAt: 1,
+      mod.TransferStreamEnvelopeSchema.safeParse({
+        transferId: 'x'.repeat(10_000),
+        kind: 'open',
+        manifestHash: 'sha256:test',
+        recipientPublicKeyBase64: Buffer.alloc(32, 1).toString('base64'),
+      }).success,
+    ).toBe(false);
+
+    expect(
+      mod.TransferStreamEnvelopeSchema.safeParse({
+        transferId: 'transfer_1',
+        kind: 'open',
+        manifestHash: 'sha256:test',
+        recipientPublicKeyBase64: Buffer.alloc(32, 1).toString('base64'),
+        openPayloadBase64: 'a'.repeat(2_000_000),
+      }).success,
+    ).toBe(false);
+
+    expect(
+      mod.TransferStreamEnvelopeSchema.safeParse({
+        transferId: 'transfer_1',
+        kind: 'open',
+        manifestHash: 'sha256:test',
+        // Invalid base64 (we need stable protocol rejection rather than leaking decode errors later).
+        recipientPublicKeyBase64: '*not-base64*',
+      }).success,
+    ).toBe(false);
+
+    expect(
+      mod.SessionHandoffPrepareTargetRequestSchema.safeParse({
+        handoffId: 'handoff_1',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        negotiatedTransportStrategy: 'direct_peer',
+        sourceSessionStorageMode: 'persisted',
+        targetPath: '/repo',
+        endpointCandidates: Array.from({ length: 200 }, (_, index) => ({
+          kind: 'http',
+          url: `http://127.0.0.1:46001/machine-transfers/direct/transfer_${index}`,
+          expiresAt: 1,
+        })),
       }).success,
     ).toBe(false);
   });
@@ -328,18 +404,4 @@ describe('session handoff schemas', () => {
     ).toBe(false);
   });
 
-  it('rejects legacy codexBackendMode provider-bundle fields (no undeployed compatibility)', async () => {
-    const mod = await loadHandoffModule();
-    expect(mod).not.toHaveProperty('error');
-    if ('error' in mod) return;
-
-    expect(
-      mod.SessionHandoffProviderBundleSchema.safeParse({
-        providerId: 'codex',
-        remoteSessionId: 'codex_session_legacy_bundle',
-        files: [],
-        codexBackendMode: 'acp',
-      }).success,
-    ).toBe(false);
-  });
 });

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { BackendTargetRefSchema } from '../backendTargets/backendTargetRef.js';
 import { SessionMcpSelectionV1Schema } from '../mcpServers/sessionSelectionV1.js';
+import { CODEX_BACKEND_MODES } from '../providers/codex/backendMode.js';
 import { AcpConfigOptionOverridesV1Schema } from '../sessionMetadata/metadataOverridesV1.js';
 import { WindowsRemoteSessionLaunchModeSchema } from '../sessionMetadata/windowsRemoteSessionLaunchMode.js';
 import { defineSessionAuthoringFields } from './fieldDefinition.js';
@@ -53,7 +54,7 @@ export const SessionAuthoringAutomationV1Schema = z.object({
   timezone: z.string().nullable(),
 }).strict();
 
-export const SessionAuthoringCodexBackendModeSchema = z.enum(['mcp', 'acp', 'appServer']);
+export const SessionAuthoringCodexBackendModeSchema = z.enum(CODEX_BACKEND_MODES);
 
 const ALL_AUTHORING_CONTEXTS = [
   'newSession',
@@ -61,6 +62,7 @@ const ALL_AUTHORING_CONTEXTS = [
   'automationNewSession',
   'automationExistingSession',
 ] as const;
+
 
 const TEMPLATE_CONTEXTS = [
   'newSession',

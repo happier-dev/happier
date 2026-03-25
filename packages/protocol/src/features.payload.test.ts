@@ -9,6 +9,23 @@ import {
   normalizeMachineTransferServerRoutedMaxBytes,
   readMachineTransferServerRoutedMaxBytes,
 } from './features.js';
+import { FEATURE_CATALOG } from './features/catalog.js';
+import { FEATURE_IDS } from './features/featureIds.js';
+import { resolveServerEnabledBitPath } from './features/serverEnabledBit.js';
+
+function readRequiredPath(root: unknown, path: ReadonlyArray<string>): unknown {
+  let current: unknown = root;
+  for (const segment of path) {
+    if (typeof current !== 'object' || current === null) {
+      throw new Error(`Expected object at "${segment}" while reading "${path.join('.')}"`);
+    }
+    if (!Object.prototype.hasOwnProperty.call(current, segment)) {
+      throw new Error(`Missing "${segment}" while reading "${path.join('.')}"`);
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
 
 describe('FeaturesResponseSchema', () => {
   it('applies safe defaults for missing subtrees', () => {
@@ -213,5 +230,42 @@ describe('FeaturesResponseSchema', () => {
     expect(normalizeMachineTransferServerRoutedMaxBytes(0)).toBeNull();
     expect(normalizeMachineTransferServerRoutedMaxBytes(-1)).toBeNull();
     expect(normalizeMachineTransferServerRoutedMaxBytes('invalid')).toBeNull();
+  });
+
+  it('defaults fail-closed for all gates except auth.login.keyChallenge', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: {},
+      capabilities: {},
+    });
+
+    for (const featureId of FEATURE_IDS) {
+      const entry = FEATURE_CATALOG[featureId];
+      if (entry.representation !== 'server') continue;
+
+      const path = resolveServerEnabledBitPath(featureId);
+      const enabled = readRequiredPath(parsed, path);
+
+      if (featureId === 'auth.login.keyChallenge') {
+        expect(enabled).toBe(true);
+      } else {
+        expect(enabled).toBe(false);
+      }
+    }
+  });
+
+  it('includes a gate leaf for every server-represented FeatureId', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: {},
+      capabilities: {},
+    });
+
+    for (const featureId of FEATURE_IDS) {
+      const entry = FEATURE_CATALOG[featureId];
+      if (entry.representation !== 'server') continue;
+
+      const path = resolveServerEnabledBitPath(featureId);
+      const enabled = readRequiredPath(parsed, path);
+      expect(typeof enabled).toBe('boolean');
+    }
   });
 });

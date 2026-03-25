@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
+import { AgentProviderIdV1Schema } from '../providers/agentProviderIdsV1.js';
 import { McpServerBindingV1Schema, McpServerCatalogEntryTransportV1Schema, McpServerCatalogEntryV1Schema } from './settingsV1.js';
 
-export const McpDetectedProviderV1Schema = z.enum(['claude', 'codex', 'opencode']);
+export const McpDetectedProviderV1Schema = AgentProviderIdV1Schema;
 export type McpDetectedProviderV1 = z.infer<typeof McpDetectedProviderV1Schema>;
 
 export const DetectedMcpServerV1Schema = z

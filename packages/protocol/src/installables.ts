@@ -1,4 +1,12 @@
 import type { CapabilityId } from './capabilities.js';
+import {
+  CODEX_ACP_DEP_ID,
+  CODEX_ACP_DIST_TAG,
+  INSTALLABLE_KEYS,
+  type InstallableKey,
+} from './providers/codex/installables.js';
+
+export { CODEX_ACP_DEP_ID, CODEX_ACP_DIST_TAG, INSTALLABLE_KEYS, type InstallableKey };
 
 export type InstallableKind = 'dep';
 export type InstallableSourceKind = 'github_release_binary';
@@ -18,15 +26,6 @@ export type InstallableCatalogEntry = Readonly<{
   defaultPolicy: InstallableDefaultPolicy;
   experimental: boolean;
 }>;
-
-export const INSTALLABLE_KEYS = {
-  CODEX_ACP: 'codex-acp',
-} as const;
-
-export type InstallableKey = typeof INSTALLABLE_KEYS[keyof typeof INSTALLABLE_KEYS];
-
-export const CODEX_ACP_DEP_ID = 'dep.codex-acp' as const satisfies CapabilityId;
-export const CODEX_ACP_DIST_TAG = 'latest' as const;
 
 const DEFAULT_POLICY: InstallableDefaultPolicy = { autoInstallWhenNeeded: true, autoUpdateMode: 'auto' };
 

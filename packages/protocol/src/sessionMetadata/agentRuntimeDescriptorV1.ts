@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { normalizeCodexBackendMode, type CodexBackendMode } from '../providers/codex/backendMode.js';
+import { normalizeOpenCodeBackendMode } from '../providers/opencode/backendMode.js';
 
 type AgentRuntimeDescriptorProviderShape = Readonly<Record<string, unknown>>;
 
@@ -18,7 +20,7 @@ export type AgentRuntimeDescriptorEnvelopeV1<
 } & Record<string, unknown>>;
 
 type CodexAgentRuntimeDescriptorProvider = Readonly<{
-  backendMode: 'mcp' | 'acp' | 'appServer';
+  backendMode: CodexBackendMode;
   vendorSessionId?: string;
   homePath?: string;
   home?: 'user' | 'connectedService';
@@ -26,7 +28,7 @@ type CodexAgentRuntimeDescriptorProvider = Readonly<{
   connectedServiceProfileId?: string;
   providerExtra?: Readonly<AgentRuntimeDescriptorProviderExtraV1 & {
     runtimeAffinity?: Readonly<{
-      backendMode?: 'mcp' | 'acp' | 'appServer';
+      backendMode?: CodexBackendMode;
       vendorSessionId?: string;
       homePath?: string;
       home?: 'user' | 'connectedService';
@@ -64,7 +66,7 @@ export type AgentRuntimeDescriptorV1 = AgentRuntimeDescriptorEnvelopeV1;
 type CanonicalAgentRuntimeDescriptorByProviderId = {
   codex: Readonly<{
     providerId: 'codex';
-    backendMode: 'mcp' | 'acp' | 'appServer' | null;
+    backendMode: CodexBackendMode | null;
     vendorSessionId: string | null;
     home: 'user' | 'connectedService' | null;
     connectedServiceId: string | null;
@@ -96,16 +98,8 @@ function normalizeTrimmedString(value: unknown): string | null {
   return trimmed || null;
 }
 
-function normalizeCodexBackendMode(value: unknown): CanonicalAgentRuntimeDescriptorByProviderId['codex']['backendMode'] {
-  return value === 'mcp' || value === 'acp' || value === 'appServer' ? value : null;
-}
-
 function normalizeCodexHome(value: unknown): CanonicalAgentRuntimeDescriptorByProviderId['codex']['home'] {
   return value === 'user' || value === 'connectedService' ? value : null;
-}
-
-function normalizeOpenCodeBackendMode(value: unknown): CanonicalAgentRuntimeDescriptorByProviderId['opencode']['backendMode'] {
-  return value === 'server' || value === 'acp' ? value : null;
 }
 
 function normalizeOpenCodeServerBaseUrlExplicit(value: unknown): boolean {
