@@ -156,8 +156,20 @@ const styles = StyleSheet.create((theme) => ({
     },
     directoryToggle: {
         position: 'absolute',
-        left: -18,
+        // Keep the disclosure affordance on the left of the folder icon (not as a right-side row chevron).
+        left: -2,
+        top: 2,
+        width: 16,
+        height: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2,
+    },
+    directoryFolderIcon: {
+        position: 'absolute',
+        right: -1,
         top: 1,
+        zIndex: 1,
     },
     headerActions: {
         flexDirection: 'row',
@@ -1150,8 +1162,9 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                                     </Pressable>
                                     <Ionicons
                                         name={node.isExpanded ? 'folder-open-outline' : 'folder-outline'}
-                                        size={18}
+                                        size={16}
                                         color={theme.colors.textLink}
+                                        style={styles.directoryFolderIcon}
                                     />
                                 </View>
                             )
