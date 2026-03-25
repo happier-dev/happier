@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -104,6 +105,63 @@ describe('SessionHandoffProgressModal', () => {
         expect(textContent).toContain('2.0 KB');
         expect(textContent).toContain('50%');
         expect(textContent).toContain('README.md');
+    });
+
+    it('does not shrink the timeline back to minimal after the daemon has already emitted a full-timeline checkpoint', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+
+        const renderProps = {
+            onClose: () => {},
+        };
+
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                {...renderProps}
+                status={{
+                    handoffId: 'handoff_timeline_latch_1',
+                    status: 'pending',
+                    phase: 'preparing',
+                    progress: {
+                        updatedAtMs: 123,
+                        checkpoint: 'scan_source',
+                        planned: {},
+                        transferred: {},
+                        resumable: true,
+                    },
+                    recoveryActions: [],
+                }}
+            />,
+        );
+
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-scan_source')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-plan')).toBeTruthy();
+
+        act(() => {
+            screen.tree.update(
+                <SessionHandoffProgressModal
+                    {...renderProps}
+                    status={{
+                        handoffId: 'handoff_timeline_latch_1',
+                        status: 'pending',
+                        phase: 'finalizing',
+                        progress: {
+                            updatedAtMs: 456,
+                            checkpoint: 'import_session',
+                            planned: {},
+                            transferred: {},
+                            resumable: true,
+                        },
+                        recoveryActions: [],
+                    }}
+                />,
+            );
+        });
+
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-scan_source')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-plan')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-import_session')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-finalize')).toBeTruthy();
     });
 
     it('keeps the checkpoint timeline minimal when the daemon reports only minimal checkpoints (even with workspace progress)', async () => {

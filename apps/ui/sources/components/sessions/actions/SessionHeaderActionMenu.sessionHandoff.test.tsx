@@ -266,9 +266,17 @@ describe('SessionHeaderActionMenu handoff', () => {
         />);
 
     const dropdown = screen.findByType('DropdownMenu' as any);
-    await act(async () => {
-      dropdown.props.onSelect('session.handoff');
-    });
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        dropdown.props.onSelect('session.handoff');
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
     await flushHookEffects({ cycles: 1 });
 
     expect(runSessionHandoffPickerFlowMock).toHaveBeenCalledWith({

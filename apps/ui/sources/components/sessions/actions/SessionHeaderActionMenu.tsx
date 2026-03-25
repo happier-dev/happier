@@ -27,6 +27,7 @@ import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoice
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { useHasGlobalVoiceAgentConversation } from '@/voice/agent/useHasGlobalVoiceAgentConversation';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
+import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -155,17 +156,21 @@ export function SessionHeaderActionMenu(props: Readonly<{
           return;
         }
         if (actionId === 'session.handoff') {
-          fireAndForget((async () => {
-            const serverId = sessionServerId;
-            const res = await runSessionHandoffPickerFlow({
-              execute: executor.execute as any,
-              sessionId: props.sessionId,
-              sourceMachineId: sourceMachineId ?? null,
-              serverId,
-              placement: 'session_action_menu',
-            });
-            if (!res?.ok) return;
-          })(), { tag: 'SessionHeaderActionMenu.execute.sessionHandoff' });
+          // Defer opening the modal on web so the dropdown press/unmount cycle completes before we
+          // mount another portal-backed surface (avoids flakey immediate dismissals in e2e).
+          deferOnWeb(() => {
+            fireAndForget((async () => {
+              const serverId = sessionServerId;
+              const res = await runSessionHandoffPickerFlow({
+                execute: executor.execute as any,
+                sessionId: props.sessionId,
+                sourceMachineId: sourceMachineId ?? null,
+                serverId,
+                placement: 'session_action_menu',
+              });
+              if (!res?.ok) return;
+            })(), { tag: 'SessionHeaderActionMenu.execute.sessionHandoff' });
+          });
           return;
         }
         const defaultBackend = resolveSessionActionDefaultBackend({

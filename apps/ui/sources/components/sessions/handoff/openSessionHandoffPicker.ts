@@ -15,7 +15,15 @@ export async function openSessionHandoffPicker(params: Readonly<{
     serverId: string | null;
 }>): Promise<SessionHandoffPickerResult | null> {
     try {
-        await sync.refreshMachinesThrottled({ staleMs: 0, force: true });
+        // Keep the picker responsive even when machine refresh is slow or stuck (e.g. server switch churn).
+        // We still try to refresh first so the picker usually opens with the latest machine list.
+        const refresh = sync.refreshMachinesThrottled({ staleMs: 0, force: true }).catch(() => {});
+        await Promise.race([
+            refresh,
+            new Promise<void>((resolve) => {
+                setTimeout(resolve, 3000);
+            }),
+        ]);
     } catch {
         // Keep the picker usable even if the latest machine refresh fails.
     }

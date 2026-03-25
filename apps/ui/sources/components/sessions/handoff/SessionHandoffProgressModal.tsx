@@ -247,7 +247,18 @@ export function SessionHandoffProgressModal({ onClose, title, message, status }:
     const progressLabel = progressFraction === null ? null : `${Math.round(progressFraction * 100)}%`;
     const checkpointFromProgress = isKnownCheckpoint(status?.progress?.checkpoint) ? status?.progress?.checkpoint : null;
     const currentCheckpoint = checkpointFromProgress;
-    const timeline = resolveSessionHandoffProgressTimeline(checkpointFromProgress);
+    const canonicalTimelineForCheckpoint = resolveSessionHandoffProgressTimeline(checkpointFromProgress);
+    // Once the daemon has emitted any "full timeline" checkpoint, keep rendering the full timeline
+    // even when later checkpoints fall back to minimal-mode (e.g. import_session/finalize), so the
+    // UI doesn't appear to "forget" completed phases mid-handoff.
+    const hasSeenFullTimelineRef = React.useRef(false);
+    // Use the protocol's canonical resolver so the UI stays aligned with daemon semantics.
+    if (currentCheckpoint && canonicalTimelineForCheckpoint === CHECKPOINT_TIMELINE) {
+        hasSeenFullTimelineRef.current = true;
+    }
+    const timeline = hasSeenFullTimelineRef.current
+        ? CHECKPOINT_TIMELINE
+        : canonicalTimelineForCheckpoint;
     const currentCheckpointIndex = currentCheckpoint ? timeline.indexOf(currentCheckpoint) : -1;
     const isAwaitingRecovery = status?.status === 'awaiting_recovery';
     const currentDetailLabel =

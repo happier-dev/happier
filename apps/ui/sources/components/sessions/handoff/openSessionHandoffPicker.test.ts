@@ -69,6 +69,26 @@ describe('openSessionHandoffPicker', () => {
         expect(showMock).toHaveBeenCalledTimes(1);
     });
 
+    it('still opens the picker modal when the refresh hangs (never resolves)', async () => {
+        vi.useFakeTimers();
+        refreshMachinesThrottledMock.mockImplementationOnce(() => new Promise(() => {}));
+
+        const { openSessionHandoffPicker } = await import('./openSessionHandoffPicker');
+
+        const promise = openSessionHandoffPicker({
+            sessionId: 'sess_1',
+            sourceMachineId: 'machine_source',
+            serverId: 'server_a',
+        });
+
+        // The picker should not block indefinitely waiting for machine refresh.
+        await vi.advanceTimersByTimeAsync(3500);
+
+        await expect(promise).resolves.toBeNull();
+        expect(showMock).toHaveBeenCalledTimes(1);
+        expect(refreshMachinesThrottledMock).toHaveBeenCalledWith({ staleMs: 0, force: true });
+    });
+
     it('resolves the picker selection and hides the modal without letting a later close callback turn it into a cancel', async () => {
         let capturedConfig: any = null;
         showMock.mockImplementation((config: any) => {
