@@ -961,6 +961,175 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
         }
     });
 
+    it('marks the job awaiting_recovery when a one_way_safe sync_changes target diverges after the initial safety check (no overwrite after mid-transfer edits)', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-midtransfer-divergence-target-'));
+        const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-midtransfer-divergence-source-'));
+        const sourceWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-midtransfer-divergence-source-workspace-'));
+        const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-midtransfer-divergence-target-workspace-'));
+
+        try {
+            const { createWorkspaceReplicationBaselineStore } = await import('../baseline/workspaceReplicationBaselineStore');
+            const { createWorkspaceReplicationCasStore } = await import('../cas/workspaceReplicationCasStore');
+            const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+            const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+            const { createWorkspaceReplicationBlobPackPayloadSource } = await import('../transport/createWorkspaceReplicationBlobPackPayloadSource');
+            const { writeWorkspaceReplicationSourceOfferToFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+            const { executeWorkspaceReplicationJobWithLocalRuntime } = await import('./executeWorkspaceReplicationJobWithLocalRuntime');
+
+            const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+            const scope = {
+                sourceMachineId: 'machine-source',
+                sourceWorkspaceRoot,
+                targetMachineId: 'machine-target',
+                targetWorkspaceRoot,
+                mode: 'one_way_safe' as const,
+            };
+            const relationship = await relationships.ensureRelationship(scope);
+
+            const baselineContents = 'baseline\n';
+            const baselineDigest = sha256DigestOfString(baselineContents);
+            const targetReadmePath = join(targetWorkspaceRoot, 'README.md');
+            await writeFile(targetReadmePath, baselineContents, 'utf8');
+
+            const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir });
+            await baselineStore.save({
+                scope,
+                baseline: {
+                    manifestFingerprint: sha256DigestOfString('baseline-fp'),
+                    manifest: {
+                        entries: [
+                            {
+                                kind: 'file',
+                                relativePath: 'README.md',
+                                digest: baselineDigest,
+                                sizeBytes: Buffer.byteLength(baselineContents),
+                                executable: false,
+                            },
+                        ],
+                        fingerprint: sha256DigestOfString('baseline-manifest-fp'),
+                    },
+                    savedAtMs: 1,
+                },
+            });
+
+            const sourceContents = 'source\n';
+            const sourceDigest = sha256DigestOfString(sourceContents);
+            const sourceFilePath = join(sourceWorkspaceRoot, 'README.md');
+            await writeFile(sourceFilePath, sourceContents, 'utf8');
+
+            const sourceCas = createWorkspaceReplicationCasStore({ activeServerDir: sourceActiveServerDir });
+            await sourceCas.commitFile({
+                digest: sourceDigest,
+                sourcePath: sourceFilePath,
+            });
+
+            const offer: WorkspaceReplicationSourceOffer = {
+                offerId: 'offer_midtransfer_divergence',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_1',
+                sourceFingerprint: sha256DigestOfString('offer-fp'),
+                manifest: {
+                    entries: [
+                        {
+                            kind: 'file',
+                            relativePath: 'README.md',
+                            digest: sourceDigest,
+                            sizeBytes: Buffer.byteLength(sourceContents),
+                            executable: false,
+                        },
+                    ],
+                    fingerprint: sha256DigestOfString('manifest-fp'),
+                },
+                blobIndex: [{ digest: sourceDigest, sizeBytes: Buffer.byteLength(sourceContents) }],
+            };
+
+            const offerTempDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-midtransfer-divergence-offer-'));
+            const offerPath = join(offerTempDir, 'source-offer.txt');
+            await writeWorkspaceReplicationSourceOfferToFile({
+                offer,
+                filePath: offerPath,
+            });
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                schemaVersion: 1,
+                jobId: 'job_midtransfer_divergence_1',
+                relationshipId: relationship.relationshipId,
+                directionId: 'dir_1',
+                offerId: offer.offerId,
+                mode: 'one_way_safe',
+                correlationId: 'corr_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'pending',
+                    phase: 'negotiate_missing_digests',
+                    checkpoint: 'job_created',
+                    progressCounters: {
+                        plannedFiles: 0,
+                        plannedBytes: 0,
+                        transferredFiles: 0,
+                        transferredBytes: 0,
+                        appliedFiles: 0,
+                        appliedBytes: 0,
+                    },
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            let mutated = false;
+            const requestBlobPackToFile = vi.fn(async ({ packId, digests, destinationPath }) => {
+                if (!mutated) {
+                    mutated = true;
+                    await writeFile(targetReadmePath, 'diverged\n', 'utf8');
+                }
+                const payloadSource = await createWorkspaceReplicationBlobPackPayloadSource({
+                    activeServerDir: sourceActiveServerDir,
+                    packId,
+                    digests,
+                });
+                if (payloadSource.kind !== 'file') {
+                    throw new Error('expected file payload source');
+                }
+                await copyFile(payloadSource.filePath, destinationPath);
+                await payloadSource.dispose?.();
+            });
+
+            const result = await executeWorkspaceReplicationJobWithLocalRuntime({
+                activeServerDir,
+                jobStore,
+                relationships,
+                jobId: 'job_midtransfer_divergence_1',
+                now: () => 42,
+                relationshipScope: scope,
+                resolveSourceOfferById: async () => {
+                    const { readWorkspaceReplicationSourceOfferFromFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+                    return await readWorkspaceReplicationSourceOfferFromFile({
+                        transferId: 'offer_transfer_midtransfer_divergence',
+                        filePath: offerPath,
+                    });
+                },
+                requestBlobPackToFile,
+                apply: {
+                    targetPath: targetWorkspaceRoot,
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                },
+            });
+
+            expect(mutated).toBe(true);
+            expect(requestBlobPackToFile).toHaveBeenCalled();
+            expect(result.status.status).toBe('awaiting_recovery');
+            await expect(readFile(targetReadmePath, 'utf8')).resolves.toBe('diverged\n');
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);
+            await rm(sourceWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+            await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
+    });
+
     it('does not block one_way_safe sync_changes when the target diverged only on paths the source would not overwrite', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-nonblocking-divergence-target-'));
         const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-nonblocking-divergence-source-'));

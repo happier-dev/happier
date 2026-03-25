@@ -317,8 +317,9 @@ class Configuration {
     );
     this.workspaceReplicationBlobPackMaxBlobs = resolveIntEnvWithBounds(
       'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_BLOBS',
-      // Defensive max prevents attacker-controlled transfer id lists / request bodies from becoming huge work multipliers.
-      { min: 1, max: 10_000, default: 256 },
+      // Defensive max prevents digest lists (carried in bounded transport metadata envelopes) from
+      // exceeding hard caps and turning into huge work multipliers.
+      { min: 1, max: 768, default: 256 },
     );
     this.workspaceReplicationBlobPackMaxSingleBlobBytes = resolveIntEnvWithBounds(
       'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_SINGLE_BLOB_BYTES',

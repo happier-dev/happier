@@ -67,7 +67,9 @@ describe('configuration workspace replication blob pack sizing', () => {
     configMod.reloadConfiguration();
 
     expect(configMod.configuration.workspaceReplicationBlobPackTargetBytes).toBe(1024 * 1024 * 1024);
-    expect(configMod.configuration.workspaceReplicationBlobPackMaxBlobs).toBe(10_000);
+    // Keep the hard ceiling small enough that server-routed blob-pack requests can carry digest lists
+    // in the bounded `openPayload` envelope without exceeding hard caps (64KiB today).
+    expect(configMod.configuration.workspaceReplicationBlobPackMaxBlobs).toBe(768);
     expect(configMod.configuration.workspaceReplicationBlobPackMaxSingleBlobBytes).toBe(4 * 1024 * 1024 * 1024);
   });
 });

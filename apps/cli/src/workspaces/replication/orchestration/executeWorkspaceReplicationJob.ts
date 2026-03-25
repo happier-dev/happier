@@ -339,6 +339,74 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       });
     }
 
+    const runSafetyCheckIfNeeded = async (job: WorkspaceReplicationJobRecord): Promise<WorkspaceReplicationJobRecord | null> => {
+      if (!params.assertSafeToApply) {
+        return null;
+      }
+
+      const safeCheck = await params.assertSafeToApply({
+        job,
+        offer,
+      }).catch(async (error: unknown) => {
+        if (isCancelRequestedError(error)) {
+          return await abortJobAndReturn({
+            activeServerDir: params.activeServerDir,
+            jobStore: params.jobStore,
+            jobId: params.jobId,
+            now: params.now,
+          });
+        }
+        const cancelled = await abortIfCancellationRequested({
+          activeServerDir: params.activeServerDir,
+          jobStore: params.jobStore,
+          jobId: params.jobId,
+          now: params.now,
+        });
+        if (cancelled) {
+          return cancelled;
+        }
+        return await markJobFailedAndRethrow({
+          activeServerDir: params.activeServerDir,
+          jobStore: params.jobStore,
+          jobId: params.jobId,
+          now: params.now,
+          error,
+        });
+      });
+
+      if (safeCheck && 'jobId' in safeCheck) {
+        return safeCheck;
+      }
+
+      if (safeCheck && safeCheck.blockingDivergenceCandidates.length > 0) {
+        const nowMs = resolveNowMs(params.now);
+        const updated = await runWorkspaceReplicationJob({
+          jobStore: params.jobStore,
+          jobId: params.jobId,
+          now: params.now,
+          run: async (record) => ({
+            ...record,
+            awaitingRecoveryAtMs: record.awaitingRecoveryAtMs ?? nowMs,
+            lastErrorMessage: safeCheck.lastErrorMessage ?? record.lastErrorMessage ?? 'Target workspace diverged since last baseline',
+            status: {
+              ...record.status,
+              status: 'awaiting_recovery',
+              phase: 'planning',
+              checkpoint: record.status.checkpoint,
+              blockingDivergenceCandidates: [...safeCheck.blockingDivergenceCandidates],
+            },
+          }),
+        });
+        await removeWorkspaceReplicationJobStagingDirectory({
+          activeServerDir: params.activeServerDir,
+          jobId: params.jobId,
+        });
+        return updated;
+      }
+
+      return null;
+    };
+
     // 1) relationship resolved
     let latest: WorkspaceReplicationJobRecord = current;
     if (!isCheckpointAtOrAfter(latest.status.checkpoint, 'relationship_resolved')) {
@@ -375,65 +443,10 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     }
 
   // 1.5) one-way-safe divergence gating (fail closed)
-  if (params.assertSafeToApply) {
-	    const safeCheck = await params.assertSafeToApply({
-	      job: latest,
-	      offer,
-	    }).catch(async (error: unknown) => {
-	      if (isCancelRequestedError(error)) {
-	        return await abortJobAndReturn({
-	          activeServerDir: params.activeServerDir,
-	          jobStore: params.jobStore,
-	          jobId: params.jobId,
-	          now: params.now,
-	        });
-	      }
-	      const cancelled = await abortIfCancellationRequested({
-	        activeServerDir: params.activeServerDir,
-	        jobStore: params.jobStore,
-	        jobId: params.jobId,
-	        now: params.now,
-	      });
-	      if (cancelled) {
-	        return cancelled;
-	      }
-	      return await markJobFailedAndRethrow({
-	        activeServerDir: params.activeServerDir,
-	        jobStore: params.jobStore,
-	        jobId: params.jobId,
-	        now: params.now,
-	        error,
-	      });
-	    });
-
-    if (safeCheck && 'jobId' in safeCheck) {
-      return safeCheck;
-    }
-
-    if (safeCheck && safeCheck.blockingDivergenceCandidates.length > 0) {
-      const nowMs = resolveNowMs(params.now);
-      latest = await runWorkspaceReplicationJob({
-        jobStore: params.jobStore,
-        jobId: params.jobId,
-        now: params.now,
-        run: async (record) => ({
-          ...record,
-          awaitingRecoveryAtMs: record.awaitingRecoveryAtMs ?? nowMs,
-          lastErrorMessage: safeCheck.lastErrorMessage ?? record.lastErrorMessage ?? 'Target workspace diverged since last baseline',
-          status: {
-            ...record.status,
-            status: 'awaiting_recovery',
-            phase: 'planning',
-            checkpoint: record.status.checkpoint,
-            blockingDivergenceCandidates: [...safeCheck.blockingDivergenceCandidates],
-          },
-        }),
-      });
-      await removeWorkspaceReplicationJobStagingDirectory({
-        activeServerDir: params.activeServerDir,
-        jobId: params.jobId,
-      });
-      return latest;
+  {
+    const safeCheckResult = await runSafetyCheckIfNeeded(latest);
+    if (safeCheckResult) {
+      return safeCheckResult;
     }
   }
 
@@ -596,6 +609,20 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     const lostLeaseBeforeApply = await stopIfLeaseLost();
     if (lostLeaseBeforeApply) {
       return lostLeaseBeforeApply;
+    }
+
+    // 3.5) one-way-safe divergence gating (fail closed) again after blob transfer completes.
+    // This ensures mid-transfer edits on the target workspace can't be overwritten by a stale
+    // pre-transfer safety check.
+    if (
+      params.assertSafeToApply
+      && isCheckpointAtOrAfter(latest.status.checkpoint, 'blob_transfer_completed')
+      && !isCheckpointAtOrAfter(latest.status.checkpoint, 'apply_started')
+    ) {
+      const safeCheckResult = await runSafetyCheckIfNeeded(latest);
+      if (safeCheckResult) {
+        return safeCheckResult;
+      }
     }
 
     // 4) apply
