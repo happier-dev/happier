@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -49,6 +49,66 @@ describe('workspaceReplicationJobLeaseHeartbeat', () => {
 
       expect(renewed?.renewedAtMs).toBeGreaterThan(renewed?.acquiredAtMs ?? Number.POSITIVE_INFINITY);
 
+      await heartbeat.stop();
+    } finally {
+      vi.useRealTimers();
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('marks the heartbeat as lost and clears its timer when the lease is stolen', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-lease-heartbeat-lost-'));
+    vi.useFakeTimers();
+
+    try {
+      const { createWorkspaceReplicationPaths } = await import('./workspaceReplicationPaths');
+      const { tryAcquireWorkspaceReplicationJobLease } = await import('./workspaceReplicationJobLease');
+      const { startWorkspaceReplicationJobLeaseHeartbeat } = await import('./workspaceReplicationJobLeaseHeartbeat');
+
+      let nowMs = 1000;
+      await tryAcquireWorkspaceReplicationJobLease({
+        activeServerDir,
+        jobId: 'job_lease_heartbeat_lost_1',
+        ownerId: 'owner_a',
+        nowMs,
+        ttlMs: 6000,
+      });
+
+      const heartbeat = startWorkspaceReplicationJobLeaseHeartbeat({
+        activeServerDir,
+        jobId: 'job_lease_heartbeat_lost_1',
+        ownerId: 'owner_a',
+        ttlMs: 6000,
+        nowMs: () => nowMs,
+      });
+
+      expect(vi.getTimerCount()).toBe(1);
+
+      const paths = createWorkspaceReplicationPaths({ activeServerDir });
+      const leaseFilePath = join(paths.stagingDirectory, 'job_lease_heartbeat_lost_1', 'lease', 'lease.json');
+
+      // Simulate another runner stealing the lease (owner id changed).
+      await writeFile(leaseFilePath, JSON.stringify({
+        ownerId: 'owner_b',
+        acquiredAtMs: 1500,
+        renewedAtMs: 1500,
+        expiresAtMs: 20_000,
+      }), 'utf8');
+
+      nowMs = 2000;
+      vi.advanceTimersByTime(2500);
+
+      // Allow the async renewal probe to run.
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (heartbeat.hasLeaseBeenLost()) break;
+        await Promise.resolve();
+      }
+
+      expect(heartbeat.hasLeaseBeenLost()).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+
+      // stop() should remain safe/idempotent even after lease loss.
+      await heartbeat.stop();
       await heartbeat.stop();
     } finally {
       vi.useRealTimers();
