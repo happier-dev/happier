@@ -902,7 +902,7 @@ export function LocalConversationSection(props: {
             items={modelIdMenuItems}
             onSelect={(id) => {
               if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
-                preflightModels.probe.onRefresh();
+                preflightModels.probe.onRefresh?.();
                 setOpenMenu(null);
                 return;
               }
@@ -995,7 +995,7 @@ export function LocalConversationSection(props: {
             items={modelIdMenuItems}
             onSelect={(id) => {
               if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
-                preflightModels.probe.onRefresh();
+                preflightModels.probe.onRefresh?.();
                 setOpenMenu(null);
                 return;
               }
