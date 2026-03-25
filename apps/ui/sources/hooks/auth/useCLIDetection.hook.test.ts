@@ -156,6 +156,45 @@ describe('useCLIDetection (hook)', () => {
         }
     });
 
+    it('keeps refresh callback referentially stable across capability cache updates', async () => {
+        const baseRefresh = vi.fn();
+
+        useMachineCapabilitiesCacheMock.mockReturnValueOnce({
+            state: { status: 'loading' },
+            refresh: baseRefresh,
+        });
+
+        let latest: any = null;
+        function Test() {
+            latest = useCLIDetection('m1', { autoDetect: false });
+            return React.createElement('View');
+        }
+
+        const screen = await renderScreen(React.createElement(Test));
+        const refreshRef = latest?.refresh;
+        expect(typeof refreshRef).toBe('function');
+
+        useMachineCapabilitiesCacheMock.mockReturnValueOnce({
+            state: {
+                status: 'loaded',
+                snapshot: {
+                    response: {
+                        protocolVersion: 1,
+                        results: {
+                            'cli.claude': { ok: true, checkedAt: 1, data: { available: true } },
+                        },
+                    },
+                },
+            },
+            refresh: baseRefresh,
+        });
+
+        await screen.update(React.createElement(Test));
+
+        expect(latest?.refresh).toBe(refreshRef);
+        await screen.unmount();
+    });
+
     it('requests login-status overrides when includeLoginStatus is enabled', async () => {
         useMachineCapabilitiesCacheMock.mockReturnValue({
             state: { status: 'loading' },
@@ -397,6 +436,52 @@ describe('useCLIDetection (hook)', () => {
 
         expect(latest?.error).toBe('Detection error');
         expect(latest?.timestamp).toBe(0);
+    });
+
+    it('keeps the last known availability while refreshing when the cache has no snapshot', async () => {
+        const refresh = vi.fn();
+        useMachineCapabilitiesCacheMock.mockReturnValueOnce({
+            state: {
+                status: 'loaded',
+                snapshot: {
+                    response: {
+                        protocolVersion: 1,
+                        results: {
+                            'cli.claude': { ok: true, checkedAt: 10, data: { available: true } },
+                            'cli.codex': { ok: true, checkedAt: 10, data: { available: false } },
+                            'cli.gemini': { ok: true, checkedAt: 10, data: { available: true } },
+                        },
+                    },
+                },
+            },
+            refresh,
+        });
+
+        let latest: any = null;
+        function Test() {
+            latest = useCLIDetection('m1', { autoDetect: false });
+            return React.createElement('View');
+        }
+
+        const screen = await renderScreen(React.createElement(Test));
+        expect(latest?.available?.claude).toBe(true);
+        expect(latest?.available?.codex).toBe(false);
+        expect(latest?.isDetecting).toBe(false);
+        const initialTimestamp = latest?.timestamp;
+
+        useMachineCapabilitiesCacheMock.mockReturnValueOnce({
+            state: { status: 'loading' },
+            refresh,
+        });
+
+        await screen.update(React.createElement(Test));
+
+        expect(latest?.available?.claude).toBe(true);
+        expect(latest?.available?.codex).toBe(false);
+        expect(latest?.isDetecting).toBe(true);
+        expect(latest?.timestamp).toBe(initialTimestamp);
+
+        await screen.unmount();
     });
 
     it('forwards server scope to the machine capabilities cache hook', async () => {

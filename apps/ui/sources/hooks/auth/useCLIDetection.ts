@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { useMachine } from '@/sync/domains/state/storage';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
@@ -178,10 +178,12 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
         () => buildCliDetectionRequest({ agentIds: scopedAgentIds, loginStatusAgentIds: automaticLoginStatusAgentIds }),
         [automaticLoginStatusAgentIds, scopedAgentIds],
     );
+    const requestKey = useMemo(() => JSON.stringify(request), [request]);
+    const serverId = options?.serverId ?? null;
 
     const { state: cached, refresh } = useDaemonScopedMachineCapabilitiesCache({
         machineId,
-        serverId: options?.serverId,
+        serverId,
         daemonStateVersion: machine?.daemonStateVersion ?? 0,
         enabled: isOnline && options?.autoDetect !== false,
         request,
@@ -190,6 +192,32 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
 
     const lastSuccessfulDetectAtRef = useRef<number>(0);
     const fallbackDetectAtRef = useRef<number>(0);
+    const lastStableValuesRef = useRef<Readonly<{
+        signature: string;
+        available: Readonly<Record<AgentId, boolean | null>>;
+        login: Readonly<Record<AgentId, boolean | null>>;
+        authStatus: Readonly<Record<AgentId, CliAuthStatusData | null>>;
+        resolvedPath: Readonly<Record<AgentId, string | null>>;
+        resolvedCommand: Readonly<Record<AgentId, string | null>>;
+        resolutionSource: Readonly<Record<AgentId, 'override' | 'system' | 'managed' | null>>;
+        tmux: boolean | null;
+        timestamp: number;
+    }> | null>(null);
+
+    const refreshStable = useCallback((next?: { bypassCache?: boolean; includeLoginStatusForAgentIds?: readonly AgentId[] }) => {
+        if (!machineId || !isOnline) return;
+        if (next?.bypassCache) {
+            refresh({
+                request: buildCliDetectionRequest({
+                    agentIds: scopedAgentIds,
+                    loginStatusAgentIds: next.includeLoginStatusForAgentIds ?? automaticLoginStatusAgentIds,
+                    bypassCache: true,
+                }),
+            });
+            return;
+        }
+        refresh();
+    }, [automaticLoginStatusAgentIds, isOnline, machineId, refresh, scopedAgentIds]);
 
     return useMemo((): CLIAvailability => {
         if (!machineId || !isOnline) {
@@ -217,10 +245,11 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
                 tmux: null,
                 isDetecting: false,
                 timestamp: 0,
-                refresh: () => {},
+                refresh: refreshStable,
             };
         }
 
+        const signature = `${machineId}:${serverId ?? ''}:${requestKey}`;
         const snapshot =
             cached.status === 'loaded'
                 ? cached.snapshot
@@ -249,6 +278,22 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
         }
 
         if (!snapshot) {
+            const stable = lastStableValuesRef.current;
+            if (stable && stable.signature === signature) {
+                return {
+                    available: stable.available,
+                    login: stable.login,
+                    authStatus: stable.authStatus,
+                    resolvedPath: stable.resolvedPath,
+                    resolvedCommand: stable.resolvedCommand,
+                    resolutionSource: stable.resolutionSource,
+                    tmux: stable.tmux,
+                    isDetecting: cached.status === 'loading',
+                    timestamp: stable.timestamp,
+                    ...(cached.status === 'error' ? { error: 'Detection error' } : {}),
+                    refresh: refreshStable,
+                };
+            }
             const available: Record<AgentId, boolean | null> = {} as any;
             const login: Record<AgentId, boolean | null> = {} as any;
             const authStatus: Record<AgentId, CliAuthStatusData | null> = {} as any;
@@ -274,15 +319,7 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
                 isDetecting: cached.status === 'loading',
                 timestamp: 0,
                 ...(cached.status === 'error' ? { error: 'Detection error' } : {}),
-                refresh: (next) => refresh(next?.bypassCache
-                    ? {
-                        request: buildCliDetectionRequest({
-                            agentIds: scopedAgentIds,
-                            loginStatusAgentIds: next.includeLoginStatusForAgentIds ?? automaticLoginStatusAgentIds,
-                            bypassCache: true,
-                        }),
-                    }
-                    : undefined),
+                refresh: refreshStable,
             };
         }
 
@@ -302,6 +339,20 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
             resolutionSource[agentId] = readCliResolutionSource(resultsById[capId]);
         }
 
+        const nextTimestamp =
+            lastSuccessfulDetectAtRef.current || latestCheckedAt || fallbackDetectAtRef.current || 0;
+        lastStableValuesRef.current = {
+            signature,
+            available,
+            login,
+            authStatus,
+            resolvedPath,
+            resolvedCommand,
+            resolutionSource,
+            tmux: readTmuxAvailable(results['tool.tmux']),
+            timestamp: nextTimestamp,
+        };
+
         return {
             available,
             login,
@@ -311,16 +362,8 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
             resolutionSource,
             tmux: readTmuxAvailable(results['tool.tmux']),
             isDetecting: cached.status === 'loading',
-            timestamp: lastSuccessfulDetectAtRef.current || latestCheckedAt || fallbackDetectAtRef.current || 0,
-            refresh: (next) => refresh(next?.bypassCache
-                ? {
-                        request: buildCliDetectionRequest({
-                            agentIds: scopedAgentIds,
-                            loginStatusAgentIds: next.includeLoginStatusForAgentIds ?? automaticLoginStatusAgentIds,
-                            bypassCache: true,
-                        }),
-                    }
-                    : undefined),
+            timestamp: nextTimestamp,
+            refresh: refreshStable,
         };
-    }, [automaticLoginStatusAgentIds, cached, isOnline, machineId, refresh, scopedAgentIds]);
+    }, [cached, isOnline, machineId, refreshStable, requestKey, serverId]);
 }
