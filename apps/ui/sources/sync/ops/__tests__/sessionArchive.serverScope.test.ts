@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockRequest, mockResolveContext, mockRuntimeFetch, mockStorageState } = vi.hoisted(() => ({
+const { mockRequest, mockResolveContext, mockRuntimeFetchWithServerReachability, mockStorageState } = vi.hoisted(() => ({
   mockRequest: vi.fn(),
   mockResolveContext: vi.fn(),
-  mockRuntimeFetch: vi.fn(),
+  mockRuntimeFetchWithServerReachability: vi.fn(),
   mockStorageState: {
     sessions: {},
     sessionListViewDataByServerId: {},
@@ -25,8 +25,14 @@ vi.mock('../../runtime/orchestration/serverScopedRpc/resolveServerScopedSessionC
   resolveServerScopedSessionContext: mockResolveContext,
 }));
 
+vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
+  runtimeFetchWithServerReachability: mockRuntimeFetchWithServerReachability,
+}));
+
 vi.mock('@/utils/system/runtimeFetch', () => ({
-  runtimeFetch: mockRuntimeFetch,
+  runtimeFetch: vi.fn(async () => {
+    throw new Error('Unexpected runtimeFetch call');
+  }),
 }));
 
 vi.mock('../../domains/state/storage', () => ({
@@ -51,7 +57,7 @@ describe('sessionArchiveWithServerScope', () => {
   beforeEach(() => {
     mockRequest.mockReset();
     mockResolveContext.mockReset();
-    mockRuntimeFetch.mockReset();
+    mockRuntimeFetchWithServerReachability.mockReset();
     mockStorageState.sessions = {};
     mockStorageState.sessionListViewDataByServerId = {};
     mockStorageState.applySessions.mockReset();
@@ -71,10 +77,10 @@ describe('sessionArchiveWithServerScope', () => {
     const res = await sessionArchiveWithServerScope('sid-1', { serverId: 'server-a' });
     expect(res).toEqual({ success: true, archivedAt: 10 });
     expect(mockRequest).toHaveBeenCalledWith('/v2/sessions/sid-1/archive', { method: 'POST' });
-    expect(mockRuntimeFetch).not.toHaveBeenCalled();
+    expect(mockRuntimeFetchWithServerReachability).not.toHaveBeenCalled();
   });
 
-  it('uses runtimeFetch with the scoped server URL and bearer token when scope is not active', async () => {
+  it('uses runtimeFetchWithServerReachability with the scoped server URL and bearer token when scope is not active', async () => {
     mockResolveContext.mockResolvedValue({
       scope: 'scoped',
       targetServerUrl: 'https://scoped.example',
@@ -83,16 +89,21 @@ describe('sessionArchiveWithServerScope', () => {
       timeoutMs: 1000,
       encryption: null,
     });
-    mockRuntimeFetch.mockResolvedValue(makeResponse({ ok: true, json: { success: true, archivedAt: 11 } }));
+    mockRuntimeFetchWithServerReachability.mockResolvedValue(makeResponse({ ok: true, json: { success: true, archivedAt: 11 } }));
 
     const res = await sessionArchiveWithServerScope('sid-2', { serverId: 'server-b' });
     expect(res).toEqual({ success: true, archivedAt: 11 });
-    expect(mockRuntimeFetch).toHaveBeenCalledWith(
-      'https://scoped.example/v2/sessions/sid-2/archive',
+    expect(mockRuntimeFetchWithServerReachability).toHaveBeenCalledWith(
       expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({
-          Authorization: 'Bearer tok_scoped',
+        serverUrl: 'https://scoped.example',
+        token: 'tok_scoped',
+        url: 'https://scoped.example/v2/sessions/sid-2/archive',
+        timeoutMs: 1000,
+        init: expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer tok_scoped',
+          }),
         }),
       }),
     );
@@ -129,7 +140,7 @@ describe('sessionUnarchiveWithServerScope', () => {
   beforeEach(() => {
     mockRequest.mockReset();
     mockResolveContext.mockReset();
-    mockRuntimeFetch.mockReset();
+    mockRuntimeFetchWithServerReachability.mockReset();
   });
 
   it('uses active apiSocket.request when scope is active', async () => {
@@ -146,6 +157,6 @@ describe('sessionUnarchiveWithServerScope', () => {
     const res = await sessionUnarchiveWithServerScope('sid-1', { serverId: 'server-a' });
     expect(res).toEqual({ success: true, archivedAt: null });
     expect(mockRequest).toHaveBeenCalledWith('/v2/sessions/sid-1/unarchive', { method: 'POST' });
-    expect(mockRuntimeFetch).not.toHaveBeenCalled();
+    expect(mockRuntimeFetchWithServerReachability).not.toHaveBeenCalled();
   });
 });

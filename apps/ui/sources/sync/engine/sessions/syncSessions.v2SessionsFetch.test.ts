@@ -550,8 +550,8 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
 
     it('pages through /v2/sessions and applies decrypted sessions with share and key cache mapping', async () => {
         onAgentRequest.mockReset();
-        const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
-            const parsed = new URL(typeof input === 'string' ? input : String(input));
+        const requestSpy = vi.fn(async (path: string) => {
+            const parsed = new URL(path, 'https://example.test');
             expect(parsed.pathname).toBe('/v2/sessions');
 
             const cursor = parsed.searchParams.get('cursor');
@@ -580,7 +580,6 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 hasNext: false,
             });
         });
-        vi.stubGlobal('fetch', fetchSpy);
 
         const { encryption, decryptEncryptionKey, initializeSessions, decryptMetadata, decryptAgentState } =
             createEncryptionHarness();
@@ -592,6 +591,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             credentials,
             encryption,
             sessionDataKeys,
+            request: requestSpy,
             applySessions: (sessions) => {
                 appliedSessions.push(...(sessions as unknown as Array<Record<string, unknown>>));
             },
@@ -599,7 +599,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             log: { log: () => {} },
         });
 
-        expect(fetchSpy).toHaveBeenCalledTimes(2);
+        expect(requestSpy).toHaveBeenCalledTimes(2);
         expect(decryptEncryptionKey).toHaveBeenCalledTimes(2);
         expect(initializeSessions).toHaveBeenCalledTimes(1);
         expect(decryptMetadata).toHaveBeenCalledTimes(3);
@@ -619,7 +619,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
 
     it('throws HappyError for non-retryable 4xx responses', async () => {
         onAgentRequest.mockReset();
-        vi.stubGlobal('fetch', vi.fn(async () => new Response('forbidden', { status: 403 })));
+        const requestSpy = vi.fn(async () => new Response('forbidden', { status: 403 }));
         const { encryption } = createEncryptionHarness();
 
         await expect(
@@ -627,6 +627,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 credentials: { token: 't', secret: 's' },
                 encryption,
                 sessionDataKeys: new Map<string, Uint8Array>(),
+                request: requestSpy,
                 applySessions: () => {},
                 repairInvalidReadStateV1: async () => {},
                 log: { log: () => {} },

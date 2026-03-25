@@ -372,7 +372,7 @@ describe('Session Run Details Screen', () => {
 
     it('renders daemon process stats when machine execution runs list includes the run', async () => {
         const screen = await renderRunDetailsScreen();
-        expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-stale', expect.anything());
+        expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-target', expect.anything());
         expect(screen.findByType('SessionExecutionRunInfoCard' as any).props.daemonProcessLine).toContain('pid 123');
         expect(screen.findByType('SessionExecutionRunInfoCard' as any).props.daemonProcessLine).toContain('cpu 12.5');
     });

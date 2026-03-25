@@ -379,6 +379,19 @@ function SessionInfoContent({ session }: { session: Session }) {
                     {String(session.metadata?.machineId ?? directSessionMachineId ?? '').trim()}
                 </Text>
             </View>
+            {/* QA/e2e anchor: expose resolved path + homeDir so matrix can validate handoff targetPath (even under E2EE). */}
+            <View
+                testID="session-info-session-path"
+                style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
+            >
+                <Text>{String(session.metadata?.path ?? '').trim()}</Text>
+            </View>
+            <View
+                testID="session-info-home-dir"
+                style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
+            >
+                <Text>{String(session.metadata?.homeDir ?? '').trim()}</Text>
+            </View>
             <ItemList>
                 {/* Session Header */}
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>

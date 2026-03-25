@@ -286,6 +286,8 @@ describe('/session/[id]/info', () => {
         const screen = await renderInfoScreen();
         const viewMachineItem = screen.findByTestId('sessionInfo.viewMachine');
         expect(viewMachineItem).toBeTruthy();
+        expect(screen.findByTestId('session-info-session-path')).toBeTruthy();
+        expect(screen.findByTestId('session-info-home-dir')).toBeTruthy();
 
         screen.pressByTestId('sessionInfo.viewMachine');
 

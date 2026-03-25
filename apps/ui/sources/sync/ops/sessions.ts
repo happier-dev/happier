@@ -17,7 +17,7 @@ import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/
 import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import type {
     LlmTaskRunnerConfigV1,
     SessionAttachMetadataIdentityPolicy,
@@ -843,11 +843,17 @@ async function archiveRequestWithContext(params: Readonly<{
         return await apiSocket.request(path, { method: 'POST' });
     }
 
-    return await runtimeFetch(`${context.targetServerUrl}${path}`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${context.token}`,
+    return await runtimeFetchWithServerReachability({
+        serverUrl: context.targetServerUrl,
+        token: context.token,
+        url: `${context.targetServerUrl}${path}`,
+        init: {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${context.token}`,
+            },
         },
+        timeoutMs: context.timeoutMs,
     });
 }
 
@@ -927,10 +933,15 @@ export async function sessionDeleteWithServerScope(
             return { success: false, message: error || 'Failed to delete session' };
         }
 
-        const response = await runtimeFetch(`${context.targetServerUrl}/v1/sessions/${sessionId}`, {
-            method: 'DELETE',
-            headers: {
-                Authorization: `Bearer ${context.token}`,
+        const response = await runtimeFetchWithServerReachability({
+            serverUrl: context.targetServerUrl,
+            token: context.token,
+            url: `${context.targetServerUrl}/v1/sessions/${sessionId}`,
+            init: {
+                method: 'DELETE',
+                headers: {
+                    Authorization: `Bearer ${context.token}`,
+                },
             },
         });
         if (response.ok) {

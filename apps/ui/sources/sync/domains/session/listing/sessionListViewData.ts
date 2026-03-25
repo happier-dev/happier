@@ -5,6 +5,11 @@ import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import { normalizeSessionPathForProjectGrouping, resolveSessionProjectGroupingKeyParts } from './sessionListProjectGroupingKeys';
 import { t } from '@/text';
+import {
+    resolveDisplayMachineIdForSessionFromState,
+    resolveDisplayPathForSessionFromState,
+    type SessionMachineTargetState,
+} from '@/sync/ops/sessionMachineTarget';
 
 export type SessionListViewItem =
     | {
@@ -34,6 +39,11 @@ export interface BuildSessionListViewDataOptions {
     groupInactiveSessionsByProject: boolean;
     activeGroupingV1?: 'project' | 'date';
     inactiveGroupingV1?: 'project' | 'date';
+    /**
+     * Optional state snapshot used to resolve reachable machine targets when session metadata is stale
+     * (e.g. after a handoff between machines).
+     */
+    sessionTargetState?: SessionMachineTargetState;
     serverScope?: {
         serverId: string;
         serverName?: string;
@@ -110,16 +120,34 @@ function compareSessionsStableNewestFirst(a: SessionListRenderableSession, b: Se
 function groupSessionsByProject(params: Readonly<{
     sessions: ReadonlyArray<SessionListRenderableSession>;
     machines: Record<string, MachineDisplayRenderable>;
+    sessionTargetState?: SessionMachineTargetState;
 }>): ProjectGroup[] {
     const groups = new Map<string, ProjectGroup>();
+    const sessionTargetState = params.sessionTargetState;
 
     for (const session of params.sessions) {
         const parts = resolveSessionProjectGroupingKeyParts(session.metadata ?? null);
-        const machine = parts.machineId ? params.machines[parts.machineId] : undefined;
-        const host = parts.host ?? normalizeNonEmptyString(machine?.metadata?.host);
-        const homeDir = parts.homeDir ?? normalizeNonEmptyString(machine?.metadata?.homeDir);
-        const pathKey = normalizeSessionPathForProjectGrouping(session.metadata?.path, homeDir);
-        const machineGroupId = host ? `host:${host}` : parts.machineId ? `id:${parts.machineId}` : 'unknown';
+        const displayMachineId =
+            sessionTargetState
+                ? resolveDisplayMachineIdForSessionFromState({
+                      state: sessionTargetState,
+                      sessionId: session.id,
+                      metadata: session.metadata ?? null,
+                  })
+                : parts.machineId ?? '';
+        const displayPath =
+            sessionTargetState
+                ? resolveDisplayPathForSessionFromState({
+                      state: sessionTargetState,
+                      sessionId: session.id,
+                      metadata: session.metadata ?? null,
+                  })
+                : session.metadata?.path ?? null;
+        const machine = displayMachineId ? params.machines[displayMachineId] : undefined;
+        const host = normalizeNonEmptyString(machine?.metadata?.host) ?? parts.host;
+        const homeDir = normalizeNonEmptyString(machine?.metadata?.homeDir) ?? parts.homeDir;
+        const pathKey = normalizeSessionPathForProjectGrouping(displayPath, homeDir);
+        const machineGroupId = host ? `host:${host}` : displayMachineId ? `id:${displayMachineId}` : 'unknown';
         const key = `${machineGroupId}:${pathKey}`;
 
         const existing = groups.get(key);
@@ -128,8 +156,8 @@ function groupSessionsByProject(params: Readonly<{
                 if (host) {
                     return resolveBestMachineDisplayRenderableForHost(params.machines, host) ?? makeUnknownMachine(host);
                 }
-                if (parts.machineId) {
-                    return params.machines[parts.machineId] ?? makeUnknownMachine(parts.machineId);
+                if (displayMachineId) {
+                    return params.machines[displayMachineId] ?? makeUnknownMachine(displayMachineId);
                 }
                 return makeUnknownMachine('unknown');
             })();
@@ -305,6 +333,7 @@ export function buildSessionListViewData(
                 groups: groupSessionsByProject({
                     sessions: activeSessions,
                     machines,
+                    sessionTargetState: options.sessionTargetState,
                 }),
                 section: 'active',
                 serverKey,
@@ -332,6 +361,7 @@ export function buildSessionListViewData(
                 groups: groupSessionsByProject({
                     sessions: inactiveSessions,
                     machines,
+                    sessionTargetState: options.sessionTargetState,
                 }),
                 section: 'inactive',
                 serverKey,
