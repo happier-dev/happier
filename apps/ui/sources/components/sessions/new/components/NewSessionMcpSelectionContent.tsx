@@ -154,6 +154,17 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
     const agentDisplayName = t(getAgentCore(props.agentType).displayNameKey);
     const detectedSectionTitle = t('newSession.mcpDetectedSectionTitleForAgent', { agentName: agentDisplayName });
 
+    const shouldRenderDetectedGroup = React.useMemo(() => {
+        if (!props.hasContext) return false;
+        if (props.previewUnsupported) return true;
+        if (Boolean(props.error)) return true;
+        const detectedCount = preview?.detected.length ?? 0;
+        // Avoid showing a second “no servers” row when there are no Happier servers and
+        // the detected/provider list is empty. In that case, the Happier empty row already
+        // provides the actionable affordances (refresh + settings).
+        return happierServerCount > 0 || detectedCount > 0;
+    }, [happierServerCount, preview?.detected.length, props.error, props.hasContext, props.previewUnsupported]);
+
     const handleToggleManagedEnabled = React.useCallback((value: boolean) => {
         props.onSelectionChange(setManagedSessionMcpServersEnabled(props.selection, value));
     }, [props.onSelectionChange, props.selection]);
@@ -320,7 +331,7 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                         </ItemGroup>
                     ) : null}
 
-                    {props.hasContext ? (
+                    {shouldRenderDetectedGroup ? (
                         <ItemGroup
                             title={(
                                 <GroupTitleRow
@@ -400,6 +411,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        minHeight: 34,
         width: '100%',
     },
     groupTitleTextWrap: {

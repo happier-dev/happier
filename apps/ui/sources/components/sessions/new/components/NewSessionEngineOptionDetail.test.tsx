@@ -330,17 +330,17 @@ describe('NewSessionEngineOptionDetail', () => {
 
         const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
         await renderScreen(<NewSessionEngineOptionDetail
-                    backendTarget={backendTarget}
-                    selectedMachineId="machine-1"
-                    capabilityServerId="server-1"
-                    cwd="/repo"
-                    selectedModelId="default"
-                    selectedSessionModeId="default"
-                    selectedConfigOverrides={{}}
-                    onSelectionChange={(selection) => {
-                        latestSelection = selection;
-                    }}
-                />);
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            onSelectionChange={(selection) => {
+                latestSelection = selection;
+            }}
+        />);
 
         expect(typeof lastModelPickerOverlayProps?.onSubmitCustomValue).toBe('function');
 
@@ -353,6 +353,23 @@ describe('NewSessionEngineOptionDetail', () => {
             sessionModeId: 'default',
             configOverrides: {},
         });
+    });
+
+    it('does not render a session-mode picker inside the engine popover (mode is configured via the separate chip)', async () => {
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        const screen = await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            onSelectionChange={() => {}}
+        />);
+
+        expect(screen.findByTestId('agent-input-session-mode-option:review')).toBeNull();
+        expect(screen.findByTestId('agent-input-session-mode-option:default')).toBeNull();
     });
 
     it('renders ACP config options with the shared current-value summary and publishes overrides', async () => {

@@ -5,12 +5,10 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import { createMcpActionChip } from '@/components/sessions/agentInput/definitions/createMcpActionChip';
 import { NewSessionMcpSelectionContent } from '@/components/sessions/new/components/NewSessionMcpSelectionContent';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useSetting } from '@/sync/domains/state/storage';
-import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
 import { machineMcpServersPreview } from '@/sync/ops/machineMcpServers';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@/sync/runtime/rpcErrors';
 import { t } from '@/text';
-import { resolveManagedSessionMcpSelectionV1, type DaemonMcpServersPreviewResponse, type SessionMcpSelectionV1 } from '@happier-dev/protocol';
+import type { DaemonMcpServersPreviewResponse, SessionMcpSelectionV1 } from '@happier-dev/protocol';
 
 type PreviewSuccess = Extract<DaemonMcpServersPreviewResponse, { ok: true }>;
 
@@ -35,16 +33,6 @@ export function useNewSessionMcpSelection(params: Readonly<{
     const [mcpPreviewLoading, setMcpPreviewLoading] = React.useState(false);
     const [mcpPreviewError, setMcpPreviewError] = React.useState<string | null>(null);
     const [mcpPreviewUnsupported, setMcpPreviewUnsupported] = React.useState(false);
-
-    const mcpServersSettingsRaw = useSetting('mcpServersSettingsV1');
-    const mcpServersSettings = React.useMemo(
-        () => normalizeMcpServersSettingsV1(mcpServersSettingsRaw),
-        [mcpServersSettingsRaw],
-    );
-    const visibleManagedServerIds = React.useMemo(
-        () => new Set(mcpServersSettings.servers.map((server) => server.id)),
-        [mcpServersSettings.servers],
-    );
 
     React.useEffect(() => {
         setMcpPreviewUnsupported(false);
@@ -195,38 +183,11 @@ export function useNewSessionMcpSelection(params: Readonly<{
         refreshPreview,
     ]);
 
-    const selectedManagedCount = React.useMemo(() => {
+    const selectedCount = React.useMemo(() => {
         if (!mcpServersEnabled) return 0;
-        if (!params.selectedMachineId) return 0;
-        const directory = params.selectedPath.trim();
-        if (!directory) return 0;
-        try {
-            const resolved = resolveManagedSessionMcpSelectionV1(mcpServersSettings, {
-                machineId: params.selectedMachineId,
-                directory,
-                selection: params.mcpSelection,
-            });
-            return Object.values(resolved.itemsByName).filter((item) =>
-                item.selected && (visibleManagedServerIds ? visibleManagedServerIds.has(item.serverId) : true),
-            ).length;
-        } catch {
-            return 0;
-        }
-    }, [
-        mcpServersEnabled,
-        mcpServersSettings,
-        params.mcpSelection,
-        params.selectedMachineId,
-        params.selectedPath,
-        visibleManagedServerIds,
-    ]);
-
-    const selectedDetectedCount = React.useMemo(() => {
-        if (!mcpPreview) return 0;
-        return mcpPreview.detected.filter((entry) => entry.selected).length;
-    }, [mcpPreview]);
-
-    const selectedCount = selectedManagedCount + selectedDetectedCount;
+        // Chip badge should reflect detected/provider servers only, not managed/Happier settings.
+        return mcpPreview?.detected.filter((entry) => entry.selected).length ?? 0;
+    }, [mcpPreview, mcpServersEnabled]);
     const chipLabel = t('newSession.mcpChipLabel');
 
     const mcpChip = React.useMemo<AgentInputExtraActionChip | null>(() => {

@@ -18,13 +18,10 @@ export function countSelectedSessionMcpPreviewEntries(
     }>,
 ): number {
     if (!preview) return 0;
-    // Built-in MCP servers (e.g. the default Happier server) are always present and should not
-    // be counted towards the chip badge which is meant to reflect user-relevant session bindings.
-    const visibleManagedServerIds = params?.visibleManagedServerIds ?? null;
-    return preview.managed.filter((entry) =>
-        entry.selected && (visibleManagedServerIds ? visibleManagedServerIds.has(entry.serverId) : true),
-    ).length
-        + preview.detected.filter((entry) => entry.selected).length;
+    // The new-session chip badge should reflect detected/provider servers only.
+    // (Managed/Happier servers are configured separately and should not contribute to this badge.)
+    void params;
+    return preview.detected.filter((entry) => entry.selected).length;
 }
 
 export function setManagedSessionMcpServersEnabled(

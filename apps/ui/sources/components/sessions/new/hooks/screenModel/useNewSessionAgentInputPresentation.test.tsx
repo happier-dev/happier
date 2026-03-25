@@ -220,7 +220,7 @@ describe('useNewSessionAgentInputPresentation', () => {
 
         const arg = setSessionPrompt.mock.calls.at(-1)?.[0];
         expect(typeof arg).toBe('function');
-        expect(arg('hello')).toBe('hello @/repo/file.ts ');
+        expect(arg('hello')).toBe('hello @file.ts ');
 
         // The link-file chip must render a visible interactive chip in the action bar (not only an action-menu item).
         setSessionPrompt.mockClear();
