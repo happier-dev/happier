@@ -98,6 +98,7 @@ export function startSocket(app: Fastify) {
     io.use(async (socket, next) => {
         const token = socket.handshake.auth.token as string;
         const clientType = socket.handshake.auth.clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
+        const clientPurpose = socket.handshake.auth.clientPurpose as string | undefined;
         const sessionId = socket.handshake.auth.sessionId as string | undefined;
         const machineId = socket.handshake.auth.machineId as string | undefined;
 
@@ -151,6 +152,7 @@ export function startSocket(app: Fastify) {
 
         (socket.data as any).userId = verified.userId;
         (socket.data as any).clientType = clientType;
+        (socket.data as any).clientPurpose = clientPurpose;
         (socket.data as any).sessionId = sessionId;
         (socket.data as any).machineId = machineId;
         return next();
@@ -177,6 +179,7 @@ export function startSocket(app: Fastify) {
         );
         const userId = (socket.data as any).userId as string | undefined;
         const clientType = (socket.data as any).clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
+        const clientPurpose = (socket.data as any).clientPurpose as string | undefined;
         const sessionId =
             (socket.data as any).sessionScopedBinding?.sessionId as string | undefined
             ?? (socket.data as any).sessionId as string | undefined;
@@ -193,17 +196,18 @@ export function startSocket(app: Fastify) {
                 socketId: socket.id,
                 userId,
                 clientType: clientType || 'user-scoped',
+                clientPurpose: clientPurpose || 'unknown',
                 sessionId: sessionId || 'none',
                 machineId: machineId || 'none',
                 remoteAddress,
                 userAgent,
                 transport,
             },
-            `Token verified: ${userId}, clientType: ${clientType || 'user-scoped'}, sessionId: ${sessionId || 'none'}, machineId: ${machineId || 'none'}, socketId: ${socket.id} (remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
+            `Token verified: ${userId}, clientType: ${clientType || 'user-scoped'}, purpose: ${clientPurpose || 'unknown'}, sessionId: ${sessionId || 'none'}, machineId: ${machineId || 'none'}, socketId: ${socket.id} (remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
         );
 
         // Store connection based on type
-        const metadata = { clientType: clientType || 'user-scoped', sessionId, machineId };
+        const metadata = { clientType: clientType || 'user-scoped', clientPurpose: clientPurpose || 'unknown', sessionId, machineId };
         let connection: ClientConnection;
         if (metadata.clientType === 'session-scoped' && sessionId) {
             connection = {
@@ -265,6 +269,7 @@ export function startSocket(app: Fastify) {
                     socketId: socket.id,
                     userId,
                     clientType: metadata.clientType,
+                    clientPurpose: metadata.clientPurpose,
                     sessionId: sessionId || 'none',
                     machineId: machineId || 'none',
                     reason,
@@ -272,8 +277,8 @@ export function startSocket(app: Fastify) {
                     ...(isFastDisconnect ? { remoteAddress, userAgent, transport } : null),
                 },
                 isFastDisconnect
-                    ? `User disconnected: ${userId} (reason=${String(reason)}, durationMs=${durationMs}, socketId=${socket.id}, clientType=${metadata.clientType}, remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`
-                    : `User disconnected: ${userId} (reason=${String(reason)}, durationMs=${durationMs}, socketId=${socket.id}, clientType=${metadata.clientType})`,
+                    ? `User disconnected: ${userId} (reason=${String(reason)}, durationMs=${durationMs}, socketId=${socket.id}, clientType=${metadata.clientType}, purpose=${metadata.clientPurpose}, remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`
+                    : `User disconnected: ${userId} (reason=${String(reason)}, durationMs=${durationMs}, socketId=${socket.id}, clientType=${metadata.clientType}, purpose=${metadata.clientPurpose})`,
             );
 
             // Broadcast daemon offline status
@@ -318,13 +323,14 @@ export function startSocket(app: Fastify) {
                 socketId: socket.id,
                 userId,
                 clientType: metadata.clientType,
+                clientPurpose: metadata.clientPurpose,
                 sessionId: sessionId || 'none',
                 machineId: machineId || 'none',
                 remoteAddress,
                 userAgent,
                 transport,
             },
-            `User connected: ${userId} (socketId=${socket.id}, clientType=${metadata.clientType}, remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
+            `User connected: ${userId} (socketId=${socket.id}, clientType=${metadata.clientType}, purpose=${metadata.clientPurpose}, remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
         );
     });
 
