@@ -7,6 +7,7 @@ import {
   DirectSessionsCandidatesListRequestSchema,
   DirectTranscriptPageRequestSchema,
   DirectTranscriptReadAfterRequestSchema,
+  normalizeCodexBackendMode,
   type DirectSessionLinkEnsureResponse,
   type DirectSessionStatusGetResponse,
   type DirectSessionTakeoverPersistResponse,
@@ -122,10 +123,7 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     }
 
     try {
-      const codexBackendMode =
-        parsed.data.codexBackendMode === 'mcp' || parsed.data.codexBackendMode === 'acp' || parsed.data.codexBackendMode === 'appServer'
-          ? parsed.data.codexBackendMode
-          : undefined;
+      const codexBackendMode = normalizeCodexBackendMode(parsed.data.codexBackendMode) ?? undefined;
       const res = await ensureDirectSessionLink({
         credentials,
         machineId: parsed.data.machineId,

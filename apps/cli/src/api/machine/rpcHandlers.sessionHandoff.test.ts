@@ -717,8 +717,12 @@ function createLoopbackMachineTransferChannels() {
     vi.resetModules();
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-start-v2-header-only-'));
+    const workspaceRoot = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-start-v2-workspace-'));
     const published = await createPublishedDirectPeerPayloadRouter();
     try {
+      await mkdir(join(workspaceRoot, 'files'), { recursive: true });
+      await writeFile(join(workspaceRoot, 'files', 'a.txt'), 'hello\n', 'utf8');
+
       vi.doMock('@/configuration', () => ({
         configuration: {
           activeServerDir,
@@ -737,7 +741,7 @@ function createLoopbackMachineTransferChannels() {
 	          remoteSessionId: 'claude_session_1',
 	          transcriptBase64: 'e30K',
 	        },
-	        targetPath: '/repo',
+	        targetPath: workspaceRoot,
 	      });
       const registered = new Map<string, (params: unknown) => Promise<any>>();
       const rpcHandlerManager = {
@@ -751,7 +755,7 @@ function createLoopbackMachineTransferChannels() {
 	        rpcHandlerManager,
 	        loadSessionMetadata: async () => ({
 	          machineId: 'machine_source',
-	          path: '/repo',
+	          path: workspaceRoot,
 	          flavor: 'claude',
 	          claudeSessionId: 'claude_session_1',
 	          portableMetadataVersion: 'v2',
@@ -790,7 +794,7 @@ function createLoopbackMachineTransferChannels() {
       expect(rawResponse).not.toContain('contentBase64');
 
       expect(result.handoffMetadataV2).toMatchObject({
-        workspaceReplicationSourceRootPath: '/repo',
+        workspaceReplicationSourceRootPath: workspaceRoot,
       });
 
       expect(result.handoffMetadataV2).not.toHaveProperty('workspaceReplicationHandoffBackTargetRootPath');
@@ -806,14 +810,22 @@ function createLoopbackMachineTransferChannels() {
 	      expect(publishedTransferIds.some((transferId) => transferId.includes(':workspace-manifest'))).toBe(false);
 	      expect(publishedTransferIds.some((transferId) => transferId.includes(':workspace-pack'))).toBe(false);
 
-	      const providerBundlePublishCall = published.publishTransfer.mock.calls
-	        .map((call) => call?.[0])
-	        .find((input) => String(input?.transferId ?? '').includes(':provider-bundle-file'));
-	      expect(providerBundlePublishCall).toBeDefined();
-	      expect(providerBundlePublishCall).toMatchObject({
-	        payload: {},
-	        onDemandScope: expect.any(Object),
-	      });
+      const providerBundlePublishCall = published.publishTransfer.mock.calls
+        .map((call) => call?.[0])
+        .find((input) => String(input?.transferId ?? '').includes(':provider-bundle-file'));
+      expect(providerBundlePublishCall).toBeDefined();
+      expect(providerBundlePublishCall).toMatchObject({
+        payload: {},
+        onDemandScope: expect.any(Object),
+      });
+
+      // Hardening: reject obviously-invalid pack ids before attempting on-demand open.
+      // This prevents extra work/throw paths from making it into resolvePayloadSourceOnOpen.
+      expect(
+        (providerBundlePublishCall as any).onDemandScope.allowTransferId(
+          `session-handoff:${result.handoffId}:workspace-pack-direct:../evil`,
+        ),
+      ).toBe(false);
 
       const manifestTransferPublication = result.handoffMetadataV2?.workspaceReplicationManifestTransferPublication;
       expect(manifestTransferPublication).toBeDefined();
@@ -842,6 +854,7 @@ function createLoopbackMachineTransferChannels() {
       }
     } finally {
       await published.dispose();
+      await rm(workspaceRoot, { recursive: true, force: true }).catch(() => undefined);
       await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
       vi.doUnmock('@/configuration');
     }
@@ -3140,13 +3153,17 @@ function createLoopbackMachineTransferChannels() {
 
   it('starts handoff successfully when handoff requests the sync-changes workspace strategy', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
+    const homeDir = await mkdtemp(join(os.tmpdir(), 'happier-handoff-home-'));
+    const workspacePath = join(homeDir, 'projects', 'demo');
+    await mkdir(workspacePath, { recursive: true });
+    await writeFile(join(workspacePath, 'file.txt'), 'hello\n', 'utf8');
     const exportSessionBundle = vi.fn<ExportSessionBundle>(async () => ({
       providerBundle: {
         providerId: 'claude' as const,
         remoteSessionId: 'claude_session_1',
         transcriptBase64: 'e30K',
       },
-      targetPath: '/Users/tester/projects/demo',
+      targetPath: workspacePath,
     } satisfies Awaited<ReturnType<ExportSessionBundle>>));
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
@@ -3154,50 +3171,54 @@ function createLoopbackMachineTransferChannels() {
       },
     } as any;
 
-    registerMachineSessionHandoffRpcHandlers({
-      rpcHandlerManager,
-      loadSessionMetadata: async () => ({
+    try {
+      registerMachineSessionHandoffRpcHandlers({
+        rpcHandlerManager,
+        loadSessionMetadata: async () => ({
+          machineId: 'machine_source',
+          path: workspacePath,
+          homeDir,
+          flavor: 'claude',
+          claudeSessionId: 'claude_session_1',
+        }),
+        exportSessionBundle,
+      });
+
+      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+      expect(start).toBeDefined();
+
+      await expect(
+        start!({
+          sessionId: 'sess_1',
+          sourceMachineId: 'machine_source',
+          targetMachineId: 'machine_target',
+          sessionStorageMode: 'persisted',
+          preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+          workspaceTransfer: {
+            enabled: true,
+            strategy: 'sync_changes',
+            conflictPolicy: 'create_sibling_copy',
+            includeIgnoredMode: 'exclude',
+            ignoredIncludeGlobs: [],
+          },
+        }),
+      ).resolves.toMatchObject({
+        handoffId: expect.stringMatching(/^handoff_/),
+        targetPath: workspacePath,
+        status: expect.objectContaining({
+          status: 'pending',
+          phase: 'preparing',
+        }),
+      });
+
+      expect(exportSessionBundle).toHaveBeenCalledWith(expect.objectContaining({
         machineId: 'machine_source',
-        path: '/Users/tester/projects/demo',
-        homeDir: '/Users/tester',
-        flavor: 'claude',
-        claudeSessionId: 'claude_session_1',
-      }),
-      exportSessionBundle,
-    });
-
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-    expect(start).toBeDefined();
-
-    await expect(
-      start!({
-        sessionId: 'sess_1',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        sessionStorageMode: 'persisted',
-        preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
-        workspaceTransfer: {
-          enabled: true,
-          strategy: 'sync_changes',
-          conflictPolicy: 'create_sibling_copy',
-          includeIgnoredMode: 'exclude',
-          ignoredIncludeGlobs: [],
-        },
-      }),
-    ).resolves.toMatchObject({
-      handoffId: expect.stringMatching(/^handoff_/),
-      targetPath: '/Users/tester/projects/demo',
-      status: expect.objectContaining({
-        status: 'pending',
-        phase: 'preparing',
-      }),
-    });
-
-	    expect(exportSessionBundle).toHaveBeenCalledWith(expect.objectContaining({
-	      machineId: 'machine_source',
-	      path: '/Users/tester/projects/demo',
-	    }));
-	  });
+        path: workspacePath,
+      }));
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
 
   it('rejects workspace transfer before exporting bundles when ignored globs are provided without include_selected mode', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
@@ -3799,13 +3820,11 @@ function createLoopbackMachineTransferChannels() {
     const previousTransferTimeoutMs = process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
     process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '50';
 
-    const sourcePath = '/Users/tester/projects/server-routed-deferred';
+    const sourcePath = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-deferred-workspace-'));
     const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-deferred-source-'));
     const targetActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-deferred-target-'));
-    const sourceBlobDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-deferred-source-blob-'));
     const workspaceBlobPayload = Buffer.from('server-routed-pack\n', 'utf8');
-    const workspaceBlobDigest = `sha256:${createHash('sha256').update(workspaceBlobPayload).digest('hex')}`;
-    await writeFile(join(sourceBlobDir, 'README.md'), workspaceBlobPayload);
+    await writeFile(join(sourcePath, 'README.md'), workspaceBlobPayload);
     const workspaceTransfer = {
       enabled: true as const,
       strategy: 'sync_changes' as const,
@@ -3822,24 +3841,6 @@ function createLoopbackMachineTransferChannels() {
         transcriptBase64: string;
       };
       targetPath: string;
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: Array<{
-            relativePath: string;
-            kind: 'file';
-            digest: string;
-            sizeBytes: number;
-            executable: false;
-          }>;
-          fingerprint: string;
-        };
-        sourceControllerMetadata: {
-          scmBackendId: 'git';
-        };
-      };
-      blobProvider?: {
-        getBlobFilePath: (digest: string) => string | null;
-      };
     }>>();
     const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
       remoteSessionId: 'claude_session_target',
@@ -3995,26 +3996,6 @@ function createLoopbackMachineTransferChannels() {
           transcriptBase64: 'e30K',
         },
         targetPath: sourcePath,
-        workspaceExportArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: workspaceBlobDigest,
-                sizeBytes: workspaceBlobPayload.byteLength,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:0f17985b1cd57fb85b266f9106da8e3feec58da8fe9b31f6d9e4e83079a996f0',
-          },
-          sourceControllerMetadata: {
-            scmBackendId: 'git',
-          },
-        },
-        blobProvider: {
-          getBlobFilePath: (digest: string) => (digest === workspaceBlobDigest ? join(sourceBlobDir, 'README.md') : null),
-        },
       });
 
       let ready = prepareAck;
@@ -4065,23 +4046,21 @@ function createLoopbackMachineTransferChannels() {
       }
       vi.doUnmock('@/configuration');
       vi.resetModules();
+      await rm(sourcePath, { recursive: true, force: true });
       await rm(sourceActiveServerDir, { recursive: true, force: true });
       await rm(targetActiveServerDir, { recursive: true, force: true });
-      await rm(sourceBlobDir, { recursive: true, force: true });
     }
   });
 
   it('acknowledges direct-peer workspace handoff start before a large workspace export finishes when server-routed fallback is available', async () => {
     vi.resetModules();
 
-    const sourcePath = '/Users/tester/projects/direct-peer-deferred';
+    const sourcePath = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-deferred-workspace-'));
     const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-deferred-source-'));
     const targetActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-deferred-target-'));
     const targetPath = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-deferred-target-workspace-'));
-    const sourceBlobDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-deferred-source-blob-'));
     const workspaceBlobPayload = Buffer.from('direct-peer-deferred-pack\n', 'utf8');
-    const workspaceBlobDigest = `sha256:${createHash('sha256').update(workspaceBlobPayload).digest('hex')}`;
-    await writeFile(join(sourceBlobDir, 'README.md'), workspaceBlobPayload);
+    await writeFile(join(sourcePath, 'README.md'), workspaceBlobPayload);
 
     const workspaceTransfer = {
       enabled: true as const,
@@ -4100,24 +4079,6 @@ function createLoopbackMachineTransferChannels() {
         transcriptBase64: string;
       };
       targetPath: string;
-      workspaceExportArtifacts: {
-        manifest: {
-          entries: Array<{
-            relativePath: string;
-            kind: 'file';
-            digest: string;
-            sizeBytes: number;
-            executable: false;
-          }>;
-          fingerprint: string;
-        };
-        sourceControllerMetadata: {
-          scmBackendId: 'git';
-        };
-      };
-      blobProvider?: {
-        getBlobFilePath: (digest: string) => string | null;
-      };
     }>>();
 
     const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
@@ -4276,26 +4237,6 @@ function createLoopbackMachineTransferChannels() {
           transcriptBase64: 'e30K',
         },
         targetPath: sourcePath,
-        workspaceExportArtifacts: {
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: workspaceBlobDigest,
-                sizeBytes: workspaceBlobPayload.byteLength,
-                executable: false,
-              },
-            ],
-            fingerprint: 'sha256:0f17985b1cd57fb85b266f9106da8e3feec58da8fe9b31f6d9e4e83079a996f0',
-          },
-          sourceControllerMetadata: {
-            scmBackendId: 'git',
-          },
-        },
-        blobProvider: {
-          getBlobFilePath: (digest: string) => (digest === workspaceBlobDigest ? join(sourceBlobDir, 'README.md') : null),
-        },
       });
 
       let ready = prepareAck;
@@ -4335,10 +4276,10 @@ function createLoopbackMachineTransferChannels() {
     } finally {
       vi.doUnmock('@/configuration');
       vi.resetModules();
+      await rm(sourcePath, { recursive: true, force: true });
       await rm(sourceActiveServerDir, { recursive: true, force: true });
       await rm(targetActiveServerDir, { recursive: true, force: true });
       await rm(targetPath, { recursive: true, force: true });
-      await rm(sourceBlobDir, { recursive: true, force: true });
     }
   });
 

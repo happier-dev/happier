@@ -75,6 +75,7 @@ import {
   createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope,
   parseSessionHandoffWorkspaceDirectPeerBlobPackTransferId,
 } from '../../session/handoff/workspace/sessionHandoffWorkspaceReplicationDirectPeer';
+import { assertSafeWorkspaceReplicationPackId } from '../../workspaces/replication/transport/workspaceReplicationPackId';
 import {
   parseSessionHandoffWorkspaceManifestTransferId,
   buildSessionHandoffWorkspaceManifestTransferId,
@@ -95,7 +96,6 @@ import {
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { SessionHandoffProviderBundle } from '../../session/handoff/types';
-import type { WorkspaceExportBlobProvider } from '../../scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
 import { compareWorkspaceManifests } from '../../scm/sourceController/workspaceExportPackaging/compareWorkspaceManifests';
 const PREPARE_JOB_FAST_PATH_BUDGET_MS = 250;
 // Status polling can race against the background prepare runner acquiring its durable lease and
@@ -107,7 +107,6 @@ type StoredHandoffState = Readonly<{
   status: SessionHandoffStatus;
   sourceMachineId?: string;
   targetMachineId?: string;
-  workspaceBlobProvider?: WorkspaceExportBlobProvider;
   providerBundlePayloadSource?: TransferPayloadSource;
   directPeerPayloadSources?: readonly Readonly<{
     transferId: string;
@@ -121,7 +120,6 @@ type StoredHandoffState = Readonly<{
 type SessionHandoffExportBundleResult = Readonly<{
   providerBundle: SessionHandoffProviderBundle;
   targetPath: string;
-  blobProvider?: WorkspaceExportBlobProvider;
 }>;
 
 export type SessionHandoffDirectPeerTransferHandle = Readonly<{
@@ -720,7 +718,6 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   exportSessionBundle?: (metadata: Record<string, unknown>) => Promise<Readonly<{
     providerBundle: SessionHandoffProviderBundle;
     targetPath: string;
-    blobProvider?: WorkspaceExportBlobProvider;
   }>>;
   importSessionBundle?: (bundle: SessionHandoffProviderBundle, targetPath: string, sessionStorageMode: 'direct' | 'persisted') => Promise<Readonly<{
     remoteSessionId: string;
@@ -1030,7 +1027,6 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 		      });
 
 		      const workspaceReplicationMetadata = preparedWorkspaceTransfer.workspaceReplicationMetadata;
-		      const workspaceBlobProvider = preparedWorkspaceTransfer.workspaceBlobProvider;
 		      const workspaceTransferEnabled = input.request.workspaceTransfer?.enabled === true;
           const persistedWorkspaceManifest =
             workspaceTransferEnabled && workspaceReplicationMetadata
@@ -1098,7 +1094,6 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 		            ...(preparedWorkspaceTransfer.workspaceReplicationMetadata
 		              ? { workspaceReplicationMetadata: preparedWorkspaceTransfer.workspaceReplicationMetadata }
 		              : {}),
-		          ...(workspaceBlobProvider ? { workspaceBlobProvider } : {}),
 		          ...(providerBundlePayloadSource ? { providerBundlePayloadSource } : {}),
 		            workspaceTransfer: input.request.workspaceTransfer,
 		        },
@@ -1340,7 +1335,15 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	                  return true;
 	                }
 	                const parsed = parseSessionHandoffWorkspaceDirectPeerBlobPackTransferId(transferId);
-	                return parsed?.handoffId === handoffId;
+	                if (!parsed || parsed.handoffId !== handoffId) {
+	                  return false;
+	                }
+	                try {
+	                  assertSafeWorkspaceReplicationPackId(parsed.packId);
+	                } catch {
+	                  return false;
+	                }
+	                return true;
 	              },
 		              resolvePayloadSourceOnOpen: async ({ transferId, requestBody }) => {
 		                if (!cachedWorkspaceScope) {
@@ -1359,29 +1362,15 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
                       });
 
                       const workspaceSourceRootPath = persisted.workspaceSourceRootPath;
-                      const derivedBlobProvider: WorkspaceExportBlobProvider | undefined =
-                        workspaceSourceRootPath
-                          ? {
-                              getBlobFilePath: (digest) => {
-                                const entry = manifest.entries.find(
-                                  (candidate): candidate is Extract<WorkspaceManifest['entries'][number], { kind: 'file' }> =>
-                                    candidate.kind === 'file' && candidate.digest === digest,
-                                );
-                                if (!entry) return null;
-                                const rel = String(entry.relativePath ?? '').trim();
-                                if (!rel || rel.startsWith('/') || rel.startsWith('\\') || rel.includes('..')) {
-                                  return null;
-                                }
-                                return join(workspaceSourceRootPath, rel);
-                              },
-                            }
-                          : undefined;
+                      if (!workspaceSourceRootPath) {
+                        throw new Error('Direct peer transfer not ready');
+                      }
 
 		                  cachedWorkspaceScope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
 		                    handoffId,
 		                    activeServerDir: configuration.activeServerDir,
+                        sourceRootPath: workspaceSourceRootPath,
 		                    manifest,
-		                    ...(derivedBlobProvider ? { blobProvider: derivedBlobProvider } : {}),
 		                  });
 		                }
 		                return await cachedWorkspaceScope.resolvePayloadSourceOnOpen({

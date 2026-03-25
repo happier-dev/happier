@@ -2,6 +2,7 @@ import {
   AgentRuntimeDescriptorV1Schema,
   DirectSessionsProviderIdSchema,
   DirectSessionsSourceSchema,
+  normalizeCodexBackendMode,
 } from '@happier-dev/protocol';
 import {
   readOpenCodeSessionRuntimeHandleFromMetadata,
@@ -156,9 +157,7 @@ export async function loadLinkedDirectSession(params: Readonly<{
       }),
       codexBackendMode:
         persistedCodexBackendMode
-        ?? (direct.codexBackendMode === 'mcp' || direct.codexBackendMode === 'acp' || direct.codexBackendMode === 'appServer'
-          ? direct.codexBackendMode
-          : null),
+        ?? normalizeCodexBackendMode(direct.codexBackendMode),
     },
   };
 }
