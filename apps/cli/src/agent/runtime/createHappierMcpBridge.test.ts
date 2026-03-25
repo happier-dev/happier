@@ -40,6 +40,11 @@ describe('createHappierMcpBridge', () => {
   })
 
   it('uses direct script mode by default', async () => {
+    vi.mocked(existsSync).mockImplementation((pathLike) => {
+      const path = String(pathLike)
+      return path.endsWith('/package-dist/backends/codex/happyMcpStdioBridge.mjs')
+    })
+
     const session = {} as any
     const { mcpServers } = await createHappierMcpBridge(session)
 
@@ -56,6 +61,11 @@ describe('createHappierMcpBridge', () => {
   })
 
   it('supports current-process mode', async () => {
+    vi.mocked(existsSync).mockImplementation((pathLike) => {
+      const path = String(pathLike)
+      return path.endsWith('/package-dist/backends/codex/happyMcpStdioBridge.mjs')
+    })
+
     const session = {} as any
     const { mcpServers } = await createHappierMcpBridge(session, { commandMode: 'current-process' })
 
@@ -135,6 +145,10 @@ describe('createHappierMcpBridge', () => {
 
   it('uses the ensured JavaScript runtime for the bundled dist bridge when direct script mode runs under bun', async () => {
     requireJavaScriptRuntimeExecutableMock.mockResolvedValue('/managed/js-runtime')
+    vi.mocked(existsSync).mockImplementation((pathLike) => {
+      const path = String(pathLike)
+      return path.endsWith('/package-dist/backends/codex/happyMcpStdioBridge.mjs')
+    })
 
     const session = {} as any
     const { mcpServers } = await createHappierMcpBridge(session)

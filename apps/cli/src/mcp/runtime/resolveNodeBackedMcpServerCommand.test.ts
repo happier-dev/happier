@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveNodeBackedMcpServerCommand } from './resolveNodeBackedMcpServerCommand';
+import { resolveTsxImportHookPath } from '@/utils/spawnHappyCLI';
 
 const { requireJavaScriptRuntimeExecutableMock } = vi.hoisted(() => ({
   requireJavaScriptRuntimeExecutableMock: vi.fn(async (): Promise<string> => process.execPath),
@@ -179,5 +180,23 @@ describe('resolveNodeBackedMcpServerCommand', () => {
         sourceEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.ts'],
       }),
     ).rejects.toThrow(/HAPPIER_JS_RUNTIME_PATH/);
+  });
+
+  it('fails closed when neither a packaged entrypoint nor a TSX source entrypoint is available', async () => {
+    vi.mocked(resolveTsxImportHookPath).mockReturnValue(null);
+    vi.mocked(existsSync).mockImplementation((pathLike) => {
+      const path = String(pathLike);
+      if (path.endsWith('/package-dist/mcp/bridges/remoteMcpStdioBridge.mjs')) return false;
+      if (path.endsWith('/dist/mcp/bridges/remoteMcpStdioBridge.mjs')) return false;
+      if (path.endsWith('/src/mcp/bridges/remoteMcpStdioBridge.ts')) return true;
+      return false;
+    });
+
+    await expect(
+      resolveNodeBackedMcpServerCommand({
+        distEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.mjs'],
+        sourceEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.ts'],
+      }),
+    ).rejects.toThrow(/remoteMcpStdioBridge/);
   });
 });

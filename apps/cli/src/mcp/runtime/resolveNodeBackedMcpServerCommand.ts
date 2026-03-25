@@ -55,8 +55,15 @@ export async function resolveNodeBackedMcpServerCommand(params: Readonly<{
     };
   }
 
-  return {
-    command,
-    args: ['--no-warnings', '--no-deprecation', packagedEntrypoint, ...(params.args ?? [])],
-  };
+  throw new Error(
+    [
+      '[mcp] Unable to resolve a runnable Node-backed MCP server entrypoint.',
+      `packagedEntrypoint=${packagedEntrypoint}`,
+      `sourceEntrypoint=${sourceEntrypoint}`,
+      `tsxImportHook=${tsxHookPath ?? 'null'}`,
+      'Expected either:',
+      '- the packaged entrypoint to exist (package-dist/dist), or',
+      '- a TSX import hook + source entrypoint to be available for dev execution.',
+    ].join(' '),
+  );
 }
