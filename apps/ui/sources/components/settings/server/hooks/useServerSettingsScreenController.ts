@@ -33,6 +33,7 @@ import { useServerSettingsConcurrentActions } from '@/components/settings/server
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { clearPendingNotificationNav, getPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
+import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 
 type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[]; source?: string | string[] }>;
 
@@ -139,10 +140,23 @@ export function useServerSettingsScreenController(): ServerSettingsController {
                 return false;
             }
 
-            const versionRes = await runtimeFetch(`${normalized}/v1/version`, {
-                method: 'GET',
-                headers: { 'Accept': 'application/json' },
-            });
+            const timeoutMs = readServerReachabilityProbeTimeoutMs();
+            const controller = typeof AbortController === 'function' ? new AbortController() : null;
+            const timeout = controller
+                ? setTimeout(() => {
+                    controller.abort();
+                }, Math.max(0, timeoutMs))
+                : null;
+            let versionRes: Response;
+            try {
+                versionRes = await runtimeFetch(`${normalized}/v1/version`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' },
+                    ...(controller ? { signal: controller.signal } : null),
+                });
+            } finally {
+                if (timeout) clearTimeout(timeout);
+            }
             if (!versionRes.ok) {
                 setError(t('server.serverReturnedError'));
                 return false;
