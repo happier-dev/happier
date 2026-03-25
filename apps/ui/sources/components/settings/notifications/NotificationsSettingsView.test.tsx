@@ -17,6 +17,7 @@ const applyLocalSettingsMock = vi.fn();
 const modalPromptMock = vi.fn();
 const modalConfirmMock = vi.fn();
 const modalAlertMock = vi.fn();
+const routerPushMock = vi.fn();
 
 const settingsState: {
     notificationsSettingsV1: NotificationsSettingsV1;
@@ -117,6 +118,19 @@ installSettingsViewCommonModuleMocks({
             },
         });
     },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            pathname: '/settings/notifications',
+            segments: ['(app)', 'settings', 'notifications'],
+            router: {
+                push: routerPushMock,
+                replace: vi.fn(),
+                back: vi.fn(),
+                setParams: vi.fn(),
+            },
+        }).module;
+    },
 });
 
 vi.mock('@/sync/store/settingsWriters', () => ({
@@ -151,6 +165,7 @@ describe('NotificationsSettingsView', () => {
         modalPromptMock.mockReset();
         modalConfirmMock.mockReset();
         modalAlertMock.mockReset();
+        routerPushMock.mockReset();
 
         settingsState.notificationsSettingsV1 = {
             v: 1,
@@ -175,6 +190,15 @@ describe('NotificationsSettingsView', () => {
                 readyIncludeMessageText: true,
             },
         ];
+    });
+
+    it('navigates to push notification troubleshooting', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        screen.pressRow('settings-notifications-push-troubleshoot');
+
+        expect(routerPushMock).toHaveBeenCalledWith('/settings/notifications/push');
     });
 
     it('renders device-local badge/local sections alongside the remote push section', async () => {

@@ -1,32 +1,22 @@
 import { Stack, router, usePathname, useSegments } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
-import * as Notifications from 'expo-notifications';
 import { Typography } from '@/constants/Typography';
 import { createHeader } from '@/components/navigation/Header';
 import { Platform, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { isRunningOnMac } from '@/utils/platform/platform';
-import { coerceRelativeRoute } from '@/utils/path/routeUtils';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
-import { getActiveServerUrl, listServerProfiles } from '@/sync/domains/server/serverProfiles';
-import { normalizeServerUrl, setActiveServerAndSwitch, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
-import { clearPendingNotificationNav, getPendingNotificationNav, setPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
-import {
-    clearPendingNotificationAction,
-    getPendingNotificationAction,
-    setPendingNotificationAction,
-} from '@/sync/domains/pending/pendingNotificationAction';
+import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
+import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
-import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
 import { bootstrapActiveServerFromWebLocation, readWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
-import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
 import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
 import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
 import { useHappierVoiceSupport } from '@/hooks/server/useHappierVoiceSupport';
@@ -36,39 +26,9 @@ import {
 } from '@/utils/navigation/createSocialStackScreenOptions';
 import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
 import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runtime/ActivityLocalNotificationRuntime';
+import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
-
-function extractServerUrlFromNotificationData(data: unknown): string | null {
-    if (!data || typeof data !== 'object') return null;
-    const rec = data as Record<string, unknown>;
-    const serverUrl = typeof rec.serverUrl === 'string' ? rec.serverUrl : typeof rec.server === 'string' ? rec.server : '';
-    const normalized = normalizeServerUrl(serverUrl);
-    return normalized ? normalized : null;
-}
-
-function isUnsafeNotificationServerUrl(serverUrl: string): boolean {
-    const normalized = normalizeServerUrl(serverUrl);
-    if (!normalized) return true;
-    try {
-        const url = new URL(normalized);
-        const host = url.hostname.trim().toLowerCase();
-        return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1' || host === '[::1]';
-    } catch {
-        return true;
-    }
-}
-
-function findSavedServerProfileForUrl(serverUrl: string): { id: string; serverUrl: string } | null {
-    const targetKey = createServerUrlComparableKey(serverUrl);
-    if (!targetKey) return null;
-    for (const profile of listServerProfiles()) {
-        if (createServerUrlComparableKey(profile.serverUrl) === targetKey) {
-            return { id: profile.id, serverUrl: profile.serverUrl };
-        }
-    }
-    return null;
-}
 
 function readLegacySessionIdFromWebLocation(): Readonly<{ sessionId: string; cleanedRelativeUrl: string }> | null {
     if (typeof window === 'undefined') return null;
@@ -171,6 +131,11 @@ export default function RootLayout() {
         router.replace('/');
     }, [shouldRedirect]);
 
+    useNotificationResponseRouting({
+        enabled: auth.isAuthenticated,
+        refreshAuth: auth.refreshFromActiveServer,
+    });
+
     React.useEffect(() => {
         if (!auth.isAuthenticated) {
             pendingTerminalHandledRef.current = false;
@@ -217,258 +182,6 @@ export default function RootLayout() {
         }
 
         pendingTerminalHandledRef.current = false;
-        if (Platform.OS === 'web') return;
-
-        const performPermissionAction = async (params: {
-            sessionId: string;
-            requestId: string;
-            action: 'allow' | 'deny';
-        }): Promise<void> => {
-            const { sessionAllow, sessionDeny } = await import('@/sync/ops');
-            if (params.action === 'allow') {
-                await sessionAllow(params.sessionId, params.requestId, undefined, undefined, 'approved');
-            } else {
-                await sessionDeny(params.sessionId, params.requestId, undefined, undefined, 'denied', 'Denied from notification');
-            }
-        };
-
-        const pendingAction = getPendingNotificationAction();
-        if (pendingAction) {
-            const active = normalizeServerUrl(getActiveServerUrl());
-            if (normalizeServerUrl(pendingAction.serverUrl) === active) {
-                clearPendingNotificationAction();
-                fireAndForget((async () => {
-                    try {
-                        await performPermissionAction({
-                            sessionId: pendingAction.sessionId,
-                            requestId: pendingAction.requestId,
-                            action: pendingAction.action,
-                        });
-                    } catch {
-                        // best-effort; navigation still proceeds
-                    }
-                    router.push(`/session/${encodeURIComponent(pendingAction.sessionId)}`);
-                })(), { tag: 'RootLayout.pendingNotificationAction' });
-                return;
-            }
-        }
-
-        const pending = getPendingNotificationNav();
-        if (pending) {
-            const active = normalizeServerUrl(getActiveServerUrl());
-            if (normalizeServerUrl(pending.serverUrl) === active) {
-                clearPendingNotificationNav();
-                router.push(pending.route);
-                return;
-            }
-        }
-
-        const toRoute = (data: unknown): string | null => {
-            if (!data || typeof data !== 'object') return null;
-            const rec = data as Record<string, unknown>;
-            if (typeof rec.url === 'string' && rec.url.trim()) {
-                return coerceRelativeRoute(rec.url);
-            }
-            if (typeof rec.sessionId === 'string' && rec.sessionId.trim()) {
-                return `/session/${encodeURIComponent(rec.sessionId)}`;
-            }
-            return null;
-        };
-
-		        const maybeRedirectFromResponse = (response: any) => {
-		            if (!response || typeof response !== 'object') return;
-		            const actionIdentifier = typeof response.actionIdentifier === 'string' ? response.actionIdentifier : '';
-		            const notification = response.notification;
-		            const data = notification?.request?.content?.data;
-		            const isDefaultTap = !actionIdentifier || actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER;
-		            const route = toRoute(data);
-	            const actionSessionId =
-	                data && typeof data === 'object' && typeof (data as any).sessionId === 'string'
-	                    ? String((data as any).sessionId).trim()
-	                    : '';
-	            const actionRequestId =
-	                data && typeof data === 'object'
-	                    ? typeof (data as any).requestId === 'string'
-	                        ? String((data as any).requestId).trim()
-	                        : typeof (data as any).permissionId === 'string'
-	                            ? String((data as any).permissionId).trim()
-	                            : ''
-	                    : '';
-
-		            const action =
-		                actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1
-		                    ? ('allow' as const)
-		                    : actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1
-		                        ? ('deny' as const)
-		                        : null;
-		            const isKnownActionIdentifier =
-		                isDefaultTap
-		                || action !== null
-		                || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1;
-		            if (!isKnownActionIdentifier) return;
-
-			            if (route) {
-			                const serverUrl = extractServerUrlFromNotificationData(data);
-			                const routeToServerSettingsForUrl = (url: string) => {
-			                    router.push(`/server?url=${encodeURIComponent(url)}&source=notification`);
-			                };
-		
-		                // Permission action buttons are security-sensitive. Only perform allow/deny when:
-		                // - the server is already active, OR
-		                // - the server is already saved (we can switch safely), OR
-		                // - (otherwise) navigate only and let the user handle it in-app.
-		                if (!isDefaultTap && action && actionSessionId && actionRequestId) {
-		                    if (!serverUrl) {
-		                        router.push(route);
-		                        return;
-		                    }
-		
-		                    const active = normalizeServerUrl(getActiveServerUrl());
-		                    if (serverUrl !== active) {
-		                        const saved = findSavedServerProfileForUrl(serverUrl);
-		                        if (!saved) {
-		                            if (isUnsafeNotificationServerUrl(serverUrl)) {
-		                                router.push(route);
-		                                return;
-		                            }
-		                            // If the app has no servers, we can auto-add/switch to restore a working deep link,
-		                            // but never perform the allow/deny action on an unsaved server.
-		                            if (listServerProfiles().length === 0) {
-		                                setPendingNotificationNav({ serverUrl, route });
-		                                fireAndForget((async () => {
-		                                    try {
-		                                        await upsertActivateAndSwitchServer({
-		                                            serverUrl,
-		                                            source: 'notification',
-		                                            scope: 'device',
-		                                            refreshAuth: auth.refreshFromActiveServer,
-		                                        });
-		                                        clearPendingNotificationNav();
-		                                        router.push(route);
-		                                    } catch {
-		                                        // keep pending notification nav as fallback
-		                                    }
-		                                })(), { tag: 'RootLayout.notificationNav.autoAddServer.actionTap' });
-		                                return;
-		                            }
-		                            // Servers exist but the target isn't saved: redirect to server settings with a prefilled url.
-		                            setPendingNotificationNav({ serverUrl, route });
-		                            routeToServerSettingsForUrl(serverUrl);
-		                            return;
-		                        }
-		
-		                        setPendingNotificationAction({
-		                            serverUrl: saved.serverUrl,
-	                            sessionId: actionSessionId,
-	                            requestId: actionRequestId,
-	                            action,
-	                        });
-	                        fireAndForget((async () => {
-	                            try {
-	                                await setActiveServerAndSwitch({
-	                                    serverId: saved.id,
-	                                    scope: 'device',
-	                                    refreshAuth: auth.refreshFromActiveServer,
-	                                });
-	                                clearPendingNotificationAction();
-	                                try {
-	                                    await performPermissionAction({ sessionId: actionSessionId, requestId: actionRequestId, action });
-	                                } catch {
-	                                    // best-effort
-	                                }
-	                                router.push(`/session/${encodeURIComponent(actionSessionId)}`);
-	                            } catch {
-	                                // keep pending notification action as fallback
-	                            }
-	                        })(), { tag: 'RootLayout.notificationAction.savedServer' });
-	                        return;
-	                    }
-	                }
-	
-	                if (serverUrl) {
-	                    const active = normalizeServerUrl(getActiveServerUrl());
-	                    if (serverUrl !== active) {
-		                        const saved = findSavedServerProfileForUrl(serverUrl);
-		                        if (saved) {
-		                            setPendingNotificationNav({ serverUrl: saved.serverUrl, route });
-		                            fireAndForget((async () => {
-	                                try {
-	                                    await setActiveServerAndSwitch({
-	                                        serverId: saved.id,
-	                                        scope: 'device',
-	                                        refreshAuth: auth.refreshFromActiveServer,
-	                                    });
-	                                    clearPendingNotificationNav();
-	                                    router.push(route);
-	                                } catch {
-	                                    // keep pending notification nav as fallback
-	                                }
-	                            })(), { tag: 'RootLayout.notificationNav.savedServer' });
-	                            return;
-		                        }
-
-		                        if (isUnsafeNotificationServerUrl(serverUrl)) {
-		                            if (isDefaultTap || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1) {
-		                                router.push(route);
-		                                return;
-	                            }
-	                            // Unsafe/mismatched server url: fail closed for actions; navigate only.
-	                            router.push(route);
-	                            return;
-	                        }
-
-		                        if (listServerProfiles().length === 0) {
-		                            setPendingNotificationNav({ serverUrl, route });
-		                            fireAndForget((async () => {
-	                                try {
-	                                    await upsertActivateAndSwitchServer({
-	                                        serverUrl,
-	                                        source: 'notification',
-	                                        scope: 'device',
-	                                        refreshAuth: auth.refreshFromActiveServer,
-	                                    });
-	                                    clearPendingNotificationNav();
-	                                    router.push(route);
-	                                } catch {
-	                                    // keep pending notification nav as fallback
-	                                }
-		                            })(), { tag: 'RootLayout.notificationNav.autoAddServer' });
-		                            return;
-		                        }
-		                        // Servers exist but the target isn't saved: redirect to server settings with a prefilled url.
-		                        setPendingNotificationNav({ serverUrl, route });
-		                        routeToServerSettingsForUrl(serverUrl);
-		                        return;
-		                    }
-		                }
-		                if (!isDefaultTap && action && actionSessionId && actionRequestId) {
-		                    fireAndForget((async () => {
-	                        try {
-                            await performPermissionAction({ sessionId: actionSessionId, requestId: actionRequestId, action });
-                        } catch {
-                            // best-effort
-                        }
-                        router.push(`/session/${encodeURIComponent(actionSessionId)}`);
-                    })(), { tag: 'RootLayout.notificationAction.activeServer' });
-                    return;
-                }
-                if (isDefaultTap || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1) {
-                    router.push(route);
-                }
-            }
-        };
-
-        void Notifications.getLastNotificationResponseAsync()
-            .then(maybeRedirectFromResponse)
-            .catch(() => {});
-
-        const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-            maybeRedirectFromResponse(response);
-        });
-
-        return () => {
-            subscription.remove();
-        };
     }, [auth.isAuthenticated]);
 
     // Server capability gating: if the server doesn't support Happier Voice (misconfigured/disabled),

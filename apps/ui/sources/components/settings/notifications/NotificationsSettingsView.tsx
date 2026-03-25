@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
+import { useRouter } from 'expo-router';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -39,6 +40,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export const NotificationsSettingsView = React.memo(function NotificationsSettingsView() {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const settings = useSettings();
     const localSettings = useLocalSettings();
     const applySettings = useApplySettings();
@@ -62,6 +64,10 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
     );
 
     const pushEnabled = notifications.pushEnabled !== false;
+
+    const openPushTroubleshooting = React.useCallback(() => {
+        router.push('/settings/notifications/push');
+    }, [router]);
 
     const applyRemoteNotificationSettings = React.useCallback((nextNotifications: NotificationsSettingsV1, nextChannels: ReadonlyArray<NotificationChannelV1>) => {
         applySettings(buildNotificationSettingsDelta({
@@ -387,6 +393,13 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                         />
                     )}
                     showChevron={false}
+                />
+                <Item
+                    testID="settings-notifications-push-troubleshoot"
+                    title={t('settingsNotifications.push.troubleshootTitle')}
+                    subtitle={t('settingsNotifications.push.troubleshootSubtitle')}
+                    icon={<Ionicons name="help-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                    onPress={openPushTroubleshooting}
                 />
             </ItemGroup>
 

@@ -46,6 +46,7 @@ const mockState = await vi.hoisted(async () => {
 vi.mock('expo-notifications', () => ({
     DEFAULT_ACTION_IDENTIFIER: 'expo.modules.notifications.actions.DEFAULT',
     getLastNotificationResponseAsync: vi.fn(),
+    clearLastNotificationResponseAsync: vi.fn(async () => {}),
     addNotificationResponseReceivedListener: vi.fn(() => ({ remove: () => {} })),
     setBadgeCountAsync: vi.fn(async () => {}),
 }));
@@ -268,6 +269,40 @@ describe('App RootLayout notifications', () => {
         await renderRootLayout();
 
         expect(mockState.pushSpy).toHaveBeenCalledWith('/session/s_123');
+    });
+
+    it('dedupes notification responses across cold start and response listener', async () => {
+        const Notifications = await import('expo-notifications');
+        const response = {
+            actionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
+            notification: {
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n1',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_123' },
+                    },
+                },
+            },
+        };
+        vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue(response as any);
+        vi.spyOn(Notifications, 'clearLastNotificationResponseAsync').mockResolvedValue(undefined as any);
+        vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation((listener: any) => {
+            listener(response);
+            return { remove: () => {} };
+        });
+
+        await renderRootLayout();
+
+        expect(mockState.pushSpy).toHaveBeenCalledTimes(1);
+        expect(mockState.pushSpy).toHaveBeenCalledWith('/session/s_123');
+        expect(Notifications.clearLastNotificationResponseAsync).toHaveBeenCalledTimes(1);
     });
 
     it('switches server and navigates when a notification includes serverUrl', async () => {
