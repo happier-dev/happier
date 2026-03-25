@@ -1,5 +1,3 @@
-import { mergeTransferChunks } from '@/sync/domains/transfers/runtime/mergeTransferChunks';
-
 import { downloadBulkPayloadToFile } from './downloadBulkPayloadToFile';
 import { resolveBulkTransferJsonMaxBytes } from './resolveBulkTransferJsonMaxBytes';
 
@@ -30,9 +28,33 @@ export async function downloadBulkJsonPayload<TPayload>(params: Readonly<{
     | Readonly<{ ok: true; payload: TPayload }>
     | Readonly<{ ok: false; error: string }>
 > {
-    const chunks: Uint8Array[] = [];
     const jsonMaxBytes = resolveBulkTransferJsonMaxBytes(null);
     let receivedBytes = 0;
+    let buffer: Uint8Array | null = null;
+    let bufferOffset = 0;
+
+    function ensureCapacity(requiredBytes: number): void {
+        if (!buffer) {
+            buffer = new Uint8Array(Math.min(jsonMaxBytes, Math.max(1, requiredBytes)));
+            bufferOffset = 0;
+            return;
+        }
+
+        if (requiredBytes <= buffer.byteLength) {
+            return;
+        }
+
+        const nextCapacity = Math.min(
+            jsonMaxBytes,
+            Math.max(requiredBytes, Math.max(1, buffer.byteLength) * 2),
+        );
+        if (nextCapacity < requiredBytes) {
+            throw new Error(`Downloaded JSON payload exceeds max allowed bytes (${jsonMaxBytes})`);
+        }
+        const next = new Uint8Array(nextCapacity);
+        next.set(buffer.subarray(0, bufferOffset), 0);
+        buffer = next;
+    }
 
     let download: Awaited<ReturnType<typeof downloadBulkPayloadToFile>>;
     try {
@@ -45,12 +67,16 @@ export async function downloadBulkJsonPayload<TPayload>(params: Readonly<{
                         throw new Error(`Downloaded JSON payload exceeds max allowed bytes (${jsonMaxBytes})`);
                     }
                     receivedBytes = nextTotal;
-                    chunks.push(bytes);
+                    ensureCapacity(bufferOffset + bytes.byteLength);
+                    if (!buffer) throw new Error('Downloaded transfer payload returned an unsupported response');
+                    buffer.set(bytes, bufferOffset);
+                    bufferOffset += bytes.byteLength;
                 },
                 close: async () => {},
                 cleanup: async () => {
                     receivedBytes = 0;
-                    chunks.length = 0;
+                    buffer = null;
+                    bufferOffset = 0;
                 },
             },
             init: async (request) => {
@@ -60,6 +86,9 @@ export async function downloadBulkJsonPayload<TPayload>(params: Readonly<{
                         success: false as const,
                         error: `Downloaded JSON payload exceeds max allowed bytes (${jsonMaxBytes})`,
                     };
+                }
+                if (init.success === true) {
+                    ensureCapacity(init.sizeBytes);
                 }
                 return init;
             },
@@ -75,7 +104,8 @@ export async function downloadBulkJsonPayload<TPayload>(params: Readonly<{
                 ? error.message
                 : 'Downloaded transfer payload returned an unsupported response';
         receivedBytes = 0;
-        chunks.length = 0;
+        buffer = null;
+        bufferOffset = 0;
         return {
             ok: false,
             error: message,
@@ -88,7 +118,18 @@ export async function downloadBulkJsonPayload<TPayload>(params: Readonly<{
 
     let parsedJson: unknown;
     try {
-        parsedJson = JSON.parse(new TextDecoder('utf-8', { fatal: false }).decode(mergeTransferChunks(chunks)));
+        // Use a local const to ensure TypeScript narrows correctly even though `buffer` is
+        // mutated by callbacks in the download pipeline.
+        const decodeBuffer = buffer as Uint8Array | null;
+        if (!decodeBuffer) {
+            return {
+                ok: false,
+                error: 'Downloaded transfer payload returned an unsupported response',
+            };
+        }
+        parsedJson = JSON.parse(
+            new TextDecoder('utf-8', { fatal: false }).decode(decodeBuffer.subarray(0, receivedBytes)),
+        );
     } catch {
         return {
             ok: false,
