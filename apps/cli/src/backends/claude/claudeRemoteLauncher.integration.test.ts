@@ -563,10 +563,10 @@ describe.sequential('claudeRemoteLauncher', () => {
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
-  it('restarts the Claude runtime when the queued prompt mode hash changes, including across relaunch boundaries', async () => {
-    const firstSeen = createDeferred<any>();
-    const secondSeen = createDeferred<any>();
-    const thirdSeen = createDeferred<any>();
+	  it('restarts the Claude runtime when the queued prompt mode hash changes, including across relaunch boundaries', async () => {
+	    const firstSeen = createDeferred<any>();
+	    const secondSeen = createDeferred<any>();
+	    const thirdSeen = createDeferred<any>();
 
     mockClaudeRemoteDispatch
       .mockImplementationOnce(async (opts: unknown) => {
@@ -587,13 +587,13 @@ describe.sequential('claudeRemoteLauncher', () => {
         await waitForAbort(dispatchOpts.signal);
       });
 
-    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
-    session.queue.push('one', { permissionMode: 'default', appendSystemPrompt: 'a' } satisfies EnhancedMode);
-    session.queue.push('two', { permissionMode: 'default', appendSystemPrompt: 'b' } satisfies EnhancedMode);
-    session.queue.push('three', { permissionMode: 'default', appendSystemPrompt: 'c' } satisfies EnhancedMode);
-    // Ensure nextMessage never deadlocks in a regression case where the launcher fails to restart.
-    // This doesn't affect the mode-hash behavior under test; it just guarantees eventual null.
-    session.queue.close();
+	    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+	    session.queue.push('one', { permissionMode: 'default', reasoningEffort: 'low' } satisfies EnhancedMode);
+	    session.queue.push('two', { permissionMode: 'default', reasoningEffort: 'max' } satisfies EnhancedMode);
+	    session.queue.push('three', { permissionMode: 'default', reasoningEffort: 'medium' } satisfies EnhancedMode);
+	    // Ensure nextMessage never deadlocks in a regression case where the launcher fails to restart.
+	    // This doesn't affect the mode-hash behavior under test; it just guarantees eventual null.
+	    session.queue.close();
 
     const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
     const launcherPromise = claudeRemoteLauncher(session);
@@ -608,24 +608,27 @@ describe.sequential('claudeRemoteLauncher', () => {
       void secondSeen.promise.then((value) => { second = value; });
       void thirdSeen.promise.then((value) => { third = value; });
 
-      await expect.poll(() => first, { timeout: 10_000 }).not.toBe(unset);
-      expect(first).not.toBeNull();
-      expect(first?.message).toContain('one');
-      expect(first?.message).not.toContain('two');
+	      await expect.poll(() => first, { timeout: 10_000 }).not.toBe(unset);
+	      expect(first).not.toBeNull();
+	      expect(first?.message).toContain('one');
+	      expect(first?.message).not.toContain('two');
+	      expect(first?.mode?.reasoningEffort).toBe('low');
 
-      await expect.poll(() => second, { timeout: 10_000 }).not.toBe(unset);
-      expect(second).not.toBeNull();
-      expect(second?.message).toContain('two');
-      expect(second?.message).not.toContain('three');
+	      await expect.poll(() => second, { timeout: 10_000 }).not.toBe(unset);
+	      expect(second).not.toBeNull();
+	      expect(second?.message).toContain('two');
+	      expect(second?.message).not.toContain('three');
+	      expect(second?.mode?.reasoningEffort).toBe('max');
 
-      await expect.poll(() => third, { timeout: 10_000 }).not.toBe(unset);
-      expect(third).not.toBeNull();
-      expect(third?.message).toContain('three');
-    } finally {
-      expect(await switchHandler({ to: 'local' })).toBe(true);
-      await expect(launcherPromise).resolves.toBe('switch');
-    }
-  }, 30_000);
+	      await expect.poll(() => third, { timeout: 10_000 }).not.toBe(unset);
+	      expect(third).not.toBeNull();
+	      expect(third?.message).toContain('three');
+	      expect(third?.mode?.reasoningEffort).toBe('medium');
+	    } finally {
+	      expect(await switchHandler({ to: 'local' })).toBe(true);
+	      await expect(launcherPromise).resolves.toBe('switch');
+	    }
+	  }, 30_000);
 
   it('persists the last assistant uuid into session metadata when observed in remote messages', async () => {
     const { session, client, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
