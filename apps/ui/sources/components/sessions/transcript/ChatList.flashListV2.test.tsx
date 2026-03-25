@@ -330,13 +330,6 @@ vi.mock('@/sync/domains/settings/settings', () => ({
     settingsDefaults: {},
 }));
 
-vi.mock('@/utils/sessions/deriveTranscriptInteraction', () => ({
-    deriveTranscriptInteraction: () => ({
-        isReadonly: false,
-        canOpenTools: true,
-    }),
-}));
-
 vi.mock('./chatListNativeId', () => ({
     buildChatListNativeId: (sessionId: string, reactId: string) => `chat-list-${sessionId}-${reactId}`,
 }));

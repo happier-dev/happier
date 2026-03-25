@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { act } from 'react-test-renderer';
 
 import { renderHook, renderScreen, flushHookEffects } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
@@ -202,22 +201,33 @@ describe('useNewSessionAgentInputPresentation', () => {
         const chip = hook.getCurrent().agentInputExtraActionChips.find((c) => c.key === 'new-session-link-file');
         expect(chip).toBeTruthy();
 
+        // New-session link-file must behave like the existing-session chip: it opens a popover with a file browser,
+        // not a separate modal or an extra "Link file" button inside the popover.
+        expect(chip?.collapsedAction).toBeUndefined();
         expect(chip?.collapsedContentPopover).toBeTruthy();
-        const renderContent = chip?.collapsedContentPopover?.renderContent;
-        expect(typeof renderContent).toBe('function');
+        if (!chip?.collapsedContentPopover) {
+            throw new Error('Expected link-file chip to define collapsedContentPopover');
+        }
+        const renderContent = chip.collapsedContentPopover.renderContent;
         if (typeof renderContent !== 'function') {
-            throw new Error('Expected link-file chip collapsedContentPopover.renderContent to be a function');
+            throw new Error('Expected collapsedContentPopover.renderContent to be a function');
         }
 
-        // Simulate selecting a file from the popover browser content.
-        const rendered = renderContent({ requestClose: () => {}, maxHeight: 320 }) as any;
-        expect(React.isValidElement(rendered)).toBe(true);
-        const props = (rendered as any).props ?? {};
-        expect(typeof props.onPickPath).toBe('function');
-        await act(async () => {
-            props.onPickPath('/repo/file.ts');
-        });
+        const requestClose = vi.fn();
+        const contentNode = renderContent({ requestClose, maxHeight: 300 });
+        if (!React.isValidElement(contentNode)) {
+            throw new Error('Expected link-file popover content to be a React element');
+        }
 
+        // We don't mount the file browser here; we just prove the wiring by calling its onPickPath handler.
+        const { MachinePathBrowserView } = await import('@/components/ui/pathBrowser/MachinePathBrowserModal');
+        expect(contentNode.type).toBe(MachinePathBrowserView);
+        expect(typeof (contentNode.props as any).onPickPath).toBe('function');
+
+        (contentNode.props as any).onPickPath('/repo/file.ts');
+        expect(requestClose).toHaveBeenCalled();
+
+        expect(setSessionPrompt).toHaveBeenCalled();
         const arg = setSessionPrompt.mock.calls.at(-1)?.[0];
         expect(typeof arg).toBe('function');
         expect(arg('hello')).toBe('hello @file.ts ');
@@ -225,6 +235,7 @@ describe('useNewSessionAgentInputPresentation', () => {
         // The link-file chip must render a visible interactive chip in the action bar (not only an action-menu item).
         setSessionPrompt.mockClear();
 
+        const toggleCollapsedPopover = vi.fn();
         const chipUi = chip!.render({
             chipStyle: () => ({}),
             showLabel: true,
@@ -233,7 +244,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             countTextStyle: {},
             chipAnchorRef: { current: null },
             popoverAnchorRef: { current: null },
-            toggleCollapsedPopover: vi.fn(),
+            toggleCollapsedPopover,
         });
         if (!React.isValidElement(chipUi)) {
             throw new Error('Expected chip renderer to return an element');
@@ -243,7 +254,6 @@ describe('useNewSessionAgentInputPresentation', () => {
 
         await screen.pressByTestIdAsync('new-session-link-file-chip');
         await flushHookEffects({ cycles: 1, turns: 1 });
-        // In the unified popover flow, pressing the chip toggles the central collapsed popover.
-        // (Selection is handled through the popover content callback above.)
+        expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-link-file');
     });
 });

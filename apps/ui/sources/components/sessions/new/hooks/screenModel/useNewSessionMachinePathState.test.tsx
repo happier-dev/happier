@@ -59,6 +59,31 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
+    it('treats machines as eligible for initial selection when they are online via activeAt even if active=false', async () => {
+        const now = Date.now();
+
+        const hook = await renderMachinePathState({
+            machines: toMachines(
+                { id: 'machine-stale-active', metadata: { homeDir: '/stale' }, active: true, activeAt: now - 3 * 60_000 },
+                // Real server snapshots can report recent activeAt while leaving `active` false.
+                { id: 'machine-online', metadata: { homeDir: '/online' }, active: false, activeAt: now - 10_000 },
+            ),
+            recentMachinePaths: [
+                { machineId: 'machine-stale-active', path: '/repo/stale' },
+                { machineId: 'machine-online', path: '/repo/online' },
+            ],
+            machineIdParam: null,
+            pathParam: null,
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-online',
+            selectedPath: '/repo/online',
+        });
+
+        await hook.unmount();
+    });
+
     it('prefers an online machine from recent paths over an offline one', async () => {
         const now = Date.now();
 

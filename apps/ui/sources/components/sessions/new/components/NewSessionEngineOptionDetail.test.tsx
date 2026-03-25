@@ -138,21 +138,21 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModel
     useNewSessionPreflightModelsState: () => ({
         modelOptions: modelOptionsState.value,
         preflightModels: preflightModelsState.value,
-        probe: { phase: 'idle', refresh: () => {} },
+        probe: { phase: 'idle', onRefresh: () => {} },
     }),
 }));
 
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState', () => ({
     useNewSessionPreflightSessionModesState: () => ({
         modeOptions: modeOptionsState.value,
-        probe: { phase: 'idle', refresh: () => {} },
+        probe: { phase: 'idle', onRefresh: () => {} },
     }),
 }));
 
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState', () => ({
     useNewSessionPreflightConfigOptionsState: () => ({
         configOptions: configOptionsState.value,
-        probe: { phase: 'idle', refresh: () => {} },
+        probe: { phase: 'idle', onRefresh: () => {} },
     }),
 }));
 
@@ -177,14 +177,13 @@ describe('NewSessionEngineOptionDetail', () => {
         lastModelPickerOverlayProps = null;
     });
 
-    it('publishes the selected mode synchronously so a following model click preserves it', async () => {
+    it('does not render session mode selection in the engine popover (mode is controlled by the dedicated chip) and preserves the incoming sessionModeId on model changes', async () => {
         type SelectionChange = {
             modelId: string;
             sessionModeId: string;
             configOverrides: Readonly<Record<string, string>>;
         };
         let latestSelection: SelectionChange | null = null;
-        let latestSessionModeId: string | null = null;
         const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
         const screen = await renderScreen(<NewSessionEngineOptionDetail
             backendTarget={backendTarget}
@@ -192,29 +191,14 @@ describe('NewSessionEngineOptionDetail', () => {
             capabilityServerId="server-1"
             cwd="/repo"
             selectedModelId="default"
-            selectedSessionModeId="default"
+            selectedSessionModeId="review"
             selectedConfigOverrides={{}}
             onSelectionChange={(selection) => {
                 latestSelection = selection as SelectionChange;
-                latestSessionModeId = (selection as SelectionChange).sessionModeId;
             }}
         />);
 
-        await act(async () => {
-            screen.tree.update(<NewSessionEngineOptionDetail
-                backendTarget={backendTarget}
-                selectedMachineId="machine-1"
-                capabilityServerId="server-1"
-                cwd="/repo"
-                selectedModelId="default"
-                selectedSessionModeId="review"
-                selectedConfigOverrides={{}}
-                onSelectionChange={(selection) => {
-                    latestSelection = selection as SelectionChange;
-                    latestSessionModeId = (selection as SelectionChange).sessionModeId;
-                }}
-            />);
-        });
+        expect(() => screen.findByProps({ testID: 'agent-input-session-mode-option:review' })).toThrow();
 
         await screen.pressByTestIdAsync('model-picker-overlay-option:preset-fast');
         expect(latestSelection).toEqual({
@@ -222,7 +206,6 @@ describe('NewSessionEngineOptionDetail', () => {
             sessionModeId: 'review',
             configOverrides: {},
         });
-        expect(latestSessionModeId).toBe('review');
     });
 
     it('passes the full model list and custom-model capability through to ModelPickerOverlay', async () => {
@@ -250,6 +233,23 @@ describe('NewSessionEngineOptionDetail', () => {
         expect(lastModelPickerOverlayProps).toBeTruthy();
         expect(lastModelPickerOverlayProps.options).toHaveLength(12);
         expect(lastModelPickerOverlayProps.canEnterCustomValue).toBe(true);
+    });
+
+    it('surfaces a refresh control for probed config options even when no options are available yet', async () => {
+        configOptionsState.value = [];
+
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        const screen = await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+        />);
+
+        expect(screen.findByProps({ testID: 'agent-input-config-options-refresh' })).toBeTruthy();
     });
 
     it('adds a description to the CLI settings option when other models include descriptions', async () => {
