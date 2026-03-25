@@ -1,11 +1,10 @@
 import { accessSync, constants as fsConstants, existsSync } from 'node:fs';
 import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { basename, delimiter as pathDelimiter, dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { configuration } from '@/configuration';
-import { readExplicitJavaScriptRuntimeCommand } from '@/runtime/js/managedJavaScriptRuntime';
-import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
+import { resolveExistingManagedJavaScriptRuntimeCommand } from '@/runtime/js/managedJavaScriptRuntime';
 import { readRuntimeInstallableLastCheckAtMs } from '@/installables/runtime/runtimeInstallableUpdateState';
 import { downloadGitHubReleaseAsset, extractGitHubReleaseAsset } from '@happier-dev/cli-common/providers';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
@@ -20,6 +19,8 @@ type CodexAcpState = Readonly<{
 type LatestVersionCheck =
   | Readonly<{ ok: true; latestVersion: string | null; label: string | null }>
   | Readonly<{ ok: false; errorMessage: string }>;
+
+const githubFetchImpl = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined;
 
 export const codexAcpInstallDir = () => join(configuration.happyHomeDir, 'tools', 'codex-acp');
 
@@ -40,33 +41,8 @@ export const codexAcpLegacyBinPaths = () => {
   return [join(codexAcpInstallDir(), 'node_modules', '.bin', 'codex-acp')] as const;
 };
 
-function isNodeOnPath(processEnv: NodeJS.ProcessEnv): boolean {
-  const path = typeof processEnv.PATH === 'string' ? processEnv.PATH : '';
-  if (!path) return false;
-
-  const candidates = process.platform === 'win32' ? ['node.exe', 'node.cmd', 'node'] : ['node'];
-  const accessMode = process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK;
-  for (const dir of path.split(pathDelimiter)) {
-    const trimmed = dir.trim();
-    if (!trimmed) continue;
-    for (const candidate of candidates) {
-      const candidatePath = join(trimmed, candidate);
-      try {
-        accessSync(candidatePath, accessMode);
-        return true;
-      } catch {
-        // continue scanning PATH
-      }
-    }
-  }
-
-  return false;
-}
-
 function hasJavaScriptRuntimeForLegacyCodexAcpShim(processEnv: NodeJS.ProcessEnv): boolean {
-  if (resolveJavaScriptRuntimeExecutable({ isBunRuntime: true, processEnv })) return true;
-  if (readExplicitJavaScriptRuntimeCommand(processEnv)) return false;
-  return isNodeOnPath(processEnv);
+  return Boolean(resolveExistingManagedJavaScriptRuntimeCommand(processEnv));
 }
 
 function isLegacyCodexAcpShimRunnable(candidatePath: string, processEnv: NodeJS.ProcessEnv): boolean {
@@ -129,6 +105,7 @@ async function detectLatestVersionCheck(): Promise<LatestVersionCheck> {
       githubRepo: CODEX_ACP_GITHUB_REPO,
       userAgent: 'happier-cli',
       githubToken: process.env.GITHUB_TOKEN,
+      ...(githubFetchImpl ? { fetchImpl: githubFetchImpl } : {}),
     });
     const asset = resolveCodexAcpReleaseAsset(release);
     return { ok: true, latestVersion: asset.version, label: asset.tag };
@@ -155,6 +132,7 @@ async function installLatestCodexAcpRelease(logPath: string): Promise<Readonly<{
     githubRepo: CODEX_ACP_GITHUB_REPO,
     userAgent: 'happier-cli',
     githubToken: process.env.GITHUB_TOKEN,
+    ...(githubFetchImpl ? { fetchImpl: githubFetchImpl } : {}),
   });
   const asset = resolveCodexAcpReleaseAsset(release);
 

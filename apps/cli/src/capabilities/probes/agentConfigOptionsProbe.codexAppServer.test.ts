@@ -123,4 +123,77 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
     expect(withCodexAppServerClientMock).toHaveBeenCalledTimes(1);
     expect(readCodexAppServerSessionControlsMock).toHaveBeenCalledTimes(1);
   });
+
+  it('does not cache invalid dynamic config-options results as a 24h success fallback', async () => {
+    vi.resetModules();
+    const { probeAgentConfigOptionsBestEffort: probeFresh } = await import('./agentConfigOptionsProbe');
+
+    withCodexAppServerClientMock.mockImplementation(async ({ cwd, run }: any) => {
+      expect(cwd).toBe('/repo-invalid');
+      return await run({ request: vi.fn() });
+    });
+
+    readCodexAppServerSessionControlsMock.mockResolvedValueOnce({
+      availableModes: [],
+      currentModeId: 'default',
+      availableModels: [],
+      currentModelId: null,
+      // Invalid entry: array present, but nothing parseable.
+      configOptions: [{}],
+    });
+
+    const first = await probeFresh({
+      agentId: 'codex',
+      cwd: '/repo-invalid',
+      accountSettings: { codexBackendMode: 'appServer' },
+    });
+    expect(first).toEqual({
+      provider: 'codex',
+      configOptions: [],
+      source: 'static',
+    });
+
+    readCodexAppServerSessionControlsMock.mockResolvedValueOnce({
+      availableModes: [],
+      currentModeId: 'default',
+      availableModels: [],
+      currentModelId: null,
+      configOptions: [
+        {
+          id: 'speed',
+          name: 'Speed',
+          type: 'select',
+          currentValue: 'fast',
+          options: [
+            { value: 'standard', name: 'Standard' },
+            { value: 'fast', name: 'Fast' },
+          ],
+        },
+      ],
+    });
+
+    const second = await probeFresh({
+      agentId: 'codex',
+      cwd: '/repo-invalid',
+      accountSettings: { codexBackendMode: 'appServer' },
+    });
+
+    expect(second).toEqual({
+      provider: 'codex',
+      configOptions: [
+        {
+          id: 'speed',
+          name: 'Speed',
+          type: 'select',
+          currentValue: 'fast',
+          options: [
+            { value: 'standard', name: 'Standard' },
+            { value: 'fast', name: 'Fast' },
+          ],
+        },
+      ],
+      source: 'dynamic',
+    });
+    expect(readCodexAppServerSessionControlsMock).toHaveBeenCalledTimes(2);
+  });
 });

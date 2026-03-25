@@ -209,4 +209,76 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
     expect(withCodexAppServerClientMock).toHaveBeenCalledTimes(1);
     expect(readCodexAppServerSessionControlsMock).toHaveBeenCalledTimes(1);
   });
+
+  it('filters malformed dynamic model payload entries and normalizes invalid option values to null', async () => {
+    withCodexAppServerClientMock.mockImplementation(async ({ cwd, run }: any) => {
+      expect(cwd).toBe('/repo-parse');
+      return await run({ request: vi.fn() });
+    });
+    readCodexAppServerSessionControlsMock.mockResolvedValue({
+      availableModes: [],
+      currentModeId: 'default',
+      availableModels: [
+        {
+          id: 'gpt-5.4',
+          name: 'GPT-5.4',
+          modelOptions: [
+            {
+              id: 'reasoning_effort',
+              name: 'Thinking',
+              type: 'select',
+              currentValue: { invalid: true },
+              options: [
+                { value: { invalid: true }, name: 'Auto' },
+                { value: 'medium', name: 'Medium' },
+                { value: 'skip-me' },
+              ],
+            },
+            {
+              id: 'missing-type',
+              name: 'Broken option',
+              currentValue: 'ignored',
+            },
+          ],
+        },
+        {
+          id: 'missing-name',
+          modelOptions: [],
+        },
+      ],
+      currentModelId: 'gpt-5.4',
+      configOptions: [],
+    });
+
+    const result = await probeAgentModelsBestEffort({
+      agentId: 'codex',
+      cwd: '/repo-parse',
+      accountSettings: { codexBackendMode: 'appServer' },
+    });
+
+    expect(result).toEqual({
+      provider: 'codex',
+      availableModels: [
+        { id: 'default', name: 'Default' },
+        {
+          id: 'gpt-5.4',
+          name: 'GPT-5.4',
+          modelOptions: [
+            {
+              id: 'reasoning_effort',
+              name: 'Thinking',
+              type: 'select',
+              currentValue: null,
+              options: [
+                { value: null, name: 'Auto' },
+                { value: 'medium', name: 'Medium' },
+              ],
+            },
+          ],
+        },
+      ],
+      supportsFreeform: false,
+      source: 'dynamic',
+    });
+  });
 });

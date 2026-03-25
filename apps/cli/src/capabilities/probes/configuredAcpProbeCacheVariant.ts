@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings';
@@ -50,5 +52,8 @@ export function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
     defaultModel: backend.defaultModel,
   });
 
-  return `configuredAcp:${backend.backendId}:${JSON.stringify(materialProbeSettings)}`;
+  // Cache variants must not leak raw env/auth material (may contain secrets). Use a stable digest so
+  // the key stays bounded and safe to log/debug.
+  const digest = createHash('sha256').update(JSON.stringify(materialProbeSettings)).digest('base64url');
+  return `configuredAcp:${backend.backendId}:${digest}`;
 }

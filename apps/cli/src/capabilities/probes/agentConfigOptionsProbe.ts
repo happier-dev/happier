@@ -1,9 +1,10 @@
-import { withCodexAppServerClient } from '@/backends/codex/appServer/client/withCodexAppServerClient';
-import { readCodexAppServerSessionControls } from '@/backends/codex/appServer/sessionControlsMetadata';
+import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
-import { resolveCodexSessionBackendMode } from '@happier-dev/agents';
-import { AsyncTtlCache, buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
+import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
+import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
+import { z } from 'zod';
 
 export type ProbedAgentConfigOptionValue = string | number | boolean | null;
 
@@ -35,88 +36,69 @@ const agentConfigOptionsProbeCache = new AsyncTtlCache<ProbedAgentConfigOptionsR
   successTtlMs: PROBE_CONFIG_OPTIONS_SUCCESS_TTL_MS,
   errorTtlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS,
 });
-
-function buildAgentConfigOptionsProbeCacheKey(agentId: CatalogAgentId, cwd: string, backendTarget?: BackendTargetRefV1, variant?: string): string {
-  const normalizedCwd = String(cwd ?? '').trim();
-  const targetKey = backendTarget ? buildBackendTargetKey(backendTarget) : `agent:${agentId}`;
-  return `${targetKey}:${normalizedCwd}:${variant ?? 'default'}`;
-}
-
-function resolveProbeVariant(agentId: CatalogAgentId, accountSettings?: Readonly<Record<string, unknown>> | null): string {
-  if (agentId !== 'codex') return `${agentId}:default`;
-  return `codex:${resolveCodexSessionBackendMode({ metadata: null, accountSettings: accountSettings ?? null }) ?? 'default'}`;
-}
+const ProbeNonEmptyStringSchema = z.string().trim().min(1);
+const ProbeDescriptionSchema = z.string();
+const ProbeOptionValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const ProbeConfigChoiceInputSchema = z.object({
+  value: z.unknown().optional(),
+  name: ProbeNonEmptyStringSchema,
+  description: ProbeDescriptionSchema.optional(),
+});
+const ProbeConfigOptionInputSchema = z.object({
+  id: ProbeNonEmptyStringSchema,
+  name: ProbeNonEmptyStringSchema,
+  description: ProbeDescriptionSchema.optional(),
+  type: ProbeNonEmptyStringSchema,
+  currentValue: z.unknown().optional(),
+  options: z.array(z.unknown()).optional(),
+});
 
 function buildStatic(agentId: CatalogAgentId): ProbedAgentConfigOptionsResult {
   return { provider: agentId, configOptions: [], source: 'static' };
 }
 
+function normalizeProbeConfigOptionValue(value: unknown): ProbedAgentConfigOptionValue {
+  const parsed = ProbeOptionValueSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function normalizeProbeConfigChoice(choiceRaw: unknown): ProbedAgentConfigChoice | null {
+  const parsed = ProbeConfigChoiceInputSchema.safeParse(choiceRaw);
+  if (!parsed.success) return null;
+
+  return {
+    value: normalizeProbeConfigOptionValue(parsed.data.value),
+    name: parsed.data.name,
+    ...(parsed.data.description ? { description: parsed.data.description } : {}),
+  };
+}
+
 function normalizeDynamicConfigOptions(configOptionsRaw: unknown): ProbedAgentConfigOption[] | null {
   if (!Array.isArray(configOptionsRaw)) return null;
 
-  const parsed = configOptionsRaw
-    .map((optionRaw) => {
-      if (!optionRaw || typeof optionRaw !== 'object' || Array.isArray(optionRaw)) return null;
-      const option = optionRaw as Record<string, unknown>;
-      const id = typeof option.id === 'string' ? option.id.trim() : '';
-      const name = typeof option.name === 'string' ? option.name.trim() : '';
-      const type = typeof option.type === 'string' ? option.type.trim() : '';
-      if (!id || !name || !type) return null;
-      const description = typeof option.description === 'string' ? option.description : undefined;
-      const currentValue =
-        typeof option.currentValue === 'string'
-        || typeof option.currentValue === 'number'
-        || typeof option.currentValue === 'boolean'
-        || option.currentValue === null
-          ? option.currentValue
-          : null;
-      const options = Array.isArray(option.options)
-        ? option.options
-            .map((choiceRaw) => {
-              if (!choiceRaw || typeof choiceRaw !== 'object' || Array.isArray(choiceRaw)) return null;
-              const choice = choiceRaw as Record<string, unknown>;
-              const choiceName = typeof choice.name === 'string' ? choice.name.trim() : '';
-              if (!choiceName) return null;
-              const value =
-                typeof choice.value === 'string'
-                || typeof choice.value === 'number'
-                || typeof choice.value === 'boolean'
-                || choice.value === null
-                  ? choice.value
-                  : null;
-              const choiceDescription = typeof choice.description === 'string' ? choice.description : undefined;
-              const normalizedChoice: ProbedAgentConfigChoice = {
-                value,
-                name: choiceName,
-                ...(choiceDescription ? { description: choiceDescription } : {}),
-              };
-              return normalizedChoice;
-            })
-            .filter(Boolean) as NonNullable<ProbedAgentConfigOption['options']>
-        : undefined;
+  const parsed: ProbedAgentConfigOption[] = [];
+  for (const optionRaw of configOptionsRaw) {
+    const parsedOption = ProbeConfigOptionInputSchema.safeParse(optionRaw);
+    if (!parsedOption.success) continue;
 
-      return {
-        id,
-        name,
-        type,
-        currentValue,
-        ...(description ? { description } : {}),
-        ...(options ? { options } : {}),
-      } satisfies ProbedAgentConfigOption;
-    })
-    .filter(Boolean) as ProbedAgentConfigOption[];
+    const options = parsedOption.data.options
+      ?.map((choiceRaw) => normalizeProbeConfigChoice(choiceRaw))
+      .filter((choice): choice is ProbedAgentConfigChoice => choice !== null);
 
+    parsed.push({
+      id: parsedOption.data.id,
+      name: parsedOption.data.name,
+      type: parsedOption.data.type,
+      currentValue: normalizeProbeConfigOptionValue(parsedOption.data.currentValue),
+      ...(parsedOption.data.description ? { description: parsedOption.data.description } : {}),
+      ...(options ? { options } : {}),
+    });
+  }
+
+  // If the probe returned entries but none were parseable, treat the payload as invalid so callers
+  // can apply a short failure TTL instead of caching a silent fallback for a full day.
+  if (parsed.length === 0 && configOptionsRaw.length > 0) return null;
   return parsed;
-}
-
-async function probeConfigOptionsFromCodexAppServer(params: Readonly<{
-  cwd: string;
-}>): Promise<ReadonlyArray<ProbedAgentConfigOption> | null> {
-  const controls = await withCodexAppServerClient({
-    cwd: params.cwd,
-    run: async (client) => readCodexAppServerSessionControls({ client }),
-  });
-  return normalizeDynamicConfigOptions(controls.configOptions);
 }
 
 export async function probeAgentConfigOptionsBestEffort(params: {
@@ -127,13 +109,19 @@ export async function probeAgentConfigOptionsBestEffort(params: {
   accountSettings?: Readonly<Record<string, unknown>> | null;
   credentials?: Credentials | null;
 }): Promise<ProbedAgentConfigOptionsResult> {
-  void params.timeoutMs;
-  void params.credentials;
-
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
-  const probeVariant = resolveProbeVariant(params.agentId, params.accountSettings);
-  const cacheKey = buildAgentConfigOptionsProbeCacheKey(params.agentId, cwd, params.backendTarget, probeVariant);
+  const probeVariant = resolveAgentProbeVariant({
+    agentId: params.agentId,
+    backendTarget: params.backendTarget,
+    accountSettings: params.accountSettings,
+  });
+  const cacheKey = buildAgentProbeCacheKey({
+    agentId: params.agentId,
+    cwd,
+    backendTarget: params.backendTarget,
+    variant: probeVariant,
+  });
 
   const cached = agentConfigOptionsProbeCache.get(cacheKey);
   if (cached?.kind === 'success' && agentConfigOptionsProbeCache.isFresh(cached, nowMs)) return cached.value;
@@ -144,17 +132,27 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     if (cached2?.kind === 'success' && agentConfigOptionsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
     const fallback = buildStatic(params.agentId);
-    const codexBackendMode = params.agentId === 'codex'
-      ? resolveCodexSessionBackendMode({ metadata: null, accountSettings: params.accountSettings ?? null })
+    const entry = AGENTS[params.agentId];
+
+    const preflightAdapter = entry?.getPreflightSessionControlsProbeAdapter
+      ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
       : null;
-    if (params.agentId === 'codex' && codexBackendMode === 'appServer') {
-      const configOptions = await probeConfigOptionsFromCodexAppServer({ cwd }).catch(() => null);
+    if (preflightAdapter?.probeConfigOptionsRaw) {
+      const configOptionsRaw = await preflightAdapter.probeConfigOptionsRaw({
+        backendTarget: params.backendTarget,
+        cwd,
+        timeoutMs: params.timeoutMs ?? 15_000,
+        accountSettings: params.accountSettings ?? null,
+      }).catch(() => null);
+      const configOptions = normalizeDynamicConfigOptions(configOptionsRaw);
       if (configOptions) {
         const result: ProbedAgentConfigOptionsResult = { ...fallback, configOptions, source: 'dynamic' };
         agentConfigOptionsProbeCache.setSuccess(cacheKey, result, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_SUCCESS_TTL_MS });
         return result;
       }
-      agentConfigOptionsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS });
+      // The dynamic probe ran but returned invalid/unparseable data. Never cache that outcome as a
+      // 24h "success" fallback; use the short failure TTL so we can recover quickly.
+      agentConfigOptionsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS });
       return fallback;
     }
 

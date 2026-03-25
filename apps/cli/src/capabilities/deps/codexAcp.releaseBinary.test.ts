@@ -2,8 +2,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createHash } from 'node:crypto';
-import * as tar from 'tar';
+
+vi.mock('@happier-dev/cli-common/providers', async () => {
+  const actual = await vi.importActual<typeof import('@happier-dev/cli-common/providers')>('@happier-dev/cli-common/providers');
+  return {
+    ...actual,
+    downloadGitHubReleaseAsset: async ({ destinationPath }: { destinationPath: string }) => {
+      await mkdir(dirname(destinationPath), { recursive: true });
+      await writeFile(destinationPath, 'mock-archive', 'utf8');
+    },
+    extractGitHubReleaseAsset: async ({ outputPath }: { outputPath: string }) => {
+      await mkdir(dirname(outputPath), { recursive: true });
+      await writeFile(outputPath, '#!/bin/sh\necho codex-acp\n', 'utf8');
+      if (process.platform !== 'win32') {
+        await chmod(outputPath, 0o755);
+      }
+    },
+  };
+});
 
 const ORIGINAL_PLATFORM_DESCRIPTOR = Object.getOwnPropertyDescriptor(process, 'platform');
 const ORIGINAL_ARCH_DESCRIPTOR = Object.getOwnPropertyDescriptor(process, 'arch');
@@ -12,18 +28,21 @@ const ORIGINAL_PATH = process.env.PATH;
 
 const tempDirs = new Set<string>();
 
-function sha256Hex(bytes: Buffer): string {
-  return createHash('sha256').update(bytes).digest('hex');
-}
+async function createFakeManagedJavaScriptRuntime(homeDir: string): Promise<void> {
+  const runtimeInstallDir = join(homeDir, 'tools', 'js-runtime', 'current');
+  const wrapperPath = join(runtimeInstallDir, 'bin', process.platform === 'win32' ? 'happier-js-runtime.cmd' : 'happier-js-runtime');
+  const nodePath = process.platform === 'win32'
+    ? join(runtimeInstallDir, 'runtime', 'node.exe')
+    : join(runtimeInstallDir, 'runtime', 'bin', 'node');
 
-async function createCodexAcpArchive(contents: string): Promise<Buffer> {
-  const workDir = await mkdtemp(join(tmpdir(), 'happier-codex-acp-archive-'));
-  tempDirs.add(workDir);
-  const binaryPath = join(workDir, 'codex-acp');
-  await writeFile(binaryPath, contents, { mode: 0o755 });
-  const archivePath = join(workDir, 'codex-acp.tar.gz');
-  await tar.c({ gzip: true, cwd: workDir, file: archivePath }, ['codex-acp']);
-  return await readFile(archivePath);
+  await mkdir(dirname(wrapperPath), { recursive: true });
+  await mkdir(dirname(nodePath), { recursive: true });
+  await writeFile(wrapperPath, process.platform === 'win32' ? '@echo off\r\necho runtime\r\n' : '#!/bin/sh\necho runtime\n', 'utf8');
+  await writeFile(nodePath, process.platform === 'win32' ? '@echo off\r\necho node\r\n' : '#!/bin/sh\necho node\n', 'utf8');
+  if (process.platform !== 'win32') {
+    await chmod(wrapperPath, 0o755);
+    await chmod(nodePath, 0o755);
+  }
 }
 
 afterEach(async () => {
@@ -58,9 +77,6 @@ describe('codexAcp release-binary installer', () => {
     tempDirs.add(home);
     process.env.HAPPIER_HOME_DIR = home;
 
-    const archiveBytes = await createCodexAcpArchive('#!/bin/sh\necho codex-acp\n');
-    const archiveDigest = `sha256:${sha256Hex(archiveBytes)}`;
-
     const fetchMock = vi.fn(async (url: string) => {
       if (url === 'https://api.github.com/repos/zed-industries/codex-acp/releases/latest') {
         return {
@@ -72,7 +88,7 @@ describe('codexAcp release-binary installer', () => {
               {
                 name: 'codex-acp-0.9.5-aarch64-apple-darwin.tar.gz',
                 browser_download_url: 'https://github.com/zed-industries/codex-acp/releases/download/v0.9.5/codex-acp-0.9.5-aarch64-apple-darwin.tar.gz',
-                digest: archiveDigest,
+                digest: 'sha256:mock',
               },
             ],
           }),
@@ -83,11 +99,7 @@ describe('codexAcp release-binary installer', () => {
         return {
           ok: true,
           status: 200,
-          arrayBuffer: async () =>
-            archiveBytes.buffer.slice(
-              archiveBytes.byteOffset,
-              archiveBytes.byteOffset + archiveBytes.byteLength,
-            ),
+          arrayBuffer: async () => new ArrayBuffer(0),
         } as Response;
       }
 
@@ -178,9 +190,6 @@ describe('codexAcp release-binary installer', () => {
     tempDirs.add(home);
     process.env.HAPPIER_HOME_DIR = home;
 
-    const archiveBytes = await createCodexAcpArchive('#!/bin/sh\necho codex-acp\n');
-    const archiveDigest = `sha256:${sha256Hex(archiveBytes)}`;
-
     const fetchMock = vi.fn(async (url: string) => {
       if (url === 'https://api.github.com/repos/zed-industries/codex-acp/releases/latest') {
         return {
@@ -192,7 +201,7 @@ describe('codexAcp release-binary installer', () => {
               {
                 name: 'codex-acp-0.9.5-aarch64-apple-darwin.tar.gz',
                 browser_download_url: 'https://github.com/zed-industries/codex-acp/releases/download/v0.9.5/codex-acp-0.9.5-aarch64-apple-darwin.tar.gz',
-                digest: archiveDigest,
+                digest: 'sha256:mock',
               },
             ],
           }),
@@ -203,11 +212,7 @@ describe('codexAcp release-binary installer', () => {
         return {
           ok: true,
           status: 200,
-          arrayBuffer: async () =>
-            archiveBytes.buffer.slice(
-              archiveBytes.byteOffset,
-              archiveBytes.byteOffset + archiveBytes.byteLength,
-            ),
+          arrayBuffer: async () => new ArrayBuffer(0),
         } as Response;
       }
 
@@ -236,10 +241,11 @@ describe('codexAcp release-binary installer', () => {
     await expect(stat(join(installDir, 'package-lock.json'))).rejects.toThrow();
   });
 
-  it('detects legacy npm-style managed installs when current/bin is absent', async () => {
+  it('detects legacy npm-style managed installs when current/bin is absent and a managed JS runtime exists', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-codex-acp-legacy-home-'));
     tempDirs.add(home);
     process.env.HAPPIER_HOME_DIR = home;
+    await createFakeManagedJavaScriptRuntime(home);
 
     const { codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
     const legacyBinPath = join(
@@ -274,6 +280,42 @@ describe('codexAcp release-binary installer', () => {
     tempDirs.add(home);
     process.env.HAPPIER_HOME_DIR = home;
     process.env.PATH = '';
+
+    const { codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
+    const legacyBinPath = join(
+      codexAcpInstallDir(),
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'codex-acp.cmd' : 'codex-acp',
+    );
+    await mkdir(dirname(legacyBinPath), { recursive: true });
+    await writeFile(legacyBinPath, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\necho legacy\n', {
+      encoding: 'utf8',
+      mode: 0o755,
+    });
+
+    await expect(getCodexAcpDepStatus()).resolves.toEqual(
+      expect.objectContaining({
+        installed: false,
+        binPath: null,
+      }),
+    );
+  });
+
+  it('ignores legacy npm-style managed installs when node is only available on PATH', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-codex-acp-legacy-path-node-home-'));
+    tempDirs.add(home);
+    process.env.HAPPIER_HOME_DIR = home;
+
+    const pathDir = await mkdtemp(join(tmpdir(), 'happier-codex-acp-node-path-'));
+    tempDirs.add(pathDir);
+    const nodePath = join(pathDir, process.platform === 'win32' ? 'node.exe' : 'node');
+    await writeFile(nodePath, process.platform === 'win32' ? '@echo off\r\necho node\r\n' : '#!/bin/sh\necho node\n', {
+      encoding: 'utf8',
+      mode: 0o755,
+    });
+    if (process.platform !== 'win32') await chmod(nodePath, 0o755);
+    process.env.PATH = pathDir;
 
     const { codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
     const legacyBinPath = join(
