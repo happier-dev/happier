@@ -11,6 +11,7 @@ import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
+import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { sync } from '@/sync/sync';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
@@ -224,7 +225,7 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     const inboxHasContent = useInboxHasContent();
     const showEnvironmentBadge = useSetting('showEnvironmentBadge');
     const friendsEnabled = useFriendsEnabled();
-    const inboxEnabled = useFeatureEnabled('inbox.global') || useFeatureEnabled('actions.approvals');
+    const inboxEnabled = useInboxAvailable();
     // Compute connection status once per render (theme-reactive, no stale memoization)
     const connectionStatus = (() => {
         const { status } = socketStatus;

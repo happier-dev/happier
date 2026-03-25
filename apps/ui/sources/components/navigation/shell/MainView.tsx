@@ -29,6 +29,7 @@ import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { useTabState } from '@/hooks/ui/useTabState';
 import { Text } from '@/components/ui/text/Text';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
@@ -265,7 +266,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const router = useRouter();
     const pathname = usePathname();
     const friendsEnabled = useFriendsEnabled();
-    const inboxEnabled = useFeatureEnabled('inbox.global') || useFeatureEnabled('actions.approvals');
+    const inboxEnabled = useInboxAvailable();
     const voiceEnabled = useFeatureEnabled('voice');
     // Tab state management
     // NOTE: Zen tab removed - the feature never got to a useful state

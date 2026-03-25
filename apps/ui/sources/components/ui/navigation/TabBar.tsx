@@ -7,8 +7,8 @@ import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
+import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Text } from '@/components/ui/text/Text';
 import { useFriendRequests } from '@/sync/domains/state/storage';
 import type { TabType } from './tabTypes';
@@ -91,7 +91,7 @@ export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
     const insets = useSafeAreaInsets();
     const friendsEnabled = useFriendsEnabled();
     const friendRequests = useFriendRequests();
-    const inboxEnabled = useFeatureEnabled('inbox.global') || useFeatureEnabled('actions.approvals');
+    const inboxEnabled = useInboxAvailable();
     const inboxHasContent = useInboxHasContent();
 
     const tabs: { key: TabType; icon: any; label: string }[] = React.useMemo(() => {
