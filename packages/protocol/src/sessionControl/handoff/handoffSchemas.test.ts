@@ -228,6 +228,62 @@ describe('session handoff schemas', () => {
     ).toBe(true);
   });
 
+  it('rejects oversized handoff status fields (bounded progress payload)', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    expect(
+      mod.SessionHandoffStatusSchema.safeParse({
+        handoffId: 'handoff_1',
+        status: 'pending',
+        phase: 'preparing',
+        progress: {
+          updatedAtMs: 123,
+          checkpoint: 'transfer_blobs',
+          planned: {},
+          transferred: {},
+          current: {
+            relativePath: 'x'.repeat(10_000),
+          },
+          resumable: true,
+        },
+        recoveryActions: [],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      mod.SessionHandoffStatusSchema.safeParse({
+        handoffId: 'handoff_1',
+        status: 'pending',
+        phase: 'preparing',
+        progress: {
+          updatedAtMs: 123,
+          checkpoint: 'transfer_blobs',
+          planned: {},
+          transferred: {},
+          resumable: true,
+          warnings: Array.from({ length: 200 }, () => 'blocking_divergence_detected'),
+        },
+        recoveryActions: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects oversized source controller metadata headers (no large JSON in handoffMetadataV2)', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    expect(
+      mod.SessionHandoffMetadataV2Schema.safeParse({
+        workspaceReplicationSourceControllerMetadata: {
+          key: 'x'.repeat(200_000),
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it('accepts absolute transfer endpoint URLs with matching schemes', async () => {
     const mod = await loadHandoffModule();
     expect(mod).not.toHaveProperty('error');

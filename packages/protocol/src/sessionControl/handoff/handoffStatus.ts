@@ -5,6 +5,14 @@ import {
   SessionHandoffTransportStrategySchema,
 } from './handoffTypes.js';
 
+const MAX_HANDOFF_ID_LENGTH = 256;
+const MAX_JOB_ID_LENGTH = 256;
+const MAX_PATH_LENGTH = 4096;
+const MAX_DIGEST_LENGTH = 256;
+const MAX_PHASE_DETAIL_LENGTH = 1024;
+const MAX_PROGRESS_WARNINGS = 50;
+const MAX_RECOVERY_ACTIONS = 50;
+
 export const SessionHandoffPhaseSchema = z.enum([
   'preparing',
   'negotiating_transport',
@@ -80,12 +88,12 @@ export const SessionHandoffProgressSchema = z
       blobs: z.number().int().min(0).optional(),
     }).strict(),
     current: z.object({
-      relativePath: z.string().min(1).optional(),
-      digest: z.string().min(1).optional(),
-      phaseDetail: z.string().min(1).optional(),
+      relativePath: z.string().min(1).max(MAX_PATH_LENGTH).optional(),
+      digest: z.string().min(1).max(MAX_DIGEST_LENGTH).optional(),
+      phaseDetail: z.string().min(1).max(MAX_PHASE_DETAIL_LENGTH).optional(),
     }).strict().optional(),
     resumable: z.boolean(),
-    warnings: z.array(SessionHandoffProgressWarningCodeSchema).readonly().optional(),
+    warnings: z.array(SessionHandoffProgressWarningCodeSchema).max(MAX_PROGRESS_WARNINGS).readonly().optional(),
   })
   .strict();
 export type SessionHandoffProgress = z.infer<typeof SessionHandoffProgressSchema>;
@@ -102,14 +110,18 @@ export type SessionHandoffWorkspacePreflightSummary = z.infer<typeof SessionHand
 
 export const SessionHandoffStatusSchema = z
   .object({
-    handoffId: z.string().min(1),
+    handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     status: SessionHandoffStatusCodeSchema,
     phase: SessionHandoffPhaseSchema,
-    jobId: z.string().min(1).optional(),
+    jobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),
     progress: SessionHandoffProgressSchema.optional(),
     workspacePreflightSummary: SessionHandoffWorkspacePreflightSummarySchema.optional(),
     transportStrategy: SessionHandoffTransportStrategySchema.nullable().optional(),
-    recoveryActions: z.array(SessionHandoffRecoveryActionSchema).readonly().default(() => []),
+    recoveryActions: z
+      .array(SessionHandoffRecoveryActionSchema)
+      .max(MAX_RECOVERY_ACTIONS)
+      .readonly()
+      .default(() => []),
   })
   .strict();
 export type SessionHandoffStatus = z.infer<typeof SessionHandoffStatusSchema>;

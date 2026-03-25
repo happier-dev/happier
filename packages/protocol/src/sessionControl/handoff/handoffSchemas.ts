@@ -27,6 +27,8 @@ const MAX_MANIFEST_HASH_LENGTH = 256;
 const MAX_ENDPOINT_CANDIDATES = 20;
 const MAX_PREFERRED_TRANSPORT_STRATEGIES = 4;
 const MAX_INCLUDE_GLOBS = 128;
+const MAX_SOURCE_CONTROLLER_METADATA_KEYS = 50;
+const MAX_SOURCE_CONTROLLER_METADATA_JSON_BYTES = 32 * 1024;
 
 export const SessionHandoffWorkspaceTransferSchema = z
   .object({
@@ -65,12 +67,33 @@ export const SessionHandoffMetadataV2Schema = z
   .object({
     providerBundleTransferPublication: SessionHandoffProviderBundleTransferPublicationSchema.optional(),
     workspaceReplicationSourceRootPath: z.string().min(1).max(MAX_PATH_LENGTH).optional(),
+    // When a session is being handed back to its prior source machine using `sync_changes`, the
+    // source daemon can surface the original source-machine workspace root so clients do not need
+    // to rely on hydrated UI state to select the correct target directory.
+    workspaceReplicationHandoffBackTargetRootPath: z.string().min(1).max(MAX_PATH_LENGTH).optional(),
     workspaceReplicationManifestTransferPublication: SessionHandoffWorkspaceReplicationManifestTransferPublicationSchema.optional(),
     workspaceReplicationSourceControllerMetadata: z
       .record(z.string().min(1).max(128), z.unknown())
       .superRefine((value, context) => {
         const entries = Object.keys(value);
-        if (entries.length > 50) {
+        if (entries.length > MAX_SOURCE_CONTROLLER_METADATA_KEYS) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'workspaceReplicationSourceControllerMetadata is too large',
+          });
+        }
+        let json: string;
+        try {
+          json = JSON.stringify(value);
+        } catch {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'workspaceReplicationSourceControllerMetadata is too large',
+          });
+          return;
+        }
+        const byteLength = new TextEncoder().encode(json).length;
+        if (byteLength > MAX_SOURCE_CONTROLLER_METADATA_JSON_BYTES) {
           context.addIssue({
             code: z.ZodIssueCode.custom,
             message: 'workspaceReplicationSourceControllerMetadata is too large',

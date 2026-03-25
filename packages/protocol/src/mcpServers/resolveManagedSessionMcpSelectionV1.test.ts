@@ -187,4 +187,5 @@ describe('resolveManagedSessionMcpSelectionV1', () => {
       portability: 'machine_scoped',
     });
   });
+
 });
