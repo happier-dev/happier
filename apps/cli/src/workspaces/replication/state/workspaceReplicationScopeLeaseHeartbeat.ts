@@ -7,14 +7,38 @@ export function startWorkspaceReplicationScopeLeaseHeartbeat(input: Readonly<{
   ownerId: string;
   ttlMs: number;
   nowMs: () => number;
-}>): Readonly<{ stop: () => Promise<void> }> {
+}>): Readonly<{
+  stop: () => Promise<void>;
+  hasLeaseBeenLost: () => boolean;
+  whenLeaseLost: Promise<void>;
+  probeOnce: () => Promise<void>;
+}> {
   const intervalMs = Math.max(1000, Math.floor(input.ttlMs / 3));
   let stopped = false;
+  let leaseLost = false;
   let inFlight: Promise<unknown> | null = null;
+  let handle: ReturnType<typeof setInterval> | null = null;
+  let resolveLeaseLost: (() => void) | null = null;
+  const whenLeaseLost = new Promise<void>((resolve) => {
+    resolveLeaseLost = resolve;
+  });
 
-  const handle = setInterval(() => {
-    if (stopped) return;
-    if (inFlight) return;
+  const markLeaseLost = (): void => {
+    if (leaseLost) return;
+    leaseLost = true;
+    resolveLeaseLost?.();
+    resolveLeaseLost = null;
+    if (handle) {
+      clearInterval(handle);
+    }
+  };
+
+  const probeOnce = async (): Promise<void> => {
+    if (stopped || leaseLost) return;
+    if (inFlight) {
+      await inFlight.catch(() => undefined);
+      return;
+    }
     inFlight = renewWorkspaceReplicationScopeLease({
       activeServerDir: input.activeServerDir,
       relationshipId: input.relationshipId,
@@ -22,21 +46,40 @@ export function startWorkspaceReplicationScopeLeaseHeartbeat(input: Readonly<{
       ownerId: input.ownerId,
       nowMs: input.nowMs(),
       ttlMs: input.ttlMs,
+    }).then((result) => {
+      if (!result.renewed) {
+        markLeaseLost();
+      }
     }).catch(() => undefined).finally(() => {
       inFlight = null;
     });
+    await inFlight.catch(() => undefined);
+  };
+
+  handle = setInterval(() => {
+    if (stopped) return;
+    if (leaseLost) return;
+    if (inFlight) return;
+    void probeOnce();
   }, intervalMs);
   handle.unref?.();
 
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
-    clearInterval(handle);
+    if (handle) {
+      clearInterval(handle);
+    }
     const pending = inFlight;
     if (pending) {
       await pending.catch(() => undefined);
     }
   };
 
-  return { stop };
+  return {
+    stop,
+    hasLeaseBeenLost: () => leaseLost,
+    whenLeaseLost,
+    probeOnce,
+  };
 }

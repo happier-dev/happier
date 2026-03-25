@@ -12,6 +12,7 @@ describe('workspaceReplicationJobLeaseHeartbeat', () => {
     try {
       const { createWorkspaceReplicationPaths } = await import('./workspaceReplicationPaths');
       const { tryAcquireWorkspaceReplicationJobLease } = await import('./workspaceReplicationJobLease');
+      const { renewWorkspaceReplicationJobLease } = await import('./workspaceReplicationJobLease');
       const { startWorkspaceReplicationJobLeaseHeartbeat } = await import('./workspaceReplicationJobLeaseHeartbeat');
 
       let nowMs = 1000;
@@ -62,7 +63,7 @@ describe('workspaceReplicationJobLeaseHeartbeat', () => {
 
     try {
       const { createWorkspaceReplicationPaths } = await import('./workspaceReplicationPaths');
-      const { tryAcquireWorkspaceReplicationJobLease } = await import('./workspaceReplicationJobLease');
+      const { tryAcquireWorkspaceReplicationJobLease, renewWorkspaceReplicationJobLease } = await import('./workspaceReplicationJobLease');
       const { startWorkspaceReplicationJobLeaseHeartbeat } = await import('./workspaceReplicationJobLeaseHeartbeat');
 
       let nowMs = 1000;
@@ -95,14 +96,16 @@ describe('workspaceReplicationJobLeaseHeartbeat', () => {
         expiresAtMs: 20_000,
       }), 'utf8');
 
-      nowMs = 2000;
-      vi.advanceTimersByTime(2500);
+      await expect(renewWorkspaceReplicationJobLease({
+        activeServerDir,
+        jobId: 'job_lease_heartbeat_lost_1',
+        ownerId: 'owner_a',
+        nowMs: 2000,
+        ttlMs: 6000,
+      })).resolves.toMatchObject({ renewed: false });
 
-      // Allow the async renewal probe to run.
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        if (heartbeat.hasLeaseBeenLost()) break;
-        await Promise.resolve();
-      }
+      nowMs = 2000;
+      await heartbeat.probeOnce();
 
       expect(heartbeat.hasLeaseBeenLost()).toBe(true);
       expect(vi.getTimerCount()).toBe(0);

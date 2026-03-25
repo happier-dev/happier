@@ -10,6 +10,7 @@ export function startWorkspaceReplicationJobLeaseHeartbeat(input: Readonly<{
   stop: () => Promise<void>;
   hasLeaseBeenLost: () => boolean;
   whenLeaseLost: Promise<void>;
+  probeOnce: () => Promise<void>;
 }> {
   const intervalMs = Math.max(1000, Math.floor(input.ttlMs / 3));
   let stopped = false;
@@ -31,10 +32,12 @@ export function startWorkspaceReplicationJobLeaseHeartbeat(input: Readonly<{
     }
   };
 
-  handle = setInterval(() => {
-    if (stopped) return;
-    if (leaseLost) return;
-    if (inFlight) return;
+  const probeOnce = async (): Promise<void> => {
+    if (stopped || leaseLost) return;
+    if (inFlight) {
+      await inFlight.catch(() => undefined);
+      return;
+    }
     inFlight = renewWorkspaceReplicationJobLease({
       activeServerDir: input.activeServerDir,
       jobId: input.jobId,
@@ -48,6 +51,14 @@ export function startWorkspaceReplicationJobLeaseHeartbeat(input: Readonly<{
     }).catch(() => undefined).finally(() => {
       inFlight = null;
     });
+    await inFlight.catch(() => undefined);
+  };
+
+  handle = setInterval(() => {
+    if (stopped) return;
+    if (leaseLost) return;
+    if (inFlight) return;
+    void probeOnce();
   }, intervalMs);
   handle.unref?.();
 
@@ -67,5 +78,6 @@ export function startWorkspaceReplicationJobLeaseHeartbeat(input: Readonly<{
     stop,
     hasLeaseBeenLost: () => leaseLost,
     whenLeaseLost,
+    probeOnce,
   };
 }
