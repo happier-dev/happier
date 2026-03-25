@@ -89,4 +89,28 @@ describe('UserActionPromptCard (preview)', () => {
         expect(screen.findByTestId('user-action-prompt-view-tool')).toBeNull();
         expect(routerPush).not.toHaveBeenCalled();
     });
+
+    it('does not render when the session is inactive', async () => {
+        const { UserActionPromptCard } = await import('./UserActionPromptCard');
+
+        const request = {
+            id: 'ua1',
+            tool: 'ask_user',
+            kind: 'user_action',
+            arguments: { question: 'Continue?' },
+        } as PendingPermissionRequest;
+
+        const screen = await renderScreen(
+            <UserActionPromptCard
+                request={request}
+                location={null}
+                sessionId="session-1"
+                metadata={null}
+                canApprovePermissions={false}
+                disabledReason="inactive"
+            />,
+        );
+
+        expect(screen.findAllByTestId('user-action-prompt-card')).toHaveLength(0);
+    });
 });

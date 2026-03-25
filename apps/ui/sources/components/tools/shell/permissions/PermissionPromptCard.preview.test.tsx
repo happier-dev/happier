@@ -225,4 +225,27 @@ describe('PermissionPromptCard (preview)', () => {
         expect(flattened).not.toContain('COMMAND_SUBTITLE');
         expect(screen.findByTestId('permission-prompt-tool-inline-body')).toBeTruthy();
     });
+
+    it('does not render when the session is inactive', async () => {
+        toolDetailSetting = 'summary';
+        mockedToolName = 'edit';
+        mockedToolInput = { path: 'file.ts' };
+        mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
+
+        const { PermissionPromptCard } = await import('./PermissionPromptCard');
+        const request = { id: 'perm-inactive', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
+
+        const screen = await renderScreen(
+            <PermissionPromptCard
+                request={request}
+                location={null}
+                sessionId="session-1"
+                metadata={null}
+                canApprovePermissions={false}
+                disabledReason="inactive"
+            />,
+        );
+
+        expect(screen.findAllByTestId('permission-prompt-card')).toHaveLength(0);
+    });
 });

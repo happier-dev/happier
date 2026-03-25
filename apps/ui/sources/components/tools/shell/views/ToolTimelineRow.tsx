@@ -231,6 +231,8 @@ export const ToolTimelineRow = React.memo((props: {
         ? 'transcript'
         : resolvePermissionPromptSurface(permissionPromptSurface);
     const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
+    const shouldHidePendingPermissionRequestDueToInactiveSession =
+        props.interaction?.permissionDisabledReason === 'inactive' && isWaitingForPermission;
     const permissionFooter =
         showPermissionPromptsInTranscript &&
         toolForRendering.permission &&
@@ -250,6 +252,10 @@ export const ToolTimelineRow = React.memo((props: {
                 disabledReason={props.interaction?.permissionDisabledReason}
             />
         ) : null;
+
+    if (shouldHidePendingPermissionRequestDueToInactiveSession) {
+        return null;
+    }
 
     return (
         <View style={styles.container}>

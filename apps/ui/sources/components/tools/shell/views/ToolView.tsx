@@ -274,6 +274,12 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     const headerDescription = effectiveDetailLevel === 'title' ? null : description;
     const headerStatusText = effectiveDetailLevel === 'title' ? null : status;
     const showSubtitleInline = timelineDensity === 'compact' || effectiveDetailLevel === 'compact';
+    const shouldHidePendingPermissionRequestDueToInactiveSession =
+        props.interaction?.permissionDisabledReason === 'inactive' && isWaitingForPermission;
+
+    if (shouldHidePendingPermissionRequestDueToInactiveSession) {
+        return null;
+    }
 
     return (
         <View style={styles.container}>

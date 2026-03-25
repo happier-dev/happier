@@ -53,6 +53,20 @@ vi.mock('@/components/tools/normalization/policy/permissionSummary', () => ({
 }));
 
 describe('PermissionFooter summary visibility', () => {
+    it('does not render when approvals are disabled due to inactive session', async () => {
+        const screen = await renderScreen(React.createElement(PermissionFooter, {
+            permission: { id: 'p1', status: 'pending' },
+            sessionId: 's1',
+            toolName: 'Bash',
+            toolInput: { command: 'pwd' },
+            metadata: { flavor: 'opencode' },
+            canApprovePermissions: false,
+            disabledReason: 'inactive',
+        }));
+
+        expect(screen.getTextContent()).not.toContain('SUMMARY');
+    });
+
     it('does not repeat the request summary (the tool UI already shows it)', async () => {
         const screen = await renderScreen(React.createElement(PermissionFooter, {
             permission: { id: 'p1', status: 'pending' },

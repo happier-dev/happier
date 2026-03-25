@@ -69,14 +69,15 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const shouldHandleStopWithoutSessionAbort = permissionFooterBehavior?.stopHandling === 'denyOnly';
 
     if (!canApprovePermissions && permission.status === 'pending') {
+        if (disabledReason === 'inactive') {
+            return null;
+        }
         const summary = formatPermissionRequestSummary({ toolName, toolInput });
         const disabledMessage =
             disabledReason === 'public'
                 ? t('session.sharing.permissionApprovalsDisabledPublic')
                 : disabledReason === 'readOnly'
                     ? t('session.sharing.permissionApprovalsDisabledReadOnly')
-                    : disabledReason === 'inactive'
-                        ? t('session.sharing.permissionApprovalsDisabledInactive')
                     : t('session.sharing.permissionApprovalsDisabledNotGranted');
         return (
             <View style={{ marginTop: 8, paddingHorizontal: 12, paddingBottom: 12 }}>
@@ -505,21 +506,20 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             paddingVertical: embedded ? 0 : 8,
         },
         buttonContainer: {
-            flexDirection: 'column',
-            gap: 4,
-            alignItems: 'flex-start',
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 6,
         },
         button: {
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 1,
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 8,
             backgroundColor: 'transparent',
-            alignItems: 'flex-start',
-            justifyContent: 'center',
-            minHeight: 32,
             borderLeftWidth: 3,
             borderLeftColor: 'transparent',
-            alignSelf: 'stretch',
+            flexShrink: 1,
+            maxWidth: '100%',
         },
         buttonAllow: {
             backgroundColor: 'transparent',
@@ -541,15 +541,17 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             flexDirection: 'row',
             alignItems: 'center',
             gap: 4,
-            minHeight: 20,
+            minHeight: 18,
+            flexShrink: 1,
         },
         icon: {
             marginRight: 2,
         },
         buttonText: {
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: '400',
             color: theme.colors.textSecondary,
+            flexShrink: 1,
         },
         buttonTextAllow: {
             color: theme.colors.permissionButton.allow.background,

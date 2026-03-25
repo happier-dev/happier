@@ -29,6 +29,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     metadata: Metadata | null;
     canApprovePermissions: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
+    chrome?: 'card' | 'inline';
 }) {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -91,9 +92,14 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     }, [headerText.normalizedToolName, headerText.subtitle, isPreviewVisible]);
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
+    const chrome = props.chrome ?? 'card';
+
+    if (props.canApprovePermissions === false && props.disabledReason === 'inactive') {
+        return null;
+    }
 
     return (
-        <View testID="permission-prompt-card" style={styles.container}>
+        <View testID="permission-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
             <View style={styles.header}>
                 <View style={styles.icon}>
                     <Ionicons name="lock-closed-outline" size={16} color={theme.colors.warning} />
@@ -171,6 +177,12 @@ const styles = StyleSheet.create((theme) => ({
         borderColor: theme.colors.divider,
         backgroundColor: theme.colors.surfaceHighest,
         overflow: 'hidden',
+    },
+    containerInline: {
+        borderRadius: 0,
+        borderWidth: 0,
+        borderColor: 'transparent',
+        backgroundColor: 'transparent',
     },
     header: {
         flexDirection: 'row',

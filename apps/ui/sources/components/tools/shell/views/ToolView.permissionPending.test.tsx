@@ -162,4 +162,31 @@ describe('ToolView (permission pending)', () => {
 
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);
     });
+
+    it('does not render pending permission requests when the session is inactive', async () => {
+        const { ToolView } = await import('./ToolView');
+
+        const tool = makeToolCall({
+            name: 'execute',
+            state: 'running',
+            input: { command: 'pwd' },
+            result: null,
+            completedAt: null,
+            permission: { id: 'perm1', status: 'pending' },
+        });
+
+        const screen = await renderScreen(
+            React.createElement(ToolView, {
+                tool,
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+                messageId: 'm1',
+                interaction: { canSendMessages: false, canApprovePermissions: false, permissionDisabledReason: 'inactive' },
+            }),
+        );
+
+        expect(screen.findAllByTestId('tool-view-header-primary')).toHaveLength(0);
+        expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);
+    });
 });

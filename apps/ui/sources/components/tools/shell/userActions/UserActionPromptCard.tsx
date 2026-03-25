@@ -21,9 +21,11 @@ export const UserActionPromptCard = React.memo(function UserActionPromptCard(pro
     metadata: Metadata | null;
     canApprovePermissions: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
+    chrome?: 'card' | 'inline';
 }) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const chrome = props.chrome ?? 'card';
 
     const model = React.useMemo(() => {
         return buildPermissionPromptModel({ request: props.request, metadata: props.metadata, nowMs: Date.now() });
@@ -31,13 +33,17 @@ export const UserActionPromptCard = React.memo(function UserActionPromptCard(pro
     const headerText = model.headerText;
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
 
+    if (props.canApprovePermissions === false && props.disabledReason === 'inactive') {
+        return null;
+    }
+
     const onViewTool = React.useCallback(() => {
         router.push(buildPermissionToolCallRoute({ sessionId: props.sessionId, location: props.location }));
     }, [props.location, props.sessionId, router]);
     const canOpenToolRoute = canOpenPermissionToolCallRoute(props.location);
 
     return (
-        <View testID="user-action-prompt-card" style={styles.container}>
+        <View testID="user-action-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
             <View style={styles.header}>
                 <View style={styles.icon}>
                     <Ionicons name="chatbubble-ellipses-outline" size={16} color={theme.colors.warning} />
@@ -94,6 +100,12 @@ const styles = StyleSheet.create((theme) => ({
         borderColor: theme.colors.divider,
         backgroundColor: theme.colors.surfaceHighest,
         overflow: 'hidden',
+    },
+    containerInline: {
+        borderRadius: 0,
+        borderWidth: 0,
+        borderColor: 'transparent',
+        backgroundColor: 'transparent',
     },
     header: {
         flexDirection: 'row',

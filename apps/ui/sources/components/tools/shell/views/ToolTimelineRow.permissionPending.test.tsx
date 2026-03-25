@@ -209,4 +209,32 @@ describe('ToolTimelineRow (permission pending)', () => {
 
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(1);
     });
+
+    it('does not render pending permission requests when the session is inactive', async () => {
+        const { ToolTimelineRow } = await import('./ToolTimelineRow');
+        const tool: any = {
+            id: 'tool-inactive',
+            name: 'Bash',
+            state: 'running',
+            input: { command: 'pwd' },
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: null,
+            description: 'pwd',
+            result: null,
+            permission: { id: 'perm-inactive', kind: 'command', status: 'pending' },
+        };
+
+        const screen = await renderScreen(
+            <ToolTimelineRow
+                tool={tool}
+                metadata={null}
+                sessionId="s1"
+                messageId="m1"
+                interaction={{ canSendMessages: false, canApprovePermissions: false, permissionDisabledReason: 'inactive' }}
+            />,
+        );
+
+        expect(screen.findAllByTestId('tool-timeline-row')).toHaveLength(0);
+    });
 });
