@@ -193,10 +193,7 @@ export function AgentInputChipPickerPanel(
 const stylesheet = StyleSheet.create((theme) => ({
   container: {
     width: "100%",
-    borderRadius: 14,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: theme.colors.divider,
     backgroundColor: theme.colors.surface,
   },
   title: {
@@ -235,12 +232,21 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface,
   },
   detailScrollContent: {
-    paddingHorizontal: 6,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 15,
     flexGrow: 1,
+  },
+  detailPaneHeaderAccessoryRow: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 1,
   },
   detailPaneSplit: {
     paddingHorizontal: 0,
     paddingVertical: 0,
   },
+  detailPane: {
+    position: 'relative',
+  }
 }));
