@@ -8,8 +8,8 @@ describe('shouldShowMessageCopyButton', () => {
         { platformOS: 'web' as const, isMessageHovered: true, isCopyButtonHovered: false, expected: true },
         { platformOS: 'web' as const, isMessageHovered: false, isCopyButtonHovered: true, expected: true },
         { platformOS: 'web' as const, isMessageHovered: true, isCopyButtonHovered: true, expected: true },
-        { platformOS: 'ios' as const, isMessageHovered: false, isCopyButtonHovered: false, expected: true },
-        { platformOS: 'android' as const, isMessageHovered: true, isCopyButtonHovered: false, expected: true },
+        { platformOS: 'ios' as const, isMessageHovered: false, isCopyButtonHovered: false, expected: false },
+        { platformOS: 'android' as const, isMessageHovered: true, isCopyButtonHovered: false, expected: false },
         { platformOS: 'windows' as const, isMessageHovered: false, isCopyButtonHovered: true, expected: true },
     ])(
         'returns $expected for platform=$platformOS messageHovered=$isMessageHovered copyHovered=$isCopyButtonHovered',

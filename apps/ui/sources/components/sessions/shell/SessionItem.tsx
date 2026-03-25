@@ -1,6 +1,6 @@
 import React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { GestureDetector, Swipeable, type GestureType } from 'react-native-gesture-handler';
+import { GestureDetector, Swipeable, type ComposedGesture, type GestureType } from 'react-native-gesture-handler';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -11,7 +11,6 @@ import { Typography } from '@/constants/Typography';
 import { formatPendingCountBadge } from '@/components/sessions/pendingBadge';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { useIsTablet } from '@/utils/platform/responsive';
 import { HappyError } from '@/utils/errors/errors';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -24,6 +23,7 @@ import { getSessionAvatarId, getSessionName, getSessionSubtitle, useSessionStatu
 import { PinIcon, PinSlashIcon } from './sessionPinIcons';
 import { TagIcon } from './sessionTagIcons';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { ContextMenu } from '@/components/ui/forms/dropdown/ContextMenu';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { shouldEmphasizeSessionRowTitle, shouldShowMinimalSessionStatusLine } from './row/resolveSessionRowPresentation';
 import {
@@ -401,6 +401,9 @@ export const SessionItem = React.memo(
         compactMinimal,
         reorderHandleGesture,
         isBeingDragged,
+        nativeInlineDragEnabled,
+        nativeContextMenuOpen,
+        onNativeContextMenuOpenChange,
     }: {
         embedded?: boolean;
         embeddedIsLast?: boolean;
@@ -424,8 +427,11 @@ export const SessionItem = React.memo(
         secondaryLineMode?: SessionListSecondaryLineMode;
         compact?: boolean;
         compactMinimal?: boolean;
-        reorderHandleGesture?: GestureType;
+        reorderHandleGesture?: GestureType | ComposedGesture;
         isBeingDragged?: boolean;
+        nativeInlineDragEnabled?: boolean;
+        nativeContextMenuOpen?: boolean;
+        onNativeContextMenuOpenChange?: (next: boolean) => void;
     }) => {
         const styles = stylesheet;
         const { theme } = useUnistyles();
@@ -436,7 +442,6 @@ export const SessionItem = React.memo(
         const sessionNameResolved = getSessionName(resolvedSession);
         const sessionSubtitle = subtitleOverride ?? getSessionSubtitle(resolvedSession);
         const navigateToSession = useNavigateToSession();
-        const isTablet = useIsTablet();
         const swipeableRef = React.useRef<Swipeable | null>(null);
         const sessionOwnerId = typeof resolvedSession.owner === 'string' ? resolvedSession.owner : null;
         const isOwnedByCurrentUser = !sessionOwnerId || (currentUserId && sessionOwnerId === currentUserId);
@@ -452,14 +457,30 @@ export const SessionItem = React.memo(
         const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
         const [tagMenuEverOpened, setTagMenuEverOpened] = React.useState(false);
         const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
-        const showRowActions = Platform.OS !== 'web' || isRowHovered || isActionsHovered || tagMenuOpen || moreMenuOpen || isBeingDragged === true;
+        const isWeb = Platform.OS === 'web';
+        const isNativeMobile = Platform.OS === 'ios' || Platform.OS === 'android';
+        const showRowActions = isWeb && (isRowHovered || isActionsHovered || tagMenuOpen || moreMenuOpen || isBeingDragged === true);
         const rowActionIconColor = theme.colors.textSecondary;
         const supportsPin = typeof onTogglePinned === 'function';
         const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
-        const showTagAction = supportsTag && (Platform.OS !== 'web' || showRowActions);
+        const showTagAction = supportsTag && showRowActions;
         const activeTags = tags ?? [];
         const knownTags = allKnownTags ?? [];
         const showReorderHandle = Boolean(reorderHandleGesture);
+        const contextMenuAnchorRef = React.useRef<View>(null);
+        const [uncontrolledContextMenuOpen, setUncontrolledContextMenuOpen] = React.useState(false);
+        const contextMenuOpen = nativeContextMenuOpen ?? uncontrolledContextMenuOpen;
+        const setContextMenuOpen = onNativeContextMenuOpenChange ?? setUncontrolledContextMenuOpen;
+        const suppressNextPressRef = React.useRef(false);
+        React.useEffect(() => {
+            // When a context menu is opened by an external gesture (e.g. session list long-press),
+            // Pressable may still fire `onPress` on touch-up. Suppress that navigation.
+            suppressNextPressRef.current = contextMenuOpen;
+        }, [contextMenuOpen]);
+        const isBeingDraggedRef = React.useRef<boolean>(false);
+        React.useEffect(() => {
+            isBeingDraggedRef.current = isBeingDragged === true;
+        }, [isBeingDragged]);
         const handleRowHoverIn = React.useCallback(() => {
             setIsRowHovered(true);
         }, []);
@@ -607,6 +628,45 @@ export const SessionItem = React.memo(
             }
         }, [handleRenameSession, performMutation]);
 
+        const contextMenuItems = React.useMemo((): DropdownMenuItem[] => {
+            if (!isNativeMobile) return [];
+            const items: DropdownMenuItem[] = [];
+            if (supportsTag) {
+                items.push({
+                    id: 'tags',
+                    title: t('sessionTags.editTagsLabel'),
+                    icon: <TagIcon size={14} color={rowActionIconColor} />,
+                });
+            }
+            if (supportsPin) {
+                items.push({
+                    id: 'pin',
+                    title: pinned ? t('sessionInfo.unpinSession') : t('sessionInfo.pinSession'),
+                    icon: pinned
+                        ? <PinSlashIcon size={14} color={rowActionIconColor} />
+                        : <PinIcon size={14} color={rowActionIconColor} />,
+                });
+            }
+            items.push(...moreMenuItems);
+            return items;
+        }, [isNativeMobile, moreMenuItems, pinned, rowActionIconColor, supportsPin, supportsTag]);
+
+        const handleContextMenuSelect = React.useCallback((itemId: string) => {
+            if (itemId === 'tags') {
+                setContextMenuOpen(false);
+                setTagMenuEverOpened(true);
+                setTagMenuOpen(true);
+                return;
+            }
+            if (itemId === 'pin') {
+                setContextMenuOpen(false);
+                onTogglePinned?.();
+                return;
+            }
+            setContextMenuOpen(false);
+            handleMoreMenuSelect(itemId);
+        }, [handleMoreMenuSelect, onTogglePinned]);
+
         const avatarId = React.useMemo(() => {
             return getSessionAvatarId(resolvedSession);
         }, [resolvedSession]);
@@ -621,7 +681,6 @@ export const SessionItem = React.memo(
         }, [meaningfulActivityAt]);
         const tagChipDensity: 'default' | 'compact' | 'minimal' = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
         const tagLimit = isMinimal ? 1 : compact ? 2 : 3;
-        const isWeb = Platform.OS === 'web';
         const tagChips = React.useMemo(() => {
             if (!tagsEnabled || activeTags.length === 0) return [];
             const slice = activeTags.slice(0, tagLimit);
@@ -646,6 +705,7 @@ export const SessionItem = React.memo(
             sessionStatus,
         });
         const showTagChips = tagChips.length > 0 && (!isMinimal || !showMinimalStatusLine);
+        const enableLongPressContextMenu = isNativeMobile && contextMenuItems.length > 0 && nativeInlineDragEnabled !== true;
 
         const itemContent = (
             <Pressable
@@ -660,18 +720,20 @@ export const SessionItem = React.memo(
                     selected ? styles.sessionItemSelected : null,
                     embedded && !embeddedIsLast ? styles.embeddedSeparator : null,
                 ]}
-                onHoverIn={Platform.OS === 'web' ? handleRowHoverIn : undefined}
-                onHoverOut={Platform.OS === 'web' ? handleRowHoverOut : undefined}
-                onPressIn={() => {
-                    if (isTablet) {
-                        navigateToSession(resolvedSession.id, serverId ? { serverId } : undefined);
-                    }
-                }}
+                onHoverIn={isWeb ? handleRowHoverIn : undefined}
+                onHoverOut={isWeb ? handleRowHoverOut : undefined}
                 onPress={() => {
-                    if (!isTablet) {
-                        navigateToSession(resolvedSession.id, serverId ? { serverId } : undefined);
+                    if (suppressNextPressRef.current) {
+                        suppressNextPressRef.current = false;
+                        return;
                     }
+                    navigateToSession(resolvedSession.id, serverId ? { serverId } : undefined);
                 }}
+                onLongPress={enableLongPressContextMenu ? () => {
+                    if (isBeingDraggedRef.current) return;
+                    suppressNextPressRef.current = true;
+                    setContextMenuOpen(true);
+                } : undefined}
             >
                 {isMinimal ? (
                     <View style={styles.minimalIndicatorColumn}>
@@ -979,8 +1041,65 @@ export const SessionItem = React.memo(
                             : null,
         ];
 
+        const menuNodes = isNativeMobile ? (
+            <>
+                <ContextMenu
+                    open={contextMenuOpen}
+                    onOpenChange={setContextMenuOpen}
+                    anchorRef={contextMenuAnchorRef}
+                    items={contextMenuItems}
+                    onSelect={handleContextMenuSelect}
+                    placement="auto"
+                    variant="slim"
+                    showCategoryTitles={false}
+                    maxWidthCap={260}
+                />
+                {supportsTag ? (
+                    <ContextMenu
+                        open={tagMenuOpen}
+                        onOpenChange={(next) => {
+                            setTagMenuOpen(next);
+                            if (next) setTagMenuEverOpened(true);
+                        }}
+                        anchorRef={contextMenuAnchorRef}
+                        items={tagMenuItems}
+                        onSelect={handleTagMenuSelect}
+                        onCreateItem={handleTagMenuCreate}
+                        createItemDisplay={(query) => ({
+                            title: `${t('dropdown.createItem.prefix')} ${query}`,
+                            leftGap: 8,
+                            rowContainerStyle: { paddingVertical: 6 },
+                            titleStyle: { fontSize: 14, lineHeight: 20 },
+                            titleNode: (
+                                <>
+                                    {t('dropdown.createItem.prefix')}
+                                    <RNText style={styles.tagChipInlineText} numberOfLines={1}>
+                                        {query}
+                                    </RNText>
+                                </>
+                            ),
+                            icon: <Ionicons name="add" size={16} color={rowActionIconColor} />,
+                        })}
+                        placement="auto"
+                        variant="slim"
+                        search={true}
+                        searchPlaceholder={t('sessionTags.searchOrAddPlaceholder')}
+                        emptyLabel={null}
+                        showCategoryTitles={false}
+                        matchTriggerWidth={false}
+                        maxWidthCap={260}
+                    />
+                ) : null}
+            </>
+        ) : null;
+
         if (!swipeEnabled) {
-            return <View style={containerStyles}>{itemContent}</View>;
+            return (
+                <View ref={contextMenuAnchorRef} collapsable={false} style={containerStyles}>
+                    {itemContent}
+                    {menuNodes}
+                </View>
+            );
         }
 
         const renderRightActions = () => (
@@ -993,7 +1112,7 @@ export const SessionItem = React.memo(
         );
 
         return (
-            <View style={containerStyles}>
+            <View ref={contextMenuAnchorRef} collapsable={false} style={containerStyles}>
                 <Swipeable
                     ref={swipeableRef}
                     renderRightActions={renderRightActions}
@@ -1002,6 +1121,7 @@ export const SessionItem = React.memo(
                 >
                     {itemContent}
                 </Swipeable>
+                {menuNodes}
             </View>
         );
     },

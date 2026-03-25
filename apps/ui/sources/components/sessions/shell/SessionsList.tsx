@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, FlatList, Pressable, Platform } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
+import { GestureDetector } from 'react-native-gesture-handler';
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { Text } from '@/components/ui/text/Text';
 import { usePathname, useRouter } from 'expo-router';
@@ -179,6 +180,7 @@ const SessionListRow = React.memo(function SessionListRow(props: SessionListRowP
 
     const styles = stylesheet;
     const wrapperRef = React.useRef<View>(null);
+    const contextMenuPendingRef = React.useRef(false);
 
     // On web, FlatList wraps each item in a CellRenderer div with
     // `position: relative; z-index: 0`. This creates a stacking context that
@@ -194,15 +196,20 @@ const SessionListRow = React.memo(function SessionListRow(props: SessionListRowP
     }, []);
 
     const handleDragStart = React.useCallback((sk: string) => {
+        contextMenuPendingRef.current = false;
+        if (typeof itemProps.onNativeContextMenuOpenChange === 'function') {
+            itemProps.onNativeContextMenuOpenChange(false);
+        }
         const cellWrapper = getCellWrapper();
         if (cellWrapper) {
             cellWrapper.style.zIndex = '9999';
             cellWrapper.style.overflow = 'visible';
         }
         onDragStart(sk);
-    }, [getCellWrapper, onDragStart]);
+    }, [getCellWrapper, itemProps.onNativeContextMenuOpenChange, onDragStart]);
 
     const handleDragEnd = React.useCallback((sk: string, gk: string, delta: number) => {
+        contextMenuPendingRef.current = false;
         const cellWrapper = getCellWrapper();
         if (cellWrapper) {
             cellWrapper.style.zIndex = '';
@@ -210,6 +217,24 @@ const SessionListRow = React.memo(function SessionListRow(props: SessionListRowP
         }
         onDragEnd(sk, gk, delta);
     }, [getCellWrapper, onDragEnd]);
+
+    const isWeb = Platform.OS === 'web';
+    const onNativeContextMenuOpenChange = itemProps.onNativeContextMenuOpenChange;
+    const handleLongPressActivated = React.useCallback(() => {
+        if (isWeb || typeof onNativeContextMenuOpenChange !== 'function' || isDragActive) return;
+
+        // Defer one frame so a immediately-started drag can cancel this before the menu renders.
+        contextMenuPendingRef.current = true;
+        const openIfStillPending = () => {
+            if (!contextMenuPendingRef.current) return;
+            onNativeContextMenuOpenChange(true);
+        };
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(openIfStillPending);
+        } else {
+            setTimeout(openIfStillPending, 0);
+        }
+    }, [isDragActive, isWeb, onNativeContextMenuOpenChange]);
 
     const { gesture, animatedStyle } = useSessionInlineDrag({
         sessionKey, groupKey, rowHeight,
@@ -219,6 +244,10 @@ const SessionListRow = React.memo(function SessionListRow(props: SessionListRowP
         totalItemCount,
         dropIndicatorIdx,
         dropIndicatorEdge,
+        activateAfterLongPressMs: isWeb ? undefined : 350,
+        onLongPressActivated: !isWeb && typeof onNativeContextMenuOpenChange === 'function'
+            ? () => handleLongPressActivated()
+            : undefined,
     });
 
     // Fallback: also sync cell wrapper styles via useEffect in case the JS
@@ -258,11 +287,27 @@ const SessionListRow = React.memo(function SessionListRow(props: SessionListRowP
     return (
         <Animated.View ref={wrapperRef} style={animatedStyle} pointerEvents={rowPointerEvents}>
             <Animated.View style={[styles.dropIndicator, indicatorAnimatedStyle]} pointerEvents="none" />
-            <SessionItem
-                {...itemProps}
-                reorderHandleGesture={gesture}
-                isBeingDragged={isBeingDragged}
-            />
+            {isWeb ? (
+                <SessionItem
+                    {...itemProps}
+                    reorderHandleGesture={gesture}
+                    isBeingDragged={isBeingDragged}
+                />
+            ) : (
+                gesture ? (
+                    <GestureDetector gesture={gesture}>
+                        <SessionItem
+                            {...itemProps}
+                            isBeingDragged={isBeingDragged}
+                        />
+                    </GestureDetector>
+                ) : (
+                    <SessionItem
+                        {...itemProps}
+                        isBeingDragged={isBeingDragged}
+                    />
+                )
+            )}
         </Animated.View>
     );
 });
@@ -566,6 +611,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
     groupOrderRef.current = currentGroupOrderMap;
 
     const [draggingSessionKey, setDraggingSessionKey] = React.useState<string | null>(null);
+    const [nativeContextMenuSessionKey, setNativeContextMenuSessionKey] = React.useState<string | null>(null);
 
     // Drop indicator shared values — written by the dragging row's onUpdate
     // worklet, read by every row's useAnimatedStyle on the UI thread.
@@ -606,6 +652,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
     }, [setSessionListGroupOrderV1]);
 
     const handleDragStart = React.useCallback((sessionKey: string) => {
+        setNativeContextMenuSessionKey(null);
         setDraggingSessionKey(sessionKey);
     }, []);
 
@@ -747,6 +794,15 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
             : null;
 
         const groupKey = String(item.groupKey ?? '').trim();
+        const isNative = Platform.OS === 'ios' || Platform.OS === 'android';
+        const nativeContextMenuOpen = isNative && sessionKey != null && nativeContextMenuSessionKey === sessionKey;
+        const handleNativeContextMenuOpenChange = (next: boolean) => {
+            if (!isNative || !sessionKey) return;
+            setNativeContextMenuSessionKey((prev) => {
+                if (next) return sessionKey;
+                return prev === sessionKey ? null : prev;
+            });
+        };
 
         return (
             <SessionListRow
@@ -781,6 +837,13 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
                 secondaryLineMode={resolveSessionListSecondaryLineMode({ groupKind: item.groupKind })}
                 compact={Boolean(compactSessionView)}
                 compactMinimal={Boolean(compactSessionView && compactSessionViewMinimal)}
+                {...(isNative && sessionKey != null
+                    ? {
+                        nativeInlineDragEnabled: true,
+                        nativeContextMenuOpen,
+                        onNativeContextMenuOpenChange: handleNativeContextMenuOpenChange,
+                    }
+                    : null)}
             />
         );
     }, [
@@ -789,6 +852,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
         compactSessionViewMinimal,
         currentUserId,
         draggingSessionKey,
+        nativeContextMenuSessionKey,
         dropIndicatorEdge,
         dropIndicatorIdx,
         handleDragEnd,
@@ -803,6 +867,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
         sessionTagsV1,
         setPinnedSessionKeysV1,
         setSessionTagsV1,
+        setNativeContextMenuSessionKey,
         showPinnedServerBadge,
         showServerBadge,
     ]);

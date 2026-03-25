@@ -1,7 +1,8 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,6 +54,10 @@ vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
     LinkedWorkspaceFilesRow: () => null,
 }));
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
+
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
     isCommittedMessageDiscarded: () => false,
 }));
@@ -75,7 +80,7 @@ describe('MessageView (copy button hitSlop)', () => {
         standardCleanup();
     });
 
-    it('uses hitSlop=15 for the copy button so icon-only actions are easy to tap', async () => {
+    it('shows copy in the native context menu instead of rendering icon-only buttons', async () => {
         const { MessageView } = await import('./MessageView');
 
         const message: any = {
@@ -88,13 +93,22 @@ describe('MessageView (copy button hitSlop)', () => {
             <MessageView message={message} metadata={null} sessionId="s1" />,
         );
 
-        const copyButton = screen.findByTestId('transcript-message-copy:local-1');
-        expect(copyButton).toBeTruthy();
+        const copyButtons = screen.findAll((node: any) => node.props?.testID === 'transcript-message-copy:local-1');
+        expect(copyButtons).toHaveLength(0);
 
-        const copyPressables = screen.findAll(
-            (node: any) => node.type === 'Pressable' && node.props.accessibilityLabel === 'common.copy',
+        const longPressables = screen.findAll(
+            (node: any) => node.type === 'Pressable' && typeof node.props?.onLongPress === 'function',
         );
-        expect(copyPressables).toHaveLength(1);
-        expect(copyPressables[0].props.hitSlop).toBe(15);
+        expect(longPressables.length).toBeGreaterThan(0);
+
+        await act(async () => {
+            invokeTestInstanceHandler(longPressables[0], 'onLongPress');
+        });
+
+        const dropdowns = screen.findAllByType('DropdownMenu');
+        expect(dropdowns).toHaveLength(1);
+        expect(dropdowns[0].props.open).toBe(true);
+        expect(dropdowns[0].props.trigger).toBe(null);
+        expect(dropdowns[0].props.items).toEqual([{ id: 'copy', title: 'common.copy' }]);
     });
 });

@@ -80,6 +80,7 @@ installSessionShellCommonModuleMocks({
             useHasUnreadMessages: () => false,
             useProfile: () => ({ id: 'u1' }),
             useSession: () => null,
+            useSessionListRenderable: () => null,
             useSessionListMeaningfulActivityAt: () => null,
         });
     },
@@ -136,14 +137,22 @@ describe('SessionItem tags (new tag)', () => {
         });
         expect(stableItemLocator).toHaveLength(1);
 
-        const tagButton = screen.findByProps({ testID: 'session-item-tag-action' });
-        expect(tagButton).toBeTruthy();
         await act(async () => {
-            await pressTestInstanceAsync(tagButton);
+            invokeTestInstanceHandler(stableItemLocator[0], 'onLongPress');
         });
 
         const dropdowns = screen.findAllByType('DropdownMenu');
-        const dropdown = dropdowns.find((d: any) => d.props.search === true);
+        const contextMenu = dropdowns.find((d: any) => d.props.search !== true);
+        expect(contextMenu).toBeTruthy();
+        if (!contextMenu) {
+            throw new Error('Context menu not found');
+        }
+
+        await act(async () => {
+            invokeTestInstanceHandler(contextMenu, 'onSelect', 'tags');
+        });
+
+        const dropdown = screen.findAllByType('DropdownMenu').find((d: any) => d.props.search === true);
         expect(dropdown).toBeTruthy();
         if (!dropdown) {
             throw new Error('Tag dropdown not found');
