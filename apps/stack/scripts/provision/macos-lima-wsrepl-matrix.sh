@@ -1852,9 +1852,15 @@ import sys
 vm_machine_id, host_machine_id, vm_name_pattern, host_name_pattern, out_strategy, back_strategy = sys.argv[1:]
 
 def build_step(machine_id: str, name_pattern: str, strategy: str) -> dict:
-  if (name_pattern or "").strip():
-    return {"targetMachineNamePattern": name_pattern.strip(), "strategy": strategy}
-  return {"targetMachineId": machine_id.strip(), "strategy": strategy}
+  # Prefer explicit ids for determinism: name patterns can match multiple online machines in a dev
+  # environment with multiple VMs registered under the same account.
+  mid = (machine_id or "").strip()
+  if mid:
+    return {"targetMachineId": mid, "strategy": strategy}
+  pat = (name_pattern or "").strip()
+  if pat:
+    return {"targetMachineNamePattern": pat, "strategy": strategy}
+  return {"targetMachineId": "", "strategy": strategy}
 
 steps = [
   build_step(vm_machine_id, vm_name_pattern, out_strategy),
@@ -2118,9 +2124,15 @@ import sys
 vm_machine_id, host_machine_id, vm_name_pattern, host_name_pattern, out_strategy, back_strategy = sys.argv[1:]
 
 def build_step(machine_id: str, name_pattern: str, strategy: str) -> dict:
-  if (name_pattern or "").strip():
-    return {"targetMachineNamePattern": name_pattern.strip(), "strategy": strategy}
-  return {"targetMachineId": machine_id.strip(), "strategy": strategy}
+  # Prefer explicit ids for determinism: name patterns can match multiple online machines in a dev
+  # environment with multiple VMs registered under the same account.
+  mid = (machine_id or "").strip()
+  if mid:
+    return {"targetMachineId": mid, "strategy": strategy}
+  pat = (name_pattern or "").strip()
+  if pat:
+    return {"targetMachineNamePattern": pat, "strategy": strategy}
+  return {"targetMachineId": "", "strategy": strategy}
 
 steps = [
   build_step(vm_machine_id, vm_name_pattern, out_strategy),

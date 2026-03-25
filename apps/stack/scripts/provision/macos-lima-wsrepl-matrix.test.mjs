@@ -2588,8 +2588,9 @@ test('macos wsrepl lima matrix wrapper can derive HAPPIER_QA_STEPS_JSON from hos
     // Intentionally omit HAPPIER_QA_STEPS_JSON; wrapper should derive it from these ids.
     WSREPL_QA_HOST_MACHINE_ID: 'machine_host_1',
     WSREPL_QA_VM_MACHINE_ID: 'machine_vm_1',
-    // Derivation should prefer name-based targeting so the matrix remains stable even if daemon
-    // machine ids differ from UI picker row ids.
+    // Name-based selection is supported (via explicit HAPPIER_QA_STEPS_JSON), but the wrapper's
+    // derived default must be deterministic: prefer explicit ids to avoid ambiguous glob matches
+    // when multiple VMs are registered in the same account.
     WSREPL_QA_HOST_MACHINE_NAME_PATTERN: 'host-machine-name-1',
     WSREPL_QA_VM_MACHINE_NAME_PATTERN: 'vm-machine-name-1',
     HAPPIER_UI_URL: 'http://localhost:19000/?server=http%3A%2F%2Flocalhost%3A53288',
@@ -2608,14 +2609,14 @@ test('macos wsrepl lima matrix wrapper can derive HAPPIER_QA_STEPS_JSON from hos
   const meta = JSON.parse(await readFile(join(reportDir, 'playwright', 'meta.json'), 'utf8'));
   const stepsJson = JSON.parse(meta.stepsJson);
   assert.deepEqual(stepsJson, [
-    { targetMachineNamePattern: 'vm-machine-name-1', strategy: 'transfer_snapshot' },
-    { targetMachineNamePattern: 'host-machine-name-1', strategy: 'sync_changes' },
+    { targetMachineId: 'machine_vm_1', strategy: 'transfer_snapshot' },
+    { targetMachineId: 'machine_host_1', strategy: 'sync_changes' },
   ]);
   assert.equal(meta.sourceMachineId, 'machine_host_1');
 
   const summary = JSON.parse(await readFile(join(reportDir, 'summary.json'), 'utf8'));
-  assert.deepEqual(summary.parameters.targetMachineIds, []);
-  assert.deepEqual(summary.parameters.targetMachineNamePatterns, ['vm-machine-name-1', 'host-machine-name-1']);
+  assert.deepEqual(summary.parameters.targetMachineIds, ['machine_vm_1', 'machine_host_1']);
+  assert.deepEqual(summary.parameters.targetMachineNamePatterns, []);
 });
 
 test('macos wsrepl lima matrix wrapper default vm machine name pattern is substring-friendly', async () => {
