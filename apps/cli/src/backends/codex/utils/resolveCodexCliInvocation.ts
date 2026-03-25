@@ -1,4 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 
 import { requireJavaScriptRuntimeExecutable } from '@/runtime/js/requireJavaScriptRuntimeExecutable';
 import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
@@ -23,24 +25,68 @@ function isJavaScriptBackedCodexCommand(command: string): boolean {
     }
 }
 
-function resolveOverrideCommand(processEnv: NodeJS.ProcessEnv, overrideEnvVarKeys: readonly string[]): string | null {
+function looksLikePath(value: string): boolean {
+    return value.includes('/') || value.includes('\\') || value.startsWith('.') || value.startsWith('~');
+}
+
+function expandHomeDir(value: string): string {
+    if (value === '~') {
+        return homedir();
+    }
+    if (value.startsWith('~/') || value.startsWith('~\\')) {
+        return resolve(homedir(), value.slice(2));
+    }
+    // Fall back to a conservative expansion for any other "~" prefix.
+    return resolve(homedir(), value.slice(1));
+}
+
+function resolveOverrideCommand(
+    processEnv: NodeJS.ProcessEnv,
+    overrideEnvVarKeys: readonly string[],
+    cwd: string,
+): string | null {
     for (const key of overrideEnvVarKeys) {
         const value = typeof processEnv[key] === 'string' ? processEnv[key].trim() : '';
-        if (value) return value;
+        if (!value) continue;
+
+        if (!looksLikePath(value)) {
+            return value;
+        }
+
+        const expanded = value.startsWith('~')
+            ? expandHomeDir(value)
+            : resolve(cwd, value);
+        const accessMode =
+            JAVA_SCRIPT_ENTRYPOINT_EXTENSION.test(expanded)
+                ? fsConstants.R_OK
+                : process.platform === 'win32'
+                    ? fsConstants.F_OK
+                    : fsConstants.X_OK;
+        try {
+            accessSync(expanded, accessMode);
+            if (!statSync(expanded).isFile()) {
+                continue;
+            }
+            return expanded;
+        } catch {
+            continue;
+        }
     }
     return null;
 }
 
 export async function resolveCodexCliInvocation(params: Readonly<{
     args: string[];
+    cwd?: string;
     processEnv?: NodeJS.ProcessEnv;
     overrideEnvVarKeys?: readonly string[];
     targetLabel?: string;
 }>): Promise<Readonly<{ command: string; args: string[] }>> {
     const processEnv = params.processEnv ?? process.env;
+    const cwd = params.cwd ?? process.cwd();
     const command =
-        resolveOverrideCommand(processEnv, params.overrideEnvVarKeys ?? [])
-        ?? requireProviderCliCommand('codex');
+        resolveOverrideCommand(processEnv, params.overrideEnvVarKeys ?? [], cwd)
+        ?? requireProviderCliCommand('codex', { processEnv });
 
     if (!isJavaScriptBackedCodexCommand(command)) {
         return { command, args: [...params.args] };

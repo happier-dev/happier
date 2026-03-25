@@ -5,6 +5,7 @@ import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
 import { checklists } from './cli/checklists';
 import { supportsCodexVendorResume } from './resume/vendorResumeSupport';
 import { codexDaemonSpawnHooks } from '@/backends/codex/daemon/spawnHooks';
+import { readCodexEnvironmentAuthState } from '@/backends/codex/cli/auth/readCodexEnvironmentAuthState';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
@@ -31,10 +32,12 @@ export const agent = {
     // Keep dynamic model probes cache-partitioned by runtime flavor (appServer vs ACP vs MCP).
     const backendMode =
       resolveCodexSessionBackendMode({ metadata: null, accountSettings: accountSettings ?? null }) ?? 'appServer';
-    return `codex:${backendMode}`;
+    // Speed eligibility is auth-dependent; include auth method to avoid stale modelOptions.
+    const authMethod = readCodexEnvironmentAuthState().method ?? 'unknown';
+    return `codex:${backendMode}:${authMethod}`;
   },
-  getPreflightModelsProbeAdapter: async () =>
-    (await import('@/backends/codex/preflight/codexPreflightModelsProbeAdapter')).codexPreflightModelsProbeAdapter,
+  getPreflightSessionControlsProbeAdapter: async () =>
+    (await import('@/backends/codex/preflight/codexPreflightSessionControlsProbeAdapter')).codexPreflightSessionControlsProbeAdapter,
   checklists,
   runtimeInstallableKeys: [INSTALLABLE_KEYS.CODEX_ACP],
 } satisfies AgentCatalogEntry;

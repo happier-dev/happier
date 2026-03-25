@@ -17,7 +17,6 @@ function resolveCodexRuntimeSourceAffinity(source: unknown): Readonly<{
   home?: 'user' | 'connectedService';
   connectedServiceId?: string;
   connectedServiceProfileId?: string;
-  homePath?: string;
 }> {
   const parsedSource = DirectSessionsSourceSchema.safeParse(source);
   if (!parsedSource.success || parsedSource.data.kind !== 'codexHome') {
@@ -29,9 +28,8 @@ function resolveCodexRuntimeSourceAffinity(source: unknown): Readonly<{
       home: 'connectedService',
       connectedServiceId: parsedSource.data.connectedServiceId,
       connectedServiceProfileId: parsedSource.data.connectedServiceProfileId,
-      homePath: parsedSource.data.homePath,
     }
-    : { home: 'user', homePath: parsedSource.data.homePath };
+    : { home: 'user' };
 }
 
 function resolveCodexHome(env: NodeJS.ProcessEnv): string {
@@ -66,39 +64,33 @@ export async function importCodexSessionBundle(params: Readonly<{
       home: importedRuntimeDescriptor.home,
       connectedServiceId: importedRuntimeDescriptor.connectedServiceId,
       connectedServiceProfileId: importedRuntimeDescriptor.connectedServiceProfileId,
-      homePath:
-        importedRuntimeDescriptor.home === 'user'
-          ? importedRuntimeDescriptor.homePath ?? codexHome
-          : importedRuntimeDescriptor.homePath,
+      // Handoff bundles must be portable across machines; never import a source-machine homePath.
+      // Rollout files are written into the *target* CODEX_HOME below, so the runtime must use that.
+      homePath: codexHome,
     })
     : buildCodexAgentRuntimeDescriptor({
       backendMode: runtimeIdentity.backendMode,
       vendorSessionId: params.bundle.remoteSessionId,
       ...sourceAffinity,
-      homePath: sourceAffinity.home === 'user' ? (sourceAffinity.homePath ?? codexHome) : sourceAffinity.homePath,
+      homePath: codexHome,
     });
-  const directSource = (() => {
-    const parsedSource = DirectSessionsSourceSchema.safeParse(params.bundle.affinity?.source);
-    return parsedSource.success && parsedSource.data.kind === 'codexHome'
-      ? parsedSource.data
-        : runtimeDescriptor.provider.home === 'connectedService'
-        ? {
-          kind: 'codexHome' as const,
-          home: 'connectedService' as const,
-          ...(runtimeDescriptor.provider.connectedServiceId ? { connectedServiceId: runtimeDescriptor.provider.connectedServiceId } : {}),
-          ...(runtimeDescriptor.provider.connectedServiceProfileId ? { connectedServiceProfileId: runtimeDescriptor.provider.connectedServiceProfileId } : {}),
-          ...(runtimeDescriptor.provider.homePath ? { homePath: runtimeDescriptor.provider.homePath } : {}),
-        }
-        : {
-          kind: 'codexHome' as const,
-          home: 'user' as const,
-          homePath: runtimeDescriptor.provider.homePath ?? codexHome,
-        };
-  })();
+  const directSource = runtimeDescriptor.provider.home === 'connectedService'
+    ? {
+      kind: 'codexHome' as const,
+      home: 'connectedService' as const,
+      ...(runtimeDescriptor.provider.connectedServiceId ? { connectedServiceId: runtimeDescriptor.provider.connectedServiceId } : {}),
+      ...(runtimeDescriptor.provider.connectedServiceProfileId ? { connectedServiceProfileId: runtimeDescriptor.provider.connectedServiceProfileId } : {}),
+      // Intentionally omit any homePath: connected-service homes are resolved/verified per-machine.
+    }
+    : {
+      kind: 'codexHome' as const,
+      home: 'user' as const,
+      homePath: codexHome,
+    };
   for (const file of params.bundle.files) {
     const destPath = resolveContainedCodexPath(codexHome, file.relativePath);
     await mkdir(dirname(destPath), { recursive: true });
-    await writeFile(destPath, Buffer.from(file.contentBase64, 'base64').toString('utf8'), 'utf8');
+    await writeFile(destPath, Buffer.from(file.contentBase64, 'base64'));
   }
 
   return {

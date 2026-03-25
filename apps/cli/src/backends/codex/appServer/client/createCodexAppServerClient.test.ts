@@ -75,6 +75,44 @@ describe('createCodexAppServerClient', () => {
         });
     });
 
+    it('always includes a params field in JSON-RPC requests (Codex app-server rejects missing params)', async () => {
+        await withTempDir('happier-codex-app-server-client-requires-params-', async (root) => {
+            const fakeAppServer = await writeFakeCodexAppServerScript({
+                dir: root,
+                bodyLines: [
+                    'for await (const line of rl) {',
+                    '  if (!line.trim()) continue;',
+                    '  const msg = JSON.parse(line);',
+                    '  if (msg.method === "initialize") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake", version: "0.0.0" } } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  if (msg.method === "initialized") continue;',
+                    '  if (!("params" in msg)) {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32600, message: "Invalid request: missing field `params`" } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  if (msg.method === "state/read") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { ok: true, params: msg.params } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
+                    '}',
+                ],
+            });
+
+            const client = await createCodexAppServerClient({
+                processEnv: createCodexAppServerProcessEnv(fakeAppServer),
+            });
+
+            try {
+                await expect(client.request('state/read')).resolves.toEqual({ ok: true, params: {} });
+            } finally {
+                await client.dispose();
+            }
+        });
+    });
+
     it('keeps handlers active until unregistered', async () => {
         await withTempDir('happier-codex-app-server-client-persistent-handlers-', async (root) => {
             const fakeAppServer = await writeFakeCodexAppServerScript({
@@ -385,7 +423,7 @@ describe('createCodexAppServerClient', () => {
                     'mcp_servers.happier__happier.command="echo"',
                     'mcp_servers.happier__happier.enabled=true',
                 ],
-            } as any);
+            });
 
             try {
                 await expect(client.request('state/read')).resolves.toEqual({
@@ -453,7 +491,7 @@ describe('createCodexAppServerClient', () => {
             const client = await createCodexAppServerClient({
                 processEnv: createCodexAppServerProcessEnv(fakeAppServer, { CODEX_HOME: codexHome }),
                 disableUserMcpServers: true,
-            } as any);
+            });
 
             try {
                 await expect(client.request('state/read')).resolves.toEqual({

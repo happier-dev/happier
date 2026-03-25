@@ -12,6 +12,9 @@ const ENV_KEYS = [
   'HAPPIER_CODEX_ACP_CONFIG_OVERRIDES',
   'HAPPIER_HOME_DIR',
   'HAPPIER_CODEX_ACP_NPX_MODE',
+  'HAPPIER_JS_RUNTIME_PATH',
+  'HAPPIER_MANAGED_NODE_BIN',
+  'HAPPIER_NODE_PATH',
   'PATH',
 ] as const;
 
@@ -27,6 +30,23 @@ async function createFakeCodexAcpBinary(): Promise<{ dir: string; bin: string }>
   const dir = dirname(bin);
   tempDirs.add(dir);
   return { dir, bin };
+}
+
+async function createFakeManagedJavaScriptRuntime(homeDir: string): Promise<void> {
+  const runtimeInstallDir = join(homeDir, 'tools', 'js-runtime', 'current');
+  const wrapperPath = join(runtimeInstallDir, 'bin', process.platform === 'win32' ? 'happier-js-runtime.cmd' : 'happier-js-runtime');
+  const nodePath = process.platform === 'win32'
+    ? join(runtimeInstallDir, 'runtime', 'node.exe')
+    : join(runtimeInstallDir, 'runtime', 'bin', 'node');
+
+  await mkdir(dirname(wrapperPath), { recursive: true });
+  await mkdir(dirname(nodePath), { recursive: true });
+  await writeFile(wrapperPath, process.platform === 'win32' ? '@echo off\r\necho runtime\r\n' : '#!/bin/sh\necho runtime\n', 'utf8');
+  await writeFile(nodePath, process.platform === 'win32' ? '@echo off\r\necho node\r\n' : '#!/bin/sh\necho node\n', 'utf8');
+  if (process.platform !== 'win32') {
+    await chmod(wrapperPath, 0o755);
+    await chmod(nodePath, 0o755);
+  }
 }
 
 async function createNonExecutableCodexAcpBinary(): Promise<{ dir: string; bin: string }> {
@@ -278,6 +298,7 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     await mkdir(join(dir, 'tools', 'codex-acp', 'node_modules', '.bin'), { recursive: true });
     await writeFile(legacyBin, '#!/bin/sh\necho ok\n', 'utf8');
     await chmod(legacyBin, 0o755);
+    await createFakeManagedJavaScriptRuntime(dir);
 
     const { resolveCodexAcpSpawn } = await import('./resolveCommand');
     const spawn = resolveCodexAcpSpawn();

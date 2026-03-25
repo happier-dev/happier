@@ -7,6 +7,7 @@ import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process
 
 import { resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation';
 import { appendCodexCliConfigOverridesArgs } from '../../utils/appendCodexCliConfigOverridesArgs';
+import { readCodexAppServerRequestTimeoutMs } from './codexAppServerRpcTimeout';
 
 type JsonRpcMessage = Readonly<{
     id?: number | string | null;
@@ -40,32 +41,6 @@ type PendingRequest = Readonly<{
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
 }>;
-
-const STARTUP_RPC_METHODS = new Set(['thread/start', 'thread/resume']);
-
-function clampRpcTimeoutMs(rawValue: unknown, fallbackMs: number, maxMs: number): number {
-    const raw = Number.parseInt(String(rawValue ?? ''), 10);
-    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : fallbackMs;
-    return Math.max(250, Math.min(maxMs, configured));
-}
-
-function readRpcTimeoutMs(env?: NodeJS.ProcessEnv): number {
-    return clampRpcTimeoutMs(env?.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS, 5_000, 60_000);
-}
-
-function readStartupRpcTimeoutMs(env?: NodeJS.ProcessEnv, baseTimeoutMs?: number): number {
-    const base = baseTimeoutMs ?? readRpcTimeoutMs(env);
-    const configured = clampRpcTimeoutMs(env?.HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS, 20_000, 120_000);
-    return Math.max(base, configured);
-}
-
-function readRequestTimeoutMs(method: string, env?: NodeJS.ProcessEnv): number {
-    const baseTimeoutMs = readRpcTimeoutMs(env);
-    if (STARTUP_RPC_METHODS.has(method)) {
-        return readStartupRpcTimeoutMs(env, baseTimeoutMs);
-    }
-    return baseTimeoutMs;
-}
 
 function failWaiters(state: MessageQueueState, error: Error): void {
     if (state.fatalError === null) {
@@ -146,6 +121,7 @@ export async function createCodexAppServerClient(params: Readonly<{
     const processEnv = sanitizeCodexAppServerEnv(params.processEnv ?? process.env);
     const baseInvocation = await resolveCodexCliInvocation({
         args: ['app-server', '--listen', 'stdio://'],
+        cwd: params.cwd,
         processEnv,
         overrideEnvVarKeys: ['HAPPIER_CODEX_APP_SERVER_BIN', 'HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
         targetLabel: 'Codex app-server',
@@ -332,7 +308,7 @@ export async function createCodexAppServerClient(params: Readonly<{
     });
 
     const request = async (method: string, requestParams?: unknown): Promise<unknown> => {
-        const timeoutMs = readRequestTimeoutMs(method, processEnv);
+        const timeoutMs = readCodexAppServerRequestTimeoutMs(method, processEnv);
         const id = ++nextId;
         const requestKey = toMessageKey(id);
         if (!requestKey) {
@@ -359,7 +335,8 @@ export async function createCodexAppServerClient(params: Readonly<{
             await sendMessage({
                 id,
                 method,
-                ...(requestParams !== undefined ? { params: requestParams } : {}),
+                // Codex app-server rejects requests that omit the `params` field entirely.
+                params: requestParams === undefined ? {} : requestParams,
             });
         } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
@@ -373,7 +350,8 @@ export async function createCodexAppServerClient(params: Readonly<{
     const notify = async (method: string, notificationParams?: unknown): Promise<void> => {
         await sendMessage({
             method,
-            ...(notificationParams !== undefined ? { params: notificationParams } : {}),
+            // Codex app-server rejects notifications that omit the `params` field entirely.
+            params: notificationParams === undefined ? {} : notificationParams,
         });
     };
 

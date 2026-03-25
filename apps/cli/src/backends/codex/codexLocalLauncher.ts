@@ -64,6 +64,7 @@ async function resolveCodexTuiInvocation(opts: {
 }): Promise<{ command: string; args: string[] }> {
   return await resolveCodexCliInvocation({
     args: buildCodexTuiArgs(opts),
+    cwd: opts.cwd,
     processEnv: process.env,
     overrideEnvVarKeys: ['HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
     targetLabel: 'Codex CLI',

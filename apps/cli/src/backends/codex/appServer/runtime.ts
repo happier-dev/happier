@@ -162,8 +162,14 @@ function readServiceTier(value: unknown): string | null {
     return record ? trimStringValue(record.serviceTier) ?? trimStringValue(record.service_tier) : null;
 }
 
-function buildThreadServiceTierParams(currentServiceTier: string | null): { serviceTier?: 'fast' | null } {
-    return currentServiceTier === 'fast' ? { serviceTier: 'fast' } : {};
+function buildThreadServiceTierParams(
+    currentServiceTier: string | null,
+    hasServiceTierOverride: boolean,
+): { serviceTier?: 'fast' | null } {
+    if (!hasServiceTierOverride) {
+        return {};
+    }
+    return currentServiceTier === 'fast' ? { serviceTier: 'fast' } : { serviceTier: null };
 }
 
 function createPendingTurn(threadId: string): PendingTurn {
@@ -220,6 +226,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     let currentModelId: string | null = null;
     let currentReasoningEffort: string | null = null;
     let currentServiceTier: string | null = null;
+    let hasServiceTierOverride = false;
     let pendingTurnStartSeqInclusive: number | null = null;
     let pendingTurnUserMessageSeq: number | null = null;
     const completedTurnSeqRanges: CompletedTurnSeqRange[] = [];
@@ -873,7 +880,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 const response = await client.request('thread/resume', {
                     threadId: resumeId,
                     ...(currentModelId ? { model: currentModelId } : {}),
-                    ...buildThreadServiceTierParams(currentServiceTier),
+                    ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
                     approvalPolicy,
                     sandbox,
                     persistExtendedHistory: true,
@@ -886,7 +893,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 const response = await client.request('thread/resume', {
                     threadId: existingSessionId,
                     ...(currentModelId ? { model: currentModelId } : {}),
-                    ...buildThreadServiceTierParams(currentServiceTier),
+                    ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
                     approvalPolicy,
                     sandbox,
                     persistExtendedHistory: true,
@@ -898,7 +905,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             const response = await client.request('thread/start', {
                 cwd: params.directory,
                 ...(currentModelId ? { model: currentModelId } : {}),
-                ...buildThreadServiceTierParams(currentServiceTier),
+                ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
                 approvalPolicy,
                 sandbox,
                 experimentalRawEvents: true,
@@ -913,7 +920,14 @@ export function createCodexAppServerRuntime(params: Readonly<{
         })();
         threadId = nextThreadId;
         currentModelId = readModelId(startOrLoadResponse) ?? currentModelId;
-        currentServiceTier = readServiceTier(startOrLoadResponse);
+        const serviceTierFromResponse = readServiceTier(startOrLoadResponse);
+        // Codex app-server may omit `serviceTier` from thread/start responses even when an explicit
+        // override was sent. Do not clear an explicit override based on a missing/empty response.
+        if (serviceTierFromResponse !== null) {
+            currentServiceTier = serviceTierFromResponse;
+        } else if (!hasServiceTierOverride) {
+            currentServiceTier = null;
+        }
         await finishPendingTurn({ flushReason: 'abort' });
         publishThreadId();
         await publishSessionControls(client);
@@ -982,21 +996,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
         setSessionModel: async (model: string) => {
             currentModelId = trimSessionId(model);
             const client = await ensureClient();
-            if (threadId && currentModelId) {
-                const { approvalPolicy, sandbox } = resolveCurrentPolicy();
-                const response = await client.request('thread/resume', {
-                    threadId,
-                    model: currentModelId,
-                    ...buildThreadServiceTierParams(currentServiceTier),
-                    approvalPolicy,
-                    sandbox,
-                    persistExtendedHistory: true,
-                });
-                threadId = readThreadId(response) ?? threadId;
-                currentModelId = readModelId(response) ?? currentModelId;
-                currentServiceTier = readServiceTier(response) ?? currentServiceTier;
-                publishThreadId();
-            }
+            // Apply model changes per-turn via `turn/start` (we always pass `model` there).
+            // Avoid `thread/resume` here: it can be expensive (returns thread content) and failures
+            // are treated as best-effort by metadata synchronizers.
             await publishSessionControls(client);
         },
         setSessionConfigOption: async (key: string, value: unknown) => {
@@ -1016,20 +1018,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     throw new Error(`Unsupported Codex app-server Speed value: ${String(value)}`);
                 }
                 currentServiceTier = nextServiceTier;
+                hasServiceTierOverride = true;
                 const client = await ensureClient();
-                if (threadId) {
-                    const { approvalPolicy, sandbox } = resolveCurrentPolicy();
-                    const response = await client.request('thread/resume', {
-                        threadId,
-                        ...buildThreadServiceTierParams(currentServiceTier),
-                        approvalPolicy,
-                        sandbox,
-                        persistExtendedHistory: true,
-                    });
-                    threadId = readThreadId(response) ?? threadId;
-                    currentServiceTier = readServiceTier(response) ?? currentServiceTier;
-                    publishThreadId();
-                }
+                // Apply Speed changes per-turn via `turn/start` (we pass `serviceTier` there).
                 await publishSessionControls(client);
                 return;
             }
@@ -1105,7 +1096,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     input: [{ type: 'text', text: prompt }],
                     ...(currentModelId ? { model: currentModelId } : {}),
                     ...(currentReasoningEffort ? { effort: currentReasoningEffort } : {}),
-                    ...(currentServiceTier === 'fast' ? { serviceTier: 'fast' } : {}),
+                    ...(hasServiceTierOverride ? (currentServiceTier === 'fast' ? { serviceTier: 'fast' } : { serviceTier: null }) : {}),
                     approvalPolicy,
                     sandboxPolicy,
                     ...(collaborationMode ? { collaborationMode } : {}),

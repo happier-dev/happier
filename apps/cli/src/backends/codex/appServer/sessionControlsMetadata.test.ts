@@ -29,6 +29,72 @@ function createSessionHarness(initialMetadata: MutableMetadata = {}): Readonly<{
 }
 
 describe('publishCodexAppServerSessionControlsMetadata', () => {
+    it('still publishes model-scoped options when collaborationMode/list is unavailable', async () => {
+        const client = {
+            request: async (method: string) => {
+                if (method === 'collaborationMode/list') {
+                    throw new Error('collaborationMode/list requires experimentalApi capability');
+                }
+                if (method === 'model/list') {
+                    return {
+                        data: [
+                            {
+                                id: 'gpt-5.4',
+                                displayName: 'gpt-5.4',
+                                description: 'Latest frontier agentic coding model.',
+                                isDefault: true,
+                                supportedReasoningEfforts: [
+                                    { reasoningEffort: 'low', description: 'Fast responses with lighter reasoning' },
+                                    { reasoningEffort: 'medium', description: 'Balances speed and reasoning depth for everyday tasks' },
+                                    { reasoningEffort: 'high', description: 'Greater reasoning depth for complex problems' },
+                                ],
+                                defaultReasoningEffort: 'medium',
+                            },
+                        ],
+                    };
+                }
+                throw new Error(`Unexpected method: ${method}`);
+            },
+        };
+        const { session, getMetadata } = createSessionHarness();
+
+        await publishCodexAppServerSessionControlsMetadata({
+            client,
+            session,
+            provider: 'codex',
+            updatedAt: 1000,
+            authMethod: null,
+            currentModelId: 'gpt-5.4',
+        });
+
+        expect(getMetadata()[SESSION_MODELS_STATE_KEY]).toEqual({
+            v: 1,
+            provider: 'codex',
+            updatedAt: 1000,
+            currentModelId: 'gpt-5.4',
+            availableModels: [
+                {
+                    id: 'gpt-5.4',
+                    name: 'GPT 5.4',
+                    description: 'Latest frontier agentic coding model.',
+                    modelOptions: [
+                        {
+                            id: 'reasoning_effort',
+                            name: 'Thinking',
+                            type: 'select',
+                            currentValue: 'medium',
+                            options: [
+                                { value: 'low', name: 'Low', description: 'Fast responses with lighter reasoning' },
+                                { value: 'medium', name: 'Medium', description: 'Balances speed and reasoning depth for everyday tasks' },
+                                { value: 'high', name: 'High', description: 'Greater reasoning depth for complex problems' },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+    });
+
     it('accepts snake_case reasoning effort fields from model/list', async () => {
         const client = {
             request: vi.fn(async (method: string) => {
@@ -169,7 +235,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                 currentModeId: 'plan',
                 availableModes: [
                     { id: 'default', name: 'Default' },
-                    { id: 'plan', name: 'Plan', description: 'Reasoning effort: medium' },
+                    { id: 'plan', name: 'Plan', description: 'Think first' },
                 ],
             },
             [SESSION_MODELS_STATE_KEY]: {
@@ -394,7 +460,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
             updatedAt: 900,
             currentModeId: 'default',
             availableModes: [
-                { id: 'plan', name: 'Plan' },
+                { id: 'plan', name: 'Plan', description: 'Think first' },
                 { id: 'default', name: 'Default' },
             ],
         });

@@ -42,6 +42,35 @@ describe('codex session handoff bundle', () => {
     expect('codexBackendMode' in result).toBe(false);
   });
 
+  it('exports rollout files as raw bytes without UTF-8 re-encoding', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-export-bytes-'));
+    const rolloutDir = join(codexHome, 'sessions', '2026', '03', '08');
+    await mkdir(rolloutDir, { recursive: true });
+    const rolloutPath = join(rolloutDir, 'rollout-2026-03-08T10-00-00-thread_bytes.jsonl');
+    const bytes = Buffer.from([0xff, 0x00, 0x61, 0x62, 0x80]);
+    await writeFile(rolloutPath, bytes);
+
+    const result = await exportCodexSessionBundle({
+      metadata: {
+        path: '/repo',
+        codexSessionId: 'thread_bytes',
+        codexBackendMode: 'appServer',
+      },
+      remoteSessionId: 'thread_bytes',
+      env: {
+        CODEX_HOME: codexHome,
+      },
+      activeServerDir: '/active-server',
+    });
+
+    expect(result.files).toEqual([
+      {
+        relativePath: 'sessions/2026/03/08/rollout-2026-03-08T10-00-00-thread_bytes.jsonl',
+        contentBase64: bytes.toString('base64'),
+      },
+    ]);
+  });
+
   it('exports rollout files from the linked connected-service codex home instead of the current CODEX_HOME', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-export-connected-'));
     const userCodexHome = join(root, 'user-codex-home');
@@ -133,7 +162,7 @@ describe('codex session handoff bundle', () => {
       activeServerDir: '/active-server',
     });
 
-    expect(result.affinity?.runtimeDescriptor).toEqual({
+    expect(result.affinity?.runtimeDescriptor).toMatchObject({
       v: 1,
       providerId: 'codex',
       provider: {
@@ -141,6 +170,11 @@ describe('codex session handoff bundle', () => {
         vendorSessionId: 'thread_runtime',
         home: 'connectedService',
         connectedServiceId: 'openai-codex',
+        providerExtra: {
+          owner: 'codex',
+          schemaId: 'codex.agentRuntimeDescriptorExtra',
+          v: 1,
+        },
       },
     });
   });
@@ -201,8 +235,60 @@ describe('codex session handoff bundle', () => {
       home: 'connectedService',
       connectedServiceId: 'openai-codex',
       connectedServiceProfileId: 'profile-1',
-      homePath: connectedCodexHome,
     });
+  });
+
+  it('does not export machine-specific codex homePath affinity in the bundle', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-export-homepath-'));
+    const userCodexHome = join(root, 'user-codex-home');
+    const sourceCodexHome = join(root, 'source-machine-codex-home');
+    const rolloutDir = join(sourceCodexHome, 'sessions', '2026', '03', '08');
+    await mkdir(userCodexHome, { recursive: true });
+    await mkdir(rolloutDir, { recursive: true });
+    await writeFile(join(rolloutDir, 'rollout-2026-03-08T10-00-00-thread_homepath.jsonl'), '{"event":"hello-homepath"}\n', 'utf8');
+
+    const result = await exportCodexSessionBundle({
+      metadata: {
+        path: '/repo',
+        codexSessionId: 'thread_homepath',
+        codexBackendMode: 'appServer',
+        directSessionV1: {
+          v: 1,
+          providerId: 'codex',
+          machineId: 'machine_1',
+          remoteSessionId: 'thread_homepath',
+          source: {
+            kind: 'codexHome',
+            home: 'user',
+            homePath: sourceCodexHome,
+          },
+          linkedAtMs: 1,
+        },
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'codex',
+          provider: {
+            backendMode: 'appServer',
+            vendorSessionId: 'thread_homepath',
+            home: 'user',
+            homePath: sourceCodexHome,
+          },
+        },
+      },
+      remoteSessionId: 'thread_homepath',
+      env: {
+        CODEX_HOME: userCodexHome,
+      },
+      activeServerDir: join(root, 'servers', 'cloud'),
+    });
+
+    expect(result.affinity?.source).toEqual({
+      kind: 'codexHome',
+      home: 'user',
+    });
+    const exportedHomePath = (result.affinity?.runtimeDescriptor?.provider as unknown as { homePath?: unknown } | undefined)?.homePath;
+    expect(typeof exportedHomePath).not.toBe('string');
+    expect(exportedHomePath ?? null).toBeNull();
   });
 
   it('imports rollout files into the target codex home and returns resume metadata', async () => {
@@ -251,6 +337,61 @@ describe('codex session handoff bundle', () => {
     await expect(readFile(importedPath, 'utf8')).resolves.toBe('{"event":"hello"}\n');
   });
 
+  it('does not import source-machine codex homePath affinity into the target runtime descriptor', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-homepath-'));
+    const targetPath = join(tmpdir(), 'repo-target-homepath');
+    const sourceCodexHome = join(tmpdir(), 'source-machine-codex-home');
+
+    const result = await importCodexSessionBundle({
+      bundle: {
+        providerId: 'codex',
+        remoteSessionId: 'thread_homepath',
+        affinity: {
+          backendMode: 'appServer',
+          source: {
+            kind: 'codexHome',
+            home: 'user',
+            homePath: sourceCodexHome,
+          },
+          runtimeDescriptor: {
+            v: 1,
+            providerId: 'codex',
+            provider: {
+              backendMode: 'appServer',
+              vendorSessionId: 'thread_homepath',
+              home: 'user',
+              homePath: sourceCodexHome,
+            },
+          },
+        },
+        files: [
+          {
+            relativePath: 'sessions/2026/03/08/rollout-2026-03-08T10-00-00-thread_homepath.jsonl',
+            contentBase64: Buffer.from('{"event":"hello"}\n', 'utf8').toString('base64'),
+          },
+        ],
+      },
+      targetPath,
+      env: {
+        CODEX_HOME: codexHome,
+      },
+    });
+
+    expect(result.directSource).toEqual({
+      kind: 'codexHome',
+      home: 'user',
+      homePath: codexHome,
+    });
+    expect(result.agentRuntimeDescriptorV1).toMatchObject({
+      v: 1,
+      providerId: 'codex',
+      provider: {
+        home: 'user',
+        homePath: codexHome,
+      },
+    });
+  });
+
   it('imports connected-service codex affinity without collapsing the source or runtime descriptor', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-connected-'));
     const targetPath = join(tmpdir(), 'repo-target-connected');
@@ -265,6 +406,7 @@ describe('codex session handoff bundle', () => {
             kind: 'codexHome',
             home: 'connectedService',
             connectedServiceId: 'openai-codex',
+            homePath: '/source-machine/codex-home',
           },
           runtimeDescriptor: {
             v: 1,
@@ -274,6 +416,7 @@ describe('codex session handoff bundle', () => {
               vendorSessionId: 'thread_connected',
               home: 'connectedService',
               connectedServiceId: 'openai-codex',
+              homePath: '/source-machine/codex-home',
             },
           },
         },

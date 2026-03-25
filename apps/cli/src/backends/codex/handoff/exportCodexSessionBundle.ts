@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
+import { buildCodexAgentRuntimeDescriptor, resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 import {
   DirectSessionsSourceSchema,
@@ -22,6 +22,13 @@ function resolveCodexHome(env: NodeJS.ProcessEnv): string {
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function sanitizeDirectCodexSourceForHandoff(source: DirectSessionsSource | undefined): DirectSessionsSource | undefined {
+  if (!source || source.kind !== 'codexHome') return source;
+  // Absolute home paths are machine-specific and must not be transported via handoff bundles.
+  const { homePath: _homePath, ...rest } = source as DirectSessionsSource & { homePath?: string };
+  return rest as DirectSessionsSource;
 }
 
 async function resolvePreferredCodexHomes(params: Readonly<{
@@ -59,7 +66,6 @@ function resolveCodexSource(metadata: Record<string, unknown>): DirectSessionsSo
 
   const connectedServiceId = typeof runtimeDescriptor.connectedServiceId === 'string' ? runtimeDescriptor.connectedServiceId : undefined;
   const connectedServiceProfileId = typeof runtimeDescriptor.connectedServiceProfileId === 'string' ? runtimeDescriptor.connectedServiceProfileId : undefined;
-  const homePath = typeof runtimeDescriptor.homePath === 'string' ? runtimeDescriptor.homePath : undefined;
 
   return runtimeDescriptor.home === 'connectedService'
     ? {
@@ -67,12 +73,10 @@ function resolveCodexSource(metadata: Record<string, unknown>): DirectSessionsSo
       home: 'connectedService' as const,
       ...(connectedServiceId ? { connectedServiceId } : {}),
       ...(connectedServiceProfileId ? { connectedServiceProfileId } : {}),
-      ...(homePath ? { homePath } : {}),
     } satisfies DirectSessionsSource
     : {
       kind: 'codexHome' as const,
       home: 'user' as const,
-      ...(homePath ? { homePath } : {}),
     } satisfies DirectSessionsSource;
 }
 
@@ -84,7 +88,17 @@ export async function exportCodexSessionBundle(params: Readonly<{
 }>): Promise<CodexSessionBundle> {
   const runtimeIdentity = resolvePersistedCodexRuntimeIdentity(params.metadata);
   const runtimeDescriptor = readAgentRuntimeDescriptorV1ForProvider(params.metadata.agentRuntimeDescriptorV1, 'codex');
-  const source = resolveCodexSource(params.metadata);
+  const sanitizedRuntimeDescriptor = runtimeDescriptor
+    ? buildCodexAgentRuntimeDescriptor({
+      backendMode: runtimeDescriptor.provider.backendMode,
+      vendorSessionId: runtimeDescriptor.provider.vendorSessionId ?? null,
+      home: runtimeDescriptor.provider.home ?? null,
+      connectedServiceId: runtimeDescriptor.provider.connectedServiceId ?? null,
+      connectedServiceProfileId: runtimeDescriptor.provider.connectedServiceProfileId ?? null,
+      homePath: null,
+    })
+    : null;
+  const source = sanitizeDirectCodexSourceForHandoff(resolveCodexSource(params.metadata));
   const candidateHomes = await resolvePreferredCodexHomes(params);
   let rollouts = [] as Awaited<ReturnType<typeof collectCodexSessionRolloutFiles>>;
   for (const codexHome of candidateHomes) {
@@ -102,7 +116,7 @@ export async function exportCodexSessionBundle(params: Readonly<{
   const files = await Promise.all(
     rollouts.map(async (rollout) => ({
       relativePath: rollout.fileRelPath,
-      contentBase64: Buffer.from(await readFile(rollout.filePath, 'utf8'), 'utf8').toString('base64'),
+      contentBase64: (await readFile(rollout.filePath)).toString('base64'),
     })),
   );
 
@@ -112,7 +126,7 @@ export async function exportCodexSessionBundle(params: Readonly<{
     affinity: {
       backendMode: runtimeIdentity?.backendMode ?? null,
       ...(source ? { source } : {}),
-      ...(runtimeDescriptor ? { runtimeDescriptor } : {}),
+      ...(sanitizedRuntimeDescriptor ? { runtimeDescriptor: sanitizedRuntimeDescriptor } : {}),
     },
     files,
   };

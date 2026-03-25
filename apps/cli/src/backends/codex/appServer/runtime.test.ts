@@ -11,7 +11,7 @@ import {
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import { createCodexAppServerRuntime } from './runtime';
-import { createCodexAppServerTestEnvScope } from './testkit/fakeCodexAppServer';
+import { createCodexAppServerProcessEnv, createCodexAppServerTestEnvScope } from './testkit/fakeCodexAppServer';
 
 async function writeFakeCodexAppServerScript(params: Readonly<{
     dir: string;
@@ -402,12 +402,16 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('publishes connected-service direct-session metadata when activeServerDir owns CODEX_HOME', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-direct-');
-        const scopedEnv = {
+        const { root, requestLogPath, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-direct-');
+        const scopedEnv = createCodexAppServerProcessEnv(fakeAppServer, {
             HAPPIER_TRANSCRIPT_STORAGE: 'direct',
             CODEX_HOME: join(root, 'servers', 'cloud', 'daemon', 'connected-services', 'homes', 'openai-codex', 'profile', 'codex', 'codex-home'),
-        } satisfies NodeJS.ProcessEnv;
-        await mkdir(scopedEnv.CODEX_HOME, { recursive: true });
+        });
+        const codexHomeDir = scopedEnv.CODEX_HOME;
+        if (!codexHomeDir) {
+            throw new Error('Expected CODEX_HOME to be set for codex app-server runtime test');
+        }
+        await mkdir(codexHomeDir, { recursive: true });
 
         const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
             updater({ machineId: 'machine_1' }),
@@ -620,7 +624,13 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
         await runtime.sendPrompt('bridge-streams');
 
-        expect(session.sendTranscriptDraftDelta).not.toHaveBeenCalled();
+        const streamDeltas = session.sendTranscriptDraftDelta.mock.calls.map((call) => call[1]);
+        expect(streamDeltas).toEqual(expect.arrayContaining([
+            expect.objectContaining({ segmentKind: 'assistant', deltaText: 'Hello ', sidechainId: null }),
+            expect.objectContaining({ segmentKind: 'assistant', deltaText: 'world', sidechainId: null }),
+            expect.objectContaining({ segmentKind: 'thinking', deltaText: 'thinking', sidechainId: null }),
+            expect.objectContaining({ segmentKind: 'thinking', deltaText: ' hard', sidechainId: null }),
+        ]));
         expect(session.sendAgentMessageCommitted.mock.calls).toEqual(
             expect.arrayContaining([
                 ['codex', expect.objectContaining({ type: 'message', message: 'Hello ' }), expect.any(Object)],
@@ -659,7 +669,11 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
         await runtime.sendPrompt('bridge-streams-divergent-final');
 
-        expect(session.sendTranscriptDraftDelta).not.toHaveBeenCalled();
+        const streamDeltas = session.sendTranscriptDraftDelta.mock.calls.map((call) => call[1]);
+        expect(streamDeltas).toEqual(expect.arrayContaining([
+            expect.objectContaining({ segmentKind: 'assistant', deltaText: 'READY ', sidechainId: null }),
+        ]));
+        expect(streamDeltas.some((delta) => String(delta?.deltaText ?? '').includes('READY_FOR_FOLLOWUP'))).toBe(false);
         expect(session.sendAgentMessageCommitted.mock.calls).toEqual(
             expect.arrayContaining([
                 ['codex', expect.objectContaining({ type: 'message', message: 'READY_FOR_FOLLOWUP' }), expect.any(Object)],
@@ -814,7 +828,10 @@ describe('createCodexAppServerRuntime', () => {
             (call) => call[1]?.sidechainId === 'thread-child',
         );
         expect(draftAssistantTexts.some((value) => value.includes('Child'))).toBe(false);
-        expect(childDraftCalls).toEqual([]);
+        expect(childDraftCalls).toEqual(expect.arrayContaining([
+            ['codex', expect.objectContaining({ sidechainId: 'thread-child', segmentKind: 'assistant', deltaText: 'Child ' })],
+            ['codex', expect.objectContaining({ sidechainId: 'thread-child', segmentKind: 'assistant', deltaText: 'final' })],
+        ]));
         expect(session.sendAgentMessageCommitted.mock.calls).toEqual(
             expect.arrayContaining([
                 ['codex', expect.objectContaining({ type: 'message', message: 'Parent final' }), expect.any(Object)],
@@ -1049,7 +1066,7 @@ describe('createCodexAppServerRuntime', () => {
         );
         expect(updateMetadata.mock.results.map((entry) => entry.value)).toEqual(
             expect.arrayContaining([
-                expect.objectContaining({ codexSessionId: 'thread-overrides' }),
+                expect.objectContaining({ codexSessionId: 'thread-started' }),
             ]),
         );
 
@@ -1064,25 +1081,13 @@ describe('createCodexAppServerRuntime', () => {
                 .filter((entry) => entry.method === 'model/list')
                 .every((entry) => JSON.stringify(entry.params ?? null) === '{}'),
         ).toBe(true);
+        expect(requestLog.filter((entry) => entry.method === 'thread/resume')).toEqual([]);
         expect(requestLog).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
-                    method: 'thread/resume',
-                    params: expect.objectContaining({ threadId: 'thread-started', serviceTier: 'fast', persistExtendedHistory: true }),
-                }),
-                expect.objectContaining({
-                    method: 'thread/resume',
-                    params: expect.objectContaining({
-                        threadId: 'thread-overrides',
-                        model: 'gpt-5.4',
-                        serviceTier: 'fast',
-                        persistExtendedHistory: true,
-                    }),
-                }),
-                expect.objectContaining({
                     method: 'turn/start',
                     params: expect.objectContaining({
-                        threadId: 'thread-overrides',
+                        threadId: 'thread-started',
                         model: 'gpt-5.4',
                         effort: 'high',
                         serviceTier: 'fast',
@@ -1129,11 +1134,58 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
+    it('keeps Fast service tier for the first turn even when thread/start responds with serviceTier: null', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-thread-start-fast-persist-');
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+        });
+
+        await runtime.setSessionModel('gpt-5.4');
+        await runtime.setSessionConfigOption('service_tier', 'fast');
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('fast-persist');
+
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        const firstTurnStart = requestLog.find((entry) => entry.method === 'turn/start');
+        expect(firstTurnStart).toMatchObject({
+            params: expect.objectContaining({
+                serviceTier: 'fast',
+            }),
+        });
+    });
+
+    it('clears Fast service tier by sending serviceTier: null when switching back to Standard', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-service-tier-clear-');
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.setSessionConfigOption('service_tier', 'fast');
+        await runtime.setSessionConfigOption('service_tier', 'standard');
+        await runtime.sendPrompt('speed-standard');
+
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog.filter((entry) => entry.method === 'thread/resume')).toEqual([]);
+        const lastTurnStart = [...requestLog].reverse().find((entry) => entry.method === 'turn/start');
+        expect(lastTurnStart).toMatchObject({
+            params: expect.objectContaining({
+                serviceTier: null,
+            }),
+        });
+    });
+
     it('does not surface Speed controls when Codex is authenticated only by OPENAI_API_KEY', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-auth-');
-        const scopedEnv = {
+        const { root, requestLogPath, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-auth-');
+        const scopedEnv = createCodexAppServerProcessEnv(fakeAppServer, {
             OPENAI_API_KEY: 'sk-test-codex',
-        } satisfies NodeJS.ProcessEnv;
+        });
 
         const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
             updater({ machineId: 'machine_1' }),

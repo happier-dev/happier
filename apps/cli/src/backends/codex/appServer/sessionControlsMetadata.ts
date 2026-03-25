@@ -253,10 +253,7 @@ function normalizeCollaborationModeMasks(value: unknown): CollaborationModeMask[
         const name = normalizeString(record.displayName) ?? normalizeString(record.name) ?? normalizeString(record.label) ?? id;
         if (!id || !mode || !name) continue;
         const description = normalizeString(record.description)
-            ?? (() => {
-                const reasoningEffort = normalizeString(record.reasoning_effort);
-                return reasoningEffort ? `Reasoning effort: ${reasoningEffort}` : null;
-            })();
+            ?? (mode === 'plan' || id === 'plan' ? 'Think first' : null);
         out.push({
             id,
             mode,
@@ -396,10 +393,14 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
     currentReasoningEffort?: string | null;
     currentServiceTier?: string | null;
 }>): Promise<CodexAppServerSessionControlsSnapshot> {
-    const [modesResponse, modelsResponse] = await Promise.all([
+    // Best-effort: Codex app-server endpoints can be feature-gated or versioned. If one endpoint is
+    // unavailable, still return whatever we can (most importantly the model list + options).
+    const [modesSettled, modelsSettled] = await Promise.allSettled([
         params.client.request('collaborationMode/list', {}),
         params.client.request('model/list', {}),
     ]);
+    const modesResponse = modesSettled.status === 'fulfilled' ? modesSettled.value : null;
+    const modelsResponse = modelsSettled.status === 'fulfilled' ? modelsSettled.value : null;
 
     const availableModesWithMasks = normalizeCollaborationModeMasks(modesResponse);
     const availableModes = availableModesWithMasks.map(({ id, name, description }) => ({
