@@ -143,6 +143,51 @@ function findRepoRoot(startDir) {
 
 const repoRoot = findRepoRoot(__dirname);
 const CLI_BUNDLED_HOST_APPS = ['cli'];
+const CLI_SHARED_WORKSPACE_BUILD_ORDER = [
+  'agents',
+  'cli-common',
+  'connection-supervisor',
+  'protocol',
+  'transfers',
+  'release-runtime',
+];
+
+function resolveBundledWorkspacePackageNameFromSrcDir(srcDir) {
+  const normalized = String(srcDir ?? '');
+  const marker = `${resolve(repoRoot, 'packages')}/`;
+  if (!normalized.startsWith(marker)) return null;
+  const rest = normalized.slice(marker.length);
+  const name = rest.split('/')[0] ?? '';
+  return name.trim() || null;
+}
+
+function resolveCliBundledWorkspacePackageNames({ exists = existsSync } = {}) {
+  const bundles = resolveWorkspaceBundlesFromPackageJson({
+    repoRoot,
+    hostPackageDir: resolve(repoRoot, 'apps', 'cli'),
+  });
+
+  const names = [];
+  for (const bundle of bundles) {
+    const name = resolveBundledWorkspacePackageNameFromSrcDir(bundle.srcDir);
+    if (name) names.push(name);
+  }
+
+  // Keep a stable, intention-revealing build order while still deriving the set from the actual bundles.
+  const derived = Array.from(new Set(names));
+  const indexByName = new Map(CLI_SHARED_WORKSPACE_BUILD_ORDER.map((name, index) => [name, index]));
+  derived.sort((left, right) => {
+    const li = indexByName.get(left);
+    const ri = indexByName.get(right);
+    if (li == null && ri == null) return left.localeCompare(right);
+    if (li == null) return 1;
+    if (ri == null) return -1;
+    return li - ri;
+  });
+
+  // Only build packages that look like real repo workspaces.
+  return derived.filter((name) => exists(resolve(repoRoot, 'packages', name, 'tsconfig.json')));
+}
 
 export function resolveTscBin({ exists } = {}) {
   const existsImpl = exists ?? existsSync;
@@ -197,10 +242,8 @@ export function runTsc(tsconfigPath, opts) {
 export function syncBundledWorkspaceDist(opts = {}) {
   const repoRootArg = opts.repoRoot;
   const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
-  const packages = Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : ['agents', 'cli-common', 'connection-supervisor', 'protocol', 'transfers', 'release-runtime'];
   syncBundledWorkspacePackages({
     repoRoot,
-    packages,
     hostApps: Array.isArray(opts.bundledHostApps) && opts.bundledHostApps.length > 0 ? opts.bundledHostApps : CLI_BUNDLED_HOST_APPS,
     existsSync: opts.existsSync,
     cpSync: opts.cpSync,
@@ -249,12 +292,10 @@ export function syncBundledWorkspaceRuntimeDependencies(opts = {}) {
 
 export function main() {
   return withBuildSharedDepsLock(async () => {
-    runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
-    runTsc(resolve(repoRoot, 'packages', 'cli-common', 'tsconfig.json'));
-    runTsc(resolve(repoRoot, 'packages', 'connection-supervisor', 'tsconfig.json'));
-    runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
-    runTsc(resolve(repoRoot, 'packages', 'transfers', 'tsconfig.json'));
-    runTsc(resolve(repoRoot, 'packages', 'release-runtime', 'tsconfig.json'));
+    const bundledWorkspaceNames = resolveCliBundledWorkspacePackageNames();
+    for (const name of bundledWorkspaceNames) {
+      runTsc(resolve(repoRoot, 'packages', name, 'tsconfig.json'));
+    }
 
     const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
     if (!existsSync(protocolDist)) {

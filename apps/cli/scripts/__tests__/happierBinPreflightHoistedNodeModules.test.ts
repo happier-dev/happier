@@ -132,6 +132,11 @@ describe('apps/cli bin/happier.mjs preflight', () => {
         entrypointDir: 'dist',
         entrypointContent: "import '@happier-dev/protocol/changes'; console.log('ok');\n",
       });
+      writeFileSync(
+        join(projectRoot, 'package.json'),
+        `${JSON.stringify({ name: '@happier-dev/cli', bundledDependencies: ['@happier-dev/protocol'] }, null, 2)}\n`,
+        'utf8',
+      );
       copyCliBinRuntimeFiles({ binDir });
       writeFileSync(
         join(scriptsDir, 'syncBundledWorkspacePackages.mjs'),

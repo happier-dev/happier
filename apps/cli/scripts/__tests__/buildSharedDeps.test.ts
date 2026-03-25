@@ -78,10 +78,29 @@ describe('buildSharedDeps', () => {
     const cpSync = vi.fn(() => undefined);
     const rmSync = vi.fn(() => undefined);
     const existsSync = vi.fn((p: any) =>
+      String(p).endsWith('/apps/cli/package.json') ||
       String(p).endsWith('/packages/protocol/package.json') ||
-      String(p).endsWith('/packages/protocol/dist'),
+      String(p).endsWith('/packages/protocol/dist') ||
+      String(p).includes('/apps/cli/node_modules/@happier-dev/protocol/'),
     );
     const mkdirSync = vi.fn(() => undefined);
+    const readFileSync = vi.fn((p: any) => {
+      const text = String(p);
+      if (text.endsWith('/apps/cli/package.json')) {
+        return JSON.stringify({
+          bundledDependencies: ['@happier-dev/protocol'],
+        });
+      }
+      if (text.endsWith('/packages/protocol/package.json')) {
+        return JSON.stringify({
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+        });
+      }
+      throw new Error(`unexpected read: ${text}`);
+    });
 
     syncBundledWorkspaceDist({
       repoRoot: '/repo',
@@ -89,7 +108,7 @@ describe('buildSharedDeps', () => {
       existsSync,
       mkdirSync,
       rmSync,
-      packages: ['protocol'],
+      readFileSync,
     });
 
     expect(mkdirSync.mock.calls).toEqual([
@@ -116,19 +135,27 @@ describe('buildSharedDeps', () => {
   it('syncs bundled workspace package.json exports for local bundled hosts', () => {
     const cpSync = vi.fn(() => undefined);
     const existsSync = vi.fn((p: any) =>
+      String(p).endsWith('/apps/cli/package.json') ||
       String(p).endsWith('/packages/protocol/package.json') ||
       String(p).includes('/apps/cli/node_modules/@happier-dev/protocol/dist') ||
       String(p).includes('/apps/stack/node_modules/@happier-dev/protocol/dist'),
     );
-    const readFileSync = vi.fn(() =>
-      JSON.stringify({
+    const readFileSync = vi.fn((p: any) => {
+      const text = String(p);
+      if (text.endsWith('/apps/cli/package.json')) {
+        return JSON.stringify({
+          bundledDependencies: ['@happier-dev/protocol'],
+        });
+      }
+
+      return JSON.stringify({
         name: '@happier-dev/protocol',
         version: '0.0.0',
         type: 'module',
         exports: { '.': { default: './dist/index.js' }, './installables': { default: './dist/installables.js' } },
         dependencies: { zod: '1.0.0' },
-      }),
-    );
+      });
+    });
     const writeFileSync = vi.fn(() => undefined);
     const mkdirSync = vi.fn(() => undefined);
 
@@ -139,7 +166,6 @@ describe('buildSharedDeps', () => {
       mkdirSync,
       readFileSync,
       writeFileSync,
-      packages: ['protocol'],
     });
 
     expect(writeFileSync).toHaveBeenCalledTimes(1);
@@ -152,14 +178,38 @@ describe('buildSharedDeps', () => {
     expect(cliParsed.private).toBe(true);
   });
 
-  it('includes release-runtime in the default bundled workspace sync set', () => {
+  it('derives the default bundled workspace sync set from the CLI manifest', () => {
     const cpSync = vi.fn(() => undefined);
     const existsSync = vi.fn((p: any) => {
       const text = String(p);
-      return text.endsWith('/packages/release-runtime/package.json') || text.endsWith('/packages/release-runtime/dist');
+      return (
+        text.endsWith('/apps/cli/package.json') ||
+        text.endsWith('/packages/custom-bundle/package.json') ||
+        text.endsWith('/packages/custom-bundle/dist') ||
+        text.endsWith('/apps/cli/node_modules/@happier-dev/custom-bundle/package.json') ||
+        text.endsWith('/apps/cli/node_modules/@happier-dev/custom-bundle/dist')
+      );
     });
     const mkdirSync = vi.fn(() => undefined);
     const rmSync = vi.fn(() => undefined);
+    const readFileSync = vi.fn((p: any) => {
+      const text = String(p);
+      if (text.endsWith('/apps/cli/package.json')) {
+        return JSON.stringify({
+          bundledDependencies: ['@happier-dev/custom-bundle', 'tweetnacl'],
+        });
+      }
+      if (text.endsWith('/packages/custom-bundle/package.json')) {
+        return JSON.stringify({
+          name: '@happier-dev/custom-bundle',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+        });
+      }
+      throw new Error(`unexpected read: ${text}`);
+    });
+    const writeFileSync = vi.fn(() => undefined);
 
     syncBundledWorkspaceDist({
       repoRoot: '/repo',
@@ -167,6 +217,8 @@ describe('buildSharedDeps', () => {
       existsSync,
       mkdirSync,
       rmSync,
+      readFileSync,
+      writeFileSync,
     });
 
     const calls = cpSync.mock.calls as unknown[];
@@ -174,40 +226,9 @@ describe('buildSharedDeps', () => {
       calls.some((call) => {
         if (!Array.isArray(call) || call.length < 3) return false;
         const [from, to, options] = call as [unknown, unknown, { recursive?: boolean; force?: boolean }];
-        return from === '/repo/packages/release-runtime/dist'
+        return from === '/repo/packages/custom-bundle/dist'
           && typeof to === 'string'
-          && to.includes('/apps/cli/node_modules/@happier-dev/release-runtime/')
-          && options.recursive === true
-          && options.force === true;
-      }),
-    ).toBe(true);
-  });
-
-  it('includes transfers in the default bundled workspace sync set', () => {
-    const cpSync = vi.fn(() => undefined);
-    const existsSync = vi.fn((p: any) => {
-      const text = String(p);
-      return text.endsWith('/packages/transfers/package.json') || text.endsWith('/packages/transfers/dist');
-    });
-    const mkdirSync = vi.fn(() => undefined);
-    const rmSync = vi.fn(() => undefined);
-
-    syncBundledWorkspaceDist({
-      repoRoot: '/repo',
-      cpSync,
-      existsSync,
-      mkdirSync,
-      rmSync,
-    });
-
-    const calls = cpSync.mock.calls as unknown[];
-    expect(
-      calls.some((call) => {
-        if (!Array.isArray(call) || call.length < 3) return false;
-        const [from, to, options] = call as [unknown, unknown, { recursive?: boolean; force?: boolean }];
-        return from === '/repo/packages/transfers/dist'
-          && typeof to === 'string'
-          && to.includes('/apps/cli/node_modules/@happier-dev/transfers/')
+          && to.includes('/apps/cli/node_modules/@happier-dev/custom-bundle/')
           && options.recursive === true
           && options.force === true;
       }),

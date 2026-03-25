@@ -4,7 +4,6 @@ import { pathToFileURL } from 'node:url';
 
 import { resolveRuntimeEntrypoint } from './_resolveRuntimeEntrypoint.mjs';
 
-const DEFAULT_PACKAGES = ['agents', 'cli-common', 'connection-supervisor', 'protocol', 'release-runtime'];
 const DEFAULT_HOST_APPS = ['cli'];
 
 function isDisabled(env) {
@@ -41,7 +40,6 @@ export async function maybeRefreshLocalBundledWorkspacePackages(projectRoot, opt
 
   syncBundledWorkspacePackages({
     repoRoot,
-    packages: Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : DEFAULT_PACKAGES,
     hostApps: Array.isArray(opts.hostApps) && opts.hostApps.length > 0 ? opts.hostApps : DEFAULT_HOST_APPS,
   });
 }
