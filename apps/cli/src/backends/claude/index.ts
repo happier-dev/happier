@@ -14,5 +14,6 @@ export const agent = {
   getDaemonSpawnHooks: async () => claudeDaemonSpawnHooks,
   getDirectSessionProviderOps: async () => (await import('@/backends/claude/directSessions/providerOps')).claudeDirectSessionProviderOps,
   vendorResumeSupport: AGENTS_CORE.claude.resume.vendorResume,
+  getPreflightSessionControlsProbeAdapter: async () => (await import('@/backends/claude/preflight/claudePreflightModelsProbeAdapter')).claudePreflightModelsProbeAdapter,
   getHeadlessTmuxArgvTransform: async () => (await import('@/terminal/tmux/headlessTmuxArgs')).ensureRemoteStartingModeArgs,
 } satisfies AgentCatalogEntry;

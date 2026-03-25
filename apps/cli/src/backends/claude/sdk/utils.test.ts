@@ -96,6 +96,18 @@ describe('Claude SDK utils - getDefaultClaudeCodePath', () => {
     expect(getDefaultClaudeCodePath()).toBe(nativeClaudePath);
   });
 
+  it('resolves a versioned Claude JS entrypoint without requiring node on PATH', () => {
+    process.env.PATH = join(workDir, 'empty-path-versioned');
+    mkdirSync(process.env.PATH, { recursive: true });
+
+    const versionedDir = join(homeDir, '.local', 'share', 'claude', 'versions', '2.0.0');
+    mkdirSync(versionedDir, { recursive: true });
+    const versionedClaudePath = join(versionedDir, 'cli.js');
+    writeTextFileSync(versionedClaudePath, 'console.log("claude");\n');
+
+    expect(getDefaultClaudeCodePath()).toBe(versionedClaudePath);
+  });
+
   it('throws a helpful error when no Claude Code installation is found', () => {
     process.env.PATH = join(workDir, 'empty-path-2');
     mkdirSync(process.env.PATH, { recursive: true });

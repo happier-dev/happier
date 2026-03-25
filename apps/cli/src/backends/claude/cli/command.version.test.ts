@@ -196,7 +196,7 @@ describe('handleClaudeCliCommand --version', () => {
 
     vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockImplementation(({ settings }: any) => ({ marker: settings?.marker }));
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
-      source: 'none',
+      source: 'cache',
       settings: cachedSettings,
       settingsVersion: 0,
       loadedAtMs: Date.now(),

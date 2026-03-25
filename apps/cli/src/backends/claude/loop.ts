@@ -32,6 +32,12 @@ export interface EnhancedMode {
     fallbackModel?: string;
     customSystemPrompt?: string;
     appendSystemPrompt?: string;
+    /**
+     * Model-scoped "Thinking" selection (generic id: reasoning_effort).
+     *
+     * For Claude Code this maps to `--effort <level>` when supported.
+     */
+    reasoningEffort?: string;
 
     // Claude remote-mode (provider-scoped) settings forwarded via message meta.
     claudeRemoteAgentSdkEnabled?: boolean;

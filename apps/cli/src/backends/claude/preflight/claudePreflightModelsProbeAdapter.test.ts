@@ -75,12 +75,41 @@ describe('claudePreflightModelsProbeAdapter', () => {
     });
 
     expect(Array.isArray(raw)).toBe(true);
+
+    // Opus 4.6 supports effort, including the special `max` level.
     expect(raw).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'claude-opus-4-6',
-        modelOptions: [expect.objectContaining({ id: 'reasoning_effort' })],
+        modelOptions: [expect.objectContaining({
+          id: 'reasoning_effort',
+          currentValue: 'high',
+          options: expect.arrayContaining([
+            expect.objectContaining({ value: 'low' }),
+            expect.objectContaining({ value: 'medium' }),
+            expect.objectContaining({ value: 'high' }),
+            expect.objectContaining({ value: 'max' }),
+          ]),
+        })],
       }),
     ]));
+
+    // Sonnet 4.6 supports effort but does not accept `max`.
+    expect(raw).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'claude-sonnet-4-6',
+        modelOptions: [expect.objectContaining({
+          id: 'reasoning_effort',
+          currentValue: 'high',
+          options: expect.arrayContaining([
+            expect.objectContaining({ value: 'low' }),
+            expect.objectContaining({ value: 'medium' }),
+            expect.objectContaining({ value: 'high' }),
+          ]),
+        })],
+      }),
+    ]));
+
+    // Haiku does not support effort.
     expect(raw).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'claude-haiku-4-5',

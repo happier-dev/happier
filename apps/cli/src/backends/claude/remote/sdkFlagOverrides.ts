@@ -5,6 +5,7 @@ export type ClaudeSdkFlagOverrides = {
   customSystemPrompt?: string;
   model?: string;
   fallbackModel?: string;
+  effort?: string;
 };
 
 export function parseClaudeSdkFlagOverridesFromArgs(args?: string[]): ClaudeSdkFlagOverrides {
@@ -15,6 +16,7 @@ export function parseClaudeSdkFlagOverridesFromArgs(args?: string[]): ClaudeSdkF
   let customSystemPrompt: string | undefined;
   let model: string | undefined;
   let fallbackModel: string | undefined;
+  let effort: string | undefined;
 
   const nextValue = (index: number): string | undefined => {
     const next = index + 1 < input.length ? input[index + 1] : undefined;
@@ -78,6 +80,15 @@ export function parseClaudeSdkFlagOverridesFromArgs(args?: string[]): ClaudeSdkF
       }
       continue;
     }
+
+    if (arg === '--effort') {
+      const next = nextValue(i);
+      if (typeof next === 'string') {
+        effort = next;
+        i++;
+      }
+      continue;
+    }
   }
 
   return {
@@ -87,5 +98,6 @@ export function parseClaudeSdkFlagOverridesFromArgs(args?: string[]): ClaudeSdkF
     customSystemPrompt,
     model,
     fallbackModel,
+    effort,
   };
 }

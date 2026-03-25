@@ -39,6 +39,7 @@ import { applyClaudeRemoteMetaState } from '@/backends/claude/remote/claudeRemot
 import { resolveInitialClaudeRemoteMetaState } from '@/backends/claude/remote/resolveInitialClaudeRemoteMetaState';
 import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionIntentFromArgs';
 import { adoptModelOverrideFromMetadata } from './utils/adoptModelOverrideFromMetadata';
+import { adoptReasoningEffortOverrideFromMetadata } from './utils/adoptReasoningEffortOverrideFromMetadata';
 import { resolveSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { ClaudeLocalPermissionBridge, DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE } from '@/backends/claude/localPermissions/localPermissionBridge';
@@ -67,6 +68,7 @@ import { ensureManagedJavaScriptRuntimeCommand } from '@/runtime/js/managedJavaS
 import { createClaudeRawMessageTurnDiffBridge } from './utils/createClaudeRawMessageTurnDiffBridge';
 import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
+import { publishClaudeSessionModelsMetadataBestEffort } from '@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -441,6 +443,13 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Variable to track current session instance (updated via onSessionReady callback)
     // Used by hook server to notify Session when Claude changes session ID
     let currentSession: import('./session').Session | null = null;
+    let didPublishSessionModelsMetadata = false;
+    const resolveClaudeHelpProbeTimeoutMs = (): number => {
+        const raw = process.env.HAPPIER_CLAUDE_HELP_PROBE_TIMEOUT_MS;
+        const parsed = typeof raw === 'string' ? Number(raw) : Number.NaN;
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+        return process.env.CI ? 3_000 : 1_500;
+    };
     let currentClaudeRemoteMetaState = resolveInitialClaudeRemoteMetaState({ metaDefaults: options.claudeRemoteMetaDefaults });
     let localPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
     let localPermissionBridgeWaitIndefinitely = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true;
@@ -547,6 +556,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     let currentAgentModeUpdatedAt = typeof options.agentModeUpdatedAt === 'number' ? options.agentModeUpdatedAt : 0;
     let currentModel = options.model; // Track current model state
         let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
+        let currentReasoningEffort: string | undefined = undefined;
+        let currentReasoningEffortUpdatedAt = 0;
         let currentFallbackModel: string | undefined = undefined; // Track current fallback model
         let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
         let currentAppendSystemPrompt: string | undefined = resolveInitialClaudeSystemPromptText({
@@ -573,6 +584,17 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             const normalizedModeId = resolvedAgentModeOverride.modeId.trim();
             currentAgentModeId = normalizedModeId.length > 0 ? normalizedModeId : null;
             logger.debug(`[loop] Agent mode updated from session metadata: ${currentAgentModeId ?? 'default'}`);
+        }
+
+        const adoptedReasoningEffort = adoptReasoningEffortOverrideFromMetadata({
+            currentValueId: currentReasoningEffort ?? null,
+            currentUpdatedAt: currentReasoningEffortUpdatedAt,
+            metadata: session.getMetadataSnapshot(),
+        });
+        if (adoptedReasoningEffort.didChange) {
+            currentReasoningEffort = adoptedReasoningEffort.valueId ?? undefined;
+            currentReasoningEffortUpdatedAt = adoptedReasoningEffort.updatedAt;
+            logger.debug(`[loop] Thinking updated from session metadata: ${currentReasoningEffort || 'default'}`);
         }
 
         // Resolve permission mode from meta - pass through as-is, mapping happens at SDK boundary
@@ -678,6 +700,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             fallbackModel: messageFallbackModel,
             customSystemPrompt: messageCustomSystemPrompt,
             appendSystemPrompt: messageAppendSystemPrompt,
+            reasoningEffort: currentReasoningEffort,
             ...currentClaudeRemoteMetaState,
         };
 
@@ -802,16 +825,29 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 localPermissionBridge?.activate();
             }
         },
-        onSessionReady: (sessionInstance) => {
-            // Store reference for hook server callback
-            currentSession = sessionInstance;
-            if (!localPermissionBridge) {
-                localPermissionBridge = new ClaudeLocalPermissionBridge(sessionInstance, { responseTimeoutMs: localPermissionBridgeTimeoutMs });
-                localPermissionBridge.activate();
-            } else if (localPermissionBridgeEnabled) {
-                rebuildLocalPermissionBridge();
-            }
-        },
+	        onSessionReady: (sessionInstance) => {
+	            // Store reference for hook server callback
+	            currentSession = sessionInstance;
+	            if (!didPublishSessionModelsMetadata) {
+	                didPublishSessionModelsMetadata = true;
+	                const currentModelId =
+	                    typeof options.modelId === 'string'
+	                        ? options.modelId.trim()
+	                        : (typeof options.model === 'string' ? options.model.trim() : '');
+	                void publishClaudeSessionModelsMetadataBestEffort({
+	                    cwd: workingDirectory,
+	                    timeoutMs: resolveClaudeHelpProbeTimeoutMs(),
+	                    currentModelId,
+	                    session,
+	                });
+	            }
+	            if (!localPermissionBridge) {
+	                localPermissionBridge = new ClaudeLocalPermissionBridge(sessionInstance, { responseTimeoutMs: localPermissionBridgeTimeoutMs });
+	                localPermissionBridge.activate();
+	            } else if (localPermissionBridgeEnabled) {
+	                rebuildLocalPermissionBridge();
+	            }
+	        },
                     claudeArgs: options.claudeArgs,
                     hookSettingsPath,
                     jsRuntime: options.jsRuntime,
@@ -908,6 +944,13 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     const messageQueue = new MessageQueue2<EnhancedMode>(hashClaudeEnhancedModeForQueue);
 
     let currentSession: import('./session').Session | null = null;
+    let didPublishSessionModelsMetadata = false;
+    const resolveClaudeHelpProbeTimeoutMs = (): number => {
+        const raw = process.env.HAPPIER_CLAUDE_HELP_PROBE_TIMEOUT_MS;
+        const parsed = typeof raw === 'string' ? Number(raw) : Number.NaN;
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+        return process.env.CI ? 3_000 : 1_500;
+    };
     let pushSender: PushNotificationClient | null = null;
     let currentClaudeRemoteMetaState = resolveInitialClaudeRemoteMetaState({ metaDefaults: options.claudeRemoteMetaDefaults });
     let localPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
@@ -1110,6 +1153,8 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                 let currentPermissionMode: PermissionMode = options.permissionMode ?? 'default';
                 let currentModel = options.model;
                     let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
+                    let currentReasoningEffort: string | undefined = undefined;
+                    let currentReasoningEffortUpdatedAt = 0;
                     let currentFallbackModel: string | undefined = undefined;
                     let currentCustomSystemPrompt: string | undefined = undefined;
                     let currentAppendSystemPrompt: string | undefined = resolveInitialClaudeSystemPromptText({
@@ -1126,6 +1171,16 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     if (adoptedModel.didChange) {
                         currentModel = adoptedModel.modelId;
                         currentModelUpdatedAt = adoptedModel.updatedAt;
+                    }
+
+                    const adoptedReasoningEffort = adoptReasoningEffortOverrideFromMetadata({
+                        currentValueId: currentReasoningEffort ?? null,
+                        currentUpdatedAt: currentReasoningEffortUpdatedAt,
+                        metadata: session.getMetadataSnapshot(),
+                    });
+                    if (adoptedReasoningEffort.didChange) {
+                        currentReasoningEffort = adoptedReasoningEffort.valueId ?? undefined;
+                        currentReasoningEffortUpdatedAt = adoptedReasoningEffort.updatedAt;
                     }
 
                     let messagePermissionMode: PermissionMode = currentPermissionMode;
@@ -1208,6 +1263,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         fallbackModel: messageFallbackModel,
                         customSystemPrompt: messageCustomSystemPrompt,
                         appendSystemPrompt: messageAppendSystemPrompt,
+                        reasoningEffort: currentReasoningEffort,
                         ...currentClaudeRemoteMetaState,
                     };
                     const baseQueuedText = structuredRouting?.queuedText ?? message.content.text;
@@ -1333,12 +1389,28 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                             localPermissionBridge?.activate();
                         }
                     },
-                    onSessionReady: (sessionInstance) => {
-                        currentSession = sessionInstance;
-                        if (!localPermissionBridge) {
-                            localPermissionBridge = new ClaudeLocalPermissionBridge(sessionInstance, { responseTimeoutMs: localPermissionBridgeTimeoutMs });
-                            if (localPermissionBridgeEnabled) {
-                                localPermissionBridge.activate();
+	                    onSessionReady: (sessionInstance) => {
+	                        currentSession = sessionInstance;
+	                        if (!didPublishSessionModelsMetadata) {
+	                            didPublishSessionModelsMetadata = true;
+	                            const currentModelId =
+	                                typeof options.modelId === 'string'
+	                                    ? options.modelId.trim()
+	                                    : (typeof options.model === 'string' ? options.model.trim() : '');
+	                            void publishClaudeSessionModelsMetadataBestEffort({
+	                                cwd: workingDirectory,
+	                                timeoutMs: resolveClaudeHelpProbeTimeoutMs(),
+	                                currentModelId,
+	                                session: artifacts.deferredSession as unknown as {
+	                                    ensureMetadataSnapshot: (opts: Readonly<{ timeoutMs: number }>) => Promise<unknown>;
+	                                    updateMetadata: (updater: (prev: Metadata) => Metadata) => Promise<void>;
+	                                },
+	                            });
+	                        }
+	                        if (!localPermissionBridge) {
+	                            localPermissionBridge = new ClaudeLocalPermissionBridge(sessionInstance, { responseTimeoutMs: localPermissionBridgeTimeoutMs });
+	                            if (localPermissionBridgeEnabled) {
+	                                localPermissionBridge.activate();
                             }
                         } else if (localPermissionBridgeEnabled) {
                             rebuildLocalPermissionBridge();
