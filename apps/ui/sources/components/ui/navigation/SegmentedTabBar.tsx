@@ -70,7 +70,10 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
 
     return (
         <View style={styles.container}>
-            <View style={[styles.inner, compact ? styles.innerCompact : null]}>
+            <View
+                style={[styles.inner, compact ? styles.innerCompact : null]}
+                accessibilityRole="tablist"
+            >
                 {props.tabs.map((tab) => {
                     const active = props.activeTabId === tab.id;
                     return (
@@ -79,7 +82,8 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                             testID={props.testIDPrefix ? `${props.testIDPrefix}:${tab.id}` : undefined}
                             onPress={() => props.onSelectTab(tab.id)}
                             style={[styles.tab, compact ? styles.tabCompact : null, active ? styles.tabActive : null]}
-                            accessibilityRole="button"
+                            accessibilityRole="tab"
+                            accessibilityState={{ selected: active }}
                         >
                             <Text style={[styles.tabLabel, compact ? styles.tabLabelCompact : null, active ? styles.tabLabelActive : null]}>{tab.label}</Text>
                         </Pressable>
