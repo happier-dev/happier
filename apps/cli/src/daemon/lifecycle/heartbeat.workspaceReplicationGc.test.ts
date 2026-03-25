@@ -95,7 +95,7 @@ describe('startDaemonHeartbeatLoop workspace replication gc', () => {
         expect(existsSync(blobPath)).toBe(false);
     });
 
-    it('marks non-terminal workspace replication jobs as pending on daemon startup and clears stale leases', async () => {
+    it('marks non-terminal workspace replication jobs as awaiting_recovery on daemon startup and clears stale leases', async () => {
         const setIntervalSpy = vi.spyOn(global, 'setInterval').mockImplementation(((handler: (...args: any[]) => any) => {
             (globalThis as any).__tick = handler;
             return 1 as any;
@@ -180,8 +180,9 @@ describe('startDaemonHeartbeatLoop workspace replication gc', () => {
         const { readFile } = await import('node:fs/promises');
         const recovered = JSON.parse(await readFile(jobPath, 'utf8')) as any;
         expect(recovered.status).toBeTypeOf('object');
-        expect(recovered.status?.status).toBe('pending');
+        expect(recovered.status?.status).toBe('awaiting_recovery');
         expect(recovered.status?.warnings).toContain('recovered_after_daemon_restart');
+        expect(String(recovered.lastErrorMessage ?? '').toLowerCase()).toContain('daemon');
         expect(existsSync(leasePath)).toBe(false);
     });
 });
