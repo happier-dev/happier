@@ -44,6 +44,7 @@ export interface ItemProps {
     onDoublePress?: () => void;
     onLongPress?: () => void;
     onMouseDownCapture?: (event: unknown) => void;
+    onContextMenu?: (event: unknown) => void;
     accessibilityRole?: AccessibilityRole;
     disabled?: boolean;
     loading?: boolean;
@@ -237,6 +238,7 @@ export const Item = React.memo<ItemProps>((props) => {
         onDoublePress,
         onLongPress,
         onMouseDownCapture,
+        onContextMenu,
         accessibilityRole,
         disabled,
         loading,
@@ -282,8 +284,11 @@ export const Item = React.memo<ItemProps>((props) => {
         }
     }, [copy, isWeb, title, subtitle, detail]);
     
+    const longPressConsumedRef = React.useRef(false);
+
     // Handle long press for copy functionality
     const handlePressIn = React.useCallback(() => {
+        longPressConsumedRef.current = false;
         if (copy && !isWeb && !onPress) {
             longPressTimer.current = setTimeout(() => {
                 handleCopy();
@@ -311,6 +316,10 @@ export const Item = React.memo<ItemProps>((props) => {
     const webLastPressAtMsRef = React.useRef<number | null>(null);
 
     const handlePress = React.useCallback((event?: any) => {
+        if (longPressConsumedRef.current) {
+            longPressConsumedRef.current = false;
+            return;
+        }
         if (isWeb && onDoublePress) {
             const nowMs = Date.now();
             if (webDoublePressHandledAtMsRef.current > 0 && nowMs - webDoublePressHandledAtMsRef.current < 240) {
@@ -342,6 +351,11 @@ export const Item = React.memo<ItemProps>((props) => {
         }
         onPress?.();
     }, [isWeb, onDoublePress, onPress]);
+
+    const handleLongPress = React.useCallback(() => {
+        longPressConsumedRef.current = true;
+        onLongPress?.();
+    }, [onLongPress]);
 
     const isInfoMode = mode === 'info';
     const hasPrimaryPressAction = Boolean(onPress || onDoublePress || onLongPress);
@@ -544,7 +558,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 testID={testID}
                 {...webTestIdProps}
                 onPress={handlePress}
-                onLongPress={onLongPress}
+                onLongPress={handleLongPress}
                 // @ts-expect-error - react-native types do not model web-only double click props; RN Web supports onDoubleClick.
                 onDoubleClick={isWeb && onDoublePress ? (event: any) => {
                     if (Date.now() - webDoublePressHandledAtMsRef.current < 600) {
@@ -561,6 +575,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 onHoverIn={isWeb && isSelectableRow && !disabled && !loading ? () => setIsHovered(true) : undefined}
                 onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
+                onContextMenu={isWeb ? (onContextMenu as any) : undefined}
                 accessibilityRole={accessibilityRole ?? 'button'}
                 disabled={disabled || loading}
                 style={({ pressed }) => {

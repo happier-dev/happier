@@ -115,6 +115,23 @@ describe('Item', () => {
         expect(findTestInstanceByTypeWithProps(screen, 'Ionicons' as any, { name: 'chevron-forward' })).toBeTruthy();
     });
 
+    it('wires onContextMenu on web for interactive rows', async () => {
+        const { Item } = await import('./Item');
+
+        const onContextMenu = vi.fn();
+        const screen = await renderScreen(
+            <Item title="Title" onPress={() => {}} onContextMenu={onContextMenu} showChevron={false} />,
+        );
+
+        const pressable = findTestInstanceByTypeWithProps(screen, 'Pressable' as any, { accessibilityRole: 'button' });
+        expect(pressable).toBeTruthy();
+        if (!pressable) throw new Error('Pressable not found');
+
+        expect(typeof pressable.props.onContextMenu).toBe('function');
+        pressable.props.onContextMenu({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
+        expect(onContextMenu).toHaveBeenCalledTimes(1);
+    });
+
     it('wraps primitive children when subtitle is a ReactNode', async () => {
         const { Item } = await import('./Item');
 

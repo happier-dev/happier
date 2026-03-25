@@ -841,10 +841,12 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
     const openContextMenu = React.useCallback((directoryPath: string, anchorNode: View | null) => {
         if (!directoryPath) return;
-        setSelectedPath(directoryPath);
+        if (selectionMode !== 'file') {
+            setSelectedPath(directoryPath);
+        }
         contextMenuAnchorRef.current = anchorNode;
         setContextMenuDirectoryPath(directoryPath);
-    }, []);
+    }, [selectionMode]);
 
     const createFolderInDirectory = React.useCallback(async (directoryPath: string) => {
         if (!enableContextMenu) return;
@@ -1102,7 +1104,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     listRef={browserListRef}
                     onScrollToIndexFailed={handleScrollToIndexFailed}
                     renderRow={({ node, index, totalCount }) => {
-                        const rowBasePaddingLeft = 24;
+                        const rowBasePaddingLeft = 36;
                         const rowDepthIndent = 12;
                         const rowPaddingLeft = rowBasePaddingLeft + Math.min(6, Math.max(0, node.depth)) * rowDepthIndent;
                         const selected = selectedPath === node.path && (
@@ -1254,7 +1256,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     items={[{
                         id: 'create-folder',
                         title: t('files.createFolderA11y'),
-                        icon: <Ionicons name="folder-outline" size={16} color={theme.colors.textSecondary} />,
+                        icon: <Ionicons name="folder-outline" size={16} color={theme.colors.text} />,
                     }]}
                     onSelect={(itemId) => {
                         const directoryPath = contextMenuDirectoryPath;
