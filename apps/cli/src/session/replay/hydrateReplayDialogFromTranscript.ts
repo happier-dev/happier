@@ -2,6 +2,7 @@ import type { Credentials } from '@/persistence';
 
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { fetchEncryptedTranscriptMessages } from './fetchEncryptedTranscriptMessages';
 import { decryptTranscriptReplaySlice } from './decryptTranscriptReplaySlice';
@@ -17,8 +18,14 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
   const session = await fetchSessionById({ token: params.credentials.token, sessionId: params.previousSessionId });
   if (!session) return null;
 
+  const rawSession = session as Readonly<{
+    seq?: unknown;
+    encryptionMode?: unknown;
+    dataEncryptionKey?: unknown;
+  }>;
+
   const sessionSeq =
-    typeof (session as any)?.seq === 'number' && Number.isFinite((session as any).seq) ? Math.max(0, Math.floor((session as any).seq)) : 0;
+    typeof rawSession.seq === 'number' && Number.isFinite(rawSession.seq) ? Math.max(0, Math.floor(rawSession.seq)) : 0;
 
   const sourceCutoffSeqInclusive =
     typeof params.upToSeqInclusive === 'number' && Number.isFinite(params.upToSeqInclusive)
@@ -35,9 +42,13 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
     ...(typeof beforeSeq === 'number' ? { beforeSeq } : {}),
   });
 
-  const encryptionMode = (session as any)?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+  const encryptionMode = resolveSessionStoredContentEncryptionMode(rawSession);
   if (encryptionMode === 'plain') {
-    const slice = decryptTranscriptReplaySlice({ rows, maxTextChars: params.maxTextChars });
+    const slice = decryptTranscriptReplaySlice({
+      rows,
+      maxTextChars: params.maxTextChars,
+      maxDialogItems: params.limit,
+    });
     return { dialog: slice.dialog, sourceCutoffSeqInclusive, synopsisText: slice.latestSynopsisText };
   }
 
@@ -45,8 +56,8 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
     return null;
   }
 
-  const encryptedDekBase64 = typeof (session as any)?.dataEncryptionKey === 'string'
-    ? String((session as any).dataEncryptionKey).trim()
+  const encryptedDekBase64 = typeof rawSession.dataEncryptionKey === 'string'
+    ? String(rawSession.dataEncryptionKey).trim()
     : null;
   if (!encryptedDekBase64) return null;
 
@@ -61,6 +72,7 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
     encryptionKey: dek,
     encryptionVariant: 'dataKey',
     maxTextChars: params.maxTextChars,
+    maxDialogItems: params.limit,
   });
 
   return { dialog: slice.dialog, sourceCutoffSeqInclusive, synopsisText: slice.latestSynopsisText };

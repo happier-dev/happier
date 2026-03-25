@@ -1,5 +1,6 @@
 import { createSessionScopedSocket } from '@/api/session/sockets';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import type { SessionEncryptionContext, SessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { waitForSocketConnect } from '@/session/transport/socket/waitForSocketConnect';
@@ -27,12 +28,12 @@ export async function callSessionRpc(params: Readonly<{
     ? params.request
     : encodeBase64(encrypt(params.ctx.encryptionKey, params.ctx.encryptionVariant, params.request), 'base64');
 
-  const response = await new Promise<{ ok: boolean; result?: unknown; error?: string }>((resolve, reject) => {
+  const response = await new Promise<{ ok: boolean; result?: unknown; error?: string; errorCode?: string }>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('RPC call timeout')), timeoutMs);
     socket.emit(
       SOCKET_RPC_EVENTS.CALL,
       { method: params.method, params: rpcParams },
-      (payload: { ok: boolean; result?: unknown; error?: string }) => {
+      (payload: { ok: boolean; result?: unknown; error?: string; errorCode?: string }) => {
         clearTimeout(timer);
         resolve(payload);
       },
@@ -47,7 +48,10 @@ export async function callSessionRpc(params: Readonly<{
   }
 
   if (!response.ok) {
-    throw new Error(response.error || 'RPC call failed');
+    throw createRpcCallError({
+      error: response.error || 'RPC call failed',
+      errorCode: response.errorCode,
+    });
   }
 
   if (mode === 'plain') {
