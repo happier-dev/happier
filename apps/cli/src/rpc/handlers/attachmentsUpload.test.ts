@@ -73,10 +73,11 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
       if (!init) throw new Error('expected attachments upload handlers to be registered');
 
       const initRes = await init({
+        t: 'session_attachment_upload_v1',
         messageLocalId: '../../escape',
         fileName: 'hello.txt',
         sizeBytes: 11,
@@ -116,10 +117,11 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
       if (!init) throw new Error('expected attachments upload handlers to be registered');
 
       const initRes = await init({
+        t: 'session_attachment_upload_v1',
         messageLocalId: 'message-1',
         fileName: 'hello.txt',
         sizeBytes: 11,
@@ -163,10 +165,11 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
       if (!init) throw new Error('expected attachments upload handlers to be registered');
 
       const initRes = await init({
+        t: 'session_attachment_upload_v1',
         messageLocalId: 'message-1',
         fileName: 'hello.txt',
         sizeBytes: 11,
@@ -213,10 +216,11 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
       if (!init) throw new Error('expected attachments upload handlers to be registered');
 
       const initRes = await init({
+        t: 'session_attachment_upload_v1',
         messageLocalId: 'message-1',
         fileName: 'hello.txt',
         sizeBytes: 11,
@@ -259,19 +263,21 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      expect(mgr.handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT)).toBe(true);
-      expect(mgr.handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK)).toBe(true);
-      expect(mgr.handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE)).toBe(true);
-      expect(mgr.handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_ABORT)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_ABORT)).toBe(true);
+      expect(mgr.handlers.has(['daemon.sessionAttachments.', 'upload.init'].join(''))).toBe(false);
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
-      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
-      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
       if (!init || !chunk || !finalize) {
         throw new Error('expected attachment upload handlers to be registered');
       }
 
       const initResult: any = await init({
+        t: 'session_attachment_upload_v1',
         messageLocalId: 'message-1',
         fileName: 'hello.txt',
         sizeBytes: 11,
@@ -325,17 +331,18 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
-      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
-      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE);
-      const downloadInit = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT);
-      const downloadChunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK);
-      const downloadFinalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
+      const downloadInit = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT);
+      const downloadChunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK);
+      const downloadFinalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE);
       if (!init || !chunk || !finalize || !downloadInit || !downloadChunk || !downloadFinalize) {
         throw new Error('expected dedicated attachment upload and file download handlers to be registered');
       }
 
       const initResult: any = await init({
+        t: 'session_attachment_upload_v1',
         messageLocalId: 'message-2',
         fileName: 'note.txt',
         sizeBytes: 3,
@@ -363,6 +370,7 @@ describe('attachments upload (chunked)', () => {
       });
 
       const downloadInitResult: any = await downloadInit({
+        t: 'session_file_download_v1',
         path: finalizeResult.path,
         recipientPublicKeyBase64: downloadRecipientKeyPair.recipientPublicKeyBase64,
       });
@@ -412,13 +420,14 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
-      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
       if (!init || !chunk) {
         throw new Error('expected attachment upload handlers to be registered');
       }
 
       const initResult: any = await init({
+        t: 'session_attachment_upload_v1',
         messageLocalId: 'message-3',
         fileName: 'big.bin',
         sizeBytes: 11,

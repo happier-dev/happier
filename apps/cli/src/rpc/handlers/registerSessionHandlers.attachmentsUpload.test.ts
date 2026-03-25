@@ -51,9 +51,9 @@ describe('registerSessionHandlers attachments uploads', () => {
 
     registerSessionHandlers(mgr, workingDirectory);
 
-    const init = handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
-    const chunk = handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
-    const finalize = handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE);
+    const init = handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+    const chunk = handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+    const finalize = handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
     if (!init) {
       throw new Error('expected attachment upload init handler to be registered');
     }
@@ -62,6 +62,7 @@ describe('registerSessionHandlers attachments uploads', () => {
     }
 
     const initResult: any = await init({
+      t: 'session_attachment_upload_v1',
       messageLocalId: 'message-1',
       fileName: 'file.txt',
       sizeBytes: 11,
@@ -90,5 +91,8 @@ describe('registerSessionHandlers attachments uploads', () => {
       sha256: expect.any(String),
     });
     expect(await readFile(join(workingDirectory, finalizeResult.path), 'utf8')).toBe('hello world');
+    expect(handlers.has(['daemon.sessionAttachments.', 'upload.init'].join(''))).toBe(false);
+    expect(handlers.has(['daemon.sessionAttachments.', 'upload.chunk'].join(''))).toBe(false);
+    expect(handlers.has(['daemon.sessionAttachments.', 'upload.finalize'].join(''))).toBe(false);
   });
 });

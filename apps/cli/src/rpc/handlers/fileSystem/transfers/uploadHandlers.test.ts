@@ -11,7 +11,7 @@ import { createEncryptedTransferChunkEnvelope } from '@/machines/transfer/transf
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/sessionRpcTransferPolicy';
-import { registerSessionFileUploadTransferRpcHandlers } from '@/transfers/rpc/registerSessionFileUploadTransferRpcHandlers';
+import { registerBulkTransferUploadRpcHandlers } from '@/transfers/rpc/registerBulkTransferUploadRpcHandlers';
 
 type Handler = (data: any) => Promise<any>;
 type UploadSessionHandle = NonNullable<ReturnType<TransferSessionStore['getUploadSession']>>;
@@ -58,13 +58,14 @@ describe('file transfers (upload)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
 
     const content = 'hello world\n';
     const initResp = await init({
+      t: 'session_file_upload_v1',
       path: 'nested/hello.txt',
       sizeBytes: Buffer.byteLength(content),
       overwrite: false,
@@ -95,13 +96,14 @@ describe('file transfers (upload)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
 
     const content = 'new\n';
     const initResp = await init({
+      t: 'session_file_upload_v1',
       path: 'file.txt',
       sizeBytes: Buffer.byteLength(content),
       overwrite: true,
@@ -131,13 +133,14 @@ describe('file transfers (upload)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
 
     const content = 'file\n';
     const initResp = await init({
+      t: 'session_file_upload_v1',
       path: 'existingdir',
       sizeBytes: Buffer.byteLength(content),
       overwrite: true,
@@ -171,11 +174,11 @@ describe('file transfers (upload)', () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
     const store = new TransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
-    registerSessionFileUploadTransferRpcHandlers(mgr as unknown as RpcHandlerManager, { workingDirectory: workspace, store });
+    registerBulkTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, { workingDirectory: workspace, store });
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
 
     const firstChunk = Buffer.alloc(configuration.filesTransferChunkBytes, 'a');
@@ -183,6 +186,7 @@ describe('file transfers (upload)', () => {
     const content = Buffer.concat([firstChunk, secondChunk]);
 
     const initResp = await init({
+      t: 'session_file_upload_v1',
       path: 'slow.bin',
       sizeBytes: content.length,
       overwrite: false,
@@ -218,11 +222,12 @@ describe('file transfers (upload)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_CHUNK);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
     if (!init || !chunk) throw new Error('expected upload handlers');
 
     const initResp = await init({
+      t: 'session_file_upload_v1',
       path: 'broken.txt',
       sizeBytes: 3,
       overwrite: false,
@@ -249,18 +254,19 @@ describe('file transfers (upload)', () => {
 
     const store = new TransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
-    registerSessionFileUploadTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+    registerBulkTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, {
       workingDirectory: workspace,
       store,
     });
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected upload handlers');
 
     const content = 'new\n';
     const initResp = await init({
+      t: 'session_file_upload_v1',
       path: 'file.txt',
       sizeBytes: Buffer.byteLength(content),
       overwrite: false,
@@ -298,17 +304,18 @@ describe('file transfers (upload)', () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
     const store = new TransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
-    registerSessionFileUploadTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+    registerBulkTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, {
       workingDirectory: workspace,
       store,
       sessionRpcTransferMaxBytes: 4,
     });
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
     if (!init) throw new Error('expected upload init handler');
 
     await expect(
       init({
+        t: 'session_file_upload_v1',
         path: 'too-large.txt',
         sizeBytes: 5,
         overwrite: false,
@@ -326,11 +333,12 @@ describe('file transfers (upload)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
     if (!init) throw new Error('expected upload init handler');
 
     await expect(
       init({
+        t: 'session_file_upload_v1',
         path: 'too-large.txt',
         sizeBytes: 5,
         overwrite: false,

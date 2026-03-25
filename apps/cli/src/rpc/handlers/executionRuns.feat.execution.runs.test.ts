@@ -376,7 +376,7 @@ describe('executionRuns session RPC handlers', () => {
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review.',
       permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
+      retentionPolicy: 'resumable',
       runClass: 'bounded',
       ioMode: 'request_response',
     });
@@ -387,14 +387,14 @@ describe('executionRuns session RPC handlers', () => {
 
     const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, {});
     expect(listed.runs?.length ?? 0).toBe(1);
-    expect(listed.runs?.[0]?.retentionPolicy).toBe('ephemeral');
+    expect(listed.runs?.[0]?.retentionPolicy).toBe('resumable');
     expect(listed.runs?.[0]?.runClass).toBe('bounded');
     expect(listed.runs?.[0]?.ioMode).toBe('request_response');
     expect(listed.runs?.[0]?.permissionMode).toBe('read_only');
 
     const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
     expect(got.run?.runId).toBe(started.runId);
-    expect(got.run?.retentionPolicy).toBe('ephemeral');
+    expect(got.run?.retentionPolicy).toBe('resumable');
     expect(got.run?.runClass).toBe('bounded');
     expect(got.run?.ioMode).toBe('request_response');
     expect(got.run?.permissionMode).toBe('read_only');
@@ -438,7 +438,7 @@ describe('executionRuns session RPC handlers', () => {
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review.',
       permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
+      retentionPolicy: 'resumable',
       runClass: 'bounded',
       ioMode: 'request_response',
     });
@@ -548,7 +548,7 @@ describe('executionRuns session RPC handlers', () => {
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review.',
       permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
+      retentionPolicy: 'resumable',
       runClass: 'bounded',
       ioMode: 'request_response',
     });
@@ -559,6 +559,7 @@ describe('executionRuns session RPC handlers', () => {
       runId: started.runId,
       includeStructured: true,
     });
+    expect(got.run?.retentionPolicy).toBe('resumable');
     expect(got.run?.availableActionIds).toEqual(['review.triage', 'review.follow_up']);
     expect(got.structuredMeta?.kind).toBe('review_findings.v2');
     expect(got.structuredMeta?.payload?.runRef?.runId).toBe(started.runId);

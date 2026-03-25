@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -44,6 +44,7 @@ describe('registerMachineFileBrowserHandlers', () => {
     const root = createTempDirectory();
     mkdirSync(join(root, 'folder'));
     writeFileSync(join(root, 'notes.txt'), 'hello');
+    const resolvedRoot = realpathSync(root);
     const { handlers, registrar } = createRegistrar();
 
     registerMachineFileBrowserHandlers({
@@ -72,11 +73,11 @@ describe('registerMachineFileBrowserHandlers', () => {
 
     await expect(listDirectory({ path: root, includeFiles: false })).resolves.toEqual({
       ok: true,
-      path: root,
+      path: resolvedRoot,
       entries: [
         {
           name: 'folder',
-          path: join(root, 'folder'),
+          path: join(resolvedRoot, 'folder'),
           type: 'directory',
           size: expect.any(Number),
           modified: expect.any(Number),

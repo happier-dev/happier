@@ -14,7 +14,7 @@ import {
 } from '@happier-dev/protocol';
 export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 export type { SpawnSessionErrorCode } from '@happier-dev/protocol';
-export { isCodexBackendMode, resolveCanonicalCodexBackendMode } from './codexBackendMode';
+export { resolveCanonicalCodexBackendMode } from './codexBackendMode';
 import { registerCapabilitiesHandlers } from './capabilities';
 import { registerPreviewEnvHandler } from './previewEnv';
 import { registerBashHandler } from './bash';

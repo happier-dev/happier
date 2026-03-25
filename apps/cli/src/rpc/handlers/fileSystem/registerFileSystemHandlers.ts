@@ -6,6 +6,7 @@ import { registerDirectoryHandlers } from './directoryHandlers';
 import { registerPathMutationHandlers } from './pathMutationHandlers';
 import { registerSessionTransferRpcHandlers } from '@/transfers/rpc/registerSessionTransferRpcHandlers';
 import { resolveSessionRpcTransferMaxBytes } from '@/transfers/policy/sessionRpcTransferPolicy';
+import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 
 function normalizeAllowedDirectories(getDirectories?: () => ReadonlyArray<string>): string[] {
   const value = getDirectories?.() ?? [];
@@ -24,6 +25,10 @@ export function registerFileSystemHandlers(
 ): void {
   const getAdditionalAllowedReadDirs = opts?.getAdditionalAllowedReadDirs;
   const getAdditionalAllowedWriteDirs = opts?.getAdditionalAllowedWriteDirs;
+  const pathAllowanceRegistry = createTransferPathAllowanceRegistry({
+    onReadDirsChange: () => {},
+    onWriteDirsChange: () => {},
+  });
 
   registerReadFileHandler(rpcHandlerManager, {
     workingDirectory,
@@ -40,5 +45,8 @@ export function registerFileSystemHandlers(
     getAdditionalAllowedReadDirs,
     getAdditionalAllowedWriteDirs,
     sessionRpcTransferMaxBytes: resolveSessionRpcTransferMaxBytes(),
+    attachmentUpload: {
+      pathAllowanceRegistry,
+    },
   });
 }
