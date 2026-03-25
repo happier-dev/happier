@@ -13,6 +13,9 @@ const TRANSFER_CHUNK_DATA_KEY_BYTES = 32;
 const TRANSFER_CHUNK_NONCE_BYTES = 12;
 const TRANSFER_CHUNK_AUTH_TAG_BYTES = 16;
 const TRANSFER_CHUNK_BUNDLE_VERSION = 0;
+const TRANSFER_RECIPIENT_PUBLIC_KEY_CACHE_MAX_ENTRIES = 256;
+
+const recipientPublicKeyCache = new Map<string, Uint8Array>();
 
 type RandomBytesFn = (length: number) => Uint8Array;
 
@@ -51,10 +54,24 @@ function resolveBase64EncodedBytesUpperBound(base64: string): number {
 }
 
 export function parseTransferRecipientPublicKeyBase64(recipientPublicKeyBase64: string): Uint8Array {
-  const recipientPublicKey = Buffer.from(recipientPublicKeyBase64, 'base64');
+  const normalized = String(recipientPublicKeyBase64 ?? '').trim();
+  const cached = recipientPublicKeyCache.get(normalized);
+  if (cached) {
+    return cached;
+  }
+
+  const recipientPublicKey = Buffer.from(normalized, 'base64');
   if (recipientPublicKey.length !== BOX_BUNDLE_PUBLIC_KEY_BYTES) {
     throw new Error('Invalid transfer recipient public key');
   }
+
+  recipientPublicKeyCache.set(normalized, recipientPublicKey);
+  while (recipientPublicKeyCache.size > TRANSFER_RECIPIENT_PUBLIC_KEY_CACHE_MAX_ENTRIES) {
+    const oldestKey = recipientPublicKeyCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    recipientPublicKeyCache.delete(oldestKey);
+  }
+
   return recipientPublicKey;
 }
 
