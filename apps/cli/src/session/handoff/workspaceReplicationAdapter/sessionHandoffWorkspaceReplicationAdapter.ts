@@ -8,12 +8,16 @@ import type {
   TransferEndpointCandidate,
 } from '@happier-dev/protocol';
 
+import { relative, resolve, sep } from 'node:path';
+
 import { rewriteDirectPeerEndpointCandidatesForTransferId } from '@/machines/transfer/rewriteDirectPeerEndpointCandidatesForTransferId';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
-import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
 import type { ScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
-import { buildWorkspaceExportArtifactsWithBlobProviderFromSourceController } from '@/scm/sourceController/workspaceTransferResolution';
+import { buildWorkspaceExportArtifactsWithSourceController } from '@/scm/sourceController/workspaceTransferResolution';
 import { createWorkspaceReplicationEngine } from '@/workspaces/replication/createWorkspaceReplicationEngine';
+import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replication/baseline/workspaceReplicationBaselineStore';
+import { createWorkspaceReplicationSourceOfferFromManifest } from '@/workspaces/replication/transport/createWorkspaceReplicationSourceOffer';
+import { assertWorkspaceReplicationDigestsAllowedByManifest } from '@/workspaces/replication/transport/workspaceReplicationAllowedDigests';
 import { assertSafeWorkspaceReplicationPackId } from '@/workspaces/replication/transport/workspaceReplicationPackId';
 import {
   createWorkspaceReplicationTransfers,
@@ -63,6 +67,29 @@ function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
+function resolveSafeWorkspaceFilePath(params: Readonly<{
+  workspaceRoot: string;
+  relativePath: string;
+}>): string | null {
+  const rawRelativePath = params.relativePath.trim();
+  if (!rawRelativePath) {
+    return null;
+  }
+  if (rawRelativePath.includes('\0')) {
+    return null;
+  }
+  const absolutePath = resolve(params.workspaceRoot, rawRelativePath);
+  const rel = relative(params.workspaceRoot, absolutePath);
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`)) {
+    return null;
+  }
+  // Fail closed: disallow Windows-style absolute paths and any backslash segments.
+  if (rel.startsWith('\\') || rel.includes('\\')) {
+    return null;
+  }
+  return absolutePath;
+}
+
 const TERMINAL_WORKSPACE_REPLICATION_JOB_STATUSES = new Set<string>([
   'completed',
   'aborted',
@@ -98,21 +125,18 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
   workspaceTransfer: SessionHandoffWorkspaceTransfer;
 }>): Promise<Readonly<{
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
-  workspaceBlobProvider?: WorkspaceExportBlobProvider;
 }>> {
-  const workspaceExport = await buildWorkspaceExportArtifactsWithBlobProviderFromSourceController({
-    activeServerDir: input.activeServerDir,
+  const workspaceExportArtifacts = await buildWorkspaceExportArtifactsWithSourceController({
     sourcePath: input.sourceRootPath,
     workspaceTransfer: input.workspaceTransfer,
   });
   const workspaceReplicationMetadata = createSessionHandoffWorkspaceReplicationMetadata({
     sourceRootPath: input.sourceRootPath,
-    workspaceExportArtifacts: workspaceExport.workspaceExportArtifacts,
+    workspaceExportArtifacts,
   });
 
   return {
     ...(workspaceReplicationMetadata ? { workspaceReplicationMetadata } : {}),
-    ...(workspaceExport.blobProvider ? { workspaceBlobProvider: workspaceExport.blobProvider } : {}),
   };
 }
 
@@ -124,7 +148,6 @@ export async function resolveSessionHandoffWorkspaceReplicationSourceOffer(input
   targetMachineId: string;
   targetPath: string;
   metadata?: SessionHandoffWorkspaceReplicationMetadata;
-  persistedBlobProvider?: WorkspaceExportBlobProvider;
   machineTransferChannel?: MachineTransferChannel;
   transfers: WorkspaceReplicationTransfers;
   blobPackTargetBytes: number;
@@ -195,7 +218,6 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
   metadata?: SessionHandoffWorkspaceReplicationMetadata;
   directPeerManifestEndpointCandidates?: readonly TransferEndpointCandidate[];
-  persistedBlobProvider?: WorkspaceExportBlobProvider;
   machineTransferChannel?: MachineTransferChannel;
   transfers: WorkspaceReplicationTransfers;
   blobPackTargetBytes: number;
@@ -244,7 +266,6 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
         targetMachineId: input.targetMachineId,
         targetPath: input.targetPath,
         metadata: input.metadata,
-        persistedBlobProvider: input.persistedBlobProvider,
         machineTransferChannel: input.machineTransferChannel,
         transfers: input.transfers,
         blobPackTargetBytes: input.blobPackTargetBytes,
@@ -382,7 +403,6 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
 }>): Promise<Readonly<{
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
   handoffMetadataV2?: SessionHandoffMetadataV2;
-  workspaceBlobProvider?: WorkspaceExportBlobProvider;
 }>> {
   const workspaceTransferEnabled = input.workspaceTransfer?.enabled === true;
   const workspaceReplicationState = workspaceTransferEnabled
@@ -394,7 +414,6 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
     })
     : null;
   const workspaceReplicationMetadata = workspaceReplicationState?.workspaceReplicationMetadata;
-  const workspaceBlobProvider = workspaceReplicationState?.workspaceBlobProvider;
 
   const providerBundleTransferPublication = input.providerBundleTransferPublication
     ? {
@@ -461,7 +480,6 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
   return {
     ...(workspaceReplicationMetadata ? { workspaceReplicationMetadata } : {}),
     ...(handoffMetadataV2 ? { handoffMetadataV2 } : {}),
-    ...(workspaceBlobProvider ? { workspaceBlobProvider } : {}),
   };
 }
 
@@ -471,6 +489,25 @@ export function createSessionHandoffWorkspaceReplicationAdapter(): Readonly<{
   resolveSourceOffer: typeof resolveSessionHandoffWorkspaceReplicationSourceOffer;
   prepareTargetWorkspace: typeof prepareSessionHandoffWorkspaceTarget;
   prepareSourceWorkspaceTransfer: typeof prepareSessionHandoffSourceWorkspaceTransfer;
+  createBlobPackPayloadSourceFromManifest: (input: Readonly<{
+    activeServerDir: string;
+    packId: string;
+    digests: readonly string[];
+    sourceRootPath: string;
+    manifest: WorkspaceManifest;
+  }>) => Promise<TransferPayloadSource>;
+  persistBaselineFromManifest: (input: Readonly<{
+    activeServerDir: string;
+    scope: Readonly<{
+      sourceMachineId: string;
+      sourceWorkspaceRoot: string;
+      targetMachineId: string;
+      targetWorkspaceRoot: string;
+      mode: 'one_way_safe';
+    }>;
+    manifest: WorkspaceManifest;
+    savedAtMs: number;
+  }>) => Promise<void>;
   readWorkspaceReplicationJobStatus: (input: Readonly<{
     activeServerDir: string;
     localMachineId?: string;
@@ -488,6 +525,36 @@ export function createSessionHandoffWorkspaceReplicationAdapter(): Readonly<{
     resolveSourceOffer: resolveSessionHandoffWorkspaceReplicationSourceOffer,
     prepareTargetWorkspace: prepareSessionHandoffWorkspaceTarget,
     prepareSourceWorkspaceTransfer: prepareSessionHandoffSourceWorkspaceTransfer,
+    createBlobPackPayloadSourceFromManifest: async (input) => {
+      assertWorkspaceReplicationDigestsAllowedByManifest(input.manifest, input.digests);
+      return await createSessionHandoffWorkspaceReplicationBlobPackPayloadSource({
+        activeServerDir: input.activeServerDir,
+        packId: input.packId,
+        digests: input.digests,
+        sourceRootPath: input.sourceRootPath,
+        manifest: input.manifest,
+      });
+    },
+    persistBaselineFromManifest: async (input) => {
+      const offer = await createWorkspaceReplicationSourceOfferFromManifest({
+        activeServerDir: input.activeServerDir,
+        source: { machineId: input.scope.sourceMachineId, rootPath: input.scope.sourceWorkspaceRoot },
+        target: { machineId: input.scope.targetMachineId, rootPath: input.scope.targetWorkspaceRoot },
+        mode: input.scope.mode,
+        manifest: input.manifest,
+      });
+      const baselineStore = createWorkspaceReplicationBaselineStore({
+        activeServerDir: input.activeServerDir,
+      });
+      await baselineStore.save({
+        scope: input.scope,
+        baseline: {
+          manifestFingerprint: offer.sourceFingerprint,
+          manifest: offer.manifest,
+          savedAtMs: input.savedAtMs,
+        },
+      });
+    },
     readWorkspaceReplicationJobStatus: async (input) => {
       const engine = createWorkspaceReplicationEngine({
         activeServerDir: input.activeServerDir,

@@ -100,11 +100,12 @@ describe('sessionHandoffWorkspaceReplicationServerRouted', () => {
     );
 
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-seed-cas-'));
-    const blobRoot = await mkdtemp(join(tmpdir(), 'happier-handoff-seed-cas-blobs-'));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'happier-handoff-seed-cas-blobs-'));
     try {
       const blobContent = Buffer.from('hello\n', 'utf8');
       const digest = `sha256:${createHash('sha256').update(blobContent).digest('hex')}`;
-      const blobPath = join(blobRoot, 'blob.txt');
+      const blobRelativePath = 'blob.txt';
+      const blobPath = join(workspaceRoot, blobRelativePath);
       await writeFile(blobPath, blobContent);
 
       const casStore = createWorkspaceReplicationCasStore({ activeServerDir });
@@ -114,8 +115,18 @@ describe('sessionHandoffWorkspaceReplicationServerRouted', () => {
         activeServerDir,
         packId: 'pack-1',
         digests: [digest],
-        blobProvider: {
-          getBlobFilePath: (candidate) => (candidate === digest ? blobPath : null),
+        sourceRootPath: workspaceRoot,
+        manifest: {
+          entries: [
+            {
+              kind: 'file',
+              relativePath: blobRelativePath,
+              digest,
+              sizeBytes: blobContent.byteLength,
+              executable: false,
+            },
+          ],
+          fingerprint: 'fingerprint',
         },
       });
 
@@ -126,7 +137,7 @@ describe('sessionHandoffWorkspaceReplicationServerRouted', () => {
         await disposeTransferPayloadSource(payloadSource);
       }
     } finally {
-      await rm(blobRoot, { recursive: true, force: true });
+      await rm(workspaceRoot, { recursive: true, force: true });
       await rm(activeServerDir, { recursive: true, force: true });
     }
   });
@@ -142,7 +153,7 @@ describe('sessionHandoffWorkspaceReplicationServerRouted', () => {
         activeServerDir,
         packId: 'pack-1',
         digests: ['sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
-      })).rejects.toThrow('blobProvider');
+      })).rejects.toThrow('sourceRootPath');
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }

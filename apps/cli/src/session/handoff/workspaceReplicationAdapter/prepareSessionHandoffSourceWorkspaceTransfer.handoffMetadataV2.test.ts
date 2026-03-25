@@ -98,6 +98,35 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
     }
   });
 
+  it('fails closed when the workspace transfer source root is missing', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-source-transfer-'));
+    const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-handoff-source-root-missing-'));
+    try {
+      await rm(sourceRootPath, { recursive: true, force: true });
+
+      const workspaceTransfer: SessionHandoffWorkspaceTransfer = {
+        enabled: true,
+        strategy: 'transfer_snapshot',
+        conflictPolicy: 'replace_existing',
+        includeIgnoredMode: 'exclude',
+        ignoredIncludeGlobs: [],
+      };
+
+      await expect(prepareSessionHandoffSourceWorkspaceTransfer({
+        handoffId: 'handoff_1',
+        activeServerDir,
+        negotiatedTransportStrategy: 'server_routed_stream',
+        workspaceTransfer,
+        sourceRootPath,
+      })).rejects.toMatchObject({
+        code: 'source_path_unreadable',
+        sourcePath: sourceRootPath,
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('returns no handoffMetadataV2 when workspace transfer is disabled', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-source-transfer-'));
     try {

@@ -14,6 +14,12 @@ const FROZEN_ENGINE_SURFACE_MODULE_SUFFIXES = [
   'workspaces/replication/jobs/workspaceReplicationJobStore',
   'workspaces/replication/state/workspaceReplicationGc',
   'workspaces/replication/state/workspaceReplicationSchemaVersion',
+  // Prevent handoff RPC from reaching into replication internals directly; keep those behind the adapter seam.
+  'workspaces/replication/cas/workspaceReplicationCasStore',
+  'workspaces/replication/baseline/workspaceReplicationBaselineStore',
+  'workspaces/replication/transport/createWorkspaceReplicationSourceOffer',
+  'workspaces/replication/transport/workspaceReplicationAllowedDigests',
+  'workspaces/replication/transport/workspaceReplicationPackId',
 ] as const;
 
 function assertDoesNotImportModule(source: string, moduleSuffix: string, filePath: string): void {

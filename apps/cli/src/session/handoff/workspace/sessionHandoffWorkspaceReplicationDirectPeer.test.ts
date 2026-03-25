@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
-import type { DirectPeerOnDemandTransferScope } from '@/machines/transfer/directPeerTransport';
 import { disposeTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 
 function createSha256DigestForPayload(payload: Buffer): string {
@@ -31,9 +30,6 @@ describe('session handoff direct-peer workspace replication publication', () => 
 	    const { buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId } = await import(
 	      './sessionHandoffWorkspaceReplicationDirectPeer'
 	    );
-	    const { publishSessionHandoffWorkspaceReplicationDirectPeerTransfers } = await import(
-	      './sessionHandoffWorkspaceReplicationDirectPeer'
-	    );
 	    const { createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope } = await import(
 	      './sessionHandoffWorkspaceReplicationDirectPeer'
 	    );
@@ -49,78 +45,31 @@ describe('session handoff direct-peer workspace replication publication', () => 
 
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-publication-'));
     try {
-      const blobPathsByDigest = new Map<string, string>();
-      const blobProviderRoot = join(activeServerDir, 'blob-provider');
-      await mkdir(blobProviderRoot, { recursive: true });
+      const workspaceRoot = join(activeServerDir, 'workspace-root');
+      await mkdir(join(workspaceRoot, 'files'), { recursive: true });
       const entries: WorkspaceManifest['entries'] = [];
       for (let i = 0; i < 257; i++) {
-        const filePath = join(blobProviderRoot, `${i.toString(16).padStart(4, '0')}.bin`);
+        const relativePath = `files/file-${i}.txt`;
+        const filePath = join(workspaceRoot, relativePath);
         const payload = Buffer.from(`payload-${i}`, 'utf8');
         await writeFile(filePath, payload);
         const digest = createSha256DigestForPayload(payload);
-        blobPathsByDigest.set(digest, filePath);
         entries.push({
           kind: 'file',
-          relativePath: `files/file-${i}.txt`,
+          relativePath,
           digest,
           sizeBytes: payload.byteLength,
           executable: false,
         });
       }
 
-	      const manifest: WorkspaceManifest = { entries };
-
-	      {
-	        let capturedOnDemandScope: DirectPeerOnDemandTransferScope | undefined;
-	        const manifestTransferId = buildSessionHandoffWorkspaceManifestTransferId({ handoffId: 'handoff-1' });
-
-	        const publication = await publishSessionHandoffWorkspaceReplicationDirectPeerTransfers({
-	          handoffId: 'handoff-1',
-	          activeServerDir,
-	          manifest,
-	          directPeerTransfer: {
-	            publishTransfer: ({ transferId, payloadSource, onDemandScope }) => {
-	              expect(transferId).toBe(manifestTransferId);
-	              // Token carrier should be tiny/in-memory; the manifest file is served on-demand.
-	              expect(payloadSource?.kind).toBe('buffer');
-	              capturedOnDemandScope = onDemandScope;
-	              return [
-	                {
-	                  kind: 'http',
-	                  url: 'http://example.invalid/machine-transfers/direct/example',
-	                  authorizationToken: 'token',
-	                  expiresAt: Date.now() + 10_000,
-	                },
-	              ];
-	            },
-	          },
-	          blobProvider: {
-	            getBlobFilePath: (digest: string) => blobPathsByDigest.get(digest) ?? null,
-	          },
-	        });
-
-	        expect(publication.manifestTransferPublication?.transferId).toBe(manifestTransferId);
-	        expect(publication.payloadSources).toHaveLength(1);
-	        expect(publication.payloadSources[0]?.transferId).toBe(manifestTransferId);
-	        expect(publication.payloadSources[0]?.payloadSource.kind).toBe('buffer');
-
-	        const scope = capturedOnDemandScope;
-	        expect(scope).toBeDefined();
-	        const resolvedManifest = await scope!.resolvePayloadSourceOnOpen({
-	          transferId: manifestTransferId,
-	          requestBody: {},
-	        });
-	        expect(resolvedManifest).toMatchObject({ kind: 'file' });
-	        await disposeTransferPayloadSource(resolvedManifest as any);
-	      }
+      const manifest: WorkspaceManifest = { entries };
 
       const onDemandScope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
         handoffId: 'handoff-1',
         activeServerDir,
+        sourceRootPath: workspaceRoot,
         manifest,
-        blobProvider: {
-          getBlobFilePath: (digest: string) => blobPathsByDigest.get(digest) ?? null,
-        },
       });
 
       const packDigests = buildWorkspaceReplicationBlobPacks({
@@ -173,7 +122,7 @@ describe('session handoff direct-peer workspace replication publication', () => 
     const { createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope } = await import(
       './sessionHandoffWorkspaceReplicationDirectPeer'
     );
-    const { buildWorkspaceReplicationBlobPacks } = await import(
+    const { countWorkspaceReplicationBlobPacks } = await import(
       '@/workspaces/replication/transport/buildWorkspaceReplicationBlobPacks'
     );
     const { configuration } = await import('@/configuration');
@@ -195,7 +144,7 @@ describe('session handoff direct-peer workspace replication publication', () => 
 
       const smallDigestCount = 12;
       const smallManifest = buildManifest(smallDigestCount);
-      const smallExpectedPackCount = buildWorkspaceReplicationBlobPacks({
+      const smallExpectedPackCount = countWorkspaceReplicationBlobPacks({
         blobs: smallManifest.entries.filter(
           (entry): entry is Extract<typeof entry, { kind: 'file' }> => entry.kind === 'file',
         ).map((entry) => ({
@@ -205,17 +154,18 @@ describe('session handoff direct-peer workspace replication publication', () => 
         blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
         blobPackMaxBlobs: configuration.workspaceReplicationBlobPackMaxBlobs,
         blobPackMaxSingleBlobBytes: configuration.workspaceReplicationBlobPackMaxSingleBlobBytes,
-      }).length;
+      });
       const smallScope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
         handoffId: 'handoff-small-1',
         activeServerDir,
+        sourceRootPath: activeServerDir,
         manifest: smallManifest,
       });
       expect(smallScope.maxResolvedTransfers).toBe(smallExpectedPackCount + 1);
 
       const largeDigestCount = 12_345;
       const largeManifest = buildManifest(largeDigestCount);
-      const largeExpectedPackCount = buildWorkspaceReplicationBlobPacks({
+      const largeExpectedPackCount = countWorkspaceReplicationBlobPacks({
         blobs: largeManifest.entries.filter(
           (entry): entry is Extract<typeof entry, { kind: 'file' }> => entry.kind === 'file',
         ).map((entry) => ({
@@ -225,11 +175,12 @@ describe('session handoff direct-peer workspace replication publication', () => 
         blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
         blobPackMaxBlobs: configuration.workspaceReplicationBlobPackMaxBlobs,
         blobPackMaxSingleBlobBytes: configuration.workspaceReplicationBlobPackMaxSingleBlobBytes,
-      }).length;
+      });
       expect(largeExpectedPackCount).toBeLessThan(largeDigestCount);
       const largeScope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
         handoffId: 'handoff-large-1',
         activeServerDir,
+        sourceRootPath: activeServerDir,
         manifest: largeManifest,
       });
       expect(largeScope.maxResolvedTransfers).toBe(largeExpectedPackCount + 1);
@@ -247,7 +198,7 @@ describe('session handoff direct-peer workspace replication publication', () => 
     const { createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope } = await import(
       './sessionHandoffWorkspaceReplicationDirectPeer'
     );
-    const { buildWorkspaceReplicationBlobPacks } = await import(
+    const { countWorkspaceReplicationBlobPacks } = await import(
       '@/workspaces/replication/transport/buildWorkspaceReplicationBlobPacks'
     );
 
@@ -297,7 +248,7 @@ describe('session handoff direct-peer workspace replication publication', () => 
         ],
       };
 
-      const uniquePackCount = buildWorkspaceReplicationBlobPacks({
+      const uniquePackCount = countWorkspaceReplicationBlobPacks({
         blobs: [
           { digest: digestA, sizeBytes: 1 },
           { digest: digestB, sizeBytes: 1 },
@@ -306,11 +257,12 @@ describe('session handoff direct-peer workspace replication publication', () => 
         blobPackTargetBytes: 1024 * 1024,
         blobPackMaxBlobs: 2,
         blobPackMaxSingleBlobBytes: 1024 * 1024,
-      }).length;
+      });
 
       const scope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
         handoffId: 'handoff-dedup-budget-1',
         activeServerDir,
+        sourceRootPath: activeServerDir,
         manifest,
       });
 
@@ -353,6 +305,7 @@ describe('session handoff direct-peer workspace replication publication', () => 
       const scope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
         handoffId: 'handoff-pack-outside-manifest-1',
         activeServerDir,
+        sourceRootPath: activeServerDir,
         manifest,
       });
 
@@ -424,6 +377,7 @@ describe('session handoff direct-peer workspace replication publication', () => 
       const scope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
         handoffId: 'handoff-pack-oversized-1',
         activeServerDir,
+        sourceRootPath: activeServerDir,
         manifest,
       });
 
@@ -461,8 +415,8 @@ describe('session handoff direct-peer workspace replication publication', () => 
 
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-pack-mismatch-'));
     try {
-      const blobProviderRoot = join(activeServerDir, 'blob-provider');
-      await mkdir(blobProviderRoot, { recursive: true });
+      const workspaceRoot = join(activeServerDir, 'workspace');
+      await mkdir(join(workspaceRoot, 'files'), { recursive: true });
       const payloadA = Buffer.from('payload-A', 'utf8');
       const payloadB = Buffer.from('payload-B', 'utf8');
       const payloadC = Buffer.from('payload-C', 'utf8');
@@ -471,20 +425,14 @@ describe('session handoff direct-peer workspace replication publication', () => 
       const digestB = createSha256DigestForPayload(payloadB);
       const digestC = createSha256DigestForPayload(payloadC);
       const digestD = createSha256DigestForPayload(payloadD);
-      const pathA = join(blobProviderRoot, 'a.bin');
-      const pathB = join(blobProviderRoot, 'b.bin');
-      const pathC = join(blobProviderRoot, 'c.bin');
-      const pathD = join(blobProviderRoot, 'd.bin');
+      const pathA = join(workspaceRoot, 'files', 'a.bin');
+      const pathB = join(workspaceRoot, 'files', 'b.bin');
+      const pathC = join(workspaceRoot, 'files', 'c.bin');
+      const pathD = join(workspaceRoot, 'files', 'd.bin');
       await writeFile(pathA, payloadA);
       await writeFile(pathB, payloadB);
       await writeFile(pathC, payloadC);
       await writeFile(pathD, payloadD);
-      const blobPathsByDigest = new Map<string, string>([
-        [digestA, pathA],
-        [digestB, pathB],
-        [digestC, pathC],
-        [digestD, pathD],
-      ]);
 
       const manifest: WorkspaceManifest = {
         entries: [
@@ -522,10 +470,8 @@ describe('session handoff direct-peer workspace replication publication', () => 
       const scope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
         handoffId: 'handoff-pack-mismatch-1',
         activeServerDir,
+        sourceRootPath: workspaceRoot,
         manifest,
-        blobProvider: {
-          getBlobFilePath: (digest: string) => blobPathsByDigest.get(digest) ?? null,
-        },
       });
 
       const subsetDigests = [digestB, digestC].sort((left, right) => left.localeCompare(right));
@@ -558,7 +504,6 @@ describe('session handoff direct-peer workspace replication publication', () => 
       });
       expect(resolved).toMatchObject({ kind: 'file' });
       await disposeTransferPayloadSource(resolved as any);
-      await rm(blobProviderRoot, { recursive: true, force: true });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }
@@ -578,19 +523,16 @@ describe('session handoff direct-peer workspace replication publication', () => 
 
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-digests-type-'));
     try {
-      const blobPathsByDigest = new Map<string, string>();
-      const blobProviderRoot = join(activeServerDir, 'blob-provider');
-      await mkdir(blobProviderRoot, { recursive: true });
+      const workspaceRoot = join(activeServerDir, 'workspace');
+      await mkdir(join(workspaceRoot, 'files'), { recursive: true });
       const payloadA = Buffer.from('payload-A', 'utf8');
       const payloadB = Buffer.from('payload-B', 'utf8');
       const digestA = createSha256DigestForPayload(payloadA);
       const digestB = createSha256DigestForPayload(payloadB);
-      const pathA = join(blobProviderRoot, 'a.bin');
-      const pathB = join(blobProviderRoot, 'b.bin');
+      const pathA = join(workspaceRoot, 'files', 'a.bin');
+      const pathB = join(workspaceRoot, 'files', 'b.bin');
       await writeFile(pathA, payloadA);
       await writeFile(pathB, payloadB);
-      blobPathsByDigest.set(digestA, pathA);
-      blobPathsByDigest.set(digestB, pathB);
 
       const manifest: WorkspaceManifest = {
         entries: [
@@ -614,10 +556,8 @@ describe('session handoff direct-peer workspace replication publication', () => 
       const onDemandScope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
         handoffId: 'handoff-digest-types-1',
         activeServerDir,
+        sourceRootPath: workspaceRoot,
         manifest,
-        blobProvider: {
-          getBlobFilePath: (digest: string) => blobPathsByDigest.get(digest) ?? null,
-        },
       });
 
       const digests = [digestA, digestB].sort((left, right) => left.localeCompare(right));
