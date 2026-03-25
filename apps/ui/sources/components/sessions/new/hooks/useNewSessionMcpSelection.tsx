@@ -38,6 +38,10 @@ export function useNewSessionMcpSelection(params: Readonly<{
         setMcpPreviewUnsupported(false);
     }, [params.agentType, params.selectedMachineId, params.selectedPath, params.targetServerId]);
 
+    const isUnsupportedPreviewErrorMessage = React.useCallback((message: string) => {
+        return message === 'RPC method not available' || message === 'Method not found';
+    }, []);
+
     const refreshPreview = React.useCallback(async () => {
         if (!mcpServersEnabled || !params.selectedMachineId || params.selectedPath.trim().length === 0) {
             setMcpPreview(null);
@@ -63,8 +67,14 @@ export function useNewSessionMcpSelection(params: Readonly<{
                 setMcpPreview(response);
                 setMcpPreviewError(null);
             } else {
-                setMcpPreview(null);
-                setMcpPreviewError(response.error);
+                if (isUnsupportedPreviewErrorMessage(response.error)) {
+                    setMcpPreview(null);
+                    setMcpPreviewError(null);
+                    setMcpPreviewUnsupported(true);
+                } else {
+                    setMcpPreview(null);
+                    setMcpPreviewError(response.error);
+                }
             }
         } catch (error) {
             if (
@@ -89,6 +99,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
         params.selectedMachineId,
         params.selectedPath,
         params.targetServerId,
+        isUnsupportedPreviewErrorMessage,
     ]);
 
     React.useEffect(() => {
@@ -121,8 +132,14 @@ export function useNewSessionMcpSelection(params: Readonly<{
                     setMcpPreview(response);
                     setMcpPreviewError(null);
                 } else {
-                    setMcpPreview(null);
-                    setMcpPreviewError(response.error);
+                    if (isUnsupportedPreviewErrorMessage(response.error)) {
+                        setMcpPreview(null);
+                        setMcpPreviewError(null);
+                        setMcpPreviewUnsupported(true);
+                    } else {
+                        setMcpPreview(null);
+                        setMcpPreviewError(response.error);
+                    }
                 }
             })
             .catch((error) => {
@@ -156,6 +173,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
         params.selectedPath,
         params.targetServerId,
         mcpPreviewUnsupported,
+        isUnsupportedPreviewErrorMessage,
     ]);
 
     const contentProps = React.useMemo(() => ({
