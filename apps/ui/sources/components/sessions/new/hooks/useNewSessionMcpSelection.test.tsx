@@ -309,4 +309,47 @@ describe('useNewSessionMcpSelection', () => {
         expect(contentNode.props.error).toBeNull();
         expect(contentNode.props.previewUnsupported).toBe(true);
     });
+
+    it('treats ok:false RPC method-not-available preview responses as unsupported instead of surfacing them as a blocking error', async () => {
+        previewSpy.mockResolvedValueOnce({ ok: false as const, errorCode: 'internal_error', error: 'RPC method not available' });
+
+        const { useNewSessionMcpSelection } = await import('./useNewSessionMcpSelection');
+
+        let chip: any = null;
+
+        function Probe() {
+            const [selection, setSelection] = React.useState(() => SessionMcpSelectionV1Schema.parse({}));
+            const result = useNewSessionMcpSelection({
+                selectedMachineId: 'machine-1',
+                selectedPath: '/workspace',
+                selectedMachineName: 'Machine One',
+                agentType: 'codex',
+                mcpSelection: selection,
+                setMcpSelection: setSelection,
+                onOpenSettings: vi.fn(),
+            });
+            chip = result.mcpChip;
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(chip).toBeTruthy();
+        const renderedContent = chip!.collapsedContentPopover.renderContent({
+            requestClose: () => {},
+            maxHeight: 420,
+        });
+        expect(React.isValidElement(renderedContent)).toBe(true);
+
+        const contentNode = renderedContent as React.ReactElement<{
+            preview: unknown;
+            error: unknown;
+            previewUnsupported?: boolean;
+        }>;
+
+        expect(contentNode.props.preview).toBeNull();
+        expect(contentNode.props.error).toBeNull();
+        expect(contentNode.props.previewUnsupported).toBe(true);
+    });
 });

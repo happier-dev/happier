@@ -32,14 +32,6 @@ vi.mock('./AgentInputChipPickerDetailPane', () => ({
         }, null),
 }));
 
-vi.mock('./AgentInputChipPickerOptionSelector', () => ({
-    AgentInputChipPickerOptionSelector: (props: any) =>
-        React.createElement('AgentInputChipPickerOptionSelector', {
-            ...props,
-            testID: 'agent-input-chip-picker.option-rail',
-        }, null),
-}));
-
 describe('AgentInputChipPickerPanel', () => {
     it('does not render inner scroll views in simple mode', async () => {
         const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
@@ -79,5 +71,60 @@ describe('AgentInputChipPickerPanel', () => {
         expect(screen.findByTestId('agent-input-chip-picker.title')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.detail-pane')).toBeTruthy();
+    });
+
+    it('closes by default when selecting an immediate option in detailed mode', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+        const onRequestClose = vi.fn();
+        const onSelect = vi.fn();
+        const onSelectImmediate = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title="Pick"
+            options={[
+                { id: 'one', label: 'One', detailDescription: 'Primary checkout' } as any,
+                {
+                    id: 'two',
+                    label: 'Two',
+                    detailDescription: 'Feature checkout',
+                    onSelectImmediate,
+                } as any,
+            ]}
+            selectedOptionId="one"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
+
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
+        expect(onSelectImmediate).toHaveBeenCalledTimes(1);
+        expect(onSelect).not.toHaveBeenCalled();
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the popover open when immediate selection opts out of auto-close', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+        const onRequestClose = vi.fn();
+        const onSelectImmediate = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title="Pick"
+            options={[
+                { id: 'one', label: 'One', detailDescription: 'Primary checkout' } as any,
+                {
+                    id: 'two',
+                    label: 'Two',
+                    detailDescription: 'Feature checkout',
+                    closeOnSelectImmediate: false,
+                    onSelectImmediate,
+                } as any,
+            ]}
+            selectedOptionId="one"
+            onSelect={() => {}}
+            onRequestClose={onRequestClose}
+        />);
+
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
+        expect(onSelectImmediate).toHaveBeenCalledTimes(1);
+        expect(onRequestClose).not.toHaveBeenCalled();
     });
 });
