@@ -109,7 +109,9 @@ export class ApiSessionClient extends EventEmitter {
     private readonly pendingMaterializedLocalIds = new Set<string>();
     private readonly committedLocalIdsAwaitingEcho = new Set<string>();
     private readonly pendingQueueMaterializedLocalIds = new Set<string>();
+    private readonly agentQueueEchoSuppressedLocalIds = new Set<string>();
     private readonly committedLocalIdCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    private readonly agentQueueEchoSuppressedLocalIdCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private pendingWakeSeq = 0;
     private readonly pendingCommitRetryAttemptsByLocalId = new Map<string, number>();
     private userSocketDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -596,8 +598,27 @@ export class ApiSessionClient extends EventEmitter {
             || this.committedLocalIdsAwaitingEcho.has(localId);
     }
 
+    private hasAgentQueueEchoSuppressedLocalId(localId: string): boolean {
+        return this.agentQueueEchoSuppressedLocalIds.has(localId);
+    }
+
     private hasPendingQueueMaterializedLocalId(localId: string): boolean {
         return this.pendingQueueMaterializedLocalIds.has(localId);
+    }
+
+    private markAgentQueueEchoSuppressedLocalId(localId: string): void {
+        if (!localId) return;
+        this.agentQueueEchoSuppressedLocalIds.add(localId);
+        const existingTimer = this.agentQueueEchoSuppressedLocalIdCleanupTimers.get(localId) ?? null;
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+        }
+        const timer = setTimeout(() => {
+            this.agentQueueEchoSuppressedLocalIdCleanupTimers.delete(localId);
+            this.agentQueueEchoSuppressedLocalIds.delete(localId);
+        }, configuration.transcriptRecoveryMaxWaitMs);
+        timer.unref?.();
+        this.agentQueueEchoSuppressedLocalIdCleanupTimers.set(localId, timer);
     }
 
     private markCommittedLocalIdAwaitingEcho(localId: string): void {
@@ -660,6 +681,8 @@ export class ApiSessionClient extends EventEmitter {
                 lastObservedMessageSeq: this.lastObservedMessageSeq,
                 lastObservedUserMessageSeq: this.lastObservedUserMessageSeq,
                 hasSelfEchoSuppressedLocalId: (localId) => this.hasSelfEchoSuppressedLocalId(localId),
+                hasAgentQueueEchoSuppressedLocalId: (localId) => this.hasAgentQueueEchoSuppressedLocalId(localId),
+                markAgentQueueEchoSuppressedLocalId: (localId) => this.markAgentQueueEchoSuppressedLocalId(localId),
                 hasPendingQueueMaterializedLocalId: (localId) => this.hasPendingQueueMaterializedLocalId(localId),
                 deleteMaterializedLocalId: (localId) => this.deleteMaterializedLocalId(localId),
                 pendingMessageCallback: this.pendingMessageCallback,
@@ -1629,6 +1652,7 @@ export class ApiSessionClient extends EventEmitter {
             meta: params.meta && typeof params.meta === 'object' ? params.meta : {},
         };
 
+        this.markAgentQueueEchoSuppressedLocalId(localId);
         if (this.pendingMessageCallback) {
             this.pendingMessageCallback(message);
         } else {
@@ -1895,11 +1919,16 @@ export class ApiSessionClient extends EventEmitter {
         this.pendingMaterializedLocalIds.clear();
         this.committedLocalIdsAwaitingEcho.clear();
         this.pendingQueueMaterializedLocalIds.clear();
+        this.agentQueueEchoSuppressedLocalIds.clear();
         this.queuedDisconnectedSessionMessages.clear();
         for (const timer of this.committedLocalIdCleanupTimers.values()) {
             clearTimeout(timer);
         }
         this.committedLocalIdCleanupTimers.clear();
+        for (const timer of this.agentQueueEchoSuppressedLocalIdCleanupTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.agentQueueEchoSuppressedLocalIdCleanupTimers.clear();
         this.pendingCommitRetryAttemptsByLocalId.clear();
         try {
             this.userSocket.close();

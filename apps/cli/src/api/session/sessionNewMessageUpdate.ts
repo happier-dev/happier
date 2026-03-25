@@ -14,6 +14,8 @@ export function handleSessionNewMessageUpdate(params: {
     lastObservedMessageSeq: number;
     lastObservedUserMessageSeq: number;
     hasSelfEchoSuppressedLocalId: (localId: string) => boolean;
+    hasAgentQueueEchoSuppressedLocalId: (localId: string) => boolean;
+    markAgentQueueEchoSuppressedLocalId: (localId: string) => void;
     hasPendingQueueMaterializedLocalId: (localId: string) => boolean;
     deleteMaterializedLocalId: (localId: string) => void;
     pendingMessageCallback: ((message: UserMessage) => void) | null;
@@ -73,6 +75,7 @@ export function handleSessionNewMessageUpdate(params: {
 
     const localId = params.update.body.message.localId ?? null;
     const isSelfEchoSuppressedLocalId = Boolean(localId && params.hasSelfEchoSuppressedLocalId(localId));
+    const isAgentQueueEchoSuppressedLocalId = Boolean(localId && params.hasAgentQueueEchoSuppressedLocalId(localId));
     const isPendingQueueMaterializedLocalId = Boolean(localId && params.hasPendingQueueMaterializedLocalId(localId));
     if (localId && (isSelfEchoSuppressedLocalId || isPendingQueueMaterializedLocalId)) {
         // We observed the broadcast for a message we materialized; cancel any recovery path.
@@ -120,12 +123,15 @@ export function handleSessionNewMessageUpdate(params: {
         const sentFrom = userResult.data.meta?.sentFrom;
         const source = userResult.data.meta?.source;
         const shouldDeliverToAgentQueue =
-            !isSelfEchoSuppressedLocalId && (params.shouldDeliverUserMessageToAgentQueue?.(userResult.data, params.update) ?? true);
+            !isAgentQueueEchoSuppressedLocalId && (params.shouldDeliverUserMessageToAgentQueue?.(userResult.data, params.update) ?? true);
         if (shouldDeliverToAgentQueue) {
             if (params.pendingMessageCallback) {
                 params.pendingMessageCallback(userResult.data);
             } else {
                 params.pendingMessages.push(userResult.data);
+            }
+            if (localId) {
+                params.markAgentQueueEchoSuppressedLocalId(localId);
             }
         } else {
             params.debug('[SOCKET] [UPDATE] Skipped user-message delivery to agent queue', {
@@ -133,6 +139,7 @@ export function handleSessionNewMessageUpdate(params: {
                 sentFrom: sentFrom ?? null,
                 localId,
                 isSelfEchoSuppressedLocalId,
+                isAgentQueueEchoSuppressedLocalId,
                 isPendingQueueMaterializedLocalId,
             });
         }
