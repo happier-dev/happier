@@ -40,6 +40,13 @@ const DEFAULT_DIRECT_PEER_CHUNK_BYTES = 256 * 1024;
 // max lower than the generic transfer chunk ceiling to avoid multi-megabyte string allocations
 // (bytes + decoded string + JSON.parse) on each request.
 const DIRECT_PEER_CHUNK_HARD_MAX_BYTES = 512 * 1024;
+// Guardrail: even with bounded per-chunk bytes, an absurd chunk count would trigger an unbounded
+// request loop (DoS footgun). This is an additional hard stop on the requester side.
+const DEFAULT_DIRECT_PEER_MAX_TOTAL_CHUNKS = 1_000_000;
+const DIRECT_PEER_MAX_TOTAL_CHUNKS_HARD_MAX = 10_000_000;
+const DEFAULT_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES = 2048;
+const DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_HARD_MAX_ENTRIES = 100_000;
+const DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_FULL_ERROR = 'Direct peer published transfer registry is full';
 const DEFAULT_DIRECT_PEER_OPEN_BODY_MAX_BYTES = 256 * 1024;
 const DEFAULT_DIRECT_PEER_BIND_HOST = '0.0.0.0';
 // Tolerate small clock skew by default so candidates published by a peer with a slightly "behind"
@@ -311,6 +318,23 @@ function readDirectPeerOpenBodyMaxBytes(): number {
   return Math.min(
     parsePositiveInt(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_OPEN_BODY_MAX_BYTES, DEFAULT_DIRECT_PEER_OPEN_BODY_MAX_BYTES),
     DIRECT_PEER_OPEN_BODY_HARD_MAX_BYTES,
+  );
+}
+
+function readDirectPeerMaxTotalChunks(): number {
+  return Math.min(
+    parsePositiveInt(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_MAX_TOTAL_CHUNKS, DEFAULT_DIRECT_PEER_MAX_TOTAL_CHUNKS),
+    DIRECT_PEER_MAX_TOTAL_CHUNKS_HARD_MAX,
+  );
+}
+
+function readDirectPeerPublishedTransferRegistryMaxEntries(): number {
+  return Math.min(
+    parsePositiveInt(
+      process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES,
+      DEFAULT_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES,
+    ),
+    DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_HARD_MAX_ENTRIES,
   );
 }
 
@@ -755,7 +779,59 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     void disposeTransferPayloadSource(source).catch(() => undefined);
   };
 
+  const clearPublishedTransfersForToken = (token: string): void => {
+    onDemandScopesByToken.delete(token);
+
+    for (const [candidateId, entry] of publishedTransfers.entries()) {
+      if (entry.transferToken !== token) {
+        continue;
+      }
+      publishedTransfers.delete(candidateId);
+      disposePayloadSourceBestEffort(entry.payloadSource);
+    }
+  };
+
+  const pruneExpiredPublishedTransfers = (): void => {
+    const nowMs = now();
+
+    const expiredTokens: string[] = [];
+    for (const [token, scope] of onDemandScopesByToken.entries()) {
+      if (scope.expiresAt < nowMs) {
+        expiredTokens.push(token);
+      }
+    }
+    for (const token of expiredTokens) {
+      clearPublishedTransfersForToken(token);
+    }
+
+    const expiredPublishedTokens: string[] = [];
+    for (const entry of publishedTransfers.values()) {
+      if (entry.expiresAt < nowMs) {
+        expiredPublishedTokens.push(entry.transferToken);
+      }
+    }
+    for (const token of new Set(expiredPublishedTokens)) {
+      clearPublishedTransfersForToken(token);
+    }
+  };
+
+  const assertRegistryHasCapacityForTransferId = (transferId: string): void => {
+    if (publishedTransfers.has(transferId)) {
+      return;
+    }
+    const maxEntries = readDirectPeerPublishedTransferRegistryMaxEntries();
+    if (publishedTransfers.size >= maxEntries) {
+      throw new Error(DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_FULL_ERROR);
+    }
+  };
+
   function publishTransfer(input: PublishDirectPeerTransferInput): PublishedDirectPeerTransfer {
+    pruneExpiredPublishedTransfers();
+    assertRegistryHasCapacityForTransferId(input.transferId);
+
+    // Re-publishing should clean up any prior payload sources/scope to avoid leaks and drift.
+    clearPublishedTransfer(input.transferId);
+
     const payloadSource = input.payloadSource ?? (input.payload ? createBufferTransferPayloadSource(input.payload) : null);
     if (!payloadSource) {
       throw new Error(`Direct peer transfer ${input.transferId} is missing a payload source`);
@@ -837,6 +913,7 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     transferToken: string;
     requestBody: unknown;
   }>): Promise<TransferPayloadSource | null> {
+    pruneExpiredPublishedTransfers();
     const scope = onDemandScopesByToken.get(input.transferToken);
     if (!scope) {
       return null;
@@ -860,6 +937,8 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
       disposePayloadSourceBestEffort(payloadSource);
       throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
     }
+
+    assertRegistryHasCapacityForTransferId(input.transferId);
     publishedTransfers.set(input.transferId, {
       transferToken: input.transferToken,
       transferTokenDigest: hashTransferToken(input.transferToken),
@@ -877,16 +956,7 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     }
 
     // Clearing a token carrier should also clear any on-demand transfers resolved under the same token.
-    const token = stored.transferToken;
-    onDemandScopesByToken.delete(token);
-
-    for (const [candidateId, entry] of publishedTransfers.entries()) {
-      if (entry.transferToken !== token) {
-        continue;
-      }
-      publishedTransfers.delete(candidateId);
-      disposePayloadSourceBestEffort(entry.payloadSource);
-    }
+    clearPublishedTransfersForToken(stored.transferToken);
   }
 
   return {
@@ -1376,6 +1446,9 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
       json = null;
       if (!parsed.success || parsed.data.transferId !== params.transferId) {
         throw createInvalidDirectPeerTransferResponseError(params.transferId);
+      }
+      if (parsed.data.totalChunks > readDirectPeerMaxTotalChunks()) {
+        throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
       }
       for (let sequence = 0; sequence < parsed.data.totalChunks; sequence += 1) {
         const chunkResponse = await fetchFn(`${auth.requestUrl}/chunks/${sequence}`, {

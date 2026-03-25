@@ -22,7 +22,57 @@ describe('direct peer machine transfer', () => {
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_CHUNK_BYTES;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_EXPIRY_SKEW_MS;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_OPEN_BODY_MAX_BYTES;
+    delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_MAX_TOTAL_CHUNKS;
+    delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES;
     delete process.env.HAPPIER_FILES_READ_MAX_BYTES;
+  });
+
+  it('rejects publish when the published transfer registry max-entries cap is exceeded', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES = '1';
+
+    const { createDirectPeerTransferRegistry } = await import('./directPeerTransport');
+
+    const registry = createDirectPeerTransferRegistry({
+      advertisedPort: 46001,
+      now: () => 1_000,
+    });
+
+    registry.publishTransfer({
+      transferId: 'transfer_registry_cap_1',
+      payload: Buffer.from('{}', 'utf8'),
+    });
+
+    expect(() => registry.publishTransfer({
+      transferId: 'transfer_registry_cap_2',
+      payload: Buffer.from('{}', 'utf8'),
+    })).toThrow('Direct peer published transfer registry is full');
+  });
+
+  it('prunes expired published transfers on publish so max-entries caps do not stall after TTL', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES = '1';
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_TTL_MS = '1';
+
+    const { createDirectPeerTransferRegistry } = await import('./directPeerTransport');
+
+    let nowMs = 1_000;
+    const registry = createDirectPeerTransferRegistry({
+      advertisedPort: 46001,
+      now: () => nowMs,
+    });
+
+    registry.publishTransfer({
+      transferId: 'transfer_registry_prune_1',
+      payload: Buffer.from('{}', 'utf8'),
+    });
+
+    nowMs += 10;
+
+    expect(() => registry.publishTransfer({
+      transferId: 'transfer_registry_prune_2',
+      payload: Buffer.from('{}', 'utf8'),
+    })).not.toThrow();
   });
 
   it('hard-clamps the direct peer chunk-bytes env override to a bounded ceiling', async () => {
@@ -2525,6 +2575,48 @@ describe('direct peer machine transfer', () => {
       destinationPath,
     })).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
 
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  });
+
+  it('fails closed before requesting chunks when a peer returns an absurd totalChunks value', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_MAX_TOTAL_CHUNKS = '3';
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-open-too-many-chunks-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+
+    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/open')) {
+        return new Response(JSON.stringify({
+          transferId: 'transfer_open_too_many_chunks',
+          manifestHash: 'sha256:ignored',
+          totalChunks: 10,
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+
+    await expect(requestDirectPeerTransferToFile({
+      transferId: 'transfer_open_too_many_chunks',
+      endpointCandidates: [
+        {
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_open_too_many_chunks',
+          authorizationToken: 'test-token',
+          expiresAt: 10_000,
+        },
+      ],
+      fetchFn,
+      now: () => 5_000,
+      destinationPath,
+    })).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
