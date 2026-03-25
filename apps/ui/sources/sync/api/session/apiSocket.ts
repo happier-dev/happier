@@ -592,14 +592,6 @@ class ApiSocket {
     }
 
     private installSocketEventHandlers(socket: Socket) {
-        socket.on('connect_error', (error) => {
-            this.setError(error instanceof Error ? error : new Error(String(error)));
-        });
-
-        socket.on('error', (error) => {
-            this.setError(error instanceof Error ? error : new Error(String(error)));
-        });
-
         socket.onAny((event, data) => {
             // console.log(`📥 SyncSocket: Received event '${event}':`, JSON.stringify(data).substring(0, 200));
             const handler = this.messageHandlers.get(event);

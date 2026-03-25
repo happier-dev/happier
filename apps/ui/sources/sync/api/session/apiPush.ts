@@ -2,6 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
 import { serverFetch } from '@/sync/http/client';
+import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { z } from 'zod';
 
 export async function registerPushToken(
@@ -15,7 +16,12 @@ export async function registerPushToken(
 
     const run = async () => {
         const doFetch = API_ENDPOINT
-            ? (p: string, init: RequestInit) => fetch(`${API_ENDPOINT}${p}`, init)
+            ? (p: string, init: RequestInit) => runtimeFetchWithServerReachability({
+                serverUrl: API_ENDPOINT,
+                token: credentials.token,
+                url: `${API_ENDPOINT}${p}`,
+                init,
+            })
             : (p: string, init: RequestInit) => serverFetch(p, init, { includeAuth: false });
 
         const response = await doFetch(path, {
@@ -106,7 +112,12 @@ export async function fetchPushTokens(
     const API_ENDPOINT = (opts.apiEndpoint ?? '').trim().replace(/\/+$/, '');
     const path = '/v1/push-tokens';
     const doFetch = API_ENDPOINT
-        ? (p: string, init: RequestInit) => fetch(`${API_ENDPOINT}${p}`, init)
+        ? (p: string, init: RequestInit) => runtimeFetchWithServerReachability({
+            serverUrl: API_ENDPOINT,
+            token: credentials.token,
+            url: `${API_ENDPOINT}${p}`,
+            init,
+        })
         : (p: string, init: RequestInit) => serverFetch(p, init, { includeAuth: false });
 
     const response = await doFetch(path, {
@@ -145,7 +156,12 @@ export async function deletePushToken(
 
     const path = `/v1/push-tokens/${encodedToken}`;
     const doFetch = API_ENDPOINT
-        ? (p: string, init: RequestInit) => fetch(`${API_ENDPOINT}${p}`, init)
+        ? (p: string, init: RequestInit) => runtimeFetchWithServerReachability({
+            serverUrl: API_ENDPOINT,
+            token: credentials.token,
+            url: `${API_ENDPOINT}${p}`,
+            init,
+        })
         : (p: string, init: RequestInit) => serverFetch(p, init, { includeAuth: false });
 
     const response = await doFetch(path, {

@@ -17,6 +17,7 @@ export function createSyncSocketTransport(params: Readonly<{
         auth: {
             token: params.token,
             clientType: 'user-scoped' as const,
+            clientPurpose: 'sync' as const,
         },
         ...(params.transports ? { transports: params.transports } : null),
         reconnection: false,
@@ -45,6 +46,10 @@ export function createSyncSocketTransport(params: Readonly<{
         errorListeners.forEach((listener) => listener(error));
     });
 
+    socket.on('error', (error) => {
+        errorListeners.forEach((listener) => listener(error));
+    });
+
     const transport: ManagedConnectionTransport = {
         async connect(): Promise<void> {
             socket.connect();
@@ -58,6 +63,11 @@ export function createSyncSocketTransport(params: Readonly<{
             disconnectedListeners.clear();
             errorListeners.clear();
             socket.removeAllListeners?.();
+            try {
+                socket.disconnect();
+            } catch {
+                // ignore
+            }
         },
         isConnected(): boolean {
             return socket.connected === true;

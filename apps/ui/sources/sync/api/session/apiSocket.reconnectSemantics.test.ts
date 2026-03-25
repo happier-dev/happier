@@ -34,6 +34,21 @@ async function settleAsyncWork() {
     }
 }
 
+async function advanceUntil(predicate: () => boolean, maxSteps = 25) {
+    for (let step = 0; step < maxSteps; step += 1) {
+        await settleAsyncWork();
+        if (predicate()) return;
+        if (typeof vi.isFakeTimers === 'function' && vi.isFakeTimers()) {
+            try {
+                await vi.advanceTimersToNextTimerAsync();
+            } catch {
+                // No more timers to advance.
+                return;
+            }
+        }
+    }
+}
+
 function createSocketStub(): SocketStub {
     const listeners = new Map<string, Set<EventHandler>>();
     const anyListeners = new Set<(event: string, data: unknown) => void>();
@@ -166,6 +181,7 @@ describe('apiSocket reconnect semantics', () => {
     });
 
     it('recreates the managed transport with the latest token after updateToken', async () => {
+        vi.useFakeTimers();
         ioSpy.mockImplementation(() => createSocketStub());
         runtimeFetchSpy.mockResolvedValue({ status: 200, headers: new Headers() });
 
@@ -178,9 +194,9 @@ describe('apiSocket reconnect semantics', () => {
             } as never,
         );
 
-        await settleAsyncWork();
+        await advanceUntil(() => ioSpy.mock.calls.length >= 1);
         apiSocket.updateToken('token-2');
-        await settleAsyncWork();
+        await advanceUntil(() => ioSpy.mock.calls.length >= 2);
 
         expect(ioSpy).toHaveBeenCalledTimes(2);
         const secondOpts = ioSpy.mock.calls[1]?.[1] as { auth?: { token?: string } } | undefined;
@@ -188,6 +204,7 @@ describe('apiSocket reconnect semantics', () => {
     });
 
     it('publishes richer managed connection state changes alongside legacy status listeners', async () => {
+        vi.useFakeTimers();
         ioSpy.mockImplementation(() => createSocketStub());
         runtimeFetchSpy.mockResolvedValue({ status: 200, headers: new Headers() });
 
@@ -203,7 +220,7 @@ describe('apiSocket reconnect semantics', () => {
             } as never,
         );
 
-        await settleAsyncWork();
+        await advanceUntil(() => stateListener.mock.calls.some((call) => call[0]?.phase === 'online'));
         expect(stateListener).toHaveBeenCalled();
         const phases = stateListener.mock.calls.map((call) => call[0]?.phase);
         expect(phases).toContain('idle');

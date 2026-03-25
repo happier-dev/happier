@@ -6,11 +6,16 @@ import { HappyError } from '@/utils/errors/errors';
 const mocks = vi.hoisted(() => {
     return {
         serverFetch: vi.fn(),
+        runtimeFetchWithServerReachability: vi.fn(),
     };
 });
 
 vi.mock('@/sync/http/client', () => ({
     serverFetch: mocks.serverFetch,
+}));
+
+vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
+    runtimeFetchWithServerReachability: mocks.runtimeFetchWithServerReachability,
 }));
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -26,6 +31,7 @@ describe('apiPush', () => {
 
     beforeEach(() => {
         mocks.serverFetch.mockReset();
+        mocks.runtimeFetchWithServerReachability.mockReset();
         fetchSpy.mockReset();
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
     });
@@ -82,40 +88,54 @@ describe('apiPush', () => {
         await expect(deletePushToken(credentials, 'ExponentPushToken[abc]')).resolves.toBeUndefined();
     });
 
-  it('registerPushToken uses fetch for explicit endpoints when retry is disabled', async () => {
-    const { registerPushToken } = await import('./apiPush');
-    fetchSpy.mockResolvedValueOnce(jsonResponse({ success: true }));
+    it('registerPushToken uses reachability-supervised runtime fetch for explicit endpoints when retry is disabled', async () => {
+        const { registerPushToken } = await import('./apiPush');
+        mocks.runtimeFetchWithServerReachability.mockResolvedValueOnce(jsonResponse({ success: true }));
 
-    await registerPushToken(credentials, 'ExponentPushToken[abc]', { apiEndpoint: 'https://company.example.test', retry: 'none' });
+        await registerPushToken(credentials, 'ExponentPushToken[abc]', {
+            apiEndpoint: 'https://company.example.test',
+            retry: 'none',
+        });
 
-        expect(fetchSpy).toHaveBeenCalledWith(
-            'https://company.example.test/v1/push-tokens',
-            expect.objectContaining({ method: 'POST' }),
-    );
-    expect(mocks.serverFetch).not.toHaveBeenCalled();
-  });
+        expect(mocks.runtimeFetchWithServerReachability).toHaveBeenCalledWith(
+            expect.objectContaining({
+                serverUrl: 'https://company.example.test',
+                token: credentials.token,
+                url: 'https://company.example.test/v1/push-tokens',
+                init: expect.objectContaining({ method: 'POST' }),
+            }),
+        );
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(mocks.serverFetch).not.toHaveBeenCalled();
+    });
 
-  it('registerPushToken treats 204 No Content as success', async () => {
-    const { registerPushToken } = await import('./apiPush');
-    mocks.serverFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    it('registerPushToken treats 204 No Content as success', async () => {
+        const { registerPushToken } = await import('./apiPush');
+        mocks.serverFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
-    await expect(registerPushToken(credentials, 'ExponentPushToken[abc]', { retry: 'none' })).resolves.toBeUndefined();
-  });
+        await expect(
+            registerPushToken(credentials, 'ExponentPushToken[abc]', { retry: 'none' }),
+        ).resolves.toBeUndefined();
+    });
 
-  it('registerPushToken treats 200 with empty body as success', async () => {
-    const { registerPushToken } = await import('./apiPush');
-    mocks.serverFetch.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    it('registerPushToken treats 200 with empty body as success', async () => {
+        const { registerPushToken } = await import('./apiPush');
+        mocks.serverFetch.mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await expect(registerPushToken(credentials, 'ExponentPushToken[abc]', { retry: 'none' })).resolves.toBeUndefined();
-  });
+        await expect(
+            registerPushToken(credentials, 'ExponentPushToken[abc]', { retry: 'none' }),
+        ).resolves.toBeUndefined();
+    });
 
-  it('registerPushToken fails with a controlled error when response JSON is malformed', async () => {
-    const { registerPushToken } = await import('./apiPush');
-    mocks.serverFetch.mockResolvedValueOnce(new Response('null', {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
+    it('registerPushToken fails with a controlled error when response JSON is malformed', async () => {
+        const { registerPushToken } = await import('./apiPush');
+        mocks.serverFetch.mockResolvedValueOnce(new Response('null', {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
         }));
 
-        await expect(registerPushToken(credentials, 'ExponentPushToken[abc]', { retry: 'none' })).rejects.toThrow('Failed to register push token');
+        await expect(
+            registerPushToken(credentials, 'ExponentPushToken[abc]', { retry: 'none' }),
+        ).rejects.toThrow('Failed to register push token');
     });
 });
