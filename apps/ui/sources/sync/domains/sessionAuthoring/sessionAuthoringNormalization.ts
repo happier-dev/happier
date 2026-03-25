@@ -1,5 +1,8 @@
-import type { CodexBackendMode } from '@happier-dev/agents';
-import { resolveMetadataStringOverrideV1 } from '@happier-dev/agents';
+import {
+    normalizeCodexBackendMode as normalizeCanonicalCodexBackendMode,
+    resolveMetadataStringOverrideV1,
+    type CodexBackendMode,
+} from '@happier-dev/agents';
 import {
     SessionAuthoringTerminalV1Schema,
     SessionAuthoringValueV1Schema,
@@ -8,6 +11,8 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
+
+export const normalizeCodexBackendMode = normalizeCanonicalCodexBackendMode;
 
 export function normalizeRequiredString(value: string): string {
     return value.trim();
@@ -21,10 +26,6 @@ export function normalizeOptionalString(value: string | null | undefined): strin
 
 export function normalizeOptionalNumber(value: number | null | undefined): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-export function normalizeCodexBackendMode(value: unknown): CodexBackendMode | null {
-    return value === 'mcp' || value === 'acp' || value === 'appServer' ? value : null;
 }
 
 export function resolveCanonicalCodexBackendMode(params: Readonly<{

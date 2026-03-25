@@ -30,6 +30,18 @@ const MetadataObjectSchema = z.object({
         updatedAt: z.number()
     }).optional(),
     machineId: z.string().optional(),
+    handoffV1: z.object({
+        v: z.literal(1),
+        sourceMachineId: z.string(),
+        targetMachineId: z.string(),
+        providerId: z.string(),
+        sessionStorageBefore: z.enum(['direct', 'persisted']),
+        sessionStorageAfter: z.enum(['direct', 'persisted']),
+        transportStrategy: z.enum(['direct_peer', 'server_routed_stream']),
+        completedAtMs: z.number(),
+        sourceWorkspaceRootPath: z.string().optional(),
+        targetWorkspaceRootPath: z.string().optional(),
+    }).optional(),
     claudeSessionId: z.string().optional(), // Claude Code session ID
     codexSessionId: z.string().optional(), // Codex session/conversation ID (uuid)
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
@@ -398,6 +410,7 @@ export interface PendingMessage {
     updatedAt: number;
     text: string;
     displayText?: string;
+    pendingDecryptFailure?: { kind: 'decrypt_failed' };
     rawRecord: any;
 }
 
