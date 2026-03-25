@@ -230,6 +230,11 @@ export default memo(function PublicShareViewerScreen() {
                     data.session.metadataVersion,
                     data.session.metadata
                 );
+                if (!e2eeMetadata) {
+                    setError(t('session.sharing.failedToDecrypt'));
+                    setIsLoading(false);
+                    return;
+                }
 
                 const e2eeAgentState = await sessionEncryption.decryptAgentState(
                     data.session.agentStateVersion,
@@ -239,7 +244,11 @@ export default memo(function PublicShareViewerScreen() {
                 const decryptedMessages = await sessionEncryption.decryptMessages(shareMessages);
                 const normalized: NormalizedMessage[] = [];
                 for (const m of decryptedMessages) {
-                    if (!m || !m.content) continue;
+                    if (!m || !m.content) {
+                        setError(t('session.sharing.failedToDecrypt'));
+                        setIsLoading(false);
+                        return;
+                    }
                     const normalizedMessage = normalizeRawMessage(
                         m.id,
                         m.localId ?? null,
