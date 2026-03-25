@@ -8,6 +8,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "react-native": "./dist/index.js",
+      "import": "./dist/index.js",
       "default": "./dist/index.js"
     }
   },
