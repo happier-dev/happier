@@ -359,11 +359,11 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                                         phase: preflightModels.probe.phase,
                                         onRefresh: preflightModels.probe.onRefresh,
                                     },
-                                }),
+                        }),
                           ]}
                           onSelect={(id) => {
                             if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
-                                preflightModels.probe.onRefresh();
+                                preflightModels.probe.onRefresh?.();
                                 return;
                             }
                             const next = String(id ?? '').trim();
