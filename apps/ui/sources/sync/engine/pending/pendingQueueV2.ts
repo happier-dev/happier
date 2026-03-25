@@ -200,7 +200,10 @@ export async function fetchAndApplyPendingMessagesV2(params: {
         }
 
         const coerced = coercePendingUserTextRecord(decrypted.value);
-        if (!coerced) continue;
+        if (!coerced) {
+            pendingMessages.push(buildPendingDecryptFailureMessage({ row: r }));
+            continue;
+        }
         pendingMessages.push({
             id: r.localId,
             localId: r.localId,
@@ -228,7 +231,14 @@ export async function fetchAndApplyPendingMessagesV2(params: {
         }
 
         const coerced = coercePendingUserTextRecord(decrypted.value);
-        if (!coerced) continue;
+        if (!coerced) {
+            discardedMessages.push({
+                ...buildPendingDecryptFailureMessage({ row: r }),
+                discardedAt: r.discardedAt ?? r.updatedAt,
+                discardedReason: coerceDiscardReason(r.discardedReason),
+            });
+            continue;
+        }
         discardedMessages.push({
             id: r.localId,
             localId: r.localId,

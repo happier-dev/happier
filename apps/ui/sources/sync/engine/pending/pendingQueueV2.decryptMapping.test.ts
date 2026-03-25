@@ -17,7 +17,7 @@ describe('pendingQueueV2 decrypt mapping', () => {
         resetPendingQueueState();
     });
 
-    it('ignores decrypted rows that are not valid RawRecord user-text messages', async () => {
+    it('retains decrypted rows that cannot be coerced to a RawRecord user-text message as explicit failures', async () => {
         const sessionId = 's_test';
         const encryption = await createPendingQueueEncryption({ sessionId });
         const sessionEncryption = getSessionEncryptionOrThrow({ encryption, sessionId });
@@ -66,9 +66,10 @@ describe('pendingQueueV2 decrypt mapping', () => {
         });
 
         const messages = storage.getState().sessionPending[sessionId]?.messages ?? [];
-        expect(messages.map((m) => m.localId)).toEqual(['a']);
+        expect(messages.map((m) => m.localId)).toEqual(['a', 'b']);
         expect(messages[0]?.text).toBe('ok');
         expect(messages[0]?.displayText).toBe('OK');
+        expect(messages[1]).toMatchObject({ pendingDecryptFailure: { kind: 'decrypt_failed' } });
     });
 
     it('maps plaintext pending rows without decrypting', async () => {
@@ -166,9 +167,7 @@ describe('pendingQueueV2 decrypt mapping', () => {
         const pendingState = storage.getState().sessionPending[sessionId];
         expect(pendingState?.messages.map((message) => message.localId)).toEqual(['queued-valid', 'queued-bad-cipher']);
         expect(pendingState?.messages[0]?.text).toBe('queued');
-        expect((pendingState?.messages[1] as { pendingDecryptFailure?: { kind: string } } | undefined)?.pendingDecryptFailure).toEqual({
-            kind: 'decrypt_failed',
-        });
+        expect(pendingState?.messages[1]).toMatchObject({ pendingDecryptFailure: { kind: 'decrypt_failed' } });
         expect(pendingState?.discarded.map((message) => message.localId)).toEqual(['discarded-valid']);
         expect(pendingState?.discarded[0]?.discardedReason).toBe('switch_to_local');
     });
@@ -254,8 +253,6 @@ describe('pendingQueueV2 decrypt mapping', () => {
 
         const pendingState = storage.getState().sessionPending[sessionId];
         expect(pendingState?.messages.map((message) => message.localId)).toEqual(['queued-missing-key']);
-        expect((pendingState?.messages[0] as { pendingDecryptFailure?: { kind: string } } | undefined)?.pendingDecryptFailure).toEqual({
-            kind: 'decrypt_failed',
-        });
+        expect(pendingState?.messages[0]).toMatchObject({ pendingDecryptFailure: { kind: 'decrypt_failed' } });
     });
 });
