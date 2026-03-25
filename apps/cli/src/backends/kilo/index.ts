@@ -2,7 +2,6 @@ import { AGENTS_CORE } from '@happier-dev/agents';
 
 import { checklists } from './cli/checklists';
 import type { AgentCatalogEntry } from '../types';
-import type { PreflightModelsProbeAdapter } from '@/capabilities/probes/preflightModelsProbeAdapterTypes';
 
 export const agent = {
   id: AGENTS_CORE.kilo.id,
@@ -16,12 +15,9 @@ export const agent = {
     const { createKiloBackend } = await import('@/backends/kilo/acp/backend');
     return (opts) => ({ backend: createKiloBackend(opts as any) });
   },
-  getPreflightModelsProbeAdapter: async () => {
-    const adapter: PreflightModelsProbeAdapter = {
-      failureCacheStrategy: 'cooldown',
-      cliModelsCommandArgs: ['models'],
-    };
-    return adapter;
-  },
+  getPreflightSessionControlsProbeAdapter: async () => ({
+    failureCacheStrategy: 'cooldown',
+    cliModelsCommandArgs: ['models'],
+  }),
   checklists,
 } satisfies AgentCatalogEntry;

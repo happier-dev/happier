@@ -70,6 +70,15 @@ describe('AGENTS', () => {
     expect(transform(['--foo'])).toEqual(['--foo', '--happy-starting-mode', 'remote']);
   });
 
+  it('exposes a preflight session-controls probe adapter for claude so model-scoped options can be surfaced without ACP', async () => {
+    const entry = requireCatalogEntry('claude');
+    expect(entry.getPreflightSessionControlsProbeAdapter).toBeTypeOf('function');
+    const adapter = await entry.getPreflightSessionControlsProbeAdapter!();
+    expect(adapter).toMatchObject({
+      probeModelsRaw: expect.any(Function),
+    });
+  });
+
   it('does not define a headless tmux argv transform for codex', () => {
     expect(requireCatalogEntry('codex').getHeadlessTmuxArgvTransform).toBeUndefined();
   });

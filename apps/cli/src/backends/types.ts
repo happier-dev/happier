@@ -15,7 +15,7 @@ import type { AgentId as CatalogAgentId, VendorResumeSupportLevel } from '@happi
 export type { CatalogAgentId, VendorResumeSupportLevel };
 import type { CodexBackendMode } from '@happier-dev/agents';
 import type { InstallableKey } from '@happier-dev/protocol';
-import type { PreflightModelsProbeAdapter } from '@/capabilities/probes/preflightModelsProbeAdapterTypes';
+import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import type {
   CliAuthMethod,
   CliAuthReason,
@@ -199,11 +199,12 @@ export type AgentCatalogEntry = Readonly<{
     accountSettings?: Readonly<Record<string, unknown>> | null;
   }>) => string | null;
   /**
-   * Optional provider-owned adapter for probing a dynamic model list without starting a full ACP session.
+   * Optional provider-owned adapter for probing dynamic session controls (models/modes/config options)
+   * without starting a full ACP session.
    *
    * Keep provider-specific implementations in the backend folder and expose them via this catalog hook.
    */
-  getPreflightModelsProbeAdapter?: () => Promise<PreflightModelsProbeAdapter | null>;
+  getPreflightSessionControlsProbeAdapter?: () => Promise<PreflightSessionControlsProbeAdapter | null>;
   /**
    * Optional capability checklist contributions for agent-specific UX.
    *
