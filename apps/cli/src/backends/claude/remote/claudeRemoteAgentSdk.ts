@@ -18,6 +18,7 @@ import { resolveClaudeCodeExperimentalEnvOverlay } from '@/backends/claude/spawn
 import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
+import { resolveClaudeCodeXdgIsolation } from '@/backends/claude/utils/resolveClaudeCodeXdgIsolation';
 import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
 
 import type { SDKMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
@@ -424,6 +425,14 @@ export async function claudeRemoteAgentSdk(opts: {
         const experimentalEnvOverlay = resolveClaudeCodeExperimentalEnvOverlay({
             claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
         });
+        const xdgIsolationEnv = resolveClaudeCodeXdgIsolation({
+            backendId: 'claude',
+            scope: 'session',
+            isolationId:
+                typeof opts.sessionId === 'string' && opts.sessionId.trim().length > 0
+                    ? opts.sessionId.trim()
+                    : `pid_${process.pid}`,
+        });
         const resumeSessionAt =
             typeof opts.resumeSessionAt === 'string' && opts.resumeSessionAt.trim().length > 0
                 ? opts.resumeSessionAt.trim()
@@ -451,7 +460,7 @@ export async function claudeRemoteAgentSdk(opts: {
             strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
         canUseTool,
         ...(opts.happierMcpServers ? { mcpServers: opts.happierMcpServers } : {}),
-            env: { ...buildClaudeSubprocessEnv(), ...experimentalEnvOverlay },
+            env: { ...xdgIsolationEnv, ...buildClaudeSubprocessEnv(), ...experimentalEnvOverlay },
             executable: runtimeExecutable,
             pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
         includePartialMessages: mode.claudeRemoteIncludePartialMessages === true || undefined,

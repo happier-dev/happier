@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { configuration } from '@/configuration';
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
 
@@ -562,6 +563,74 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             else process.env.GITHUB_TOKEN = originalToken;
             if (originalMarker === undefined) delete process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
             else process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = originalMarker;
+        }
+    });
+
+    it('injects isolated XDG dirs so Claude Code does not contend with global version locks', async () => {
+        const originals = {
+            XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+            XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+            XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+        };
+
+        delete process.env.XDG_DATA_HOME;
+        delete process.env.XDG_CACHE_HOME;
+        delete process.env.XDG_STATE_HOME;
+
+        try {
+            let capturedOptions: any = null;
+
+            const createQuery = vi.fn((_params: any) => {
+                capturedOptions = _params.options;
+                return {
+                    async *[Symbol.asyncIterator]() {
+                        yield { type: 'result' } as any;
+                    },
+                    close: vi.fn(),
+                    setPermissionMode: vi.fn(),
+                    setModel: vi.fn(),
+                    setMaxThinkingTokens: vi.fn(),
+                    supportedCommands: vi.fn(async () => []),
+                    supportedModels: vi.fn(async () => []),
+                } as any;
+            });
+
+            let didSendFirst = false;
+            const nextMessage = vi.fn(async () => {
+                if (didSendFirst) return null;
+                didSendFirst = true;
+                return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+            });
+
+            await claudeRemoteAgentSdk({
+                sessionId: 'sess_1',
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage,
+                onReady: () => {},
+                onSessionFound: () => {},
+                onMessage: () => {},
+                createQuery,
+            } as any);
+
+            expect(capturedOptions?.env).toBeTruthy();
+            expect(typeof capturedOptions.env.XDG_DATA_HOME).toBe('string');
+            expect(typeof capturedOptions.env.XDG_CACHE_HOME).toBe('string');
+            expect(typeof capturedOptions.env.XDG_STATE_HOME).toBe('string');
+            expect(capturedOptions.env.XDG_DATA_HOME).toContain(join(configuration.activeServerDir, 'isolation'));
+            expect(capturedOptions.env.XDG_CACHE_HOME).toContain(join(configuration.activeServerDir, 'isolation'));
+            expect(capturedOptions.env.XDG_STATE_HOME).toContain(join(configuration.activeServerDir, 'isolation'));
+        } finally {
+            if (originals.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
+            else process.env.XDG_DATA_HOME = originals.XDG_DATA_HOME;
+            if (originals.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
+            else process.env.XDG_CACHE_HOME = originals.XDG_CACHE_HOME;
+            if (originals.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
+            else process.env.XDG_STATE_HOME = originals.XDG_STATE_HOME;
         }
     });
 
