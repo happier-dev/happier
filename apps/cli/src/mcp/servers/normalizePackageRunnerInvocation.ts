@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 
-import { ensureManagedPnpmCommand, resolveExistingPnpmCommand } from '@/runtime/managedTools/pnpm/managedPnpm';
+import { ensureManagedPnpmCommand } from '@/runtime/managedTools/pnpm/managedPnpm';
 
 export type NormalizedPackageRunnerInvocation = Readonly<{
   command: string;
@@ -48,10 +48,7 @@ export async function normalizePackageRunnerInvocation(params: Readonly<{
   const args = [...params.args];
 
   const resolvePnpmCommand = async (): Promise<string | null> => {
-    const bootstrapAllowed = String(processEnv.HAPPIER_MANAGED_PNPM_BOOTSTRAP ?? '').trim() !== '0';
-    return bootstrapAllowed
-      ? await ensureManagedPnpmCommand(processEnv)
-      : resolveExistingPnpmCommand(processEnv);
+    return await ensureManagedPnpmCommand(processEnv);
   };
 
   if (normalized === 'npx' || normalized === 'npx.cmd' || normalized === 'bunx' || normalized === 'bunx.cmd') {
