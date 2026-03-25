@@ -4,7 +4,10 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createSessionHandoffPrepareTargetJobStore } from './sessionHandoffPrepareTargetJobStore';
+import {
+  createSessionHandoffPrepareTargetJobStore,
+  recoverSessionHandoffPrepareTargetJobsAfterRestart,
+} from './sessionHandoffPrepareTargetJobStore';
 
 describe('sessionHandoffPrepareTargetJobStore', () => {
   it('fails closed when a persisted job file uses an unsupported schemaVersion', async () => {
@@ -99,6 +102,62 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
           recoveryActions: [],
         },
       })).rejects.toMatchObject({ name: 'ZodError' });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('keeps restart-recoverable pending jobs resumable instead of terminalizing them during daemon startup recovery', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-recoverable-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const nowMs = Date.now();
+      const jobId = 'job_recoverable_1';
+      const handoffId = 'handoff_recoverable_1';
+
+      await store.write({
+        jobId,
+        handoffId,
+        createdAtMs: nowMs - 10_000,
+        updatedAtMs: nowMs - 5_000,
+        status: {
+          handoffId,
+          jobId,
+          status: 'pending',
+          phase: 'staging_target',
+          recoveryActions: [],
+          progress: {
+            updatedAtMs: nowMs - 5_000,
+            checkpoint: 'stage_target',
+            planned: {},
+            transferred: {},
+            current: {
+              phaseDetail: 'importing_workspace',
+            },
+            resumable: false,
+          },
+        },
+      });
+
+      await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        activeServerDir,
+        nowMs,
+      });
+
+      await expect(store.read(jobId)).resolves.toMatchObject({
+        jobId,
+        handoffId,
+        lastErrorMessage: 'Daemon restarted while the handoff prepare-target job was in progress',
+        status: {
+          status: 'awaiting_recovery',
+          phase: 'staging_target',
+          progress: {
+            current: {
+              phaseDetail: 'daemon_restart_missing_runner',
+            },
+          },
+        },
+      });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
     }

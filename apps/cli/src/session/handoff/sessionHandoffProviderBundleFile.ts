@@ -3,11 +3,10 @@ import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { SessionHandoffProviderBundleSchema } from '@happier-dev/protocol';
-
 import type { TransferPayloadSource } from '../../machines/transfer/transferPayloadSource';
 import { createFileTransferPayloadSource } from '../../machines/transfer/transferPayloadSource';
 import type { SessionHandoffProviderBundle } from './types';
+import { SessionHandoffProviderBundleSchema } from './sessionHandoffProviderBundleSchema';
 
 const SESSION_HANDOFF_PROVIDER_BUNDLE_DIRECTORY = join(tmpdir(), 'happier-session-handoff-provider-bundles');
 
@@ -28,16 +27,20 @@ export async function createSessionHandoffProviderBundlePayloadSource(
 ): Promise<TransferPayloadSource> {
   assertCanonicalSessionHandoffProviderBundle(providerBundle);
   const normalizedProviderBundle = SessionHandoffProviderBundleSchema.parse(providerBundle);
-  const payloadBuffer = Buffer.from(JSON.stringify(normalizedProviderBundle), 'utf8');
+  // Avoid double-buffering large provider bundles. `writeFile` accepts strings, so compute size/hash
+  // from the canonical JSON string and let Node stream/encode it directly to disk.
+  const payloadJson = JSON.stringify(normalizedProviderBundle);
+  const sizeBytes = Buffer.byteLength(payloadJson, 'utf8');
+  const manifestHash = `sha256:${createHash('sha256').update(payloadJson, 'utf8').digest('hex')}`;
 
   await mkdir(SESSION_HANDOFF_PROVIDER_BUNDLE_DIRECTORY, { recursive: true });
   const filePath = join(SESSION_HANDOFF_PROVIDER_BUNDLE_DIRECTORY, `provider-bundle-${randomUUID()}.json`);
-  await writeFile(filePath, payloadBuffer);
+  await writeFile(filePath, payloadJson, 'utf8');
 
   return createFileTransferPayloadSource({
     filePath,
-    sizeBytes: payloadBuffer.byteLength,
-    manifestHash: `sha256:${createHash('sha256').update(payloadBuffer).digest('hex')}`,
+    sizeBytes,
+    manifestHash,
     dispose: async () => {
       await rm(filePath, { force: true }).catch(() => undefined);
     },

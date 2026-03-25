@@ -16,73 +16,7 @@ describe('sessionHandoffWorkspaceReplicationServerRouted', () => {
     process.env = { ...envSnapshot };
   });
 
-  it('fails closed when workspace pack transfer ids contain an oversized digest list', async () => {
-    process.env.HAPPIER_FILES_READ_MAX_BYTES = '128';
-
-    const { parseSessionHandoffWorkspaceBlobPackTransferId } = await import(
-      './sessionHandoffWorkspaceReplicationServerRouted'
-    );
-
-    const digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-    const digests = Array.from({ length: 10 }, () => digest);
-    const encodedDigests = Buffer.from(JSON.stringify(digests), 'utf8').toString('base64url');
-
-    // This is attacker-controlled input in server-routed transfers. Reject rather than buffering a huge JSON list.
-    expect(parseSessionHandoffWorkspaceBlobPackTransferId(
-      `session-handoff:handoff_1:workspace-pack:pack_1:${encodedDigests}`,
-    )).toBeNull();
-  });
-
-  it('fails closed on oversized encoded digests before attempting base64 decode', async () => {
-    process.env.HAPPIER_FILES_READ_MAX_BYTES = '16';
-
-    const { parseSessionHandoffWorkspaceBlobPackTransferId } = await import(
-      './sessionHandoffWorkspaceReplicationServerRouted'
-    );
-
-    // Server-routed transfer ids are attacker-controlled. Ensure we reject obviously oversized payloads even if they
-    // are not valid base64url (the size check should run first).
-    const encodedDigests = 'a'.repeat(512);
-    expect(parseSessionHandoffWorkspaceBlobPackTransferId(
-      `session-handoff:handoff_1:workspace-pack:pack_1:${encodedDigests}`,
-    )).toBeNull();
-  });
-
-  it('fails closed when workspace pack transfer ids contain a packId that does not match the digest set', async () => {
-    const { parseSessionHandoffWorkspaceBlobPackTransferId } = await import(
-      './sessionHandoffWorkspaceReplicationServerRouted'
-    );
-
-    const digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-    const digests = [digest];
-    const encodedDigests = Buffer.from(JSON.stringify(digests), 'utf8').toString('base64url');
-
-    expect(parseSessionHandoffWorkspaceBlobPackTransferId(
-      `session-handoff:handoff_1:workspace-pack:pack_other:${encodedDigests}`,
-    )).toBeNull();
-  });
-
-  it('fails closed when workspace pack transfer ids contain too many digests', async () => {
-    const { parseSessionHandoffWorkspaceBlobPackTransferId } = await import(
-      './sessionHandoffWorkspaceReplicationServerRouted'
-    );
-    const { createWorkspaceReplicationPackIdForDigests } = await import(
-      '@/workspaces/replication/transport/workspaceReplicationPackId'
-    );
-
-    const tooMany = configuration.workspaceReplicationBlobPackMaxBlobs + 1;
-    // Exceed the max blobs per pack to ensure we fail closed rather than allowing attacker-controlled transfer IDs
-    // to trigger huge CAS seeding loops.
-    const digests = Array.from({ length: tooMany }, (_, index) => `sha256:${index.toString(16).padStart(64, '0')}`);
-    const packId = createWorkspaceReplicationPackIdForDigests(digests);
-    const encodedDigests = Buffer.from(JSON.stringify(digests), 'utf8').toString('base64url');
-
-    expect(parseSessionHandoffWorkspaceBlobPackTransferId(
-      `session-handoff:handoff_1:workspace-pack:${packId}:${encodedDigests}`,
-    )).toBeNull();
-  });
-
-  it('rejects building workspace pack transfer ids with too many digests', async () => {
+  it('builds bounded workspace pack transfer ids (no digest list encoding)', async () => {
     const { buildSessionHandoffWorkspaceBlobPackTransferId } = await import(
       './sessionHandoffWorkspaceReplicationServerRouted'
     );
@@ -90,15 +24,74 @@ describe('sessionHandoffWorkspaceReplicationServerRouted', () => {
       '@/workspaces/replication/transport/workspaceReplicationPackId'
     );
 
-    const tooMany = configuration.workspaceReplicationBlobPackMaxBlobs + 1;
-    const digests = Array.from({ length: tooMany }, (_, index) => `sha256:${index.toString(16).padStart(64, '0')}`);
+    const digests = Array.from(
+      { length: configuration.workspaceReplicationBlobPackMaxBlobs },
+      (_, index) => `sha256:${index.toString(16).padStart(64, '0')}`,
+    );
     const packId = createWorkspaceReplicationPackIdForDigests(digests);
 
-    expect(() => buildSessionHandoffWorkspaceBlobPackTransferId({
+    const transferId = buildSessionHandoffWorkspaceBlobPackTransferId({
       handoffId: 'handoff_1',
       packId,
+    });
+    expect(transferId).toContain(':workspace-pack:');
+    // Server-routed machine transfer caps ids at 256 chars; workspace replication must stay within it.
+    expect(transferId.length).toBeLessThanOrEqual(256);
+  });
+
+  it('parses workspace pack transfer ids and extracts handoffId/packId', async () => {
+    const { buildSessionHandoffWorkspaceBlobPackTransferId, parseSessionHandoffWorkspaceBlobPackTransferId } = await import(
+      './sessionHandoffWorkspaceReplicationServerRouted'
+    );
+
+    const transferId = buildSessionHandoffWorkspaceBlobPackTransferId({
+      handoffId: 'handoff_1',
+      packId: 'pack_123',
+    });
+    expect(parseSessionHandoffWorkspaceBlobPackTransferId(transferId)).toEqual({
+      handoffId: 'handoff_1',
+      packId: 'pack_123',
+    });
+  });
+
+  it('parses workspace blob-pack open bodies (v1) and fails closed on invalid inputs', async () => {
+    const { parseSessionHandoffWorkspaceBlobPackOpenBody } = await import(
+      './sessionHandoffWorkspaceReplicationServerRouted'
+    );
+    const { createWorkspaceReplicationPackIdForDigests } = await import(
+      '@/workspaces/replication/transport/workspaceReplicationPackId'
+    );
+
+    const digests = ['sha256:0000000000000000000000000000000000000000000000000000000000000000'];
+    const packId = createWorkspaceReplicationPackIdForDigests(digests);
+    expect(parseSessionHandoffWorkspaceBlobPackOpenBody({
+      t: 'workspace_replication_blob_pack_v1',
+      packId,
       digests,
-    })).toThrow('Invalid workspace blob-pack digest list');
+    })).toEqual({
+      t: 'workspace_replication_blob_pack_v1',
+      packId,
+      digests,
+    });
+
+    // Fail closed: do not silently drop blank digest entries (prevents request-body smuggling).
+    expect(parseSessionHandoffWorkspaceBlobPackOpenBody({
+      t: 'workspace_replication_blob_pack_v1',
+      packId,
+      digests: [...digests, '   '],
+    })).toBeNull();
+
+    expect(parseSessionHandoffWorkspaceBlobPackOpenBody({
+      t: 'workspace_replication_blob_pack_v1',
+      packId: 'pack_other',
+      digests,
+    })).toBeNull();
+
+    expect(parseSessionHandoffWorkspaceBlobPackOpenBody({
+      t: 'workspace_replication_blob_pack_v1',
+      packId,
+      digests: [...digests, ...digests],
+    })).toBeNull();
   });
 
   it('seeds missing workspace replication CAS blobs via blobProvider', async () => {

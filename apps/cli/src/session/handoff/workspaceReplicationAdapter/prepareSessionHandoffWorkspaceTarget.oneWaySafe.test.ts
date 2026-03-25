@@ -215,7 +215,7 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
           workspaceTransfer: {
             enabled: true,
             strategy: 'sync_changes',
-            conflictPolicy: 'fail',
+            conflictPolicy: 'replace_existing',
           } as any,
           metadata,
           machineTransferChannel: {

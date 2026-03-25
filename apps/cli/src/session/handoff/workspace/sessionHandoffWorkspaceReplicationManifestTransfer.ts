@@ -44,11 +44,26 @@ export async function readSessionHandoffWorkspaceReplicationManifestFromFile(inp
   filePath: string;
   sizeBytes?: number | null;
 }>): Promise<WorkspaceManifest> {
+  if (typeof input.sizeBytes === 'number') {
+    let actualSizeBytes: number;
+    try {
+      const stats = await stat(input.filePath);
+      if (!stats.isFile()) {
+        throw new Error('not a file');
+      }
+      actualSizeBytes = stats.size;
+    } catch {
+      throw new Error('Invalid workspace replication manifest');
+    }
+
+    if (actualSizeBytes !== input.sizeBytes) {
+      throw new Error('Invalid workspace replication manifest');
+    }
+  }
+
   const streaming = await isStreamingWorkspaceReplicationManifestFile(input.filePath);
   if (!streaming) {
-    // Legacy manifests were whole-buffer JSON payloads. They are intentionally rejected so large
-    // manifests cannot regress to whole-buffer reads/parses in undeployed compatibility paths.
-    throw new Error(`Legacy workspace replication manifest format is not supported: ${input.transferId}`);
+    throw new Error('Invalid workspace replication manifest');
   }
 
   const stream = createReadStream(input.filePath, { encoding: 'utf8' });

@@ -1,10 +1,12 @@
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
-import { resolveInMemoryTransferMaxBytes } from '@/machines/transfer/inMemoryTransferSizeLimit';
 import { configuration } from '@/configuration';
 import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 import { createWorkspaceReplicationBlobPackPayloadSource } from '@/workspaces/replication/transport/createWorkspaceReplicationBlobPackPayloadSource';
-import { createWorkspaceReplicationPackIdForDigests } from '@/workspaces/replication/transport/workspaceReplicationPackId';
+import {
+  assertSafeWorkspaceReplicationPackId,
+  createWorkspaceReplicationPackIdForDigests,
+} from '@/workspaces/replication/transport/workspaceReplicationPackId';
 
 const SESSION_HANDOFF_TRANSFER_ID_PREFIX = 'session-handoff:';
 const SESSION_HANDOFF_WORKSPACE_PACK_MARKER = ':workspace-pack:';
@@ -13,11 +15,16 @@ const SESSION_HANDOFF_WORKSPACE_MANIFEST_MARKER = ':workspace-manifest';
 type SessionHandoffWorkspaceBlobPackTransfer = Readonly<{
   handoffId: string;
   packId: string;
-  digests: readonly string[];
 }>;
 
 type SessionHandoffWorkspaceManifestTransfer = Readonly<{
   handoffId: string;
+}>;
+
+export type SessionHandoffWorkspaceBlobPackOpenBodyV1 = Readonly<{
+  t: 'workspace_replication_blob_pack_v1';
+  packId: string;
+  digests: readonly string[];
 }>;
 
 function isSortedUnique(values: readonly string[]): boolean {
@@ -30,58 +37,12 @@ function isSortedUnique(values: readonly string[]): boolean {
   return true;
 }
 
-function parseDecodedDigests(encodedDigests: string): readonly string[] | null {
-  const maxBytes = resolveInMemoryTransferMaxBytes();
-
-  // Reject oversized digest lists early: server-routed transfer ids are attacker-controlled input.
-  // Use the in-memory transfer budget as the hard cap so this never becomes an OOM vector.
-  const estimatedDecodedBytes = Math.ceil((encodedDigests.length * 3) / 4);
-  if (!Number.isFinite(estimatedDecodedBytes) || estimatedDecodedBytes > maxBytes) {
-    return null;
-  }
-
-  try {
-    const decodedBuffer = Buffer.from(encodedDigests, 'base64url');
-    if (decodedBuffer.byteLength > maxBytes) {
-      return null;
-    }
-    const decoded = JSON.parse(decodedBuffer.toString('utf8'));
-    if (!Array.isArray(decoded) || decoded.some((entry) => typeof entry !== 'string')) {
-      return null;
-    }
-    const digests = decoded.map((entry) => entry.trim());
-    if (digests.length === 0 || !isSortedUnique(digests)) {
-      return null;
-    }
-    // Keep server-routed digest lists aligned with the canonical pack planning boundaries.
-    // Without this, an attacker-controlled transferId can trigger huge CAS-seeding loops.
-    if (digests.length > configuration.workspaceReplicationBlobPackMaxBlobs) {
-      return null;
-    }
-    return digests;
-  } catch {
-    return null;
-  }
-}
-
 export function buildSessionHandoffWorkspaceBlobPackTransferId(input: Readonly<{
   handoffId: string;
   packId: string;
-  digests: readonly string[];
 }>): string {
-  const normalizedDigests = input.digests.map((digest) => String(digest ?? '').trim());
-  if (normalizedDigests.length === 0 || normalizedDigests.length > configuration.workspaceReplicationBlobPackMaxBlobs) {
-    throw new Error('Invalid workspace blob-pack digest list');
-  }
-  if (!isSortedUnique(normalizedDigests)) {
-    throw new Error('Invalid workspace blob-pack digest list');
-  }
-  const expectedPackId = createWorkspaceReplicationPackIdForDigests(normalizedDigests);
-  if (expectedPackId !== input.packId) {
-    throw new Error('Invalid workspace blob-pack transfer id inputs');
-  }
-  const encodedDigests = Buffer.from(JSON.stringify([...normalizedDigests]), 'utf8').toString('base64url');
-  return `${SESSION_HANDOFF_TRANSFER_ID_PREFIX}${input.handoffId}${SESSION_HANDOFF_WORKSPACE_PACK_MARKER}${input.packId}:${encodedDigests}`;
+  const packId = assertSafeWorkspaceReplicationPackId(input.packId);
+  return `${SESSION_HANDOFF_TRANSFER_ID_PREFIX}${input.handoffId}${SESSION_HANDOFF_WORKSPACE_PACK_MARKER}${packId}`;
 }
 
 export function parseSessionHandoffWorkspaceBlobPackTransferId(
@@ -99,22 +60,60 @@ export function parseSessionHandoffWorkspaceBlobPackTransferId(
   }
   const handoffId = transferId.slice(SESSION_HANDOFF_TRANSFER_ID_PREFIX.length, markerIndex).trim();
   const rest = transferId.slice(markerIndex + SESSION_HANDOFF_WORKSPACE_PACK_MARKER.length);
-  const separatorIndex = rest.indexOf(':');
-  if (handoffId.length === 0 || separatorIndex <= 0) {
+  if (handoffId.length === 0 || rest.length === 0) {
     return null;
   }
-  const packId = rest.slice(0, separatorIndex);
-  const encodedDigests = rest.slice(separatorIndex + 1);
-  const digests = parseDecodedDigests(encodedDigests);
-  if (!digests || packId.length === 0) {
+  let packId: string;
+  try {
+    packId = assertSafeWorkspaceReplicationPackId(rest);
+  } catch {
+    return null;
+  }
+  return {
+    handoffId,
+    packId,
+  };
+}
+
+export function parseSessionHandoffWorkspaceBlobPackOpenBody(
+  input: unknown,
+): SessionHandoffWorkspaceBlobPackOpenBodyV1 | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+  const record = input as Record<string, unknown>;
+  if (record.t !== 'workspace_replication_blob_pack_v1') {
+    return null;
+  }
+  if (typeof record.packId !== 'string' || record.packId.trim().length === 0) {
+    return null;
+  }
+  if (!Array.isArray(record.digests) || record.digests.some((digest) => typeof digest !== 'string')) {
+    return null;
+  }
+
+  let packId: string;
+  try {
+    packId = assertSafeWorkspaceReplicationPackId(record.packId);
+  } catch {
+    return null;
+  }
+
+  const digests = record.digests.map((digest) => digest.trim());
+  // Fail closed: do not drop blank entries (prevents request-body smuggling and keeps packId stable).
+  if (digests.length === 0 || digests.some((digest) => digest.length === 0) || !isSortedUnique(digests)) {
+    return null;
+  }
+  if (digests.length > configuration.workspaceReplicationBlobPackMaxBlobs) {
     return null;
   }
   const expectedPackId = createWorkspaceReplicationPackIdForDigests(digests);
   if (expectedPackId !== packId) {
     return null;
   }
+
   return {
-    handoffId,
+    t: 'workspace_replication_blob_pack_v1',
     packId,
     digests,
   };

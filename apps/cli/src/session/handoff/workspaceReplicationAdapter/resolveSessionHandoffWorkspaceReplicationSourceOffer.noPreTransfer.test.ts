@@ -42,7 +42,6 @@ describe('resolveSessionHandoffWorkspaceReplicationSourceOffer (no pre-transfer)
       };
 
       const transfers: WorkspaceReplicationTransfers = {
-        publishDirectPeerSourceOffer: () => [],
         requestDirectPeerSourceOffer: async () => {
           throw new Error('unexpected direct-peer source-offer request');
         },
@@ -83,7 +82,6 @@ describe('resolveSessionHandoffWorkspaceReplicationSourceOffer (no pre-transfer)
       const digest = 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 
       const transfers: WorkspaceReplicationTransfers = {
-        publishDirectPeerSourceOffer: () => [],
         requestDirectPeerSourceOffer: async () => {
           throw new Error('unexpected direct-peer source-offer request');
         },

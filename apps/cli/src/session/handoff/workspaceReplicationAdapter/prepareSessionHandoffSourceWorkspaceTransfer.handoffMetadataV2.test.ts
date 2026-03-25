@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,14 +6,17 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionHandoffWorkspaceTransfer } from '@happier-dev/protocol';
 
-import { createScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
-
 import { prepareSessionHandoffSourceWorkspaceTransfer } from './sessionHandoffWorkspaceReplicationAdapter';
 
 describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () => {
   it('includes sourceRootPath + manifest transfer publication when workspace transfer is enabled (server_routed_stream)', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-source-transfer-'));
+    const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-handoff-source-root-'));
     try {
+      await mkdir(join(sourceRootPath, 'nested'), { recursive: true });
+      await writeFile(join(sourceRootPath, 'README.md'), 'hello\n');
+      await writeFile(join(sourceRootPath, 'nested', 'note.txt'), 'note\n');
+
       const workspaceTransfer: SessionHandoffWorkspaceTransfer = {
         enabled: true,
         strategy: 'transfer_snapshot',
@@ -22,32 +25,15 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
         ignoredIncludeGlobs: [],
       };
 
-      const workspaceExportArtifacts = createScmSourceControllerWorkspaceExportArtifacts({
-        manifest: {
-          entries: [
-            {
-              kind: 'file',
-              relativePath: 'README.md',
-              digest: 'sha256:readme',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:fingerprint',
-        },
-        sourceControllerMetadata: null,
-      });
-
       const result = await prepareSessionHandoffSourceWorkspaceTransfer({
         handoffId: 'handoff_1',
         activeServerDir,
         negotiatedTransportStrategy: 'server_routed_stream',
         workspaceTransfer,
-        sourceRootPath: '/source',
-        workspaceExportArtifacts,
+        sourceRootPath,
       });
 
-      expect(result.handoffMetadataV2?.workspaceReplicationSourceRootPath).toBe('/source');
+      expect(result.handoffMetadataV2?.workspaceReplicationSourceRootPath).toBe(sourceRootPath);
       expect(result.handoffMetadataV2?.workspaceReplicationManifestTransferPublication?.transferId).toEqual(expect.any(String));
       expect(result.handoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates).toBeUndefined();
     } finally {
@@ -57,7 +43,12 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
 
   it('includes endpoint candidates in the manifest transfer publication when negotiated transport is direct_peer', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-source-transfer-'));
+    const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-handoff-source-root-'));
     try {
+      await mkdir(join(sourceRootPath, 'nested'), { recursive: true });
+      await writeFile(join(sourceRootPath, 'README.md'), 'hello\n');
+      await writeFile(join(sourceRootPath, 'nested', 'note.txt'), 'note\n');
+
       const workspaceTransfer: SessionHandoffWorkspaceTransfer = {
         enabled: true,
         strategy: 'transfer_snapshot',
@@ -66,43 +57,38 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
         ignoredIncludeGlobs: [],
       };
 
-      const workspaceExportArtifacts = createScmSourceControllerWorkspaceExportArtifacts({
-        manifest: {
-          entries: [
-            {
-              kind: 'directory',
-              relativePath: 'src',
-            },
-          ],
-          fingerprint: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-        },
-        sourceControllerMetadata: null,
-      });
-
       const result = await prepareSessionHandoffSourceWorkspaceTransfer({
         handoffId: 'handoff_1',
         activeServerDir,
         negotiatedTransportStrategy: 'direct_peer',
         workspaceTransfer,
-        sourceRootPath: '/source',
-        workspaceExportArtifacts,
-        directPeerTransfer: {
-          publishTransfer: () => ([
+        sourceRootPath,
+        providerBundleTransferPublication: {
+          transferId: 'provider_bundle_1',
+          sizeBytes: 123,
+          manifestHash: 'sha256:provider_bundle_1',
+          endpointCandidates: [
             {
               kind: 'http',
-              url: 'http://127.0.0.1:1234/transfer',
+              url: 'http://127.0.0.1:46001/machine-transfers/direct/provider_bundle_1?token=aaa#ignored',
+              authorizationToken: 'token_1',
               expiresAt: Date.now() + 60_000,
             },
-          ]),
+          ],
         },
       });
+
+      const manifestTransferId = result.handoffMetadataV2?.workspaceReplicationManifestTransferPublication?.transferId;
+      expect(manifestTransferId).toEqual(expect.any(String));
+      const expectedEncodedKey = Buffer.from(String(manifestTransferId), 'utf8').toString('base64url');
 
       expect(result.handoffMetadataV2?.workspaceReplicationManifestTransferPublication).toEqual({
         transferId: expect.any(String),
         endpointCandidates: [
           {
             kind: 'http',
-            url: 'http://127.0.0.1:1234/transfer',
+            url: `http://127.0.0.1:46001/machine-transfers/direct/${expectedEncodedKey}`,
+            authorizationToken: 'token_1',
             expiresAt: expect.any(Number),
           },
         ],
@@ -115,22 +101,6 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
   it('returns no handoffMetadataV2 when workspace transfer is disabled', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-source-transfer-'));
     try {
-      const workspaceExportArtifacts = createScmSourceControllerWorkspaceExportArtifacts({
-        manifest: {
-          entries: [
-            {
-              kind: 'file',
-              relativePath: 'README.md',
-              digest: 'sha256:readme',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:fingerprint',
-        },
-        sourceControllerMetadata: null,
-      });
-
       const result = await prepareSessionHandoffSourceWorkspaceTransfer({
         handoffId: 'handoff_1',
         activeServerDir,
@@ -143,7 +113,6 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
           ignoredIncludeGlobs: [],
         },
         sourceRootPath: '/source',
-        workspaceExportArtifacts,
       });
 
       expect(result.handoffMetadataV2).toBeUndefined();

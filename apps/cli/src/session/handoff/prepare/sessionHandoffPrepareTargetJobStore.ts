@@ -131,7 +131,6 @@ export async function recoverSessionHandoffPrepareTargetJobsAfterRestart(input: 
       return {
         ...rest,
         updatedAtMs: input.nowMs,
-        failedAtMs: rest.failedAtMs ?? input.nowMs,
         status: {
           ...rest.status,
           status: 'awaiting_recovery',

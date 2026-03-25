@@ -16,6 +16,8 @@ import {
 import type { WorkspaceReplicationTransfers } from '@/workspaces/replication/transport/workspaceReplicationTransfers';
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 import { deterministicStringify } from '@/utils/deterministicJson';
+import { configuration } from '@/configuration';
+import { buildWorkspaceReplicationBlobPacks } from '@/workspaces/replication/transport/buildWorkspaceReplicationBlobPacks';
 
 import type { SessionHandoffWorkspaceReplicationMetadata } from '../workspace/sessionHandoffWorkspaceReplicationMetadata';
 
@@ -54,8 +56,8 @@ async function writeWorkspaceReplicationBlobPackFile(input: Readonly<{
   return output.byteLength;
 }
 
-describe('prepareSessionHandoffWorkspaceTarget (engine-runner, direct_peer)', () => {
-  it('requests missing-only pack boundaries over direct peer and supplies digests via the open-request body (incremental)', async () => {
+	describe('prepareSessionHandoffWorkspaceTarget (engine-runner, direct_peer)', () => {
+	  it('requests missing-only pack boundaries over direct peer and supplies digests via the open-request body (incremental)', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-engine-direct-peer-'));
     const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-handoff-engine-direct-peer-target-'));
 
@@ -154,7 +156,6 @@ describe('prepareSessionHandoffWorkspaceTarget (engine-runner, direct_peer)', ()
       });
 
       const transfers: WorkspaceReplicationTransfers = {
-        publishDirectPeerSourceOffer: () => [],
         requestDirectPeerSourceOffer: async () => {
           throw new Error('Unexpected direct-peer source-offer request');
         },
@@ -198,11 +199,159 @@ describe('prepareSessionHandoffWorkspaceTarget (engine-runner, direct_peer)', ()
       await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
       await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
     }
-  });
+	  });
 
-  it('requests blob packs via direct-peer transfers when needed (engine-owned job lifecycle)', async () => {
-    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-engine-direct-peer-'));
-    const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-handoff-engine-direct-peer-target-'));
+	  it('requests blob packs in batches derived from buildWorkspaceReplicationBlobPacks (not per-digest) when the target CAS is empty', async () => {
+	    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-engine-direct-peer-many-missing-'));
+	    const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-handoff-engine-direct-peer-many-missing-target-'));
+
+	    try {
+	      const blobs = Array.from({ length: 257 }, (_, index) => {
+	        const contents = `blob_${index}`;
+	        const digest = sha256DigestOfString(contents);
+	        return { digest, contents };
+	      }).sort((left, right) => left.digest.localeCompare(right.digest));
+
+	      const blobsByDigest = new Map<string, string>();
+	      for (const blob of blobs) {
+	        blobsByDigest.set(blob.digest, blob.contents);
+	      }
+
+	      const sourceManifest: WorkspaceManifest = {
+	        entries: blobs.map((blob, index) => ({
+	          kind: 'file',
+	          relativePath: `file_${index}.txt`,
+	          digest: blob.digest,
+	          sizeBytes: Buffer.byteLength(blob.contents, 'utf8'),
+	          executable: false,
+	        })),
+	      };
+
+	      const metadata: SessionHandoffWorkspaceReplicationMetadata = {
+	        sourceRootPath: '/source',
+	        manifest: sourceManifest,
+	      };
+
+	      const expectedPacks = buildWorkspaceReplicationBlobPacks({
+	        blobs: sourceManifest.entries
+	          .filter((entry) => entry.kind === 'file')
+	          .map((entry) => ({ digest: entry.digest, sizeBytes: entry.sizeBytes })),
+	        blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
+	        blobPackMaxBlobs: configuration.workspaceReplicationBlobPackMaxBlobs,
+	        blobPackMaxSingleBlobBytes: configuration.workspaceReplicationBlobPackMaxSingleBlobBytes,
+	      });
+	      expect(expectedPacks.length).toBeGreaterThan(0);
+
+	      const publishDirectPeerBlobPack = vi.fn(() => []);
+	      const requestDirectPeerBlobPackToFile = vi.fn(async (input) => {
+	        const openBody = input.openBody as any;
+	        expect(openBody).toMatchObject({
+	          t: 'workspace_replication_blob_pack_v1',
+	        });
+	        expect(typeof openBody.packId).toBe('string');
+	        expect(Array.isArray(openBody.digests)).toBe(true);
+
+	        const sortedDigests = [...openBody.digests].sort((left: string, right: string) => left.localeCompare(right));
+	        expect(openBody.digests).toEqual(sortedDigests);
+	        expect(openBody.packId).toBe(createPackIdForDigests(openBody.digests));
+
+	        const expectedTransferId = `session-handoff:handoff_direct_peer_many_missing_1:workspace-pack-direct:${openBody.packId}`;
+	        expect(input.transferId).toBe(expectedTransferId);
+	        expect(input.endpointCandidates).toEqual([
+	          {
+	            kind: 'http',
+	            url: `http://127.0.0.1:46001/machine-transfers/direct/${Buffer.from(expectedTransferId, 'utf8').toString('base64url')}`,
+	            authorizationToken: 'test-token',
+	            expiresAt: 999999,
+	          },
+	        ]);
+
+	        const sizeBytes = await writeWorkspaceReplicationBlobPackFile({
+	          destinationPath: input.destinationPath,
+	          blobs: openBody.digests.map((digest: string) => ({
+	            digest,
+	            contents: blobsByDigest.get(digest) ?? (() => {
+	              throw new Error(`Missing contents for ${digest}`);
+	            })(),
+	          })),
+	        });
+	        const manifestHash = `sha256:${createHash('sha256').update(await readFile(input.destinationPath)).digest('hex')}`;
+	        return {
+	          destinationPath: input.destinationPath,
+	          manifestHash,
+	          sizeBytes,
+	        };
+	      });
+
+	      const workspaceTransfer: SessionHandoffWorkspaceTransfer = {
+	        enabled: true,
+	        strategy: 'transfer_snapshot',
+	        conflictPolicy: 'replace_existing',
+	        includeIgnoredMode: 'exclude',
+	        ignoredIncludeGlobs: [],
+	      };
+
+	      const transfers: WorkspaceReplicationTransfers = {
+	        requestDirectPeerSourceOffer: async () => {
+	          throw new Error('Unexpected direct-peer source-offer request');
+	        },
+	        requestServerRoutedSourceOffer: async () => {
+	          throw new Error('Unexpected server-routed source-offer request');
+	        },
+	        publishDirectPeerBlobPack,
+	        requestDirectPeerBlobPackToFile,
+	        requestServerRoutedBlobPackToFile: async () => {
+	          throw new Error('Unexpected server-routed blob-pack request');
+	        },
+	      };
+
+	      const result = await prepareSessionHandoffWorkspaceTarget({
+	        activeServerDir,
+	        actualTransportStrategy: 'direct_peer',
+	        handoffId: 'handoff_direct_peer_many_missing_1',
+	        sourceMachineId: 'machine_source',
+	        targetMachineId: 'machine_target',
+	        targetPath: targetWorkspaceRoot,
+	        workspaceTransfer,
+	        metadata,
+	        directPeerManifestEndpointCandidates: [
+	          {
+	            kind: 'http',
+	            url: 'http://127.0.0.1:46001/machine-transfers/direct/manifest_transfer_key',
+	            authorizationToken: 'test-token',
+	            expiresAt: 999999,
+	          },
+	        ],
+	        transfers,
+	        blobPackTargetBytes: 1024,
+	        blobPackMaxBlobs: 10,
+	        blobPackMaxSingleBlobBytes: 1024 * 1024,
+	      });
+
+	      // No pre-publish path for direct-peer blob packs; they must be resolved on-demand.
+	      expect(publishDirectPeerBlobPack).not.toHaveBeenCalled();
+
+	      // Ensure we did not degenerate into per-digest requests.
+	      expect(requestDirectPeerBlobPackToFile.mock.calls.length).toBe(expectedPacks.length);
+	      expect(requestDirectPeerBlobPackToFile.mock.calls.length).toBeLessThan(blobs.length);
+
+	      const requestedOpenBodies = requestDirectPeerBlobPackToFile.mock.calls.map((call) => (call[0] as any).openBody);
+	      const requestedPackIds = requestedOpenBodies.map((openBody: any) => openBody.packId);
+	      const expectedPackIds = expectedPacks.map((pack) => createPackIdForDigests(pack.digests));
+	      expect(requestedPackIds).toEqual(expectedPackIds);
+
+	      const importedTargetPath = result.importedWorkspace.targetPath;
+	      expect(await readFile(join(importedTargetPath, 'file_0.txt'), 'utf8')).toBe(blobs[0]!.contents);
+	      expect(await readFile(join(importedTargetPath, 'file_256.txt'), 'utf8')).toBe(blobs[256]!.contents);
+	    } finally {
+	      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+	      await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+	    }
+	  });
+
+	  it('requests blob packs via direct-peer transfers when needed (engine-owned job lifecycle)', async () => {
+	    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-engine-direct-peer-'));
+	    const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-handoff-engine-direct-peer-target-'));
 
     try {
       const fileAContents = 'hello from direct peer a\n';
@@ -251,7 +400,6 @@ describe('prepareSessionHandoffWorkspaceTarget (engine-runner, direct_peer)', ()
       };
 
       const transfers: WorkspaceReplicationTransfers = {
-        publishDirectPeerSourceOffer: () => [],
         requestDirectPeerSourceOffer: async () => {
           throw new Error('Unexpected direct-peer source-offer request');
         },
@@ -343,7 +491,6 @@ describe('prepareSessionHandoffWorkspaceTarget (engine-runner, direct_peer)', ()
       };
 
       const transfers: WorkspaceReplicationTransfers = {
-        publishDirectPeerSourceOffer: () => [],
         requestDirectPeerSourceOffer: async () => {
           throw new Error('Unexpected direct-peer source-offer request');
         },
@@ -398,7 +545,6 @@ describe('prepareSessionHandoffWorkspaceTarget (engine-runner, direct_peer)', ()
       };
 
       const transfers: WorkspaceReplicationTransfers = {
-        publishDirectPeerSourceOffer: () => [],
         requestDirectPeerSourceOffer: async () => {
           throw new Error('Unexpected direct-peer source-offer request');
         },

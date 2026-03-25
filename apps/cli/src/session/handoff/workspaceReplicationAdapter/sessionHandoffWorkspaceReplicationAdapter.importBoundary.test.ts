@@ -4,15 +4,15 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-const FROZEN_ENGINE_SURFACE_IMPORT_TOKENS = [
-  '@/workspaces/replication/createWorkspaceReplicationEngine',
-  '@/workspaces/replication/workspaceReplicationEngine',
-  '@/workspaces/replication/workspaceReplicationTypes',
-  '@/workspaces/replication/workspaceReplicationError',
-  '@/workspaces/replication/jobs/runWorkspaceReplicationJob',
-  '@/workspaces/replication/jobs/abortWorkspaceReplicationJob',
-  '@/workspaces/replication/state/workspaceReplicationGc',
-  '@/workspaces/replication/state/workspaceReplicationSchemaVersion',
+const FROZEN_ENGINE_SURFACE_MODULE_SUFFIXES = [
+  'workspaces/replication/createWorkspaceReplicationEngine',
+  'workspaces/replication/workspaceReplicationEngine',
+  'workspaces/replication/workspaceReplicationTypes',
+  'workspaces/replication/workspaceReplicationError',
+  'workspaces/replication/jobs/runWorkspaceReplicationJob',
+  'workspaces/replication/jobs/abortWorkspaceReplicationJob',
+  'workspaces/replication/state/workspaceReplicationGc',
+  'workspaces/replication/state/workspaceReplicationSchemaVersion',
 ] as const;
 
 const FORBIDDEN_ENGINE_IMPORT_TOKENS = [
@@ -23,6 +23,18 @@ const FORBIDDEN_ENGINE_IMPORT_TOKENS = [
   'rpcHandlers.sessionHandoff',
   '@/api/machine/rpcHandlers.sessionHandoff',
 ] as const;
+
+function assertDoesNotImportModule(source: string, moduleSuffix: string, filePath: string): void {
+  const escaped = moduleSuffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const importFrom = new RegExp(String.raw`\\bfrom\\s+['"][^'"]*${escaped}[^'"]*['"]`, 'g');
+  const dynamicImport = new RegExp(String.raw`\\bimport\\s*\\(\\s*['"][^'"]*${escaped}[^'"]*['"]\\s*\\)`, 'g');
+  const requireCall = new RegExp(String.raw`\\brequire\\s*\\(\\s*['"][^'"]*${escaped}[^'"]*['"]\\s*\\)`, 'g');
+
+  const hit = source.match(importFrom) ?? source.match(dynamicImport) ?? source.match(requireCall);
+  if (hit && hit.length > 0) {
+    throw new Error(`Forbidden import of "${moduleSuffix}" in ${filePath}: ${hit[0]}`);
+  }
+}
 
 async function listFilesRecursively(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -56,8 +68,8 @@ describe('session handoff workspace replication adapter (import-boundary)', () =
       // The adapter itself is allowed to import the engine surface; everything else is not.
       if (!filePath.startsWith(adapterRoot)) {
         const content = await readFile(filePath, 'utf8');
-        for (const token of FROZEN_ENGINE_SURFACE_IMPORT_TOKENS) {
-          expect(content).not.toContain(token);
+        for (const suffix of FROZEN_ENGINE_SURFACE_MODULE_SUFFIXES) {
+          assertDoesNotImportModule(content, suffix, filePath);
         }
       }
     }

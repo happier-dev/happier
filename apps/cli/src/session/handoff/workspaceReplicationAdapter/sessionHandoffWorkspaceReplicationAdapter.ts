@@ -8,17 +8,18 @@ import type {
   TransferEndpointCandidate,
 } from '@happier-dev/protocol';
 
+import { rewriteDirectPeerEndpointCandidatesForTransferId } from '@/machines/transfer/rewriteDirectPeerEndpointCandidatesForTransferId';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
 import type { ScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
+import { buildWorkspaceExportArtifactsWithBlobProviderFromSourceController } from '@/scm/sourceController/workspaceTransferResolution';
 import { createWorkspaceReplicationEngine } from '@/workspaces/replication/createWorkspaceReplicationEngine';
-import { abortWorkspaceReplicationJob } from '@/workspaces/replication/jobs/abortWorkspaceReplicationJob';
-import { createWorkspaceReplicationJobStore } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';
 import { assertSafeWorkspaceReplicationPackId } from '@/workspaces/replication/transport/workspaceReplicationPackId';
 import {
   createWorkspaceReplicationTransfers,
   type WorkspaceReplicationTransfers,
 } from '@/workspaces/replication/transport/workspaceReplicationTransfers';
+import { WorkspaceReplicationError } from '@/workspaces/replication/workspaceReplicationError';
 
 import {
   buildSessionHandoffWorkspaceReplicationSourceOffer,
@@ -26,8 +27,6 @@ import {
   type SessionHandoffWorkspaceReplicationMetadata,
 } from '../workspace/sessionHandoffWorkspaceReplicationMetadata';
 import {
-  type PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers,
-  publishSessionHandoffWorkspaceReplicationDirectPeerTransfers,
   buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId,
 } from '../workspace/sessionHandoffWorkspaceReplicationDirectPeer';
 import {
@@ -37,33 +36,6 @@ import {
   parseSessionHandoffWorkspaceBlobPackTransferId,
 } from '../workspace/sessionHandoffWorkspaceReplicationServerRouted';
 import type { SessionHandoffProviderBundleTransferPublication } from '../sessionHandoffProviderBundleTransferPublication';
-
-function rewriteDirectPeerEndpointCandidatesForTransferId(input: Readonly<{
-  endpointCandidates: readonly TransferEndpointCandidate[];
-  transferId: string;
-}>): readonly TransferEndpointCandidate[] {
-  const encodedKey = Buffer.from(input.transferId, 'utf8').toString('base64url');
-  const marker = '/machine-transfers/direct/';
-
-  return input.endpointCandidates.map((candidate) => {
-    if (candidate.kind !== 'http' && candidate.kind !== 'https') {
-      return candidate;
-    }
-    const parsed = new URL(candidate.url);
-    const markerIndex = parsed.pathname.indexOf(marker);
-    if (markerIndex < 0) {
-      throw new Error(`Invalid direct-peer endpoint candidate URL for ${input.transferId}`);
-    }
-    parsed.pathname = `${parsed.pathname.slice(0, markerIndex + marker.length)}${encodedKey}`;
-    // Direct-peer candidates should not rely on query params for auth or routing.
-    parsed.search = '';
-    parsed.hash = '';
-    return {
-      ...candidate,
-      url: parsed.toString(),
-    };
-  });
-}
 
 type DirectPeerTransferPublisher = Readonly<{
   publishTransfer: (input: Readonly<{
@@ -81,7 +53,6 @@ type MachineTransferChannel = Readonly<{
 export {
   createSessionHandoffWorkspaceReplicationBlobPackPayloadSource,
   parseSessionHandoffWorkspaceBlobPackTransferId,
-  type PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers,
   type SessionHandoffWorkspaceReplicationMetadata,
 };
 
@@ -99,11 +70,14 @@ const TERMINAL_WORKSPACE_REPLICATION_JOB_STATUSES = new Set<string>([
   'awaiting_recovery',
 ]);
 
+type WorkspaceReplicationJobStatus =
+  Awaited<ReturnType<ReturnType<typeof createWorkspaceReplicationEngine>['getJobStatus']>>;
+
 async function waitForTerminalWorkspaceReplicationJob(params: Readonly<{
   engine: ReturnType<typeof createWorkspaceReplicationEngine>;
   jobId: string;
   assertCanContinue?: () => Promise<void>;
-}>): Promise<Awaited<ReturnType<ReturnType<typeof createWorkspaceReplicationEngine>['getJobStatus']>>> {
+}>): Promise<WorkspaceReplicationJobStatus> {
   // Poll on a coarse interval to avoid hammering the job store while still providing fast convergence.
   while (true) {
     await params.assertCanContinue?.();
@@ -119,45 +93,26 @@ async function waitForTerminalWorkspaceReplicationJob(params: Readonly<{
 
 export async function createSessionHandoffWorkspaceReplicationState(input: Readonly<{
   handoffId: string;
-  activeServerDir: string;
-  negotiatedTransportStrategy?: SessionHandoffTransportStrategy;
-  workspaceTransfer?: SessionHandoffWorkspaceTransfer;
-  directPeerTransfer?: DirectPeerTransferPublisher;
   sourceRootPath: string;
-  blobProvider?: WorkspaceExportBlobProvider;
-  workspaceExportArtifacts?: ScmSourceControllerWorkspaceExportArtifacts;
+  activeServerDir: string;
+  workspaceTransfer: SessionHandoffWorkspaceTransfer;
 }>): Promise<Readonly<{
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
-  publishedWorkspaceDirectPeerTransfers?: PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers;
+  workspaceBlobProvider?: WorkspaceExportBlobProvider;
 }>> {
+  const workspaceExport = await buildWorkspaceExportArtifactsWithBlobProviderFromSourceController({
+    activeServerDir: input.activeServerDir,
+    sourcePath: input.sourceRootPath,
+    workspaceTransfer: input.workspaceTransfer,
+  });
   const workspaceReplicationMetadata = createSessionHandoffWorkspaceReplicationMetadata({
     sourceRootPath: input.sourceRootPath,
-    workspaceExportArtifacts: input.workspaceExportArtifacts,
+    workspaceExportArtifacts: workspaceExport.workspaceExportArtifacts,
   });
 
-  if (
-    input.negotiatedTransportStrategy !== 'direct_peer'
-    || input.workspaceTransfer?.enabled !== true
-    || !workspaceReplicationMetadata
-    || !input.directPeerTransfer
-  ) {
-    return {
-      ...(workspaceReplicationMetadata ? { workspaceReplicationMetadata } : {}),
-    };
-  }
-
-  const publishedWorkspaceDirectPeerTransfers =
-    await publishSessionHandoffWorkspaceReplicationDirectPeerTransfers({
-      handoffId: input.handoffId,
-      activeServerDir: input.activeServerDir,
-      manifest: workspaceReplicationMetadata.manifest,
-      directPeerTransfer: input.directPeerTransfer,
-      blobProvider: input.blobProvider,
-    });
-
   return {
-    workspaceReplicationMetadata,
-    publishedWorkspaceDirectPeerTransfers,
+    ...(workspaceReplicationMetadata ? { workspaceReplicationMetadata } : {}),
+    ...(workspaceExport.blobProvider ? { workspaceBlobProvider: workspaceExport.blobProvider } : {}),
   };
 }
 
@@ -335,18 +290,21 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
           strategy: workspaceTransfer.strategy,
           conflictPolicy: workspaceTransfer.conflictPolicy,
         },
-        blobPackPlanningMode: 'missing_only',
         requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
           if (input.actualTransportStrategy === 'server_routed_stream' && input.machineTransferChannel) {
             await input.transfers.requestServerRoutedBlobPackToFile({
               transferId: buildSessionHandoffWorkspaceBlobPackTransferId({
                 handoffId: input.handoffId,
                 packId,
-                digests,
               }),
               sourceMachineId: input.sourceMachineId,
               machineTransferChannel: input.machineTransferChannel,
               destinationPath,
+              openBody: {
+                t: 'workspace_replication_blob_pack_v1',
+                packId,
+                digests: [...digests],
+              },
             });
             return;
           }
@@ -420,42 +378,23 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
   directPeerTransfer?: DirectPeerTransferPublisher;
   sourceRootPath: string;
-  blobProvider?: WorkspaceExportBlobProvider;
-  workspaceExportArtifacts?: ScmSourceControllerWorkspaceExportArtifacts;
   providerBundleTransferPublication?: SessionHandoffProviderBundleTransferPublication;
 }>): Promise<Readonly<{
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
-  publishedWorkspaceDirectPeerTransfers?: PublishedSessionHandoffWorkspaceReplicationDirectPeerTransfers;
   handoffMetadataV2?: SessionHandoffMetadataV2;
+  workspaceBlobProvider?: WorkspaceExportBlobProvider;
 }>> {
   const workspaceTransferEnabled = input.workspaceTransfer?.enabled === true;
   const workspaceReplicationState = workspaceTransferEnabled
     ? await createSessionHandoffWorkspaceReplicationState({
       handoffId: input.handoffId,
-      activeServerDir: input.activeServerDir,
-      negotiatedTransportStrategy: input.negotiatedTransportStrategy,
-      workspaceTransfer: input.workspaceTransfer,
-      directPeerTransfer: input.directPeerTransfer,
       sourceRootPath: input.sourceRootPath,
-      blobProvider: input.blobProvider,
-      ...(input.workspaceExportArtifacts
-        ? { workspaceExportArtifacts: input.workspaceExportArtifacts }
-        : {}),
+      activeServerDir: input.activeServerDir,
+      workspaceTransfer: input.workspaceTransfer,
     })
     : null;
   const workspaceReplicationMetadata = workspaceReplicationState?.workspaceReplicationMetadata;
-  const publishedWorkspaceDirectPeerTransfers = workspaceReplicationState?.publishedWorkspaceDirectPeerTransfers;
-
-  const workspaceReplicationManifestTransferPublication =
-    publishedWorkspaceDirectPeerTransfers?.manifestTransferPublication
-    ?? (workspaceReplicationMetadata && input.workspaceTransfer?.enabled
-      ? {
-          transferId: buildSessionHandoffWorkspaceManifestTransferId({
-            handoffId: input.handoffId,
-          }),
-          endpointCandidates: undefined,
-        }
-      : undefined);
+  const workspaceBlobProvider = workspaceReplicationState?.workspaceBlobProvider;
 
   const providerBundleTransferPublication = input.providerBundleTransferPublication
     ? {
@@ -467,6 +406,28 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
           : {}),
       }
     : undefined;
+
+  const workspaceReplicationManifestTransferPublication =
+    workspaceReplicationMetadata && input.workspaceTransfer?.enabled
+      ? (() => {
+          const transferId = buildSessionHandoffWorkspaceManifestTransferId({
+            handoffId: input.handoffId,
+          });
+          const carrierCandidates = providerBundleTransferPublication?.endpointCandidates;
+          const endpointCandidates =
+            input.negotiatedTransportStrategy === 'direct_peer' && carrierCandidates?.length
+              ? rewriteDirectPeerEndpointCandidatesForTransferId({
+                  endpointCandidates: carrierCandidates,
+                  transferId,
+                })
+              : undefined;
+
+          return {
+            transferId,
+            ...(endpointCandidates ? { endpointCandidates } : {}),
+          };
+        })()
+      : undefined;
 
   const workspaceReplicationManifestTransferPublicationNormalized = workspaceReplicationManifestTransferPublication
     ? {
@@ -481,7 +442,6 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
     providerBundleTransferPublication
     || workspaceReplicationMetadata
     || workspaceReplicationManifestTransferPublicationNormalized
-    || publishedWorkspaceDirectPeerTransfers
       ? {
           ...(providerBundleTransferPublication
             ? { providerBundleTransferPublication: providerBundleTransferPublication }
@@ -500,8 +460,8 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
 
   return {
     ...(workspaceReplicationMetadata ? { workspaceReplicationMetadata } : {}),
-    ...(publishedWorkspaceDirectPeerTransfers ? { publishedWorkspaceDirectPeerTransfers } : {}),
     ...(handoffMetadataV2 ? { handoffMetadataV2 } : {}),
+    ...(workspaceBlobProvider ? { workspaceBlobProvider } : {}),
   };
 }
 
@@ -511,10 +471,15 @@ export function createSessionHandoffWorkspaceReplicationAdapter(): Readonly<{
   resolveSourceOffer: typeof resolveSessionHandoffWorkspaceReplicationSourceOffer;
   prepareTargetWorkspace: typeof prepareSessionHandoffWorkspaceTarget;
   prepareSourceWorkspaceTransfer: typeof prepareSessionHandoffSourceWorkspaceTransfer;
+  readWorkspaceReplicationJobStatus: (input: Readonly<{
+    activeServerDir: string;
+    localMachineId?: string;
+    jobId: string;
+  }>) => Promise<WorkspaceReplicationJobStatus | null>;
   abortWorkspaceReplicationJob: (input: Readonly<{
     activeServerDir: string;
+    localMachineId?: string;
     jobId: string;
-    now?: () => number;
   }>) => Promise<void>;
 }> {
   return {
@@ -523,13 +488,27 @@ export function createSessionHandoffWorkspaceReplicationAdapter(): Readonly<{
     resolveSourceOffer: resolveSessionHandoffWorkspaceReplicationSourceOffer,
     prepareTargetWorkspace: prepareSessionHandoffWorkspaceTarget,
     prepareSourceWorkspaceTransfer: prepareSessionHandoffSourceWorkspaceTransfer,
-    abortWorkspaceReplicationJob: async (input) => {
-      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir: input.activeServerDir });
-      await abortWorkspaceReplicationJob({
-        jobStore,
-        jobId: input.jobId,
-        now: input.now,
+    readWorkspaceReplicationJobStatus: async (input) => {
+      const engine = createWorkspaceReplicationEngine({
+        activeServerDir: input.activeServerDir,
+        localMachineId: input.localMachineId ?? 'machine_unknown',
       });
+
+      try {
+        return await engine.getJobStatus(input.jobId);
+      } catch (error) {
+        if (error instanceof WorkspaceReplicationError && error.code === 'job_not_found') {
+          return null;
+        }
+        throw error;
+      }
+    },
+    abortWorkspaceReplicationJob: async (input) => {
+      const engine = createWorkspaceReplicationEngine({
+        activeServerDir: input.activeServerDir,
+        localMachineId: input.localMachineId ?? 'machine_unknown',
+      });
+      await engine.abortJob(input.jobId);
     },
   };
 }

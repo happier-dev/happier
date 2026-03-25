@@ -42,7 +42,8 @@ function resolveLeasePaths(input: Readonly<{
   );
   const leaseDirectory = join(jobStagingDirectory, 'lease');
   const leaseFilePath = join(leaseDirectory, 'lease.json');
-  return { jobStagingDirectory, leaseDirectory, leaseFilePath } as const;
+  const runnerFilePath = join(leaseDirectory, 'runner.json');
+  return { jobStagingDirectory, leaseDirectory, leaseFilePath, runnerFilePath } as const;
 }
 
 async function readLeaseRecord(filePath: string): Promise<SessionHandoffPrepareTargetJobLeaseRecord | null> {
@@ -134,7 +135,20 @@ export async function tryAcquireSessionHandoffPrepareTargetJobLease(input: Reado
         // Daemon process is gone; treat the lease as stale to avoid restart stalls.
         await rm(resolved.leaseDirectory, { recursive: true, force: true }).catch(() => undefined);
       } else {
-      return { acquired: false, lease: existing };
+        if (pid === process.pid) {
+          const runner = await readLeaseRecord(resolved.runnerFilePath);
+          const runnerIsFresh =
+            runner
+            && runner.ownerId === existing.ownerId
+            && runner.renewedAtMs + Math.max(250, Math.floor(ttlMs / 2)) > input.nowMs;
+          if (!runnerIsFresh) {
+            await rm(resolved.leaseDirectory, { recursive: true, force: true }).catch(() => undefined);
+          } else {
+            return { acquired: false, lease: existing };
+          }
+        } else {
+          return { acquired: false, lease: existing };
+        }
       }
     }
     const previousAttempt = existing?.attempt ?? 0;
@@ -154,6 +168,7 @@ export async function tryAcquireSessionHandoffPrepareTargetJobLease(input: Reado
     const tempLeaseDirectory = `${resolved.leaseDirectory}.tmp-${randomUUID()}`;
     await mkdir(tempLeaseDirectory, { recursive: false });
     await writeLeaseRecord(join(tempLeaseDirectory, 'lease.json'), next);
+    await writeLeaseRecord(join(tempLeaseDirectory, 'runner.json'), next);
     try {
       await rename(tempLeaseDirectory, resolved.leaseDirectory);
       return { acquired: true, lease: next };
@@ -197,6 +212,7 @@ export async function renewSessionHandoffPrepareTargetJobLease(input: Readonly<{
   };
   // Best-effort atomic: overwrite within the lease directory, which is already acquired/owned.
   await writeLeaseRecord(resolved.leaseFilePath, next);
+  await writeLeaseRecord(resolved.runnerFilePath, next);
   return { renewed: true, lease: next };
 }
 

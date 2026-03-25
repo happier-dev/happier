@@ -3,24 +3,41 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-const FROZEN_ENGINE_SURFACE_IMPORT_TOKENS = [
-  '@/workspaces/replication/createWorkspaceReplicationEngine',
-  '@/workspaces/replication/workspaceReplicationEngine',
-  '@/workspaces/replication/workspaceReplicationTypes',
-  '@/workspaces/replication/workspaceReplicationError',
-  '@/workspaces/replication/jobs/runWorkspaceReplicationJob',
-  '@/workspaces/replication/jobs/abortWorkspaceReplicationJob',
-  '@/workspaces/replication/state/workspaceReplicationGc',
-  '@/workspaces/replication/state/workspaceReplicationSchemaVersion',
+const FROZEN_ENGINE_SURFACE_MODULE_SUFFIXES = [
+  'workspaces/replication/createWorkspaceReplicationEngine',
+  'workspaces/replication/workspaceReplicationEngine',
+  'workspaces/replication/workspaceReplicationTypes',
+  'workspaces/replication/workspaceReplicationError',
+  'workspaces/replication/jobs/runWorkspaceReplicationJob',
+  'workspaces/replication/jobs/abortWorkspaceReplicationJob',
+  // Job persistence is engine-native. Session handoff must go through the adapter for job reads as well.
+  'workspaces/replication/jobs/workspaceReplicationJobStore',
+  'workspaces/replication/state/workspaceReplicationGc',
+  'workspaces/replication/state/workspaceReplicationSchemaVersion',
 ] as const;
+
+function assertDoesNotImportModule(source: string, moduleSuffix: string, filePath: string): void {
+  const escaped = moduleSuffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const importFrom = new RegExp(String.raw`\\bfrom\\s+['"][^'"]*${escaped}[^'"]*['"]`, 'g');
+  const dynamicImport = new RegExp(String.raw`\\bimport\\s*\\(\\s*['"][^'"]*${escaped}[^'"]*['"]\\s*\\)`, 'g');
+  const requireCall = new RegExp(String.raw`\\brequire\\s*\\(\\s*['"][^'"]*${escaped}[^'"]*['"]\\s*\\)`, 'g');
+
+  const hit = source.match(importFrom) ?? source.match(dynamicImport) ?? source.match(requireCall);
+  if (hit && hit.length > 0) {
+    throw new Error(`Forbidden import of "${moduleSuffix}" in ${filePath}: ${hit[0]}`);
+  }
+}
 
 describe('session handoff (import-boundary)', () => {
   it('keeps rpcHandlers.sessionHandoff from importing the frozen replication engine surface directly (must go through the adapter)', async () => {
     const rpcHandlers = fileURLToPath(new URL('../../../api/machine/rpcHandlers.sessionHandoff.ts', import.meta.url));
     const content = await readFile(rpcHandlers, 'utf8');
 
-    for (const token of FROZEN_ENGINE_SURFACE_IMPORT_TOKENS) {
-      expect(content).not.toContain(token);
+    // Guard against subtle regex drift: this is the highest-value boundary to enforce.
+    expect(content).not.toContain('workspaces/replication/jobs/workspaceReplicationJobStore');
+
+    for (const suffix of FROZEN_ENGINE_SURFACE_MODULE_SUFFIXES) {
+      assertDoesNotImportModule(content, suffix, rpcHandlers);
     }
   });
 });

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -64,7 +64,7 @@ describe('sessionHandoffWorkspaceReplicationManifestTransfer', () => {
     }
   });
 
-  it('rejects legacy JSON manifest files (streaming-only; no undeployed compatibility)', async () => {
+  it('rejects non-streaming manifest files', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-session-handoff-manifest-legacy-'));
     const filePath = join(directory, 'workspace-manifest.json');
 
@@ -74,9 +74,41 @@ describe('sessionHandoffWorkspaceReplicationManifestTransfer', () => {
       await expect(readSessionHandoffWorkspaceReplicationManifestFromFile({
         transferId: 'transfer_legacy',
         filePath,
-      })).rejects.toThrow(/Legacy workspace replication manifest format is not supported/u);
+      })).rejects.toThrow(/Invalid workspace replication manifest/u);
     } finally {
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when sizeBytes is provided but does not match the actual manifest file', async () => {
+    const source = await createSessionHandoffWorkspaceReplicationManifestPayloadSource({
+      manifest: {
+        entries: [
+          {
+            relativePath: 'README.md',
+            kind: 'file',
+            digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            sizeBytes: 1,
+            executable: false,
+          },
+        ],
+      },
+    });
+
+    try {
+      expect(source.kind).toBe('file');
+      if (source.kind !== 'file') {
+        throw new Error('Expected file payload source');
+      }
+
+      const actualSizeBytes = source.sizeBytes ?? (await stat(source.filePath)).size;
+      await expect(readSessionHandoffWorkspaceReplicationManifestFromFile({
+        transferId: 'transfer_1',
+        filePath: source.filePath,
+        sizeBytes: actualSizeBytes + 1,
+      })).rejects.toThrow(/Invalid workspace replication manifest/u);
+    } finally {
+      await disposeTransferPayloadSource(source);
     }
   });
 });

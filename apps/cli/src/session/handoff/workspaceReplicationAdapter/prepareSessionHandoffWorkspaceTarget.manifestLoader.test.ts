@@ -23,7 +23,6 @@ describe('prepareSessionHandoffWorkspaceTarget (manifest loading)', () => {
         ignoredIncludeGlobs: [],
       };
       const transfers: WorkspaceReplicationTransfers = {
-        publishDirectPeerSourceOffer: () => [],
         requestDirectPeerSourceOffer: async () => {
           throw new Error('Unexpected direct-peer source-offer request');
         },

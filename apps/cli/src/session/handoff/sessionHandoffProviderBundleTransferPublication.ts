@@ -1,11 +1,9 @@
-import type { TransferEndpointCandidate } from '@happier-dev/protocol';
+import type {
+  SessionHandoffProviderBundleTransferPublication as ProtocolSessionHandoffProviderBundleTransferPublication,
+} from '@happier-dev/protocol';
 
-export type SessionHandoffProviderBundleTransferPublication = Readonly<{
-  transferId: string;
-  sizeBytes: number;
-  manifestHash: string;
-  endpointCandidates?: readonly TransferEndpointCandidate[];
-}>;
+export type SessionHandoffProviderBundleTransferPublication =
+  ProtocolSessionHandoffProviderBundleTransferPublication;
 
 const SESSION_HANDOFF_PROVIDER_BUNDLE_TRANSFER_ID_SUFFIX = ':provider-bundle-file';
 
