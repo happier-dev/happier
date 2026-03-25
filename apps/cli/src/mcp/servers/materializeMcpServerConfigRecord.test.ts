@@ -14,6 +14,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { projectPath } from '@/projectPath';
+import { resolvePackagedRuntimeEntrypoint } from '@/runtime/resolvePackagedRuntimeEntrypoint';
 import { resolveCliTsxTsconfigPath, resolveTsxImportHookPath } from '@/utils/spawnHappyCLI';
 
 import { materializeMcpServerConfigRecord } from './materializeMcpServerConfigRecord';
@@ -282,6 +283,7 @@ describe('materializeMcpServerConfigRecord', () => {
       const distEntrypoint = join(projectPath(), 'dist', 'mcp', 'launchers', 'stdioMcpServerLauncher.mjs');
       const sourceEntrypoint = join(projectPath(), 'src', 'mcp', 'launchers', 'stdioMcpServerLauncher.ts');
       const tsxHookPath = resolveTsxImportHookPath();
+      const packagedEntrypoint = resolvePackagedRuntimeEntrypoint('mcp/launchers/stdioMcpServerLauncher.mjs');
       const expectedArgs =
         !existsSync(distEntrypoint) && existsSync(sourceEntrypoint) && typeof tsxHookPath === 'string' && tsxHookPath.length > 0
           ? [
@@ -291,7 +293,7 @@ describe('materializeMcpServerConfigRecord', () => {
               tsxHookPath,
               sourceEntrypoint,
             ]
-          : ['--no-warnings', '--no-deprecation', join(projectPath(), 'bin', 'happier-mcp-stdio-launcher.mjs')];
+          : ['--no-warnings', '--no-deprecation', packagedEntrypoint];
       expect(cfg.args).toEqual(expectedArgs);
       if (expectedArgs.includes('--import')) {
         expect(cfg.env?.TSX_TSCONFIG_PATH).toBe(resolveCliTsxTsconfigPath());

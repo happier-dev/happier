@@ -1,6 +1,7 @@
+import { accessSync, constants as fsConstants, statSync } from 'node:fs';
 import { basename } from 'node:path';
 
-import { ensureManagedPnpmCommand } from '@/runtime/managedTools/pnpm/managedPnpm';
+import { managedPnpmBinPath } from '@/runtime/managedTools/pnpm/managedPnpm';
 
 export type NormalizedPackageRunnerInvocation = Readonly<{
   command: string;
@@ -38,13 +39,39 @@ function hasPackageFlag(args: readonly string[]): boolean {
   return args.some((arg) => arg === '-p' || arg === '--package' || arg.startsWith('--package=') || arg.startsWith('-p='));
 }
 
+function resolveManagedOrOverridePnpmCommand(processEnv: NodeJS.ProcessEnv): string | null {
+  const rawOverride = typeof processEnv.HAPPIER_PNPM_BIN === 'string' ? processEnv.HAPPIER_PNPM_BIN.trim() : '';
+  if (rawOverride) {
+    try {
+      accessSync(rawOverride, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+      if (!statSync(rawOverride).isFile()) {
+        return null;
+      }
+      return rawOverride;
+    } catch {
+      return null;
+    }
+  }
+
+  const managedPath = managedPnpmBinPath(processEnv);
+  try {
+    accessSync(managedPath, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+    if (!statSync(managedPath).isFile()) {
+      return null;
+    }
+    return managedPath;
+  } catch {
+    return null;
+  }
+}
+
 export async function normalizePackageRunnerInvocation(params: Readonly<{
   command: string;
   args: readonly string[];
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<NormalizedPackageRunnerInvocation | null> {
   const processEnv = params.processEnv ?? process.env;
-  const pnpmCommand = await ensureManagedPnpmCommand(processEnv);
+  const pnpmCommand = resolveManagedOrOverridePnpmCommand(processEnv);
   if (!pnpmCommand) return null;
 
   const normalized = basename(params.command).toLowerCase();
