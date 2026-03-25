@@ -1,6 +1,6 @@
 import React from "react";
 import { useWindowDimensions, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 
 import { Item } from "@/components/ui/lists/Item";
 import { ItemGroup } from "@/components/ui/lists/ItemGroup";
@@ -16,7 +16,8 @@ import {
   type AgentInputChipPickerPanelProps,
 } from "./AgentInputChipPickerTypes";
 
-const DETAILED_PICKER_STACKED_WIDTH = 520;
+// Keep parity with OptionPickerOverlay's mobile single-column breakpoint.
+const DETAILED_PICKER_STACKED_WIDTH = 560;
 
 export {
   type AgentInputChipPickerOption,
@@ -86,7 +87,7 @@ export function AgentInputChipPickerPanel(
       // For selectors with a detail pane (e.g. engine + model), keep the popover
       // open so users can continue configuring the newly focused option.
       const canFocusOptionInPlace = typeof option.renderDetailContent === "function";
-      if (!canFocusOptionInPlace && option.closeOnSelectImmediate === true) {
+      if (!canFocusOptionInPlace && option.closeOnSelectImmediate !== false) {
         props.onRequestClose();
       }
       return;
@@ -278,7 +279,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
     paddingVertical: 0,
   },
-  detailPane: {
+  detailPane: {
     position: 'relative',
   }
 }));

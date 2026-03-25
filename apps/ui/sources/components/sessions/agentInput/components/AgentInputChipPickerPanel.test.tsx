@@ -32,6 +32,26 @@ vi.mock('./AgentInputChipPickerDetailPane', () => ({
         }, null),
 }));
 
+vi.mock('./AgentInputChipPickerOptionSelector', () => ({
+    AgentInputChipPickerOptionSelector: (props: any) => {
+        const sections = Array.isArray(props.sections) ? props.sections : [];
+        return React.createElement(
+            'View',
+            { testID: 'agent-input-chip-picker.option-rail' },
+            sections.flatMap((section: any) => Array.isArray(section?.options) ? section.options : [])
+                .map((option: any) => React.createElement(
+                    'Pressable',
+                    {
+                        key: String(option.id),
+                        testID: `agent-input-chip-picker.option:${option.id}`,
+                        onPress: () => props.onFocusOption?.(String(option.id)),
+                    },
+                    null,
+                )),
+        );
+    },
+}));
+
 describe('AgentInputChipPickerPanel', () => {
     it('does not render inner scroll views in simple mode', async () => {
         const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
