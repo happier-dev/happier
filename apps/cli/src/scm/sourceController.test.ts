@@ -589,6 +589,24 @@ describe('scm source controller', () => {
         }
     });
 
+    it('fails closed when the filesystem fallback source root is missing', async () => {
+        const sourcePath = await mkdtemp(join(tmpdir(), 'happier-source-controller-fallback-missing-'));
+        await rm(sourcePath, { recursive: true, force: true });
+
+        await expect(resolveWorkspaceReplicationSourceInputsWithSourceController({
+            sourcePath,
+            workspaceTransfer: {
+                strategy: 'transfer_snapshot',
+                includeIgnoredMode: 'exclude',
+                ignoredIncludeGlobs: [],
+            },
+            registry: createScmBackendRegistry([]),
+        })).rejects.toMatchObject({
+            code: 'source_path_unreadable',
+            sourcePath,
+        });
+    });
+
     it('passes a backend-agnostic checkout materialization request through the shared source-controller hook', async () => {
         const materializeWorkspaceCheckout = vi.fn(async () => undefined);
         const registry = createScmBackendRegistry([

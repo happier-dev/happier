@@ -35,7 +35,7 @@ import {
     type ScmSourceControllerWorkspaceTransferMetadata,
     type ScmSourceControllerWorkspaceTransferResult,
 } from './workspaceTransfer';
-import { buildNonPortableWorkspacePathError } from './workspaceTransferErrors';
+import { buildNonPortableWorkspacePathError, WorkspaceTransferSourcePathError } from './workspaceTransferErrors';
 
 export { buildNonPortableWorkspacePathError } from './workspaceTransferErrors';
 
@@ -265,6 +265,18 @@ export async function resolveWorkspaceReplicationSourceInputsWithSourceControlle
             safeFilterPolicy: inferWorkspaceManifestSafeFilterPolicyFromEntries(entries, input.registry),
             isNestedRepoSourcePath: resolved.isNestedRepoSourcePath,
         };
+    }
+
+    try {
+        await readdir(input.sourcePath, { withFileTypes: true });
+    } catch (error) {
+        if (isIgnorableWorkspaceExportAccessError(error)) {
+            throw new WorkspaceTransferSourcePathError({
+                sourcePath: input.sourcePath,
+                cause: error,
+            });
+        }
+        throw error;
     }
 
     const entries = await listWorkspaceExportFallbackEntries({

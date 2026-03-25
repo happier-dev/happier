@@ -39,6 +39,7 @@ export async function scanWorkspaceManifest(params: Readonly<{
     workspaceRoot: string;
     safeFilterPolicy?: WorkspaceManifestSafeFilterPolicy;
     scmRegistry?: ScmBackendRegistry;
+    assertCanContinue?: () => void | Promise<void>;
     resolveCachedFileDigest?: (
         file: WorkspaceManifestScannedFileMetadata,
     ) => string | null | undefined | Promise<string | null | undefined>;
@@ -50,6 +51,7 @@ export async function scanWorkspaceManifest(params: Readonly<{
     const entries: WorkspaceManifestEntry[] = [];
 
     for (let pendingIndex = 0; pendingIndex < pendingDirectories.length; pendingIndex += 1) {
+        await params.assertCanContinue?.();
         const directoryPath = pendingDirectories[pendingIndex];
         let directoryEntries;
         try {
@@ -63,6 +65,7 @@ export async function scanWorkspaceManifest(params: Readonly<{
         directoryEntries.sort((left, right) => left.name.localeCompare(right.name));
 
         for (const directoryEntry of directoryEntries) {
+            await params.assertCanContinue?.();
             const candidatePath = join(directoryPath, directoryEntry.name);
             const resolvedPath = resolveWorkspaceRelativePath({
                 workspaceRoot,
@@ -128,8 +131,12 @@ export async function scanWorkspaceManifest(params: Readonly<{
                 };
                 let fileDigest: string;
                 try {
+                    await params.assertCanContinue?.();
                     const cachedDigest = await params.resolveCachedFileDigest?.(scannedFileMetadata);
-                    fileDigest = cachedDigest ?? await hashWorkspaceFile({ filePath: candidatePath });
+                    fileDigest = cachedDigest ?? await hashWorkspaceFile({
+                        filePath: candidatePath,
+                        assertCanContinue: params.assertCanContinue,
+                    });
                 } catch (error) {
                     if (isIgnorableWorkspaceExportAccessError(error)) {
                         continue;

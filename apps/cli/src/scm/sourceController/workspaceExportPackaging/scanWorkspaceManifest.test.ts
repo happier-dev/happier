@@ -256,6 +256,30 @@ describe('scanWorkspaceManifest', () => {
         }
     });
 
+    it('aborts scanning when assertCanContinue throws (cancellation/lease-loss)', async () => {
+        const root = await makeTempDir('workspace-manifest-abort-');
+        await writeFile(join(root, 'a.txt'), 'a\n');
+        await writeFile(join(root, 'b.txt'), 'b\n');
+
+        let scannedCount = 0;
+        let shouldCancel = false;
+
+        await expect(scanWorkspaceManifest({
+            workspaceRoot: root,
+            assertCanContinue() {
+                if (shouldCancel) {
+                    throw new Error('cancelled');
+                }
+            },
+            onFileScanned() {
+                scannedCount += 1;
+                shouldCancel = true;
+            },
+        })).rejects.toThrow('cancelled');
+
+        expect(scannedCount).toBe(1);
+    });
+
     it('uses a cached digest from the optional digest resolver before attempting to read file contents', async () => {
         const root = await makeTempDir('workspace-manifest-cache-hit-');
         const filePath = join(root, 'README.md');
