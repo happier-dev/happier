@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises';
 
-import { WorkspaceManifestFingerprintSchema, WorkspaceManifestSchema } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
@@ -9,14 +8,15 @@ import {
   buildWorkspaceReplicationBaselineCacheKey,
   type WorkspaceReplicationBaselineScope,
 } from './baselineCacheKeys';
+import { ReplicationManifestFingerprintSchema, ReplicationManifestSchema } from '../replicationManifestSchema';
 import { createWorkspaceReplicationRelationshipStore } from '../relationships/workspaceReplicationRelationshipStore';
 import { workspaceReplicationModes } from '../relationships/relationshipScope';
 import { WORKSPACE_REPLICATION_SCHEMA_VERSION } from '../state/workspaceReplicationSchemaVersion';
 
 export const WorkspaceReplicationBaselineRecordSchema = z
   .object({
-    manifestFingerprint: WorkspaceManifestFingerprintSchema,
-    manifest: WorkspaceManifestSchema,
+    manifestFingerprint: ReplicationManifestFingerprintSchema,
+    manifest: ReplicationManifestSchema,
     savedAtMs: z.number().int().min(0),
   })
   .strict();
@@ -24,7 +24,7 @@ export type WorkspaceReplicationBaselineRecord = z.infer<typeof WorkspaceReplica
 
 const PersistedWorkspaceReplicationBaselineSchema = z
   .object({
-    schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION).default(WORKSPACE_REPLICATION_SCHEMA_VERSION),
+    schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION),
     cacheKey: z.string().regex(/^workspace-replication-baseline-v1-[a-f0-9]{64}$/u),
     scope: z.object({
       sourceMachineId: z.string().min(1),
@@ -47,8 +47,17 @@ export type WorkspaceReplicationBaselineStore = Readonly<{
 async function readPersistedWorkspaceReplicationBaseline(path: string) {
   try {
     const raw = await readFile(path, 'utf8');
-    const parsed = PersistedWorkspaceReplicationBaselineSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new Error(`Invalid workspace replication baseline record: ${path}`);
+    }
+    const parsed = PersistedWorkspaceReplicationBaselineSchema.safeParse(value);
+    if (!parsed.success) {
+      throw new Error(`Invalid workspace replication baseline record: ${path}`);
+    }
+    return parsed.data;
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException;
     if (nodeError?.code === 'ENOENT') {

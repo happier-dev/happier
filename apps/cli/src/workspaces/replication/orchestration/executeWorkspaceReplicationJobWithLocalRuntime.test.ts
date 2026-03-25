@@ -118,7 +118,6 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
                     return await readWorkspaceReplicationSourceOfferFromFile({
                         transferId: 'offer_transfer_1',
                         filePath: offerPath,
-                        legacyWholeBufferMaxBytes: 1024 * 1024,
                     });
                 },
                 requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
@@ -293,7 +292,6 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
                     return await readWorkspaceReplicationSourceOfferFromFile({
                         transferId: 'offer_transfer_progress_1',
                         filePath: offerPath,
-                        legacyWholeBufferMaxBytes: 1024 * 1024,
                     });
                 },
                 requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
@@ -471,7 +469,6 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
                     return await readWorkspaceReplicationSourceOfferFromFile({
                         transferId: 'offer_transfer_1',
                         filePath: offerPath,
-                        legacyWholeBufferMaxBytes: 1024 * 1024,
                     });
                 },
                 requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
@@ -930,7 +927,6 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
                     return await readWorkspaceReplicationSourceOfferFromFile({
                         transferId: 'offer_transfer_diverged',
                         filePath: offerPath,
-                        legacyWholeBufferMaxBytes: 1024 * 1024,
                     });
                 },
                 requestBlobPackToFile,
@@ -1135,7 +1131,6 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
                     return await readWorkspaceReplicationSourceOfferFromFile({
                         transferId: 'offer_transfer_nonblocking',
                         filePath: offerPath,
-                        legacyWholeBufferMaxBytes: 1024 * 1024,
                     });
                 },
                 requestBlobPackToFile,
@@ -1277,7 +1272,6 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
                     return await readWorkspaceReplicationSourceOfferFromFile({
                         transferId: 'offer_transfer_missing_baseline',
                         filePath: offerPath,
-                        legacyWholeBufferMaxBytes: 1024 * 1024,
                     });
                 },
                 requestBlobPackToFile,

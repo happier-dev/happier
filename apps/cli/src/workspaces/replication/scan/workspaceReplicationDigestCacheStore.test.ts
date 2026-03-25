@@ -58,16 +58,8 @@ describe('workspaceReplicationDigestCacheStore', () => {
       delete persistedJson.schemaVersion;
       await writeFile(filePath, JSON.stringify(persistedJson), 'utf8');
 
-      await expect(store.load(relationship.relationshipId)).resolves.toMatchObject({
-        entries: {
-          'README.md': {
-            sizeBytes: 6,
-            mtimeMs: 123,
-            executable: false,
-            digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-          },
-        },
-      });
+      // This store is not deployed. Do not keep compatibility for schema-less records.
+      await expect(store.load(relationship.relationshipId)).resolves.toBeNull();
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }

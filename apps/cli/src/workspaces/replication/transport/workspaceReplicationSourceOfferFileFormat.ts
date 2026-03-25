@@ -2,12 +2,9 @@ import { createReadStream } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 
-import {
-  WorkspaceManifestEntrySchema,
-  WorkspaceManifestFingerprintSchema,
-} from '@happier-dev/protocol';
 import { z } from 'zod';
 
+import { ReplicationManifestEntrySchema, ReplicationManifestFingerprintSchema } from '../replicationManifestSchema';
 import type { WorkspaceReplicationSourceOffer } from './createWorkspaceReplicationSourceOffer';
 
 export const WORKSPACE_REPLICATION_SOURCE_OFFER_STREAM_MAGIC = 'HAPPIER_WORKSPACE_REPLICATION_SOURCE_OFFER_V1';
@@ -16,8 +13,8 @@ const WorkspaceReplicationSourceOfferHeaderSchema = z.object({
   offerId: z.string().min(1),
   relationshipId: z.string().min(1),
   directionId: z.string().min(1),
-  sourceFingerprint: WorkspaceManifestFingerprintSchema,
-  manifestFingerprint: WorkspaceManifestFingerprintSchema.optional(),
+  sourceFingerprint: ReplicationManifestFingerprintSchema,
+  manifestFingerprint: ReplicationManifestFingerprintSchema.optional(),
   sourceControllerMetadata: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
@@ -40,20 +37,9 @@ export async function isStreamingWorkspaceReplicationSourceOfferFile(filePath: s
 export async function readWorkspaceReplicationSourceOfferFromFile(input: Readonly<{
   transferId: string;
   filePath: string;
-  sizeBytes?: number | null;
-  legacyWholeBufferMaxBytes: number;
 }>): Promise<WorkspaceReplicationSourceOffer> {
-  const sizeBytes = typeof input.sizeBytes === 'number'
-    ? input.sizeBytes
-    : (await stat(input.filePath)).size;
-
   const streaming = await isStreamingWorkspaceReplicationSourceOfferFile(input.filePath);
   if (!streaming) {
-    if (sizeBytes > input.legacyWholeBufferMaxBytes) {
-      throw new Error(
-        `Workspace replication source offer exceeds max payload bytes for ${input.transferId}: ${input.legacyWholeBufferMaxBytes}`,
-      );
-    }
     // Legacy offers were whole-buffer JSON payloads. They are intentionally rejected so large offers
     // cannot regress to whole-buffer reads/parses during transport/storage hardening.
     throw new Error(`Legacy workspace replication source offer format is not supported: ${input.transferId}`);
@@ -88,7 +74,7 @@ export async function readWorkspaceReplicationSourceOfferFromFile(input: Readonl
       throw new Error('Invalid workspace replication source offer');
     }
 
-    const entries: z.infer<typeof WorkspaceManifestEntrySchema>[] = [];
+    const entries: z.infer<typeof ReplicationManifestEntrySchema>[] = [];
     const blobIndexByDigest = new Map<string, { digest: string; sizeBytes: number }>();
 
     // Continue from the current iterator position without buffering the full file.
@@ -103,7 +89,7 @@ export async function readWorkspaceReplicationSourceOfferFromFile(input: Readonl
       } catch {
         throw new Error('Invalid workspace replication source offer');
       }
-      const parsedEntry = WorkspaceManifestEntrySchema.safeParse(entryJson);
+      const parsedEntry = ReplicationManifestEntrySchema.safeParse(entryJson);
       if (!parsedEntry.success) {
         throw new Error('Invalid workspace replication source offer');
       }

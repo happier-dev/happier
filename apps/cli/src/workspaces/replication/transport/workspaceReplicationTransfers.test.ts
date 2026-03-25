@@ -3,54 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 
 describe('workspaceReplicationTransfers', () => {
-  it('publishes source offers through the provided direct-peer typed transfer handle', async () => {
-    const { createWorkspaceReplicationTransfers } = await import('./workspaceReplicationTransfers');
-
-    const endpointCandidates: readonly TransferEndpointCandidate[] = [
-      {
-        kind: 'http',
-        url: 'http://127.0.0.1:46001/machine-transfers/direct/source-offer',
-        authorizationToken: 'token',
-        expiresAt: 1,
-      },
-    ];
-    const publishTransfer = vi.fn(() => endpointCandidates);
-    const transfers = createWorkspaceReplicationTransfers();
-
-    expect(transfers.publishDirectPeerSourceOffer({
-      transferId: 'offer_transfer_123',
-      sourceOffer: {
-        offerId: 'offer_123',
-        relationshipId: 'relationship_123',
-        directionId: 'direction_123',
-        sourceFingerprint: 'sha256:manifest_123',
-        manifest: {
-          entries: [],
-          fingerprint: 'sha256:manifest_123',
-        },
-        blobIndex: [],
-      },
-      directPeerTransfer: {
-        publishTransfer,
-      },
-    })).toEqual(endpointCandidates);
-
-    expect(publishTransfer).toHaveBeenCalledWith({
-      transferId: 'offer_transfer_123',
-      payload: {
-        offerId: 'offer_123',
-        relationshipId: 'relationship_123',
-        directionId: 'direction_123',
-        sourceFingerprint: 'sha256:manifest_123',
-        manifest: {
-          entries: [],
-          fingerprint: 'sha256:manifest_123',
-        },
-        blobIndex: [],
-      },
-    });
-  });
-
   it('requests source offers through file-backed transfer APIs and decodes them from the on-disk format', async () => {
     const requestDirectPeerTransferToFile = vi.fn(async ({ destinationPath }: { destinationPath: string }) => ({
       destinationPath,
@@ -87,14 +39,12 @@ describe('workspaceReplicationTransfers', () => {
             blobIndex: [],
           };
     });
-    const resolveLegacyWholeBufferMaxBytes = vi.fn(() => 999);
 
     const { createWorkspaceReplicationTransfers } = await import('./workspaceReplicationTransfers');
     const transfers = createWorkspaceReplicationTransfers({
       requestDirectPeerTransferToFile,
       requestServerRoutedTransferToFile,
       readWorkspaceReplicationSourceOfferFromFile,
-      resolveLegacyWholeBufferMaxBytes,
     });
 
     await expect(transfers.requestDirectPeerSourceOffer({
@@ -119,8 +69,6 @@ describe('workspaceReplicationTransfers', () => {
     expect(readWorkspaceReplicationSourceOfferFromFile).toHaveBeenCalledWith({
       transferId: 'offer_transfer_direct',
       filePath: expect.any(String),
-      sizeBytes: 12,
-      legacyWholeBufferMaxBytes: 999,
     });
 
     await expect(transfers.requestServerRoutedSourceOffer({
@@ -153,8 +101,6 @@ describe('workspaceReplicationTransfers', () => {
     expect(readWorkspaceReplicationSourceOfferFromFile).toHaveBeenCalledWith({
       transferId: 'offer_transfer_server',
       filePath: expect.any(String),
-      sizeBytes: 34,
-      legacyWholeBufferMaxBytes: 999,
     });
   });
 
@@ -247,5 +193,26 @@ describe('workspaceReplicationTransfers', () => {
       },
       destinationPath: '/tmp/received.bin',
     });
+  });
+
+  it('rejects non-file direct-peer payload sources so blob packs stay file-backed', async () => {
+    const publishTransfer = vi.fn();
+    const { createWorkspaceReplicationTransfers } = await import('./workspaceReplicationTransfers');
+    const transfers = createWorkspaceReplicationTransfers();
+
+    expect(() =>
+      transfers.publishDirectPeerBlobPack({
+        transferId: 'blob_pack_transfer_inline',
+        payloadSource: {
+          kind: 'json',
+          value: { blob: 'too large to inline' },
+          manifestHash: 'sha256:inline',
+        } as never,
+        directPeerTransfer: {
+          publishTransfer,
+        },
+      }),
+    ).toThrow(/file-backed/i);
+    expect(publishTransfer).not.toHaveBeenCalled();
   });
 });

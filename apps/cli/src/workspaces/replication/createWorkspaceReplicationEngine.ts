@@ -37,11 +37,37 @@ type ReadonlyWorkspaceManifest = Readonly<{
     fingerprint?: WorkspaceManifest['fingerprint'];
 }>;
 
+type DurableResumeContext = Readonly<{
+    apply: Readonly<{
+        targetPath: string;
+        strategy: WorkspaceReplicationStartJobFromOfferInput['apply']['strategy'];
+        conflictPolicy: WorkspaceReplicationStartJobFromOfferInput['apply']['conflictPolicy'];
+    }>;
+}>;
+
 function toMutableWorkspaceManifest(manifest: ReadonlyWorkspaceManifest): WorkspaceManifest {
     return {
         entries: manifest.entries.map((entry) => ({ ...entry })),
         ...(manifest.fingerprint ? { fingerprint: manifest.fingerprint } : {}),
     };
+}
+
+function createDurableResumeContext(input: Readonly<{
+    apply: WorkspaceReplicationStartJobFromOfferInput['apply'];
+}>): DurableResumeContext {
+    return {
+        apply: {
+            targetPath: input.apply.targetPath,
+            strategy: input.apply.strategy,
+            conflictPolicy: input.apply.conflictPolicy,
+        },
+    };
+}
+
+function resumeContextsMatch(left: DurableResumeContext, right: DurableResumeContext): boolean {
+    return left.apply.targetPath === right.apply.targetPath
+        && left.apply.strategy === right.apply.strategy
+        && left.apply.conflictPolicy === right.apply.conflictPolicy;
 }
 
 export function createWorkspaceReplicationEngine(
@@ -167,6 +193,84 @@ export function createWorkspaceReplicationEngine(
         async function startJobFromOffer(params: WorkspaceReplicationStartJobFromOfferInput): Promise<WorkspaceReplicationStartJobFromOfferResult> {
             const relationship = await stores.relationships.ensureRelationship(params.scope);
             const nowMs = now();
+            const directionId = buildWorkspaceReplicationDirectionId(params.scope);
+            const resumeContext = createDurableResumeContext({
+                apply: params.apply,
+            });
+
+            const scheduleExecution = (jobId: string): void => {
+                const executionInput = {
+                    jobId,
+                    scope: params.scope,
+                    sourceOffer: params.sourceOffer,
+                    apply: params.apply,
+                    requestBlobPackToFile: params.requestBlobPackToFile,
+                } as const;
+
+                if (executeJobInBackground) {
+                    executeJobInBackground(executionInput);
+                } else {
+                    queueMicrotask(() => {
+                        void executeJobWithLocalRuntimeImpl({
+                            activeServerDir: input.activeServerDir,
+                            jobStore: stores.jobs,
+                            relationships: stores.relationships,
+                            jobId,
+                            now,
+                            relationshipScope: params.scope,
+                            resolveSourceOfferById: async (offerId) => {
+                                const offer = await stores.sourceOffers.read(offerId);
+                                if (!offer) {
+                                    throw new Error(`Workspace replication source offer not found: ${offerId}`);
+                                }
+                            return offer;
+                            },
+                            requestBlobPackToFile: params.requestBlobPackToFile,
+                            apply: params.apply,
+                        }).catch(() => undefined);
+                    });
+                }
+            };
+
+            if (params.correlationId) {
+                const existing = await stores.jobs.findByCorrelationId(params.correlationId);
+                if (existing && (existing.status.status === 'pending' || existing.status.status === 'in_progress')) {
+                    if (existing.offerId && existing.offerId !== params.sourceOffer.offerId) {
+                        throw new Error(
+                            `Workspace replication correlationId is already in use for a different offer: ${params.correlationId}`,
+                        );
+                    }
+                    if (existing.directionId && existing.directionId !== directionId) {
+                        throw new Error(
+                            `Workspace replication correlationId is already in use for a different direction: ${params.correlationId}`,
+                        );
+                    }
+                    if (existing.relationshipId && existing.relationshipId !== relationship.relationshipId) {
+                        throw new Error(
+                            `Workspace replication correlationId is already in use for a different relationship: ${params.correlationId}`,
+                        );
+                    }
+                    if (existing.resumeContext && !resumeContextsMatch(existing.resumeContext, resumeContext)) {
+                        throw new Error(
+                            `Workspace replication correlationId is already in use for a different durable resume context: ${params.correlationId}`,
+                        );
+                    }
+
+                    await stores.sourceOffers.write(params.sourceOffer);
+                    scheduleExecution(existing.jobId);
+                    return { jobId: existing.jobId, initialStatus: existing };
+                }
+
+                if (
+                    existing
+                    && existing.status.status === 'completed'
+                    && existing.offerId
+                    && existing.offerId === params.sourceOffer.offerId
+                ) {
+                    return { jobId: existing.jobId, initialStatus: existing };
+                }
+            }
+
             const jobId = `job_${objectKey({
                 correlationId: params.correlationId ?? '',
                 offerId: params.sourceOffer.offerId,
@@ -180,11 +284,12 @@ export function createWorkspaceReplicationEngine(
                 jobId,
                 ...(params.correlationId ? { correlationId: params.correlationId } : {}),
                 relationshipId: relationship.relationshipId,
-                directionId: buildWorkspaceReplicationDirectionId(params.scope),
+                directionId,
                 offerId: params.sourceOffer.offerId,
                 mode: params.scope.mode,
                 createdAtMs: nowMs,
                 updatedAtMs: nowMs,
+                resumeContext,
                 status: {
                     status: 'pending',
                     phase: 'planning',
@@ -203,40 +308,7 @@ export function createWorkspaceReplicationEngine(
             };
 
             await stores.jobs.write(initialStatus);
-
-            const executionInput = {
-                jobId,
-                scope: params.scope,
-                sourceOffer: params.sourceOffer,
-                apply: params.apply,
-                requestBlobPackToFile: params.requestBlobPackToFile,
-                ...(params.blobPackPlanningMode ? { blobPackPlanningMode: params.blobPackPlanningMode } : {}),
-            } as const;
-
-            if (executeJobInBackground) {
-                executeJobInBackground(executionInput);
-            } else {
-                queueMicrotask(() => {
-                    void executeJobWithLocalRuntimeImpl({
-                        activeServerDir: input.activeServerDir,
-                        jobStore: stores.jobs,
-                        relationships: stores.relationships,
-                        jobId,
-                        now,
-                        relationshipScope: params.scope,
-                        resolveSourceOfferById: async (offerId) => {
-                            const offer = await stores.sourceOffers.read(offerId);
-                            if (!offer) {
-                                throw new Error(`Workspace replication source offer not found: ${offerId}`);
-                            }
-                            return offer;
-                        },
-                        requestBlobPackToFile: params.requestBlobPackToFile,
-                        apply: params.apply,
-                        ...(params.blobPackPlanningMode ? { blobPackPlanningMode: params.blobPackPlanningMode } : {}),
-                    }).catch(() => undefined);
-                });
-            }
+            scheduleExecution(jobId);
 
             return {
                 jobId,
@@ -267,6 +339,7 @@ export function createWorkspaceReplicationEngine(
             const aborted = await abortWorkspaceReplicationJob({
                 jobStore: stores.jobs,
                 jobId,
+                activeServerDir: input.activeServerDir,
                 now,
             });
             if (!aborted) {

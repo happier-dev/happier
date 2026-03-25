@@ -22,6 +22,7 @@ const TERMINAL_JOB_STATUSES = new Set<WorkspaceReplicationJobRecord['status']['s
 ]);
 
 const VALID_JOB_ID_REGEX = /^[A-Za-z0-9._-]+$/u;
+const CLI_DAEMON_LEASE_OWNER_PID_REGEX = /^cli-daemon:(\d+)(?::|$)/u;
 
 function resolveTerminalAtMs(record: WorkspaceReplicationJobRecord): number | null {
   if (typeof record.completedAtMs === 'number') return record.completedAtMs;
@@ -38,6 +39,47 @@ async function readJobRecord(filePath: string): Promise<WorkspaceReplicationJobR
     return safeParseWorkspaceReplicationJobRecordFromDiskValue(JSON.parse(raw));
   } catch {
     return null;
+  }
+}
+
+type WorkspaceReplicationLeaseProbe = Readonly<{
+  ownerId: string;
+  expiresAtMs: number;
+}>;
+
+async function readLeaseProbe(filePath: string): Promise<WorkspaceReplicationLeaseProbe | null> {
+  try {
+    const raw = await readFile(filePath, 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    const value = parsed as Record<string, unknown>;
+    if (typeof value.ownerId !== 'string' || value.ownerId.trim().length === 0) {
+      return null;
+    }
+    if (typeof value.expiresAtMs !== 'number' || !Number.isFinite(value.expiresAtMs)) {
+      return null;
+    }
+    return {
+      ownerId: value.ownerId,
+      expiresAtMs: value.expiresAtMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError?.code === 'EPERM') {
+      return true;
+    }
+    return false;
   }
 }
 
@@ -64,6 +106,26 @@ export async function recoverWorkspaceReplicationJobsAfterRestart(params: Readon
       }
       if (TERMINAL_JOB_STATUSES.has(record.status.status)) {
         continue;
+      }
+
+      const jobIdFromFilename = entry.name.slice(0, -'.json'.length);
+      if (VALID_JOB_ID_REGEX.test(jobIdFromFilename)) {
+        const stagingDir = resolveWorkspaceReplicationJobStagingDirectory({
+          stagingDirectory: paths.stagingDirectory,
+          jobId: jobIdFromFilename,
+        });
+        const leaseProbe = await readLeaseProbe(join(stagingDir, 'lease', 'lease.json'));
+        if (leaseProbe && leaseProbe.expiresAtMs > params.nowMs) {
+          const match = CLI_DAEMON_LEASE_OWNER_PID_REGEX.exec(leaseProbe.ownerId);
+          if (match) {
+            const pid = Number.parseInt(match[1] ?? '', 10);
+            if (Number.isFinite(pid) && pid > 0 && isPidAlive(pid)) {
+              // Another daemon process is still alive and appears to own the lease. Avoid clearing the
+              // lease or mutating the job record, since that could enable concurrent runners.
+              continue;
+            }
+          }
+        }
       }
 
       const updatedAtMs = params.nowMs;
@@ -94,7 +156,6 @@ export async function recoverWorkspaceReplicationJobsAfterRestart(params: Readon
       await writeJsonAtomic(filePath, WorkspaceReplicationJobRecordSchema.parse(next));
       // Clear the job lease on daemon restart recovery. The owning process is gone, but the lease
       // could still be unexpired, which would otherwise stall resumability for up to the TTL.
-      const jobIdFromFilename = entry.name.slice(0, -'.json'.length);
       if (VALID_JOB_ID_REGEX.test(jobIdFromFilename)) {
         const stagingDir = resolveWorkspaceReplicationJobStagingDirectory({
           stagingDirectory: paths.stagingDirectory,
@@ -353,14 +414,40 @@ export async function gcWorkspaceReplicationCas(params: Readonly<{
 
     let totalBytes = 0;
 
+    const casBlobCandidates: Array<Readonly<{ hex: string; filePath: string }>> = [];
     for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      const hex = entry.name;
-      if (!/^[a-f0-9]{64}$/u.test(hex)) continue;
-      const digest = `sha256:${hex}`;
+      const entryPath = join(sha256Directory, entry.name);
+      if (entry.isFile()) {
+        // Legacy layout (pre-sharding): cas/sha256/<hex>
+        if (/^[a-f0-9]{64}$/u.test(entry.name)) {
+          casBlobCandidates.push({ hex: entry.name, filePath: entryPath });
+        }
+        continue;
+      }
+      if (!entry.isDirectory()) continue;
+      // Sharded layout: cas/sha256/<prefix>/<hex>
+      if (!/^[a-f0-9]{2}$/u.test(entry.name)) continue;
 
-      const filePath = join(sha256Directory, entry.name);
-      const info = await stat(filePath).catch(() => null);
+      const shardEntries = await readdir(entryPath, { withFileTypes: true }).catch((error: unknown) => {
+        const nodeError = error as NodeJS.ErrnoException;
+        if (nodeError?.code === 'ENOENT') return [];
+        throw error;
+      });
+      for (const shardEntry of shardEntries) {
+        if (!shardEntry.isFile()) continue;
+        const hex = shardEntry.name;
+        if (!/^[a-f0-9]{64}$/u.test(hex)) continue;
+        if (!hex.startsWith(entry.name)) continue;
+        casBlobCandidates.push({
+          hex,
+          filePath: join(entryPath, shardEntry.name),
+        });
+      }
+    }
+
+    for (const candidate of casBlobCandidates) {
+      const digest = `sha256:${candidate.hex}`;
+      const info = await stat(candidate.filePath).catch(() => null);
       if (!info) continue;
 
       totalBytes += info.size;
@@ -371,7 +458,7 @@ export async function gcWorkspaceReplicationCas(params: Readonly<{
 
       unreferenced.push({
         digest,
-        filePath,
+        filePath: candidate.filePath,
         sizeBytes: info.size,
         mtimeMs: info.mtimeMs,
       });

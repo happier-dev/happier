@@ -92,19 +92,27 @@ async function abortIfCancellationRequested(params: Readonly<{
 }
 
 async function markJobFailedAndRethrow(params: Readonly<{
+  activeServerDir: string;
   jobStore: WorkspaceReplicationJobStore;
   jobId: string;
   now?: () => number;
   error: unknown;
 }>): Promise<never> {
-  await runWorkspaceReplicationJob({
-    jobStore: params.jobStore,
-    jobId: params.jobId,
-    now: params.now,
-    run: async () => {
-      throw params.error;
-    },
-  });
+  try {
+    await runWorkspaceReplicationJob({
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+      run: async () => {
+        throw params.error;
+      },
+    });
+  } finally {
+    await removeWorkspaceReplicationJobStagingDirectory({
+      activeServerDir: params.activeServerDir,
+      jobId: params.jobId,
+    });
+  }
   // runWorkspaceReplicationJob always throws when the runner throws; this is unreachable.
   throw params.error instanceof Error ? params.error : new Error('Workspace replication job failed');
 }
@@ -142,7 +150,7 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     offer: WorkspaceReplicationSourceOffer;
   }>) => Promise<void>;
 }>): Promise<WorkspaceReplicationJobRecord> {
-  const current = await params.jobStore.read(params.jobId);
+  let current = await params.jobStore.read(params.jobId);
   if (!current) {
     throw new WorkspaceReplicationError({
       code: 'job_not_found',
@@ -164,7 +172,8 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     ttlMs: leaseTtlMs,
   });
   if (!leaseAttempt.acquired) {
-    return current;
+    const latest = await params.jobStore.read(params.jobId);
+    return latest ?? current;
   }
 
   const heartbeat = startWorkspaceReplicationJobLeaseHeartbeat({
@@ -177,13 +186,24 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
 
   const stopIfLeaseLost = async (): Promise<WorkspaceReplicationJobRecord | null> => {
     const nowMs = resolveNowMs(params.now);
-	    const renewed = await renewWorkspaceReplicationJobLease({
-	      activeServerDir: params.activeServerDir,
-	      jobId: params.jobId,
-	      ownerId: leaseOwnerId,
-	      nowMs,
-	      ttlMs: leaseTtlMs,
-	    }).catch(() => ({ renewed: false, lease: null }));
+    let renewed: Awaited<ReturnType<typeof renewWorkspaceReplicationJobLease>>;
+    try {
+      renewed = await renewWorkspaceReplicationJobLease({
+        activeServerDir: params.activeServerDir,
+        jobId: params.jobId,
+        ownerId: leaseOwnerId,
+        nowMs,
+        ttlMs: leaseTtlMs,
+      });
+    } catch (error) {
+      return await markJobFailedAndRethrow({
+        activeServerDir: params.activeServerDir,
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        error,
+      });
+    }
 
     if (renewed.renewed) {
       return null;
@@ -200,6 +220,55 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
   };
 
   try {
+    const acquiredLease = leaseAttempt.lease;
+    if (acquiredLease?.attempt && acquiredLease.leaseId) {
+      await runWorkspaceReplicationJob({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        run: async (record) => ({
+          ...record,
+          lastAttempt: {
+            attemptNumber: acquiredLease.attempt ?? 1,
+            leaseId: acquiredLease.leaseId ?? 'unknown',
+            ownerId: leaseOwnerId,
+            acquiredAtMs: acquiredLease.acquiredAtMs,
+          },
+        }),
+      });
+      current = await params.jobStore.read(params.jobId);
+      if (!current) {
+        throw new WorkspaceReplicationError({
+          code: 'job_not_found',
+          message: `Workspace replication job not found: ${params.jobId}`,
+        });
+      }
+    }
+
+    if (leaseAttempt.lease?.attempt && leaseAttempt.lease.attempt > 1) {
+      await runWorkspaceReplicationJob({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        run: async (record) => ({
+          ...record,
+          status: {
+            ...record.status,
+            warnings: record.status.warnings.includes('resumed_existing_job')
+              ? record.status.warnings
+              : [...record.status.warnings, 'resumed_existing_job'],
+          },
+        }),
+      });
+      current = await params.jobStore.read(params.jobId);
+      if (!current) {
+        throw new WorkspaceReplicationError({
+          code: 'job_not_found',
+          message: `Workspace replication job not found: ${params.jobId}`,
+        });
+      }
+    }
+
     if (current.cancelRequestedAtMs || current.status.status === 'aborted') {
       const nowMs = resolveNowMs(params.now);
       const aborted = await runWorkspaceReplicationJob({
@@ -215,89 +284,127 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       return aborted;
     }
 
-  if (!current.relationshipId) {
-    return await markJobFailedAndRethrow({
-      jobStore: params.jobStore,
-      jobId: params.jobId,
-      now: params.now,
-      error: new Error(`Workspace replication job is missing relationshipId: ${current.jobId}`),
-    });
-  }
-  if (!current.offerId) {
-    return await markJobFailedAndRethrow({
-      jobStore: params.jobStore,
-      jobId: params.jobId,
-      now: params.now,
-      error: new Error(`Workspace replication job is missing offerId: ${current.jobId}`),
-    });
-  }
-
-  const relationship = await params.relationships.read(current.relationshipId);
-  if (!relationship) {
-    return await markJobFailedAndRethrow({
-      jobStore: params.jobStore,
-      jobId: params.jobId,
-      now: params.now,
-      error: new Error(`Workspace replication relationship not found: ${current.relationshipId}`),
-    });
-  }
-
-  const offer = await params.resolveSourceOfferById(current.offerId);
-
-  // 1) relationship resolved
-  let latest: WorkspaceReplicationJobRecord = current;
-  if (!isCheckpointAtOrAfter(latest.status.checkpoint, 'relationship_resolved')) {
-    latest = await runWorkspaceReplicationJob({
-      jobStore: params.jobStore,
-      jobId: params.jobId,
-      now: params.now,
-      run: async (record) => {
-        if (record.cancelRequestedAtMs) {
-          return abortRecord(record, resolveNowMs(params.now));
-        }
-        return {
-          ...record,
-          relationshipId: relationship.relationshipId,
-          status: {
-            ...record.status,
-            status: 'in_progress',
-            phase: 'planning',
-            checkpoint: 'relationship_resolved',
-          },
-        };
-      },
-    });
-  }
-
-  if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-    await removeWorkspaceReplicationJobStagingDirectory({
-      activeServerDir: params.activeServerDir,
-      jobId: params.jobId,
-    });
-    return latest;
-  }
-
-  // 1.5) one-way-safe divergence gating (fail closed)
-  if (params.assertSafeToApply) {
-    const safeCheck = await params.assertSafeToApply({
-      job: latest,
-      offer,
-    }).catch(async (error: unknown) => {
-      if (isCancelRequestedError(error)) {
-        return await abortJobAndReturn({
-          activeServerDir: params.activeServerDir,
-          jobStore: params.jobStore,
-          jobId: params.jobId,
-          now: params.now,
-        });
-      }
+    if (!current.relationshipId) {
       return await markJobFailedAndRethrow({
+        activeServerDir: params.activeServerDir,
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        error: new Error(`Workspace replication job is missing relationshipId: ${current.jobId}`),
+      });
+    }
+    if (!current.offerId) {
+      return await markJobFailedAndRethrow({
+        activeServerDir: params.activeServerDir,
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        error: new Error(`Workspace replication job is missing offerId: ${current.jobId}`),
+      });
+    }
+
+    let relationship: Awaited<ReturnType<typeof params.relationships.read>>;
+    try {
+      relationship = await params.relationships.read(current.relationshipId);
+    } catch (error) {
+      return await markJobFailedAndRethrow({
+        activeServerDir: params.activeServerDir,
         jobStore: params.jobStore,
         jobId: params.jobId,
         now: params.now,
         error,
       });
+    }
+
+    if (!relationship) {
+      return await markJobFailedAndRethrow({
+        activeServerDir: params.activeServerDir,
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        error: new Error(`Workspace replication relationship not found: ${current.relationshipId}`),
+      });
+    }
+
+    let offer: WorkspaceReplicationSourceOffer;
+    try {
+      offer = await params.resolveSourceOfferById(current.offerId);
+    } catch (error) {
+      return await markJobFailedAndRethrow({
+        activeServerDir: params.activeServerDir,
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        error,
+      });
+    }
+
+    // 1) relationship resolved
+    let latest: WorkspaceReplicationJobRecord = current;
+    if (!isCheckpointAtOrAfter(latest.status.checkpoint, 'relationship_resolved')) {
+      latest = await runWorkspaceReplicationJob({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        run: async (record) => {
+          if (record.cancelRequestedAtMs) {
+            return abortRecord(record, resolveNowMs(params.now));
+          }
+          return {
+            ...record,
+            relationshipId: relationship.relationshipId,
+            status: {
+              ...record.status,
+              status: 'in_progress',
+              phase: 'planning',
+              checkpoint: 'relationship_resolved',
+            },
+          };
+        },
+      });
+    }
+
+    const cancelledAfterRelationshipResolved = await abortIfCancellationRequested({
+      activeServerDir: params.activeServerDir,
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
     });
+    if (cancelledAfterRelationshipResolved) {
+      return cancelledAfterRelationshipResolved;
+    }
+
+  // 1.5) one-way-safe divergence gating (fail closed)
+  if (params.assertSafeToApply) {
+	    const safeCheck = await params.assertSafeToApply({
+	      job: latest,
+	      offer,
+	    }).catch(async (error: unknown) => {
+	      if (isCancelRequestedError(error)) {
+	        return await abortJobAndReturn({
+	          activeServerDir: params.activeServerDir,
+	          jobStore: params.jobStore,
+	          jobId: params.jobId,
+	          now: params.now,
+	        });
+	      }
+	      const cancelled = await abortIfCancellationRequested({
+	        activeServerDir: params.activeServerDir,
+	        jobStore: params.jobStore,
+	        jobId: params.jobId,
+	        now: params.now,
+	      });
+	      if (cancelled) {
+	        return cancelled;
+	      }
+	      return await markJobFailedAndRethrow({
+	        activeServerDir: params.activeServerDir,
+	        jobStore: params.jobStore,
+	        jobId: params.jobId,
+	        now: params.now,
+	        error,
+	      });
+	    });
 
     if (safeCheck && 'jobId' in safeCheck) {
       return safeCheck;
@@ -364,12 +471,14 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       });
     }
 
-    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-      await removeWorkspaceReplicationJobStagingDirectory({
-        activeServerDir: params.activeServerDir,
-        jobId: params.jobId,
-      });
-      return latest;
+    const cancelledAfterMissingDigestsNegotiated = await abortIfCancellationRequested({
+      activeServerDir: params.activeServerDir,
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+    });
+    if (cancelledAfterMissingDigestsNegotiated) {
+      return cancelledAfterMissingDigestsNegotiated;
     }
 
     // 3) transfer missing blobs into target CAS
@@ -395,14 +504,6 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       });
     }
 
-    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-      await removeWorkspaceReplicationJobStagingDirectory({
-        activeServerDir: params.activeServerDir,
-        jobId: params.jobId,
-      });
-      return latest;
-    }
-
     const cancelledBeforeTransfer = await abortIfCancellationRequested({
       activeServerDir: params.activeServerDir,
       jobStore: params.jobStore,
@@ -413,27 +514,37 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       return cancelledBeforeTransfer;
     }
 
-    const transferResult = await params.transferMissingBlobsToTargetCas({
-      job: latest,
-      offer,
-      missingDigests: missingPlan.missingBlobs.map((blob) => blob.digest),
-      missingBytes: missingPlan.plannedByteCount,
-    }).catch(async (error: unknown) => {
-      if (isCancelRequestedError(error)) {
-        return await abortJobAndReturn({
-          activeServerDir: params.activeServerDir,
-          jobStore: params.jobStore,
-          jobId: params.jobId,
-          now: params.now,
-        });
-      }
-      return await markJobFailedAndRethrow({
-        jobStore: params.jobStore,
-        jobId: params.jobId,
-        now: params.now,
-        error,
-      });
-    });
+	    const transferResult = await params.transferMissingBlobsToTargetCas({
+	      job: latest,
+	      offer,
+	      missingDigests: missingPlan.missingBlobs.map((blob) => blob.digest),
+	      missingBytes: missingPlan.plannedByteCount,
+	    }).catch(async (error: unknown) => {
+	      if (isCancelRequestedError(error)) {
+	        return await abortJobAndReturn({
+	          activeServerDir: params.activeServerDir,
+	          jobStore: params.jobStore,
+	          jobId: params.jobId,
+	          now: params.now,
+	        });
+	      }
+	      const cancelled = await abortIfCancellationRequested({
+	        activeServerDir: params.activeServerDir,
+	        jobStore: params.jobStore,
+	        jobId: params.jobId,
+	        now: params.now,
+	      });
+	      if (cancelled) {
+	        return cancelled;
+	      }
+	      return await markJobFailedAndRethrow({
+	        activeServerDir: params.activeServerDir,
+	        jobStore: params.jobStore,
+	        jobId: params.jobId,
+	        now: params.now,
+	        error,
+	      });
+	    });
 
     if ('jobId' in transferResult) {
       // abortJobAndReturn returned a job record; stop execution immediately.
@@ -470,12 +581,14 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       },
     });
 
-    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-      await removeWorkspaceReplicationJobStagingDirectory({
-        activeServerDir: params.activeServerDir,
-        jobId: params.jobId,
-      });
-      return latest;
+    const cancelledAfterTransferCompleted = await abortIfCancellationRequested({
+      activeServerDir: params.activeServerDir,
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+    });
+    if (cancelledAfterTransferCompleted) {
+      return cancelledAfterTransferCompleted;
     }
   }
 
@@ -508,14 +621,6 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       });
     }
 
-    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-      await removeWorkspaceReplicationJobStagingDirectory({
-        activeServerDir: params.activeServerDir,
-        jobId: params.jobId,
-      });
-      return latest;
-    }
-
     const cancelledBeforeApply = await abortIfCancellationRequested({
       activeServerDir: params.activeServerDir,
       jobStore: params.jobStore,
@@ -526,25 +631,35 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       return cancelledBeforeApply;
     }
 
-    const applyResult = await params.applyPlan({
-      job: latest,
-      offer,
-    }).catch(async (error: unknown) => {
-      if (isCancelRequestedError(error)) {
-        return await abortJobAndReturn({
-          activeServerDir: params.activeServerDir,
-          jobStore: params.jobStore,
-          jobId: params.jobId,
-          now: params.now,
-        });
-      }
-      return await markJobFailedAndRethrow({
-        jobStore: params.jobStore,
-        jobId: params.jobId,
-        now: params.now,
-        error,
-      });
-    });
+	    const applyResult = await params.applyPlan({
+	      job: latest,
+	      offer,
+	    }).catch(async (error: unknown) => {
+	      if (isCancelRequestedError(error)) {
+	        return await abortJobAndReturn({
+	          activeServerDir: params.activeServerDir,
+	          jobStore: params.jobStore,
+	          jobId: params.jobId,
+	          now: params.now,
+	        });
+	      }
+	      const cancelled = await abortIfCancellationRequested({
+	        activeServerDir: params.activeServerDir,
+	        jobStore: params.jobStore,
+	        jobId: params.jobId,
+	        now: params.now,
+	      });
+	      if (cancelled) {
+	        return cancelled;
+	      }
+	      return await markJobFailedAndRethrow({
+	        activeServerDir: params.activeServerDir,
+	        jobStore: params.jobStore,
+	        jobId: params.jobId,
+	        now: params.now,
+	        error,
+	      });
+	    });
 
     if ('jobId' in applyResult) {
       return applyResult;
@@ -583,12 +698,14 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       },
     });
 
-    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-      await removeWorkspaceReplicationJobStagingDirectory({
-        activeServerDir: params.activeServerDir,
-        jobId: params.jobId,
-      });
-      return latest;
+    const cancelledAfterApplyCompleted = await abortIfCancellationRequested({
+      activeServerDir: params.activeServerDir,
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+    });
+    if (cancelledAfterApplyCompleted) {
+      return cancelledAfterApplyCompleted;
     }
   }
 
@@ -619,14 +736,6 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       },
     });
 
-    if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
-      await removeWorkspaceReplicationJobStagingDirectory({
-        activeServerDir: params.activeServerDir,
-        jobId: params.jobId,
-      });
-      return latest;
-    }
-
     const cancelledBeforeBaselineCommit = await abortIfCancellationRequested({
       activeServerDir: params.activeServerDir,
       jobStore: params.jobStore,
@@ -637,25 +746,35 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       return cancelledBeforeBaselineCommit;
     }
 
-    await params.commitBaseline({
-      job: latest,
-      offer,
-    }).catch(async (error: unknown) => {
-      if (isCancelRequestedError(error)) {
-        return await abortJobAndReturn({
-          activeServerDir: params.activeServerDir,
-          jobStore: params.jobStore,
-          jobId: params.jobId,
-          now: params.now,
-        });
-      }
-      return await markJobFailedAndRethrow({
-        jobStore: params.jobStore,
-        jobId: params.jobId,
-        now: params.now,
-        error,
-      });
-    });
+	    await params.commitBaseline({
+	      job: latest,
+	      offer,
+	    }).catch(async (error: unknown) => {
+	      if (isCancelRequestedError(error)) {
+	        return await abortJobAndReturn({
+	          activeServerDir: params.activeServerDir,
+	          jobStore: params.jobStore,
+	          jobId: params.jobId,
+	          now: params.now,
+	        });
+	      }
+	      const cancelled = await abortIfCancellationRequested({
+	        activeServerDir: params.activeServerDir,
+	        jobStore: params.jobStore,
+	        jobId: params.jobId,
+	        now: params.now,
+	      });
+	      if (cancelled) {
+	        return;
+	      }
+	      return await markJobFailedAndRethrow({
+	        activeServerDir: params.activeServerDir,
+	        jobStore: params.jobStore,
+	        jobId: params.jobId,
+	        now: params.now,
+	        error,
+	      });
+	    });
 
     // If commitBaseline threw cancellation, it was converted into an abort record update.
     const afterCommit = await params.jobStore.read(params.jobId);
@@ -665,6 +784,11 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
         jobId: params.jobId,
       });
       return afterCommit;
+    }
+
+    const lostLeaseAfterCommit = await stopIfLeaseLost();
+    if (lostLeaseAfterCommit) {
+      return lostLeaseAfterCommit;
     }
 
     const completedAtMs = resolveNowMs(params.now);
@@ -683,9 +807,14 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
         },
       }),
     });
+
+    await removeWorkspaceReplicationJobStagingDirectory({
+      activeServerDir: params.activeServerDir,
+      jobId: params.jobId,
+    });
   }
 
-  return latest;
+    return latest;
   } finally {
     await heartbeat.stop().catch(() => undefined);
     await releaseWorkspaceReplicationJobLease({

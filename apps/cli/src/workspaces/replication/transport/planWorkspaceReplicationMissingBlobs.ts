@@ -20,8 +20,13 @@ export async function planWorkspaceReplicationMissingBlobs(input: Readonly<{
   const missingBlobs: WorkspaceReplicationSourceOfferBlob[] = [];
   let alreadyPresentFileCount = 0;
   let alreadyPresentByteCount = 0;
+  const seenDigests = new Set<string>();
 
   for (const blob of input.blobIndex) {
+    if (seenDigests.has(blob.digest)) {
+      continue;
+    }
+    seenDigests.add(blob.digest);
     if (await casStore.contains(blob.digest)) {
       alreadyPresentFileCount += 1;
       alreadyPresentByteCount += blob.sizeBytes;

@@ -27,9 +27,10 @@ describe('workspaceReplicationCasStore', () => {
         sourcePath,
       });
 
+      const hex = digest.slice('sha256:'.length);
       expect(committed).toEqual({
         digest,
-        blobPath: join(activeServerDir, 'workspace-replication', 'cas', 'sha256', digest.slice('sha256:'.length)),
+        blobPath: join(activeServerDir, 'workspace-replication', 'cas', 'sha256', hex.slice(0, 2), hex),
         sizeBytes: payload.length,
       });
       await expect(store.contains(digest)).resolves.toBe(true);

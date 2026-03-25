@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -93,6 +93,61 @@ describe('abortWorkspaceReplicationJob', () => {
                     status: 'completed',
                 },
             });
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true });
+        }
+    });
+
+    it('aborts a pending job immediately when no runner holds the lease (marks aborted + cleans staging)', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-abort-job-pending-'));
+
+        try {
+            const { createWorkspaceReplicationJobStore } = await import('./workspaceReplicationJobStore');
+            const { abortWorkspaceReplicationJob } = await import('./abortWorkspaceReplicationJob');
+            const { createWorkspaceReplicationPaths, resolveWorkspaceReplicationJobStagingDirectory } = await import(
+                '../state/workspaceReplicationPaths'
+            );
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                schemaVersion: 1,
+                jobId: 'job_abort_3',
+                correlationId: 'handoff_abort_3',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'pending',
+                    phase: 'planning',
+                    checkpoint: 'job_created',
+                    progressCounters: {},
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            const result = await abortWorkspaceReplicationJob({
+                jobStore,
+                jobId: 'job_abort_3',
+                activeServerDir,
+                now: () => 77,
+            });
+
+            expect(result).toMatchObject({
+                jobId: 'job_abort_3',
+                cancelRequestedAtMs: 77,
+                abortedAtMs: 77,
+                updatedAtMs: 77,
+                status: {
+                    status: 'aborted',
+                },
+            });
+
+            const paths = createWorkspaceReplicationPaths({ activeServerDir });
+            const stagingDir = resolveWorkspaceReplicationJobStagingDirectory({
+                stagingDirectory: paths.stagingDirectory,
+                jobId: 'job_abort_3',
+            });
+            await expect(stat(stagingDir)).rejects.toMatchObject({ code: 'ENOENT' });
         } finally {
             await rm(activeServerDir, { recursive: true, force: true });
         }

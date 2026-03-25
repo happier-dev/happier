@@ -42,7 +42,6 @@ describe('workspaceReplicationSourceOfferFileFormat', () => {
       await expect(readWorkspaceReplicationSourceOfferFromFile({
         transferId: 'transfer_1',
         filePath,
-        legacyWholeBufferMaxBytes: 1,
       })).resolves.toMatchObject({
         offerId: 'offer_1',
         relationshipId: 'rel_1',
@@ -68,10 +67,7 @@ describe('workspaceReplicationSourceOfferFileFormat', () => {
       await expect(readWorkspaceReplicationSourceOfferFromFile({
         transferId: 'transfer_1',
         filePath,
-        // Force legacy-path rejection without reading the full file.
-        sizeBytes: 2,
-        legacyWholeBufferMaxBytes: 1,
-      })).rejects.toThrow('exceeds max payload bytes');
+      })).rejects.toThrow(/legacy/i);
     } finally {
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -86,7 +82,6 @@ describe('workspaceReplicationSourceOfferFileFormat', () => {
       await expect(readWorkspaceReplicationSourceOfferFromFile({
         transferId: 'transfer_1',
         filePath,
-        legacyWholeBufferMaxBytes: 1,
       })).rejects.toThrow('Invalid workspace replication source offer');
     } finally {
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);
@@ -116,7 +111,6 @@ describe('workspaceReplicationSourceOfferFileFormat', () => {
       await expect(readWorkspaceReplicationSourceOfferFromFile({
         transferId: 'transfer_1',
         filePath,
-        legacyWholeBufferMaxBytes: 1,
       })).rejects.toThrow('Invalid workspace replication source offer');
     } finally {
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);

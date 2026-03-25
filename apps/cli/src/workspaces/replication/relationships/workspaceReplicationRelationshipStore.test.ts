@@ -92,22 +92,9 @@ describe('workspaceReplicationRelationshipStore', () => {
       delete persistedJson.schemaVersion;
       await writeFile(filePath, JSON.stringify(persistedJson), 'utf8');
 
-      await expect(store.readByScope(scope)).resolves.toMatchObject({
-        relationshipId,
-      });
-      await expect(store.read(relationshipId)).resolves.toMatchObject({
-        relationshipId,
-        endpoints: [
-          {
-            machineId: 'machine_a',
-            rootPath: '/repo',
-          },
-          {
-            machineId: 'machine_b',
-            rootPath: '/copy',
-          },
-        ],
-      });
+      // This store is not deployed. Do not keep compatibility for schema-less records.
+      await expect(store.readByScope(scope)).resolves.toBeNull();
+      await expect(store.read(relationshipId)).resolves.toBeNull();
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }

@@ -9,16 +9,14 @@ import { createWorkspaceReplicationPaths } from '../state/workspaceReplicationPa
 import { listWorkspaceReplicationJobs } from './listWorkspaceReplicationJobs';
 
 describe('listWorkspaceReplicationJobs', () => {
-    it('includes legacy job records that require normalization (phase/status mapping)', async () => {
+    it('fails closed for legacy job records missing schemaVersion (no undeployed compatibility)', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-workspace-replication-list-jobs-'));
 
         try {
             const paths = createWorkspaceReplicationPaths({ activeServerDir });
             await mkdir(paths.jobsDirectory, { recursive: true });
 
-            // This is a deliberately legacy-shaped record:
-            // - status.status used to be 'running'
-            // - status.phase used to be 'applying'
+            // Deliberately legacy-shaped record (missing schemaVersion).
             const legacyRecord = {
                 jobId: 'job_legacy_1',
                 correlationId: 'corr_1',
@@ -38,18 +36,7 @@ describe('listWorkspaceReplicationJobs', () => {
             );
 
             const jobs = await listWorkspaceReplicationJobs({ activeServerDir });
-            expect(jobs.map((job) => job.jobId)).toContain('job_legacy_1');
-
-            const job = jobs.find((j) => j.jobId === 'job_legacy_1');
-            expect(job).toMatchObject({
-                jobId: 'job_legacy_1',
-                correlationId: 'corr_1',
-                status: {
-                    status: 'in_progress',
-                    phase: 'apply',
-                    checkpoint: 'job_created',
-                },
-            });
+            expect(jobs.map((job) => job.jobId)).not.toContain('job_legacy_1');
         } finally {
             await rm(activeServerDir, { recursive: true, force: true });
         }

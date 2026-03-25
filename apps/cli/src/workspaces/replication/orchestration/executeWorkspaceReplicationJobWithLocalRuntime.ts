@@ -24,7 +24,6 @@ import { scanWorkspaceManifestIntoCas } from '../scan/scanWorkspaceManifestIntoC
 import { runWorkspaceReplicationJob } from '../jobs/runWorkspaceReplicationJob';
 
 import { executeWorkspaceReplicationJob } from './executeWorkspaceReplicationJob';
-import type { WorkspaceReplicationBlobPackPlanningMode } from '../workspaceReplicationTypes';
 
 function sumAppliedBytes(offer: WorkspaceReplicationSourceOffer): number {
     let total = 0;
@@ -75,7 +74,6 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
         conflictPolicy: ScmSourceControllerWorkspaceTransferConflictPolicy;
         registry?: ScmBackendRegistry;
     }>;
-    blobPackPlanningMode?: WorkspaceReplicationBlobPackPlanningMode;
 }>): Promise<Awaited<ReturnType<typeof executeWorkspaceReplicationJob>>> {
   const baselineStore = createWorkspaceReplicationBaselineStore({
     activeServerDir: params.activeServerDir,
@@ -160,21 +158,14 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
     },
     transferMissingBlobsToTargetCas: async ({ job, offer, missingDigests }) => {
       const missingDigestsSet = new Set(missingDigests);
-      const planningMode = params.blobPackPlanningMode ?? 'missing_only';
-      const blobsForPacking =
-        planningMode === 'stable_full_offer'
-          ? offer.blobIndex
-          : offer.blobIndex.filter((blob) => missingDigestsSet.has(blob.digest));
+      const blobsForPacking = offer.blobIndex.filter((blob) => missingDigestsSet.has(blob.digest));
       const packs = buildWorkspaceReplicationBlobPacks({
         blobs: blobsForPacking,
         blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
         blobPackMaxBlobs: configuration.workspaceReplicationBlobPackMaxBlobs,
         blobPackMaxSingleBlobBytes: configuration.workspaceReplicationBlobPackMaxSingleBlobBytes,
       });
-      const packsToRequest =
-        planningMode === 'stable_full_offer'
-          ? packs.filter((pack) => pack.digests.some((digest) => missingDigestsSet.has(digest)))
-          : packs;
+      const packsToRequest = packs;
 
             let transferredFiles = 0;
             let transferredBytes = 0;

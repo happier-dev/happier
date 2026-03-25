@@ -192,6 +192,11 @@ export async function renewWorkspaceReplicationJobLease(input: Readonly<{
   if (!existing || existing.ownerId !== input.ownerId) {
     return { renewed: false, lease: existing };
   }
+  // Fail closed: once a lease has expired, the owner must re-acquire via the atomic acquire path.
+  // This prevents a paused/zombie runner from extending a lease after TTL and masking a stalled job.
+  if (existing.expiresAtMs <= input.nowMs) {
+    return { renewed: false, lease: existing };
+  }
   const next: WorkspaceReplicationJobLeaseRecord = {
     ...existing,
     renewedAtMs: input.nowMs,

@@ -41,6 +41,32 @@ describe('buildWorkspaceReplicationBlobPacks', () => {
     ]);
   });
 
+  it('counts pack partitions without requiring the caller to keep the full pack list', async () => {
+    const {
+      buildWorkspaceReplicationBlobPacks,
+      countWorkspaceReplicationBlobPacks,
+    } = await import('./buildWorkspaceReplicationBlobPacks');
+
+    const blobs = Array.from({ length: 513 }, (_, index) => ({
+      digest: `sha256:${index.toString(16).padStart(64, '0')}`,
+      sizeBytes: index % 3 === 0 ? 2 : 1,
+    }));
+
+    const expectedPackCount = buildWorkspaceReplicationBlobPacks({
+      blobs,
+      blobPackTargetBytes: 12,
+      blobPackMaxBlobs: 8,
+      blobPackMaxSingleBlobBytes: 16,
+    }).length;
+
+    expect(countWorkspaceReplicationBlobPacks({
+      blobs,
+      blobPackTargetBytes: 12,
+      blobPackMaxBlobs: 8,
+      blobPackMaxSingleBlobBytes: 16,
+    })).toBe(expectedPackCount);
+  });
+
   it('throws when a single blob exceeds the configured max single-blob bytes', async () => {
     const { buildWorkspaceReplicationBlobPacks } = await import('./buildWorkspaceReplicationBlobPacks');
 
@@ -55,5 +81,60 @@ describe('buildWorkspaceReplicationBlobPacks', () => {
       blobPackMaxBlobs: 2,
       blobPackMaxSingleBlobBytes: 24,
     })).toThrow('Workspace replication blob exceeds max single-blob bytes');
+  });
+
+  it('reads each blob size once while building packs', async () => {
+    const { buildWorkspaceReplicationBlobPacks } = await import('./buildWorkspaceReplicationBlobPacks');
+
+    let sizeReads = 0;
+    const blobs = [
+      {
+        digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        get sizeBytes() {
+          sizeReads += 1;
+          return 4;
+        },
+      },
+      {
+        digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        get sizeBytes() {
+          sizeReads += 1;
+          return 5;
+        },
+      },
+      {
+        digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        get sizeBytes() {
+          sizeReads += 1;
+          return 6;
+        },
+      },
+    ] satisfies ReadonlyArray<{
+      digest: string;
+      readonly sizeBytes: number;
+    }>;
+
+    expect(buildWorkspaceReplicationBlobPacks({
+      blobs,
+      blobPackTargetBytes: 10,
+      blobPackMaxBlobs: 2,
+      blobPackMaxSingleBlobBytes: 16,
+    })).toEqual([
+      expect.objectContaining({
+        digests: [
+          'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        ],
+        totalBytes: 9,
+      }),
+      expect.objectContaining({
+        digests: [
+          'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        ],
+        totalBytes: 6,
+      }),
+    ]);
+
+    expect(sizeReads).toBe(3);
   });
 });

@@ -1,8 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { resolveInMemoryTransferMaxBytes } from '@/machines/transfer/inMemoryTransferSizeLimit';
-
 import type { WorkspaceReplicationSourceOffer } from './createWorkspaceReplicationSourceOffer';
 import {
   readWorkspaceReplicationSourceOfferFromFile,
@@ -46,7 +44,6 @@ export function createWorkspaceReplicationSourceOfferStore(input: Readonly<{
         return await readWorkspaceReplicationSourceOfferFromFile({
           transferId: offerId,
           filePath,
-          legacyWholeBufferMaxBytes: resolveInMemoryTransferMaxBytes(),
         });
       } catch (error) {
         const nodeError = error as NodeJS.ErrnoException;

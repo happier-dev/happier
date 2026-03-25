@@ -71,9 +71,31 @@ export const WorkspaceReplicationJobStatusSchema = z
   })
   .strip();
 
+export const WorkspaceReplicationJobResumeContextSchema = z
+  .object({
+    apply: z
+      .object({
+        targetPath: z.string().min(1),
+        strategy: z.enum(['transfer_snapshot', 'sync_changes']),
+        conflictPolicy: z.enum(['create_sibling_copy', 'replace_existing']),
+      })
+      .strip(),
+    blobPackPlanningMode: z.enum(['missing_only', 'stable_full_offer']).optional(),
+  })
+  .strip();
+
 export const WorkspaceReplicationJobRecordSchema = z
   .object({
     schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION).optional(),
+    lastAttempt: z
+      .object({
+        attemptNumber: z.number().int().min(1),
+        leaseId: z.string().min(1),
+        ownerId: z.string().min(1),
+        acquiredAtMs: z.number().int().min(0),
+      })
+      .strip()
+      .optional(),
     jobId: z.string().min(1),
     correlationId: z.string().min(1).optional(),
     relationshipId: z.string().min(1).optional(),
@@ -82,6 +104,7 @@ export const WorkspaceReplicationJobRecordSchema = z
     mode: z.enum(['one_way_safe', 'one_way_replica', 'two_way_safe']).optional(),
     createdAtMs: z.number().int().min(0),
     updatedAtMs: z.number().int().min(0),
+    resumeContext: WorkspaceReplicationJobResumeContextSchema.optional(),
     cancelRequestedAtMs: z.number().int().min(0).optional(),
     abortedAtMs: z.number().int().min(0).optional(),
     completedAtMs: z.number().int().min(0).optional(),
@@ -182,13 +205,50 @@ function mergeWorkspaceReplicationJobRecordsForWrite(
   }
 
   let base = incoming;
+  const incomingStatus = incoming.status.status;
+  // "Terminal" outcomes that indicate the runner must stop and require user/system action.
+  // We allow these to win even if the writer is stale and regresses the checkpoint, because
+  // dropping them can leave a job stuck "in_progress" with no runner.
+  const incomingIsNonSuccessTerminal =
+    incomingStatus === 'aborted'
+    || incomingStatus === 'failed'
+    || incomingStatus === 'awaiting_recovery';
+
+  function mergeWarnings(
+    a: readonly string[],
+    b: readonly string[],
+  ): string[] {
+    if (b.length === 0) return [...a];
+    if (a.length === 0) return [...b];
+    const merged: string[] = [...a];
+    for (const warning of b) {
+      if (!merged.includes(warning)) merged.push(warning);
+    }
+    return merged;
+  }
 
   // Fail closed: prevent checkpoint regressions from stale writers.
   if (compareCheckpoint(existing.status.checkpoint, incoming.status.checkpoint) > 0) {
-    base = {
-      ...incoming,
-      status: existing.status,
-    };
+    if (incomingIsNonSuccessTerminal) {
+      base = {
+        ...incoming,
+        status: {
+          ...existing.status,
+          status: incomingStatus,
+          progressCounters: mergeProgressCounters(existing.status.progressCounters, incoming.status.progressCounters),
+          warnings: mergeWarnings(existing.status.warnings, incoming.status.warnings),
+          blockingDivergenceCandidates:
+            incoming.status.blockingDivergenceCandidates.length > 0
+              ? incoming.status.blockingDivergenceCandidates
+              : existing.status.blockingDivergenceCandidates,
+        },
+      };
+    } else {
+      base = {
+        ...incoming,
+        status: existing.status,
+      };
+    }
   } else if (existing.status.checkpoint === incoming.status.checkpoint) {
     base = {
       ...incoming,
@@ -205,10 +265,18 @@ function mergeWorkspaceReplicationJobRecordsForWrite(
   const directionId = incoming.directionId ?? existing.directionId;
   const offerId = incoming.offerId ?? existing.offerId;
   const mode = incoming.mode ?? existing.mode;
+  const lastAttempt = (() => {
+    if (!existing.lastAttempt) return incoming.lastAttempt;
+    if (!incoming.lastAttempt) return existing.lastAttempt;
+    return incoming.lastAttempt.attemptNumber >= existing.lastAttempt.attemptNumber
+      ? incoming.lastAttempt
+      : existing.lastAttempt;
+  })();
   return {
     ...base,
     // Identity fields must be sticky so partial/stale writers can't clear them.
     createdAtMs: existing.createdAtMs,
+    ...(lastAttempt === undefined ? {} : { lastAttempt }),
     ...(correlationId === undefined ? {} : { correlationId }),
     ...(relationshipId === undefined ? {} : { relationshipId }),
     ...(directionId === undefined ? {} : { directionId }),
@@ -221,6 +289,7 @@ function mergeWorkspaceReplicationJobRecordsForWrite(
     ...(base.awaitingRecoveryAtMs === undefined && existing.awaitingRecoveryAtMs !== undefined ? { awaitingRecoveryAtMs: existing.awaitingRecoveryAtMs } : {}),
     ...(base.lastErrorMessage === undefined && existing.lastErrorMessage !== undefined ? { lastErrorMessage: existing.lastErrorMessage } : {}),
     ...(base.result === undefined && existing.result !== undefined ? { result: existing.result } : {}),
+    ...(base.resumeContext === undefined && existing.resumeContext !== undefined ? { resumeContext: existing.resumeContext } : {}),
   };
 }
 

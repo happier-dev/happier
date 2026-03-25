@@ -27,7 +27,7 @@ const WorkspaceReplicationRelationshipConfigSchema = z.object({
 }).strict();
 
 export const WorkspaceReplicationRelationshipRecordSchema = z.object({
-  schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION).default(WORKSPACE_REPLICATION_SCHEMA_VERSION),
+  schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION),
   relationshipId: z.string().regex(/^rel_[A-Za-z0-9_-]+$/u),
   endpoints: z.tuple([
     z.object({

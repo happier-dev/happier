@@ -1,6 +1,6 @@
 import { mkdtemp, rm, utimes, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -206,6 +206,7 @@ describe('workspaceReplicationGc', () => {
 
             const digest = `sha256:${'d'.repeat(64)}`;
             const blobPath = resolveWorkspaceReplicationCasBlobPath({ casDirectory: paths.casDirectory, digest });
+            await mkdir(dirname(blobPath), { recursive: true });
             await writeFile(blobPath, Buffer.from('payload', 'utf8'));
 
             const result = await gcWorkspaceReplicationCas({
@@ -238,6 +239,7 @@ describe('workspaceReplicationGc', () => {
 
             const digest = `sha256:${'e'.repeat(64)}`;
             const blobPath = resolveWorkspaceReplicationCasBlobPath({ casDirectory: paths.casDirectory, digest });
+            await mkdir(dirname(blobPath), { recursive: true });
             await writeFile(blobPath, Buffer.from('payload', 'utf8'));
 
             const result = await gcWorkspaceReplicationCas({
@@ -353,6 +355,8 @@ describe('workspaceReplicationGc', () => {
             const keepPath = resolveWorkspaceReplicationCasBlobPath({ casDirectory: paths.casDirectory, digest: keepDigest });
             const dropPath = resolveWorkspaceReplicationCasBlobPath({ casDirectory: paths.casDirectory, digest: dropDigest });
             await mkdir(join(paths.casDirectory, 'sha256'), { recursive: true });
+            await mkdir(dirname(keepPath), { recursive: true });
+            await mkdir(dirname(dropPath), { recursive: true });
             await writeFile(keepPath, Buffer.from('keep', 'utf8'));
             await writeFile(dropPath, Buffer.from('drop', 'utf8'));
 
@@ -429,6 +433,9 @@ describe('workspaceReplicationGc', () => {
             const p1 = resolveWorkspaceReplicationCasBlobPath({ casDirectory: paths.casDirectory, digest: d1 });
             const p2 = resolveWorkspaceReplicationCasBlobPath({ casDirectory: paths.casDirectory, digest: d2 });
             const p3 = resolveWorkspaceReplicationCasBlobPath({ casDirectory: paths.casDirectory, digest: d3 });
+            await mkdir(dirname(p1), { recursive: true });
+            await mkdir(dirname(p2), { recursive: true });
+            await mkdir(dirname(p3), { recursive: true });
             await writeFile(p1, Buffer.from('x'.repeat(10), 'utf8'));
             await writeFile(p2, Buffer.from('y'.repeat(10), 'utf8'));
             await writeFile(p3, Buffer.from('z'.repeat(10), 'utf8'));

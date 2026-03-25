@@ -11,13 +11,80 @@ function compareBlobsByDigest(left: WorkspaceReplicationSourceOfferBlob, right: 
   return left.digest.localeCompare(right.digest);
 }
 
-function createBlobPack(blobs: readonly WorkspaceReplicationSourceOfferBlob[]): WorkspaceReplicationBlobPack {
-  const digests = blobs.map((blob) => blob.digest);
+function compareBlobIndexesByDigest(
+  leftIndex: number,
+  rightIndex: number,
+  blobs: readonly WorkspaceReplicationSourceOfferBlob[],
+): number {
+  return compareBlobsByDigest(blobs[leftIndex], blobs[rightIndex]);
+}
+
+function createSortedBlobIndexes(blobs: readonly WorkspaceReplicationSourceOfferBlob[]): number[] {
+  return blobs.map((_, index) => index).sort((leftIndex, rightIndex) => compareBlobIndexesByDigest(leftIndex, rightIndex, blobs));
+}
+
+function createBlobPack(digests: readonly string[], totalBytes: number): WorkspaceReplicationBlobPack {
   return {
     packId: createWorkspaceReplicationPackIdForDigests(digests),
     digests,
-    totalBytes: blobs.reduce((total, blob) => total + blob.sizeBytes, 0),
+    totalBytes,
   };
+}
+
+function countBlobPackPartitions(sortedBlobIndexes: readonly number[], input: Readonly<{
+  blobs: readonly WorkspaceReplicationSourceOfferBlob[];
+  blobPackTargetBytes: number;
+  blobPackMaxBlobs: number;
+  blobPackMaxSingleBlobBytes: number;
+}>): number {
+  let packCount = 0;
+  let currentPackBlobs = 0;
+  let currentPackBytes = 0;
+
+  const flushCurrentPack = (): void => {
+    if (currentPackBlobs === 0) {
+      return;
+    }
+    packCount += 1;
+    currentPackBlobs = 0;
+    currentPackBytes = 0;
+  };
+
+  for (const blobIndex of sortedBlobIndexes) {
+    const blob = input.blobs[blobIndex];
+    const blobSizeBytes = blob.sizeBytes;
+    if (blobSizeBytes > input.blobPackMaxSingleBlobBytes) {
+      throw new Error(`Workspace replication blob exceeds max single-blob bytes: ${blob.digest}`);
+    }
+
+    const exceedsTargetBytes = currentPackBytes + blobSizeBytes > input.blobPackTargetBytes;
+    const exceedsMaxBlobs = currentPackBlobs >= input.blobPackMaxBlobs;
+    if (currentPackBlobs > 0 && (exceedsTargetBytes || exceedsMaxBlobs)) {
+      flushCurrentPack();
+    }
+
+    if (blobSizeBytes > input.blobPackTargetBytes) {
+      packCount += 1;
+      continue;
+    }
+
+    currentPackBlobs += 1;
+    currentPackBytes += blobSizeBytes;
+  }
+
+  flushCurrentPack();
+
+  return packCount;
+}
+
+export function countWorkspaceReplicationBlobPacks(input: Readonly<{
+  blobs: readonly WorkspaceReplicationSourceOfferBlob[];
+  blobPackTargetBytes: number;
+  blobPackMaxBlobs: number;
+  blobPackMaxSingleBlobBytes: number;
+}>): number {
+  const sortedBlobIndexes = createSortedBlobIndexes(input.blobs);
+  return countBlobPackPartitions(sortedBlobIndexes, input);
 }
 
 export function buildWorkspaceReplicationBlobPacks(input: Readonly<{
@@ -26,38 +93,40 @@ export function buildWorkspaceReplicationBlobPacks(input: Readonly<{
   blobPackMaxBlobs: number;
   blobPackMaxSingleBlobBytes: number;
 }>): readonly WorkspaceReplicationBlobPack[] {
-  const sortedBlobs = [...input.blobs].sort(compareBlobsByDigest);
   const packs: WorkspaceReplicationBlobPack[] = [];
-  let currentPackBlobs: WorkspaceReplicationSourceOfferBlob[] = [];
+  const sortedBlobIndexes = createSortedBlobIndexes(input.blobs);
+  let currentPackDigests: string[] = [];
   let currentPackBytes = 0;
 
   const flushCurrentPack = (): void => {
-    if (currentPackBlobs.length === 0) {
+    if (currentPackDigests.length === 0) {
       return;
     }
-    packs.push(createBlobPack(currentPackBlobs));
-    currentPackBlobs = [];
+    packs.push(createBlobPack(currentPackDigests, currentPackBytes));
+    currentPackDigests = [];
     currentPackBytes = 0;
   };
 
-  for (const blob of sortedBlobs) {
-    if (blob.sizeBytes > input.blobPackMaxSingleBlobBytes) {
+  for (const blobIndex of sortedBlobIndexes) {
+    const blob = input.blobs[blobIndex];
+    const blobSizeBytes = blob.sizeBytes;
+    if (blobSizeBytes > input.blobPackMaxSingleBlobBytes) {
       throw new Error(`Workspace replication blob exceeds max single-blob bytes: ${blob.digest}`);
     }
 
-    const exceedsTargetBytes = currentPackBytes + blob.sizeBytes > input.blobPackTargetBytes;
-    const exceedsMaxBlobs = currentPackBlobs.length >= input.blobPackMaxBlobs;
-    if (currentPackBlobs.length > 0 && (exceedsTargetBytes || exceedsMaxBlobs)) {
+    const exceedsTargetBytes = currentPackBytes + blobSizeBytes > input.blobPackTargetBytes;
+    const exceedsMaxBlobs = currentPackDigests.length >= input.blobPackMaxBlobs;
+    if (currentPackDigests.length > 0 && (exceedsTargetBytes || exceedsMaxBlobs)) {
       flushCurrentPack();
     }
 
-    if (blob.sizeBytes > input.blobPackTargetBytes) {
-      packs.push(createBlobPack([blob]));
+    if (blobSizeBytes > input.blobPackTargetBytes) {
+      packs.push(createBlobPack([blob.digest], blobSizeBytes));
       continue;
     }
 
-    currentPackBlobs.push(blob);
-    currentPackBytes += blob.sizeBytes;
+    currentPackDigests.push(blob.digest);
+    currentPackBytes += blobSizeBytes;
   }
 
   flushCurrentPack();

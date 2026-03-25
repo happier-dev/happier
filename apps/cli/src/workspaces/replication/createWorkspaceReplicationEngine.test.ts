@@ -248,8 +248,270 @@ describe('createWorkspaceReplicationEngine', () => {
             correlationId: 'corr_stub',
         });
         expect(stores.sourceOffers.write).toHaveBeenCalled();
-        expect(stores.jobs.write).toHaveBeenCalled();
+        expect(stores.jobs.write).toHaveBeenCalledWith(expect.objectContaining({
+            jobId: expect.any(String),
+            resumeContext: {
+                apply: {
+                    targetPath: '/target',
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                },
+            },
+        }));
         expect(executeJobInBackground).toHaveBeenCalled();
+    });
+
+    it('reuses an existing in-flight job when correlationId matches (daemon-restart resumability)', async () => {
+        const activeServerDir = '/tmp/happier-active-server';
+        const localMachineId = 'machine_local';
+        const executeJobInBackground = vi.fn(() => undefined);
+        const directionScope: WorkspaceReplicationDirectionScope = {
+            sourceMachineId: 'source',
+            sourceWorkspaceRoot: '/source',
+            targetMachineId: 'target',
+            targetWorkspaceRoot: '/target',
+            mode: 'one_way_safe',
+        };
+
+        const stores = {
+            cas: createStubCasStore(),
+            relationships: createStubRelationshipStore(),
+            baselines: createStubBaselineStore(),
+            jobs: createStubJobStore(),
+            sourceOffers: createStubSourceOfferStore(),
+        };
+        const existingJobRecord: WorkspaceReplicationJobRecord = {
+            schemaVersion: 1,
+            jobId: 'job_existing',
+            correlationId: 'corr_existing',
+            relationshipId: relationshipRecord.relationshipId,
+            directionId: buildWorkspaceReplicationDirectionId(directionScope),
+            offerId: 'offer_stub',
+            mode: 'one_way_safe',
+            createdAtMs: 1,
+            updatedAtMs: 2,
+            status: {
+                status: 'pending',
+                phase: 'planning',
+                checkpoint: 'relationship_resolved',
+                progressCounters: {
+                    plannedFiles: 0,
+                    plannedBytes: 0,
+                    transferredFiles: 0,
+                    transferredBytes: 0,
+                    appliedFiles: 0,
+                    appliedBytes: 0,
+                },
+                warnings: [],
+                blockingDivergenceCandidates: [],
+            },
+        };
+        (stores.jobs.findByCorrelationId as ReturnType<typeof vi.fn>).mockResolvedValueOnce(existingJobRecord);
+
+        const { createWorkspaceReplicationEngine } = await import('./createWorkspaceReplicationEngine');
+        const engine = createWorkspaceReplicationEngine(
+            { activeServerDir, localMachineId },
+            {
+                createCasStore: () => stores.cas,
+                createRelationshipStore: () => stores.relationships,
+                createBaselineStore: () => stores.baselines,
+                createJobStore: () => stores.jobs,
+                createSourceOfferStore: () => stores.sourceOffers,
+                executeJobInBackground,
+            },
+        );
+
+        const started = await engine.startJobFromOffer({
+            scope: directionScope,
+            sourceOffer: {
+                offerId: 'offer_stub',
+                relationshipId: relationshipRecord.relationshipId,
+                directionId: buildWorkspaceReplicationDirectionId(directionScope),
+                sourceFingerprint: 'sha256:offer',
+                manifest: { entries: [], fingerprint: 'sha256:offer' },
+                blobIndex: [],
+            },
+            apply: {
+                targetPath: '/target',
+                strategy: 'sync_changes',
+                conflictPolicy: 'replace_existing',
+            },
+            requestBlobPackToFile: vi.fn(async () => undefined),
+            correlationId: 'corr_existing',
+        });
+
+        expect(stores.jobs.write).not.toHaveBeenCalled();
+        expect(started).toMatchObject({
+            jobId: 'job_existing',
+            initialStatus: {
+                jobId: 'job_existing',
+            },
+        });
+        expect(executeJobInBackground).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job_existing' }));
+    });
+
+    it('fails closed when correlationId reuses an in-flight job with a different durable resume context', async () => {
+        const activeServerDir = '/tmp/happier-active-server';
+        const localMachineId = 'machine_local';
+        const directionScope: WorkspaceReplicationDirectionScope = {
+            sourceMachineId: 'source',
+            sourceWorkspaceRoot: '/source',
+            targetMachineId: 'target',
+            targetWorkspaceRoot: '/target',
+            mode: 'one_way_safe',
+        };
+
+        const stores = {
+            cas: createStubCasStore(),
+            relationships: createStubRelationshipStore(),
+            baselines: createStubBaselineStore(),
+            jobs: createStubJobStore(),
+            sourceOffers: createStubSourceOfferStore(),
+        };
+        (stores.jobs.findByCorrelationId as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            schemaVersion: 1,
+            jobId: 'job_resume_mismatch',
+            correlationId: 'corr_resume_mismatch',
+            relationshipId: relationshipRecord.relationshipId,
+            directionId: buildWorkspaceReplicationDirectionId(directionScope),
+            offerId: 'offer_stub',
+            mode: 'one_way_safe',
+            createdAtMs: 1,
+            updatedAtMs: 2,
+            resumeContext: {
+                apply: {
+                    targetPath: '/old-target',
+                    strategy: 'sync_changes',
+                    conflictPolicy: 'replace_existing',
+                },
+            },
+            status: {
+                status: 'pending',
+                phase: 'planning',
+                checkpoint: 'relationship_resolved',
+                progressCounters: {
+                    plannedFiles: 0,
+                    plannedBytes: 0,
+                    transferredFiles: 0,
+                    transferredBytes: 0,
+                    appliedFiles: 0,
+                    appliedBytes: 0,
+                },
+                warnings: [],
+                blockingDivergenceCandidates: [],
+            },
+        });
+
+        const { createWorkspaceReplicationEngine } = await import('./createWorkspaceReplicationEngine');
+        const engine = createWorkspaceReplicationEngine(
+            { activeServerDir, localMachineId },
+            {
+                createCasStore: () => stores.cas,
+                createRelationshipStore: () => stores.relationships,
+                createBaselineStore: () => stores.baselines,
+                createJobStore: () => stores.jobs,
+                createSourceOfferStore: () => stores.sourceOffers,
+                executeJobInBackground: vi.fn(),
+            },
+        );
+
+        await expect(engine.startJobFromOffer({
+            scope: directionScope,
+            sourceOffer: {
+                offerId: 'offer_stub',
+                relationshipId: relationshipRecord.relationshipId,
+                directionId: buildWorkspaceReplicationDirectionId(directionScope),
+                sourceFingerprint: 'sha256:offer',
+                manifest: { entries: [], fingerprint: 'sha256:offer' },
+                blobIndex: [],
+            },
+            apply: {
+                targetPath: '/new-target',
+                strategy: 'sync_changes',
+                conflictPolicy: 'replace_existing',
+            },
+            requestBlobPackToFile: vi.fn(async () => undefined),
+            correlationId: 'corr_resume_mismatch',
+        })).rejects.toThrow(/resume context/i);
+    });
+
+    it('fails closed when correlationId is already in use for a different in-flight offer', async () => {
+        const activeServerDir = '/tmp/happier-active-server';
+        const localMachineId = 'machine_local';
+        const directionScope: WorkspaceReplicationDirectionScope = {
+            sourceMachineId: 'source',
+            sourceWorkspaceRoot: '/source',
+            targetMachineId: 'target',
+            targetWorkspaceRoot: '/target',
+            mode: 'one_way_safe',
+        };
+
+        const stores = {
+            cas: createStubCasStore(),
+            relationships: createStubRelationshipStore(),
+            baselines: createStubBaselineStore(),
+            jobs: createStubJobStore(),
+            sourceOffers: createStubSourceOfferStore(),
+        };
+        const existingJobRecord: WorkspaceReplicationJobRecord = {
+            schemaVersion: 1,
+            jobId: 'job_existing',
+            correlationId: 'corr_existing',
+            relationshipId: relationshipRecord.relationshipId,
+            directionId: buildWorkspaceReplicationDirectionId(directionScope),
+            offerId: 'offer_old',
+            mode: 'one_way_safe',
+            createdAtMs: 1,
+            updatedAtMs: 2,
+            status: {
+                status: 'in_progress',
+                phase: 'planning',
+                checkpoint: 'relationship_resolved',
+                progressCounters: {
+                    plannedFiles: 0,
+                    plannedBytes: 0,
+                    transferredFiles: 0,
+                    transferredBytes: 0,
+                    appliedFiles: 0,
+                    appliedBytes: 0,
+                },
+                warnings: [],
+                blockingDivergenceCandidates: [],
+            },
+        };
+        (stores.jobs.findByCorrelationId as ReturnType<typeof vi.fn>).mockResolvedValueOnce(existingJobRecord);
+
+        const { createWorkspaceReplicationEngine } = await import('./createWorkspaceReplicationEngine');
+        const engine = createWorkspaceReplicationEngine(
+            { activeServerDir, localMachineId },
+            {
+                createCasStore: () => stores.cas,
+                createRelationshipStore: () => stores.relationships,
+                createBaselineStore: () => stores.baselines,
+                createJobStore: () => stores.jobs,
+                createSourceOfferStore: () => stores.sourceOffers,
+                executeJobInBackground: () => undefined,
+            },
+        );
+
+        await expect(engine.startJobFromOffer({
+            scope: directionScope,
+            sourceOffer: {
+                offerId: 'offer_new',
+                relationshipId: relationshipRecord.relationshipId,
+                directionId: buildWorkspaceReplicationDirectionId(directionScope),
+                sourceFingerprint: 'sha256:offer',
+                manifest: { entries: [], fingerprint: 'sha256:offer' },
+                blobIndex: [],
+            },
+            apply: {
+                targetPath: '/target',
+                strategy: 'sync_changes',
+                conflictPolicy: 'replace_existing',
+            },
+            requestBlobPackToFile: vi.fn(async () => undefined),
+            correlationId: 'corr_existing',
+        })).rejects.toThrow(/correlationId/i);
     });
 
     it('wraps store initialization failures in a workspace replication error', async () => {
@@ -350,7 +612,6 @@ describe('createWorkspaceReplicationEngine', () => {
             const parsed = await readWorkspaceReplicationSourceOfferFromFile({
                 transferId: sourceOffer.offerId,
                 filePath: offerFilePath,
-                legacyWholeBufferMaxBytes: 10_000_000,
             });
             expect(parsed.offerId).toBe(sourceOffer.offerId);
         } finally {

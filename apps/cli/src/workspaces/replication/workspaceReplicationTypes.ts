@@ -7,10 +7,8 @@ import type {
     ScmSourceControllerWorkspaceTransferStrategy,
 } from '@/scm/sourceController/workspaceTransfer';
 
-import type { WorkspaceReplicationBaselineRecord, WorkspaceReplicationBaselineStore } from './baseline/workspaceReplicationBaselineStore';
-import type { WorkspaceReplicationCasStore } from './cas/workspaceReplicationCasStore';
-import type { WorkspaceReplicationJobRecord, WorkspaceReplicationJobStore } from './jobs/workspaceReplicationJobStore';
-import type { WorkspaceReplicationRelationshipStore } from './relationships/workspaceReplicationRelationshipStore';
+import type { WorkspaceReplicationBaselineRecord } from './baseline/workspaceReplicationBaselineStore';
+import type { WorkspaceReplicationJobRecord } from './jobs/workspaceReplicationJobStore';
 import type { WorkspaceReplicationDirectionScope } from './relationships/relationshipScope';
 import type { WorkspaceReplicationSourceOffer } from './transport/createWorkspaceReplicationSourceOffer';
 
@@ -19,13 +17,6 @@ export type WorkspaceReplicationEngineInput = Readonly<{
     localMachineId: string;
     scmRegistry?: ScmBackendRegistry;
     now?: () => number;
-}>;
-
-export type WorkspaceReplicationEngineStores = Readonly<{
-    cas: WorkspaceReplicationCasStore;
-    relationships: WorkspaceReplicationRelationshipStore;
-    baselines: WorkspaceReplicationBaselineStore;
-    jobs: WorkspaceReplicationJobStore;
 }>;
 
 type CreateWorkspaceReplicationBaselineStore = typeof import('./baseline/workspaceReplicationBaselineStore').createWorkspaceReplicationBaselineStore;
@@ -100,20 +91,12 @@ export type WorkspaceReplicationBlobPackRequestToFile = (input: Readonly<{
     destinationPath: string;
 }>) => Promise<void>;
 
-export type WorkspaceReplicationBlobPackPlanningMode =
-    // Default: request packs built from the missing digest subset (minimizes bytes; best for server-routed/on-demand).
-    | 'missing_only'
-    // Request packs built from the full source-offer blob index, then select packs that include missing digests.
-    // This yields stable pack boundaries even when the missing set is sparse (best for pre-published packs, e.g. direct-peer).
-    | 'stable_full_offer';
-
 export type WorkspaceReplicationStartJobFromOfferInput = Readonly<{
     scope: WorkspaceReplicationDirectionScope;
     sourceOffer: WorkspaceReplicationSourceOffer;
     apply: WorkspaceReplicationApplyInput;
     requestBlobPackToFile: WorkspaceReplicationBlobPackRequestToFile;
     correlationId?: string;
-    blobPackPlanningMode?: WorkspaceReplicationBlobPackPlanningMode;
 }>;
 
 export type WorkspaceReplicationStartJobFromOfferResult = Readonly<{
@@ -147,5 +130,4 @@ export type WorkspaceReplicationJobExecutionInput = Readonly<{
     sourceOffer: WorkspaceReplicationSourceOffer;
     apply: WorkspaceReplicationApplyInput;
     requestBlobPackToFile: WorkspaceReplicationBlobPackRequestToFile;
-    blobPackPlanningMode?: WorkspaceReplicationBlobPackPlanningMode;
 }>;

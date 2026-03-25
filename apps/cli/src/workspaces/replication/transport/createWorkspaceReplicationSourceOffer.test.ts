@@ -238,7 +238,6 @@ describe('createWorkspaceReplicationSourceOffer', () => {
       await expect(readWorkspaceReplicationSourceOfferFromFile({
         transferId: 'offer_legacy_1',
         filePath,
-        legacyWholeBufferMaxBytes: 10_000_000,
       })).rejects.toThrow(/legacy/i);
     } finally {
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);
@@ -282,8 +281,6 @@ describe('createWorkspaceReplicationSourceOffer', () => {
       const readBack = await readWorkspaceReplicationSourceOfferFromFile({
         transferId: offer.offerId,
         filePath,
-        // If the reader accidentally falls back to whole-buffer legacy decoding, this should fail closed.
-        legacyWholeBufferMaxBytes: 1,
       });
 
       expect(readBack.offerId).toBe(offer.offerId);

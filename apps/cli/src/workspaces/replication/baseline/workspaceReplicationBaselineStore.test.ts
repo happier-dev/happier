@@ -73,8 +73,7 @@ describe('workspaceReplicationBaselineStore', () => {
 
       const filePath = store.resolveFilePath(scope);
       const persisted = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
-      // Legacy records might omit schemaVersion. The store should fail open for missing schemaVersion
-      // (still rejecting mismatched schema versions).
+      // This store is not deployed. Do not keep compatibility for schema-less records.
       delete persisted.schemaVersion;
       await writeFile(filePath, JSON.stringify(persisted), 'utf8');
 
@@ -89,21 +88,7 @@ describe('workspaceReplicationBaselineStore', () => {
           'baseline.json',
         ),
       );
-      await expect(store.load(scope)).resolves.toMatchObject({
-        manifestFingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
-        manifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
-              sizeBytes: 6,
-              executable: false,
-            },
-          ],
-        },
-        savedAtMs: 123,
-      });
+      await expect(store.load(scope)).rejects.toThrow('Invalid workspace replication baseline record');
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }

@@ -55,13 +55,12 @@ describe('sendWorkspaceReplicationBlobPacks', () => {
             digests: [digestA, digestB],
             totalBytes: payloadA.byteLength + payloadB.byteLength,
           },
-        ],
-        transfers: {
-          publishDirectPeerSourceOffer: () => [],
-          requestDirectPeerSourceOffer: async () => {
-            throw new Error('Unexpected direct-peer source offer request');
-          },
-          requestServerRoutedSourceOffer: async () => {
+	        ],
+	        transfers: {
+	          requestDirectPeerSourceOffer: async () => {
+	            throw new Error('Unexpected direct-peer source offer request');
+	          },
+	          requestServerRoutedSourceOffer: async () => {
             throw new Error('Unexpected server-routed source offer request');
           },
           publishDirectPeerBlobPack: ({ transferId, payloadSource }) => {
@@ -178,13 +177,12 @@ describe('sendWorkspaceReplicationBlobPacks', () => {
             digests: [digest],
             totalBytes: payload.byteLength,
           },
-        ],
-        transfers: {
-          publishDirectPeerSourceOffer: () => [],
-          requestDirectPeerSourceOffer: async () => {
-            throw new Error('Unexpected direct-peer source offer request');
-          },
-          requestServerRoutedSourceOffer: async () => {
+	        ],
+	        transfers: {
+	          requestDirectPeerSourceOffer: async () => {
+	            throw new Error('Unexpected direct-peer source offer request');
+	          },
+	          requestServerRoutedSourceOffer: async () => {
             throw new Error('Unexpected server-routed source offer request');
           },
           publishDirectPeerBlobPack: ({ transferId, payloadSource }) => {

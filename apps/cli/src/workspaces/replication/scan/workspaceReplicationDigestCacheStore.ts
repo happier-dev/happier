@@ -24,7 +24,7 @@ const WorkspaceReplicationDigestCacheEntrySchema = z
 
 const WorkspaceReplicationDigestCacheSchema = z
   .object({
-    schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION).default(WORKSPACE_REPLICATION_SCHEMA_VERSION),
+    schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION),
     entries: z.record(z.string().min(1), WorkspaceReplicationDigestCacheEntrySchema),
   })
   .strict();

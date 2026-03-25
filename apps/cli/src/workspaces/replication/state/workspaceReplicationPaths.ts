@@ -34,7 +34,8 @@ export function resolveWorkspaceReplicationCasBlobPath(input: Readonly<{
   if (!/^[a-f0-9]{64}$/u.test(hex)) {
     throw new Error(`Invalid workspace replication CAS digest: ${input.digest}`);
   }
-  return join(input.casDirectory, 'sha256', hex);
+  // Shard CAS blobs by digest prefix to avoid pathological single-directory scaling on large repos.
+  return join(input.casDirectory, 'sha256', hex.slice(0, 2), hex);
 }
 
 export function resolveWorkspaceReplicationJobPath(input: Readonly<{

@@ -30,10 +30,13 @@ async function listFilesRecursively(directory: string): Promise<string[]> {
 }
 
 function assertDoesNotDependOnHandoff(content: string) {
-    expect(content).not.toContain('session/handoff');
-    expect(content).not.toContain('SessionHandoff');
-    expect(content).not.toContain('sessionControl/handoff');
-    expect(content).not.toContain('handoffStatus');
+  expect(content).not.toContain('session/handoff');
+  expect(content).not.toContain('SessionHandoff');
+  expect(content).not.toContain('SessionHandoffWorkspaceTransfer');
+  expect(content).not.toContain('SessionHandoffMetadataV2');
+  expect(content).not.toContain('SessionHandoffTransportStrategy');
+  expect(content).not.toContain('sessionControl/handoff');
+  expect(content).not.toContain('handoffStatus');
 }
 
 describe('workspace replication engine (import-boundary)', () => {
@@ -50,17 +53,25 @@ describe('workspace replication engine (import-boundary)', () => {
         }
     });
 
-    it('keeps the entire replication engine folder handoff-agnostic', async () => {
-        const engineRoot = fileURLToPath(new URL('.', import.meta.url));
-        const files = (await listFilesRecursively(engineRoot)).filter((filePath) =>
-            filePath.endsWith('.ts')
-            && !filePath.endsWith('.test.ts')
+  it('keeps the entire replication engine folder handoff-agnostic', async () => {
+    const engineRoot = fileURLToPath(new URL('.', import.meta.url));
+    const files = (await listFilesRecursively(engineRoot)).filter((filePath) =>
+      filePath.endsWith('.ts')
+      && !filePath.endsWith('.test.ts')
             && !filePath.endsWith('.spec.ts'),
         );
 
         for (const filePath of files) {
             const content = await readFile(filePath, 'utf8');
-            assertDoesNotDependOnHandoff(content);
-        }
-    });
+      assertDoesNotDependOnHandoff(content);
+    }
+  });
+
+  it('keeps transport-specific blob-pack planning out of the public engine types surface', async () => {
+    const typesPath = fileURLToPath(new URL('./workspaceReplicationTypes.ts', import.meta.url));
+    const content = await readFile(typesPath, 'utf8');
+
+    expect(content).not.toContain('blobPackPlanningMode');
+    expect(content).not.toContain('WorkspaceReplicationBlobPackPlanningMode');
+  });
 });

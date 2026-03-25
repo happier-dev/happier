@@ -159,6 +159,47 @@ describe('workspaceReplicationJobLease', () => {
     }
   });
 
+  it('fails closed when renewing an expired lease (zombie runner cannot extend after TTL)', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-lease-renew-expired-'));
+    try {
+      const { tryAcquireWorkspaceReplicationJobLease, renewWorkspaceReplicationJobLease } = await import(
+        './workspaceReplicationJobLease'
+      );
+
+      await expect(tryAcquireWorkspaceReplicationJobLease({
+        activeServerDir,
+        jobId: 'job_lease_renew_expired_1',
+        ownerId: 'owner_a',
+        nowMs: 1000,
+        ttlMs: 10,
+      })).resolves.toMatchObject({
+        acquired: true,
+        lease: expect.objectContaining({
+          ownerId: 'owner_a',
+          expiresAtMs: 1010,
+        }),
+      });
+
+      await expect(renewWorkspaceReplicationJobLease({
+        activeServerDir,
+        jobId: 'job_lease_renew_expired_1',
+        ownerId: 'owner_a',
+        nowMs: 2000,
+        ttlMs: 10_000,
+      })).resolves.toMatchObject({
+        renewed: false,
+        lease: expect.objectContaining({
+          ownerId: 'owner_a',
+          acquiredAtMs: 1000,
+          renewedAtMs: 1000,
+          expiresAtMs: 1010,
+        }),
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed when renewing a lease owned by another runner', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-lease-renew-mismatch-'));
     try {
