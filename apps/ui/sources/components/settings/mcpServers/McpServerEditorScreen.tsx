@@ -31,7 +31,6 @@ import { buildQuickInstallMcpDraft, type McpQuickInstallPresetId } from '@/sync/
 import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
 import { parseImportedMcpServerJson } from '@/sync/domains/settings/mcpServers/parseImportedMcpServerJson';
 import { t } from '@/text';
-import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 
@@ -230,6 +229,10 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         }));
     }, [machines, theme.colors.textSecondary]);
 
+    const closeToMcpServersSettings = React.useCallback(() => {
+        router.replace('/settings/mcp' as any);
+    }, [router]);
+
     const commitDraft = React.useCallback((): boolean => {
         const parsedServer = McpServerCatalogEntryV1Schema.safeParse(draftServer);
         if (!parsedServer.success) {
@@ -261,13 +264,13 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         const didSave = commitDraft();
         if (!didSave) return;
         ignoreBeforeRemoveRef.current = true;
-        safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
-    }, [commitDraft, navigation, router]);
+        closeToMcpServersSettings();
+    }, [closeToMcpServersSettings, commitDraft]);
 
     const handleDeleteOrCancel = React.useCallback(async () => {
         if (!serverId) {
             ignoreBeforeRemoveRef.current = true;
-            safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
+            closeToMcpServersSettings();
             return;
         }
 
@@ -281,8 +284,8 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         const next = deleteMcpServerCatalogEntryV1(normalizedSettings, serverId);
         setMcpSettings(next as any);
         ignoreBeforeRemoveRef.current = true;
-        safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
-    }, [draftServer.name, navigation, normalizedSettings, router, serverId, setMcpSettings]);
+        closeToMcpServersSettings();
+    }, [closeToMcpServersSettings, draftServer.name, normalizedSettings, serverId, setMcpSettings]);
 
     const handleImportJson = React.useCallback(() => {
         if (!selectedMachineId) {
@@ -304,8 +307,8 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         setSecrets(materialized.nextSecrets);
         setMcpSettings(materialized.nextSettings as any);
         ignoreBeforeRemoveRef.current = true;
-        safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
-    }, [importInputMappings, importParseResult.servers, navigation, normalizedSettings, router, secrets, selectedMachineId, setMcpSettings, setSecrets]);
+        closeToMcpServersSettings();
+    }, [closeToMcpServersSettings, importInputMappings, importParseResult.servers, normalizedSettings, secrets, selectedMachineId, setMcpSettings, setSecrets]);
 
     const handleQuickInstall = React.useCallback(() => {
         if (!selectedMachineId) {
@@ -339,8 +342,8 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         setSecrets(nextSecrets);
         setMcpSettings(nextSettings as any);
         ignoreBeforeRemoveRef.current = true;
-        safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
-    }, [navigation, normalizedSettings, quickInstallInputMappingsByPreset, router, secrets, selectedMachineId, selectedQuickInstallDrafts, setMcpSettings, setSecrets]);
+        closeToMcpServersSettings();
+    }, [closeToMcpServersSettings, normalizedSettings, quickInstallInputMappingsByPreset, secrets, selectedMachineId, selectedQuickInstallDrafts, setMcpSettings, setSecrets]);
 
     const requestUnsavedChangesDecision = React.useCallback(async () => {
         return await promptUnsavedChangesAlert(
@@ -361,8 +364,8 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
             nav.dispatch(action);
             return;
         }
-        safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' });
-    }, [navigation, router]);
+        closeToMcpServersSettings();
+    }, [closeToMcpServersSettings, navigation]);
 
     useUnsavedChangesBeforeRemoveGuard({
         navigation,
@@ -468,7 +471,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                     inputMappings={importInputMappings}
                     onChangeInputMapping={(inputId, next) => setImportInputMappings((current) => ({ ...current, [inputId]: next }))}
                     mappingIssues={importMappingIssues}
-                    onCancel={() => safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' })}
+                    onCancel={() => closeToMcpServersSettings()}
                     onImport={handleImportJson}
                 />
             ) : null}
@@ -498,7 +501,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                             },
                         }))}
                     mappingIssuesByPreset={quickInstallMappingIssuesByPreset}
-                    onCancel={() => safeRouterBack({ router, navigation, fallbackHref: '/settings/mcp' })}
+                    onCancel={() => closeToMcpServersSettings()}
                     onInstall={handleQuickInstall}
                 />
             ) : null}

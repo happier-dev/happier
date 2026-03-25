@@ -33,6 +33,8 @@ const navigationBeforeRemoveHandlers: Array<(event: any) => void | Promise<void>
 const promptUnsavedChangesAlertSpy = vi.hoisted(
     () => vi.fn<typeof promptUnsavedChangesAlert>(),
 );
+let navigationCanGoBack = false;
+let routerCanGoBack: boolean | null = null;
 let liveMcpSettings: {
     v: 1;
     strictMode: boolean;
@@ -130,9 +132,10 @@ const mcpServersCommonModuleMockOptions = {
             router: {
                 back: routerBackSpy,
                 replace: routerReplaceSpy,
+                canGoBack: () => routerCanGoBack,
             },
             navigation: {
-                canGoBack: () => false,
+                canGoBack: () => navigationCanGoBack,
                 dispatch: navigationDispatchSpy,
                 setOptions: navigationSetOptionsSpy,
                 addListener: (event: string, handler: (evt: any) => void | Promise<void>) => {
@@ -234,6 +237,8 @@ async function renderEditorScreen() {
 beforeEach(() => {
     resetMcpServersCommonModuleMockState();
     resetLiveSettings();
+    navigationCanGoBack = false;
+    routerCanGoBack = null;
     routerBackSpy.mockReset();
     routerReplaceSpy.mockReset();
     installMcpServersCommonModuleMocks(mcpServersCommonModuleMockOptions);
@@ -241,6 +246,37 @@ beforeEach(() => {
 });
 
 describe('McpServerEditorScreen', () => {
+    it('replaces to the MCP servers settings screen when cancelling quick install even if a back stack exists', async () => {
+        vi.useFakeTimers();
+        navigationCanGoBack = true;
+        routerCanGoBack = true;
+
+        Object.defineProperty(globalThis, 'location', {
+            value: { href: 'http://localhost/settings/mcp-server?addMode=quick-install', pathname: '/settings/mcp-server' },
+            writable: true,
+            configurable: true,
+        });
+        Object.defineProperty(globalThis, 'history', {
+            value: { back: vi.fn() },
+            writable: true,
+            configurable: true,
+        });
+
+        mcpServersModuleState.routerSearchParams = { addMode: 'quick-install', presetId: 'sequential-thinking' };
+        liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
+
+        const screen = await renderEditorScreen();
+
+        await act(async () => {
+            screen.pressByTestId('mcp.server.quickInstall.cancel');
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/mcp');
+
+        vi.useRealTimers();
+    });
+
     it('prompts to discard unsaved changes when navigating away via the navigation back action', async () => {
         const screen = await renderEditorScreen();
 
