@@ -10,29 +10,6 @@ import { t } from '@/text';
 import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 
 const WEB_PICKER_DOUBLE_OPEN_COOLDOWN_MS = 500;
-let lastWebPickerOpenAtMs = 0;
-
-function runPickerOpenWithWebCooldown(action: () => void) {
-    if (Platform.OS !== 'web') {
-        action();
-        return;
-    }
-
-    const now = Date.now();
-    // If the system clock moves backwards (or tests use fake timers), don't let a future
-    // `lastWebPickerOpenAtMs` value block picker opens indefinitely.
-    if (now < lastWebPickerOpenAtMs) {
-        lastWebPickerOpenAtMs = 0;
-    }
-    if (now - lastWebPickerOpenAtMs < WEB_PICKER_DOUBLE_OPEN_COOLDOWN_MS) return;
-    lastWebPickerOpenAtMs = now;
-
-    // When the OS file chooser closes, some browsers can dispatch a follow-up "press" (key/mouse)
-    // to the previously focused element, which re-opens the picker immediately. Blurring and
-    // applying a short cooldown makes the flow deterministic.
-    blurActiveElementOnWeb();
-    action();
-}
 
 export function createAttachmentActionChip(params: Readonly<{
     onPickFile: () => void;
@@ -40,6 +17,29 @@ export function createAttachmentActionChip(params: Readonly<{
     disabled?: boolean;
 }>): AgentInputExtraActionChip {
     const showChooser = Platform.OS === 'ios' || Platform.OS === 'android';
+    // Per-chip instance guard (avoid cross-screen/test interference from module-level state).
+    let lastWebPickerOpenAtMs = 0;
+    const runPickerOpenWithWebCooldown = (action: () => void) => {
+        if (Platform.OS !== 'web') {
+            action();
+            return;
+        }
+
+        const now = Date.now();
+        // If the system clock moves backwards (or tests use fake timers), don't let a future
+        // `lastWebPickerOpenAtMs` value block picker opens indefinitely.
+        if (now < lastWebPickerOpenAtMs) {
+            lastWebPickerOpenAtMs = 0;
+        }
+        if (now - lastWebPickerOpenAtMs < WEB_PICKER_DOUBLE_OPEN_COOLDOWN_MS) return;
+        lastWebPickerOpenAtMs = now;
+
+        // When the OS file chooser closes, some browsers can dispatch a follow-up "press" (key/mouse)
+        // to the previously focused element, which re-opens the picker immediately. Blurring and
+        // applying a short cooldown makes the flow deterministic.
+        blurActiveElementOnWeb();
+        action();
+    };
 
     return {
         key: 'attachments-add',

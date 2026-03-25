@@ -96,6 +96,7 @@ export function createTranscriptStorageActionChip(params: Readonly<{
         key: 'new-session-storage',
         controlId: 'storage',
         collapsedOptionsPopover: {
+            presentation: 'simple',
             title: t('settingsSession.defaultStorage.title'),
             label: isDirect
                 ? t('sessionsList.storageDirectTab')

@@ -86,7 +86,7 @@ export function AgentInputChipPickerPanel(
       // For selectors with a detail pane (e.g. engine + model), keep the popover
       // open so users can continue configuring the newly focused option.
       const canFocusOptionInPlace = typeof option.renderDetailContent === "function";
-      if (!canFocusOptionInPlace && option.closeOnSelectImmediate !== false) {
+      if (!canFocusOptionInPlace && option.closeOnSelectImmediate === true) {
         props.onRequestClose();
       }
       return;
@@ -250,8 +250,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   railScroll: {
-    width: 150,
-    maxWidth: "25%",
+    width: 190,
+    maxWidth: "30%",
     backgroundColor: theme.colors.groupped.background,
     borderRightWidth: 1,
     borderRightColor: theme.colors.divider,

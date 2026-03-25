@@ -17,6 +17,7 @@ import { RepositoryTreeDropOverlay } from '@/components/sessions/files/repositor
 import { RepositoryTreeTransferStatusBar } from '@/components/sessions/files/repositoryTree/RepositoryTreeTransferStatusBar';
 import { WebDropTargetView } from '@/components/sessions/files/repositoryTree/WebDropTargetView';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
+import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
 import { fileSearchCache, searchFiles } from '@/sync/domains/input/suggestionFile';
 import { clearCachedRepositoryDirectoryEntries } from '@/sync/domains/input/repositoryDirectory';
@@ -41,7 +42,6 @@ import { createRepositoryTreeUploadMenuConfig } from '@/components/sessions/file
 import { useRepositoryTreeWebDropState } from '@/components/sessions/files/repositoryTree/useRepositoryTreeWebDropState';
 import { promptRepositoryUploadDestination } from '@/components/sessions/files/views/promptRepositoryUploadDestination';
 import { RepositoryTreeChangedFilesPane } from '@/components/sessions/files/views/repositoryTreeBrowser/RepositoryTreeChangedFilesPane';
-import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
 
 export type SessionRepositoryTreeBrowserViewProps = Readonly<{
     sessionId: string;
