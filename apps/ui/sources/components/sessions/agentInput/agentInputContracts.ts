@@ -45,6 +45,11 @@ export type AgentInputExtraActionChip = Readonly<{
         blurInput: () => void;
     }>) => ActionListItem | ReadonlyArray<ActionListItem>;
     collapsedOptionsPopover?: Readonly<{
+        /**
+         * Controls which popover presentation is used when this chip is opened from the collapsed
+         * action menu. Defaults to the richer chip-picker panel.
+         */
+        presentation?: 'picker' | 'simple';
         title: string;
         label?: string | null;
         icon?: (tint: string) => React.ReactNode;

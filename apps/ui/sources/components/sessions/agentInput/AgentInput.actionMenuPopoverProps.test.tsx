@@ -467,6 +467,79 @@ describe('AgentInput (action menu popover props)', () => {
         expect(chipPickerProps?.anchorRef).toBe(settingsButton.props.ref);
     });
 
+    it('routes collapsed storage actions through the shared simple-options popover anchored to the action menu button', async () => {
+        vi.resetModules();
+        captured.last = null;
+        capturedActionMenuContent.last = null;
+        capturedSimpleOptionsPopover.last = null;
+        capturedChipPickerPopover.last = null;
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    agentType={"codex" as any}
+                    onAgentClick={() => {}}
+                    extraActionChips={[{
+                        key: 'new-session-storage',
+                        controlId: 'storage',
+                        collapsedOptionsPopover: {
+                            presentation: 'simple',
+                            title: 'settingsSession.defaultStorage.title',
+                            label: 'Synced',
+                            options: [
+                                { id: 'persisted', label: 'Synced', subtitle: 'Synced subtitle' },
+                                { id: 'direct', label: 'Direct', subtitle: 'Direct subtitle' },
+                            ],
+                            selectedOptionId: 'persisted',
+                            onSelect: () => {},
+                        },
+                        render: () => React.createElement('View', { testID: 'agent-input-storage-chip' }),
+                    }]}
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                />);
+
+        const settingsButton = screen.findByTestId('agent-input-action-menu-button');
+
+        expect(settingsButton).toBeTruthy();
+        if (!settingsButton) {
+            return;
+        }
+
+        await screen.pressByTestIdAsync('agent-input-action-menu-button');
+
+        const actionMenuActions = getCapturedActionMenuActions();
+        const storageAction = actionMenuActions.find((action: { id?: string }) => action.id === 'storage');
+        expect(storageAction).toBeTruthy();
+
+        act(() => {
+            storageAction?.onPress?.();
+        });
+
+        const simplePopoverProps = capturedSimpleOptionsPopover.last as (Record<string, unknown> & {
+            open?: boolean;
+            title?: string;
+            selectedOptionId?: string | null;
+            anchorRef?: unknown;
+            options?: Array<{ id: string }>;
+        }) | null;
+
+        expect(simplePopoverProps?.open).toBe(true);
+        expect(simplePopoverProps?.title).toBe('settingsSession.defaultStorage.title');
+        expect(simplePopoverProps?.selectedOptionId).toBe('persisted');
+        expect(simplePopoverProps?.options?.map((option) => option.id)).toEqual([
+            'persisted',
+            'direct',
+        ]);
+        expect(simplePopoverProps?.anchorRef).toBe(settingsButton.props.ref);
+        expect(capturedChipPickerPopover.last).toBeNull();
+    });
+
     it('routes collapsed content actions through the shared content popover anchored to the action menu button', async () => {
         vi.resetModules();
         captured.last = null;

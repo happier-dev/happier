@@ -56,6 +56,7 @@ describe('AgentInputChipPickerPanel', () => {
         />);
 
         expect(screen.findByTestId('agent-input-chip-picker')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.title')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.option:one')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.option:two')).toBeTruthy();
     });
@@ -75,6 +76,7 @@ describe('AgentInputChipPickerPanel', () => {
         />);
 
         expect(screen.findByTestId('agent-input-chip-picker')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.title')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.detail-pane')).toBeTruthy();
     });

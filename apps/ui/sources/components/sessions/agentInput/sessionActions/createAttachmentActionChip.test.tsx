@@ -144,4 +144,50 @@ describe('createAttachmentActionChip', () => {
         }
     });
 
+    it('on web it ignores duplicate press events fired shortly after opening (prevents double-open)', async () => {
+        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
+        const originalOs = Platform.OS;
+        const originalNow = Date.now;
+        (Platform as any).OS = 'web';
+
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-03-25T12:00:00.000Z'));
+
+        try {
+            const onPickFile = vi.fn();
+            const onPickImage = vi.fn();
+            const chip = createAttachmentActionChip({
+                onPickFile,
+                onPickImage,
+            } as any);
+
+            const screen = await renderScreen(
+                <React.Fragment>
+                    {chip.render({
+                        chipStyle: () => ({}),
+                        showLabel: true,
+                        iconColor: '#000',
+                        textStyle: {},
+                        countTextStyle: {},
+                        chipAnchorRef: { current: null },
+                        popoverAnchorRef: { current: null },
+                        toggleCollapsedPopover: vi.fn(),
+                    })}
+                </React.Fragment>,
+            );
+
+            await screen.pressByTestIdAsync('agent-input-attachments-chip');
+            await screen.pressByTestIdAsync('agent-input-attachments-chip');
+            expect(onPickFile).toHaveBeenCalledTimes(1);
+
+            vi.advanceTimersByTime(500);
+            await screen.pressByTestIdAsync('agent-input-attachments-chip');
+            expect(onPickFile).toHaveBeenCalledTimes(2);
+        } finally {
+            (Platform as any).OS = originalOs;
+            vi.useRealTimers();
+            (Date as any).now = originalNow;
+        }
+    });
+
 });

@@ -90,6 +90,7 @@ export function agentInputChipPickerHasDetailPane(
             || option.detailDescription
             || option.detailContent
             || option.renderDetailContent
+            || (option.detailSelectOptions?.length ?? 0) > 0
             || option.detailActionLabel
             || (option.detailBullets?.length ?? 0) > 0,
         )

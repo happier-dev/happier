@@ -104,7 +104,7 @@ vi.mock('./AgentInputChipPickerPanel', () => ({
                         if (option.onSelectImmediate) {
                             option.onSelectImmediate();
                             const hasFocusOnlyDetail = typeof option.renderDetailContent === 'function';
-                            if (!hasFocusOnlyDetail && option.closeOnSelectImmediate !== false) {
+                            if (!hasFocusOnlyDetail && option.closeOnSelectImmediate === true) {
                                 props.onRequestClose?.();
                             }
                             return;
@@ -215,7 +215,7 @@ describe('AgentInputChipPickerPopover', () => {
         expect(onRequestClose).toHaveBeenCalled();
     });
 
-    it('selects immediately in detailed mode for pure selection options', async () => {
+    it('selects immediately in detailed mode for pure selection options that request auto-close', async () => {
         const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
         const onSelect = vi.fn();
         const onRequestClose = vi.fn();
@@ -241,6 +241,7 @@ describe('AgentInputChipPickerPopover', () => {
                     sectionId: 'linked',
                     sectionLabel: 'Linked',
                     detailDescription: 'Feature checkout',
+                    closeOnSelectImmediate: true,
                     onSelectImmediate: () => {
                         onSelect('two');
                     },

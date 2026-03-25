@@ -102,11 +102,19 @@ export function AgentInputChipPickerPanel(
   const railWidth = props.railWidth ?? styles.railScroll.width;
   const railMaxWidth = props.railMaxWidth ?? styles.railScroll.maxWidth;
 
+  const headerRow = (
+    <View style={styles.headerRow}>
+      <Text testID="agent-input-chip-picker.title" style={styles.title}>
+        {props.title}
+      </Text>
+    </View>
+  );
+
   return (
     <View testID="agent-input-chip-picker" style={styles.container}>
       {!detailed ? (
         <View style={styles.body}>
-          <Text style={styles.title}>{props.title}</Text>
+          {headerRow}
           <ItemListStatic style={{ backgroundColor: "transparent" }}>
             {sections.map((section) => (
               <ItemGroup key={section.id} title={section.label ?? ""}>
@@ -133,62 +141,65 @@ export function AgentInputChipPickerPanel(
           </ItemListStatic>
         </View>
       ) : (
-        <View
-          style={[
-            styles.bodyDetailed,
-            showDetailedSelector && detailedLayout === "stacked"
-              ? styles.bodyDetailedStacked
-              : null,
-          ]}
-        >
-          {showDetailedSelector ? (
-            <View
-              style={detailedLayout === "split"
-                ? [styles.railScroll, { width: railWidth, maxWidth: railMaxWidth }]
-                : null}
-            >
+        <View style={styles.bodyDetailedShell}>
+          <View style={styles.headerDetailed}>{headerRow}</View>
+          <View
+            style={[
+              styles.bodyDetailed,
+              showDetailedSelector && detailedLayout === "stacked"
+                ? styles.bodyDetailedStacked
+                : null,
+            ]}
+          >
+            {showDetailedSelector ? (
               <View
-                style={detailedLayout === "split" ? styles.railScrollContent : null}
+                style={detailedLayout === "split"
+                  ? [styles.railScroll, { width: railWidth, maxWidth: railMaxWidth }]
+                  : null}
               >
-                <AgentInputChipPickerOptionSelector
-                  sections={sections}
-                  focusedOptionId={focusedOption?.id ?? null}
-                  selectedOptionId={props.selectedOptionId}
-                  onFocusOption={handleDetailedOptionFocus}
-                  variant={detailedLayout === "stacked" ? "stacked" : "rail"}
-                />
-              </View>
-            </View>
-          ) : null}
-          {focusedOption ? (
-            <View style={detailedLayout === "split" ? styles.detailScroll : null}>
-              <View style={[styles.detailPane, detailedLayout === "split" ? styles.detailScrollContent : null]}>
-              {props.detailPaneHeaderAccessory ? (
-                <View style={styles.detailPaneHeaderAccessoryRow}>
-                  {props.detailPaneHeaderAccessory}
+                <View
+                  style={detailedLayout === "split" ? styles.railScrollContent : null}
+                >
+                  <AgentInputChipPickerOptionSelector
+                    sections={sections}
+                    focusedOptionId={focusedOption?.id ?? null}
+                    selectedOptionId={props.selectedOptionId}
+                    onFocusOption={handleDetailedOptionFocus}
+                    variant={detailedLayout === "stacked" ? "stacked" : "rail"}
+                  />
                 </View>
-              ) : null}
-              <AgentInputChipPickerDetailPane
-                style={detailPaneStyle}
-                option={focusedOption}
-                onApply={() => {
-                  if (focusedOption.disabled) return;
-                  if (focusedOption.onApply) {
-                    focusedOption.onApply();
-                  } else {
-                    props.onSelect(focusedOption.id);
-                  }
-                  props.onRequestClose();
-                }}
-                applyLabel={props.applyLabel ?? t("common.use")}
-                onSelectDetailOption={(id) => {
-                  props.onSelect(id);
-                }}
-                onRequestClose={props.onRequestClose}
-              />
               </View>
-            </View>
-          ) : null}
+            ) : null}
+            {focusedOption ? (
+              <View style={detailedLayout === "split" ? styles.detailScroll : null}>
+                <View style={[styles.detailPane, detailedLayout === "split" ? styles.detailScrollContent : null]}>
+                  {props.detailPaneHeaderAccessory ? (
+                    <View style={styles.detailPaneHeaderAccessoryRow}>
+                      {props.detailPaneHeaderAccessory}
+                    </View>
+                  ) : null}
+                  <AgentInputChipPickerDetailPane
+                    style={detailPaneStyle}
+                    option={focusedOption}
+                    onApply={() => {
+                      if (focusedOption.disabled) return;
+                      if (focusedOption.onApply) {
+                        focusedOption.onApply();
+                      } else {
+                        props.onSelect(focusedOption.id);
+                      }
+                      props.onRequestClose();
+                    }}
+                    applyLabel={props.applyLabel ?? t("common.use")}
+                    onSelectDetailOption={(id) => {
+                      props.onSelect(id);
+                    }}
+                    onRequestClose={props.onRequestClose}
+                  />
+                </View>
+              </View>
+            ) : null}
+          </View>
         </View>
       )}
     </View>
@@ -209,6 +220,22 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   body: {
     padding: 12,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  headerDetailed: {
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.divider,
+  },
+  bodyDetailedShell: {
+    backgroundColor: theme.colors.surface,
   },
   bodyDetailed: {
     flexDirection: "row",
