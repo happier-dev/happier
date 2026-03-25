@@ -290,6 +290,10 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         machineCapabilitiesInvokeMock.mockRejectedValue(new Error('unexpected probe call'));
 
         let readCall = 0;
+        const cachedValue = {
+            availableModels: [{ id: 'm1', name: 'Model 1' }],
+            supportsFreeform: false,
+        };
         vi.doMock('@/sync/domains/models/dynamicModelProbeCache', async () => {
             const actual = await vi.importActual<typeof import('@/sync/domains/models/dynamicModelProbeCache')>(
                 '@/sync/domains/models/dynamicModelProbeCache',
@@ -302,10 +306,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
                         kind: 'success' as const,
                         updatedAt: 123,
                         expiresAt: Date.now() + 60_000,
-                        value: {
-                            availableModels: [{ id: `m${readCall}`, name: `Model ${readCall}` }],
-                            supportsFreeform: false,
-                        },
+                        value: cachedValue,
                     };
                 },
             };
@@ -325,6 +326,10 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         } as any));
 
         expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(true);
+        expect(readCall).toBe(1);
+
+        await hook.rerender();
+        expect(readCall).toBe(1);
         await hook.unmount();
     });
 });

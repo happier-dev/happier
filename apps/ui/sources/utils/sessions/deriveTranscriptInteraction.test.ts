@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveTranscriptInteraction } from './deriveTranscriptInteraction';
+import { deriveTranscriptInteraction, deriveTranscriptInteractionFromSession } from './deriveTranscriptInteraction';
 
 describe('deriveTranscriptInteraction', () => {
     it('treats missing accessLevel as owner (full interaction)', () => {
@@ -77,6 +77,24 @@ describe('deriveTranscriptInteraction', () => {
             canApprovePermissions: false,
             permissionDisabledReason: 'public',
             disableToolNavigation: true,
+        });
+    });
+});
+
+describe('deriveTranscriptInteractionFromSession', () => {
+    it('treats session.active as the source of truth (even if presence is stale)', () => {
+        expect(
+            deriveTranscriptInteractionFromSession({
+                accessLevel: undefined,
+                canApprovePermissions: true,
+                active: false,
+                presence: 'online',
+            }),
+        ).toEqual({
+            canSendMessages: true,
+            canApprovePermissions: false,
+            permissionDisabledReason: 'inactive',
+            disableToolNavigation: undefined,
         });
     });
 });

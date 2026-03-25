@@ -10,7 +10,7 @@ import { useMachine } from '@/sync/domains/state/storage';
 import { readDisplayMachineIdForSession, readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
 import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserActionPromptCard';
-import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { formatPathRelativeToHome, getSessionName } from '@/utils/sessions/sessionUtils';
 import { InboxSessionAttentionHeader } from './InboxSessionAttentionHeader';
@@ -31,13 +31,13 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
         metadata: props.session.metadata ?? null,
     });
     const transcriptInteraction = React.useMemo(() => {
-        return deriveTranscriptInteraction({
-            kind: 'session',
+        return deriveTranscriptInteractionFromSession({
             accessLevel: props.session.accessLevel,
             canApprovePermissions: props.session.canApprovePermissions,
-            isSessionActive: props.session.presence === 'online',
+            active: props.session.active,
+            presence: props.session.presence,
         });
-    }, [props.session.accessLevel, props.session.canApprovePermissions, props.session.presence]);
+    }, [props.session.accessLevel, props.session.canApprovePermissions, props.session.active, props.session.presence]);
 
     if (
         transcriptInteraction.permissionDisabledReason === 'inactive' &&

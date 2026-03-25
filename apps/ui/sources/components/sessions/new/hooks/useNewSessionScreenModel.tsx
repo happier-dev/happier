@@ -539,7 +539,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     });
     const refreshCliAvailability = React.useCallback(() => {
         void cliAvailability.refresh({ bypassCache: true });
-    }, [cliAvailability]);
+    }, [cliAvailability.refresh]);
     React.useEffect(() => {
         if (!useProfiles) {
             return;

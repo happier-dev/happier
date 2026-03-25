@@ -15,7 +15,11 @@ import {
     writeDynamicModelProbeCacheError,
     writeDynamicModelProbeCacheSuccess,
 } from '@/sync/domains/models/dynamicModelProbeCache';
-import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import {
+    buildNewSessionCapabilityProbeContextKey,
+    normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts,
+    type NewSessionCapabilityProbeContext,
+} from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
 import { scheduleProbedResourceRetryAfterExpiry } from './probedResourceRetrySchedule';
 
@@ -69,13 +73,21 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
     const backendTargetKey = React.useMemo(() => buildBackendTargetKey(backendTarget), [backendTarget]);
 
+    const probeContextKey = buildNewSessionCapabilityProbeContextKey(params.probeContext);
+    const probeContextCacheKeySuffixParts = React.useMemo(
+        () => normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts(params.probeContext),
+        [probeContextKey],
+    );
+    const probeContextCapabilityParams = React.useMemo(
+        () => params.probeContext?.capabilityParams ?? null,
+        [probeContextKey],
+    );
+
     const probeScopeKey = React.useMemo(() => {
         const machineId = String(params.selectedMachineId ?? '').trim();
         if (!machineId) return null;
         const serverId = String(params.capabilityServerId ?? '').trim() || 'active';
-        const extraKeySuffixParts = Array.isArray(params.probeContext?.cacheKeySuffixParts)
-            ? params.probeContext!.cacheKeySuffixParts!.map((part) => String(part ?? '').trim()).filter(Boolean)
-            : [];
+        const extraKeySuffixParts = probeContextCacheKeySuffixParts ?? [];
         // Scope key excludes cwd so switching worktrees doesn't flash the dynamic model list.
         return JSON.stringify([
             'dynamicModelProbeScope',
@@ -84,7 +96,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             backendTargetKey,
             ...extraKeySuffixParts,
         ]);
-    }, [backendTargetKey, params.capabilityServerId, params.probeContext?.cacheKeySuffixParts, params.selectedMachineId]);
+    }, [backendTargetKey, params.capabilityServerId, params.selectedMachineId, probeContextKey, probeContextCacheKeySuffixParts]);
 
     const preflightModelsKey = React.useMemo(() => {
         return buildDynamicModelProbeCacheKey({
@@ -92,9 +104,9 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             targetKey: backendTargetKey,
             serverId: params.capabilityServerId,
             cwd: params.cwd ?? null,
-            extraKeySuffixParts: params.probeContext?.cacheKeySuffixParts ?? null,
+            extraKeySuffixParts: probeContextCacheKeySuffixParts,
         });
-    }, [backendTargetKey, params.capabilityServerId, params.cwd, params.probeContext?.cacheKeySuffixParts, params.selectedMachineId]);
+    }, [backendTargetKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCacheKeySuffixParts]);
 
     React.useEffect(() => {
         preflightModelsRef.current = preflightModels;
@@ -174,18 +186,18 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 list: PreflightModelList;
                 cacheable: boolean;
             }> | null>(preflightModelsKey, async () => {
-                const res = await machineCapabilitiesInvoke(params.selectedMachineId!, {
-                    id: `cli.${agentType}` as any,
-                    method: 'probeModels',
-                    params: {
-                        timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
-                        backendTarget,
-                        ...(params.probeContext?.capabilityParams ? params.probeContext.capabilityParams : {}),
-                        ...(cwd ? { cwd } : {}),
-                    },
-                }, {
-                    serverId: params.capabilityServerId,
-                });
+                    const res = await machineCapabilitiesInvoke(params.selectedMachineId!, {
+                        id: `cli.${agentType}` as any,
+                        method: 'probeModels',
+                        params: {
+                            timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
+                            backendTarget,
+                            ...(probeContextCapabilityParams ? probeContextCapabilityParams : {}),
+                            ...(cwd ? { cwd } : {}),
+                        },
+                    }, {
+                        serverId: params.capabilityServerId,
+                    });
 
                 if (!res.supported) return null;
                 if (!res.response.ok) return null;
@@ -266,7 +278,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTarget, preflightModelsKey, probeScopeKey, params.capabilityServerId, params.cwd, params.selectedMachineId, params.probeContext?.capabilityParams, refreshNonce]);
+    }, [agentType, backendTarget, preflightModelsKey, probeScopeKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextKey, refreshNonce, probeContextCapabilityParams]);
 
     const modelOptions = React.useMemo(
         () => getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: preflightModels }),

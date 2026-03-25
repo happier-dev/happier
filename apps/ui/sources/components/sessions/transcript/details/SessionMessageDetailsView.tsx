@@ -23,7 +23,7 @@ import { shouldEnableExecutionRunPolling } from '@/sync/domains/session/particip
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useSessionMessages } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { Typography } from '@/constants/Typography';
 import { ToolFullView } from '@/components/tools/shell/views/ToolFullView';
 import { useSessionRecipientState } from '@/components/sessions/agentInput/routing/useSessionRecipientState';
@@ -167,12 +167,13 @@ function ToolCallDetailsView(props: Readonly<{
     const canControlExecutionRuns = directSessionRuntime.directSessionLink === null || directSessionRuntime.status?.runnerActive === true;
 
     const interaction = React.useMemo(() => {
-        return deriveTranscriptInteraction({
-            kind: 'session',
+        return deriveTranscriptInteractionFromSession({
             accessLevel: props.session.accessLevel,
             canApprovePermissions: props.session.canApprovePermissions,
+            active: props.session.active,
+            presence: props.session.presence,
         });
-    }, [props.session.accessLevel, props.session.canApprovePermissions]);
+    }, [props.session.accessLevel, props.session.active, props.session.canApprovePermissions, props.session.presence]);
 
     const focusedTool = props.message.tool;
     const toolName = focusedTool?.name;

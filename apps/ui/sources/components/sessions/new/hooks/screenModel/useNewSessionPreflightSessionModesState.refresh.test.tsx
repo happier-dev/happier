@@ -118,6 +118,9 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
         machineCapabilitiesInvokeMock.mockRejectedValue(new Error('unexpected probe call'));
 
         let readCall = 0;
+        const cachedValue = {
+            availableModes: [{ id: 'mode1', name: 'Mode 1' }],
+        };
         vi.doMock('@/sync/domains/sessionModes/dynamicSessionModeProbeCache', async () => {
             const actual = await vi.importActual<typeof import('@/sync/domains/sessionModes/dynamicSessionModeProbeCache')>(
                 '@/sync/domains/sessionModes/dynamicSessionModeProbeCache',
@@ -130,9 +133,7 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
                         kind: 'success' as const,
                         updatedAt: 123,
                         expiresAt: Date.now() + 60_000,
-                        value: {
-                            availableModes: [{ id: `mode${readCall}`, name: `Mode ${readCall}` }],
-                        },
+                        value: cachedValue,
                     };
                 },
             };
@@ -151,6 +152,10 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
         } as any));
 
         expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode1')).toBe(true);
+        expect(readCall).toBe(1);
+
+        await hook.rerender();
+        expect(readCall).toBe(1);
         await hook.unmount();
     });
 });

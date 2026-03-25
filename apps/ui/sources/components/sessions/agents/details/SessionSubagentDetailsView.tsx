@@ -11,7 +11,7 @@ import { useSessionSubagents } from '@/hooks/session/useSessionSubagents';
 import { useMessage, useResolvedSessionMessageRouteId, useSession } from '@/sync/domains/state/storage';
 import { useSessionMessages } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -58,10 +58,11 @@ export const SessionSubagentDetailsView = React.memo((props: Readonly<{
     const [executionRunDelivery, setExecutionRunDelivery] = React.useState<'prompt' | 'steer_if_supported' | 'interrupt'>('steer_if_supported');
     const transcriptInteraction = React.useMemo(() => {
         if (!session) return { canSendMessages: false } as const;
-        return deriveTranscriptInteraction({
-            kind: 'session',
+        return deriveTranscriptInteractionFromSession({
             accessLevel: session.accessLevel,
             canApprovePermissions: session.canApprovePermissions,
+            active: session.active,
+            presence: session.presence,
         });
     }, [session]);
 

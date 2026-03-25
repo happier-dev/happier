@@ -6,6 +6,7 @@ import type { CapabilityDetectResult, CliAuthStatusData, CliCapabilityData, Tmux
 import { AGENT_IDS, type AgentId, getAgentCore } from '@/agents/catalog/catalog';
 import { isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 export type CLIAvailability = Readonly<{
     available: Readonly<Record<AgentId, boolean | null>>; // null = unknown/loading, true = installed, false = not installed
@@ -169,11 +170,14 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
         return isMachineOnline(machine);
     }, [machine, machineId]);
 
+    const includeLoginStatusForAgentIdsKey = stableJsonStringify(options?.includeLoginStatusForAgentIds ?? null);
+    const agentIdsKey = stableJsonStringify(options?.agentIds ?? null);
+
     const automaticLoginStatusAgentIds = useMemo(
         () => resolveAutomaticLoginStatusAgentIds(Boolean(options?.includeLoginStatus), options?.includeLoginStatusForAgentIds),
-        [options?.includeLoginStatus, options?.includeLoginStatusForAgentIds],
+        [options?.includeLoginStatus, includeLoginStatusForAgentIdsKey],
     );
-    const scopedAgentIds = useMemo(() => normalizeRequestedAgentIds(options?.agentIds), [options?.agentIds]);
+    const scopedAgentIds = useMemo(() => normalizeRequestedAgentIds(options?.agentIds), [agentIdsKey]);
     const request = useMemo(
         () => buildCliDetectionRequest({ agentIds: scopedAgentIds, loginStatusAgentIds: automaticLoginStatusAgentIds }),
         [automaticLoginStatusAgentIds, scopedAgentIds],

@@ -5,6 +5,31 @@ export type TranscriptInteraction = Readonly<{
     disableToolNavigation?: boolean;
 }>;
 
+export function deriveTranscriptInteractionFromSession(
+    session: Readonly<{
+        accessLevel: 'view' | 'edit' | 'admin' | null | undefined;
+        canApprovePermissions: boolean | null | undefined;
+        active?: boolean | null | undefined;
+        presence?: 'online' | number | null | undefined;
+        disableToolNavigation?: boolean;
+    }>,
+): TranscriptInteraction {
+    const isSessionActive =
+        typeof session.active === 'boolean'
+            ? session.active
+            : typeof session.presence !== 'undefined'
+                ? session.presence === 'online'
+                : undefined;
+
+    return deriveTranscriptInteraction({
+        kind: 'session',
+        accessLevel: session.accessLevel,
+        canApprovePermissions: session.canApprovePermissions,
+        ...(typeof isSessionActive !== 'undefined' ? { isSessionActive } : {}),
+        disableToolNavigation: session.disableToolNavigation,
+    });
+}
+
 export function deriveTranscriptInteraction(
     input:
         | Readonly<{

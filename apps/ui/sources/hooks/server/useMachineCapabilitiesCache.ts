@@ -7,6 +7,7 @@ import type { CapabilitiesDetectRequest, CapabilitiesDetectResponse, CapabilityD
 import { CHECKLIST_IDS, resumeChecklistId } from '@happier-dev/protocol/checklists';
 import { AGENT_IDS } from '@/agents/catalog/catalog';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 export type MachineCapabilitiesSnapshot = {
     response: CapabilitiesDetectResponse;
@@ -213,21 +214,6 @@ function readMachineCapabilitiesErrorBackoffMsFromEnv(): number {
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed)) return DEFAULT_ERROR_BACKOFF_MS;
     return Math.max(0, Math.min(10 * 60_000, parsed));
-}
-
-function stableJsonStringify(value: unknown): string {
-    if (value === null || value === undefined) return 'null';
-    if (typeof value === 'string') return JSON.stringify(value);
-    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'null';
-    if (typeof value === 'boolean') return value ? 'true' : 'false';
-    if (Array.isArray(value)) return `[${value.map((v) => stableJsonStringify(v)).join(',')}]`;
-    if (typeof value === 'object') {
-        const obj = value as Record<string, unknown>;
-        const keys = Object.keys(obj).sort();
-        return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJsonStringify(obj[k])}`).join(',')}}`;
-    }
-    // functions/symbols/etc: treat as null for cache key stability
-    return 'null';
 }
 
 function detectRequestKey(request: CapabilitiesDetectRequest): string {

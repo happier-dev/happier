@@ -45,7 +45,7 @@ import { resolveWebPinRetryTimeoutMs } from '@/components/sessions/transcript/sc
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { resolveActiveThinkingMessageId } from '@/components/sessions/transcript/thinking/resolveActiveThinkingMessageId';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { deriveTranscriptInteraction, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { deriveTranscriptInteractionFromSession, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { buildChatListNativeId } from './chatListNativeId';
 import { useWebFlashListCrashFallback } from '@/components/ui/lists/useWebFlashListCrashFallback';
 import { buildTranscriptHotColdSegments } from '@/components/sessions/transcript/segments/buildTranscriptHotColdSegments';
@@ -260,13 +260,13 @@ export const ChatList = React.memo((props: {
     }, [latestCommittedActivityKey, latestThinkingMessageActivityAtMs, latestThinkingMessageId, props.session.thinking, staleMs, thinkingPulseNow]);
 
     const interaction = React.useMemo(() => {
-        return deriveTranscriptInteraction({
-            kind: 'session',
+        return deriveTranscriptInteractionFromSession({
             accessLevel: props.session.accessLevel,
             canApprovePermissions: props.session.canApprovePermissions,
-            isSessionActive: props.session.presence === 'online',
+            active: props.session.active,
+            presence: props.session.presence,
         });
-    }, [props.session.accessLevel, props.session.canApprovePermissions, props.session.presence]);
+    }, [props.session.accessLevel, props.session.canApprovePermissions, props.session.active, props.session.presence]);
 
         return (
             <ChatListInternal

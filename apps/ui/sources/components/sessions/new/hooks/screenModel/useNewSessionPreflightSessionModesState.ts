@@ -18,7 +18,11 @@ import {
     writeDynamicSessionModeProbeCacheError,
     writeDynamicSessionModeProbeCacheSuccess,
 } from '@/sync/domains/sessionModes/dynamicSessionModeProbeCache';
-import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import {
+    buildNewSessionCapabilityProbeContextKey,
+    normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts,
+    type NewSessionCapabilityProbeContext,
+} from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
 import { scheduleProbedResourceRetryAfterExpiry } from './probedResourceRetrySchedule';
 
@@ -63,15 +67,25 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
 
     const backendTargetKey = React.useMemo(() => buildBackendTargetKey(backendTarget), [backendTarget]);
 
+    const probeContextKey = buildNewSessionCapabilityProbeContextKey(params.probeContext);
+    const probeContextCacheKeySuffixParts = React.useMemo(
+        () => normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts(params.probeContext),
+        [probeContextKey],
+    );
+    const probeContextCapabilityParams = React.useMemo(
+        () => params.probeContext?.capabilityParams ?? null,
+        [probeContextKey],
+    );
+
     const preflightModesKey = React.useMemo(() => {
         return buildDynamicSessionModeProbeCacheKey({
             machineId: params.selectedMachineId,
             targetKey: backendTargetKey,
             serverId: params.capabilityServerId,
             cwd: params.cwd ?? null,
-            extraKeySuffixParts: params.probeContext?.cacheKeySuffixParts ?? null,
+            extraKeySuffixParts: probeContextCacheKeySuffixParts,
         });
-    }, [backendTargetKey, params.capabilityServerId, params.cwd, params.probeContext?.cacheKeySuffixParts, params.selectedMachineId]);
+    }, [backendTargetKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCacheKeySuffixParts]);
 
     const supportsPreflightModeProbe = React.useMemo(() => {
         const core = getAgentCore(agentType);
@@ -163,7 +177,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                         params: {
                             timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
                             backendTarget,
-                            ...(params.probeContext?.capabilityParams ? params.probeContext.capabilityParams : {}),
+                            ...(probeContextCapabilityParams ? probeContextCapabilityParams : {}),
                             ...(cwd ? { cwd } : {}),
                         },
                     },
@@ -235,7 +249,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTarget, preflightModesKey, params.selectedMachineId, params.capabilityServerId, params.cwd, params.probeContext?.capabilityParams, refreshNonce, supportsPreflightModeProbe]);
+    }, [agentType, backendTarget, preflightModesKey, params.selectedMachineId, params.capabilityServerId, params.cwd, probeContextKey, probeContextCapabilityParams, refreshNonce, supportsPreflightModeProbe]);
 
     const modeOptions = React.useMemo(() => {
         if (staticModeOptions.length > 0) return staticModeOptions;

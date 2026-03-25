@@ -3,6 +3,7 @@ import { resolveAgentConfiguredRuntimeKind } from '@happier-dev/agents';
 
 import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 export type NewSessionCapabilityProbeContext = Readonly<{
     cacheKeySuffixParts?: readonly string[] | null;
@@ -39,6 +40,22 @@ function getOrCreateProbeContextForRuntimeKind(runtimeKind: string): NewSessionC
     }
 
     return created;
+}
+
+export function normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts(
+    probeContext: NewSessionCapabilityProbeContext | null | undefined,
+): readonly string[] | null {
+    const raw = probeContext?.cacheKeySuffixParts;
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    const normalized = raw.map((part) => String(part ?? '').trim()).filter(Boolean);
+    return normalized.length > 0 ? normalized : null;
+}
+
+export function buildNewSessionCapabilityProbeContextKey(probeContext: NewSessionCapabilityProbeContext | null | undefined): string {
+    return stableJsonStringify({
+        cacheKeySuffixParts: probeContext?.cacheKeySuffixParts ?? null,
+        capabilityParams: probeContext?.capabilityParams ?? null,
+    });
 }
 
 export function resolveNewSessionCapabilityProbeContext(params: Readonly<{

@@ -50,7 +50,7 @@ import { isRunningOnMac } from '@/utils/platform/platform';
 import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, listPendingPermissionRequests, listPendingUserActionRequests, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
-import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -684,7 +684,9 @@ function SessionViewLoaded({
     );
 
     // Inactive session resume state
-    const isSessionActive = session.presence === 'online';
+    // Use `session.active` as the source of truth for whether the provider process is running.
+    // `presence` is derived from server snapshots and can drift if a partial update lands.
+    const isSessionActive = session.active === true;
     const supportsLocalControl = !isHiddenSystemSessionSession && supportsEffectiveLocalControlForSession({
         agentId,
         metadata: session.metadata,
@@ -1057,13 +1059,13 @@ function SessionViewLoaded({
     const hasWriteAccess = !session.accessLevel || session.accessLevel === 'edit' || session.accessLevel === 'admin';
     const isReadOnly = session.accessLevel === 'view';
     const transcriptInteraction = React.useMemo(() => {
-        return deriveTranscriptInteraction({
-            kind: 'session',
+        return deriveTranscriptInteractionFromSession({
             accessLevel: session.accessLevel,
             canApprovePermissions: session.canApprovePermissions,
-            isSessionActive,
+            active: session.active,
+            presence: session.presence,
         });
-    }, [isSessionActive, session.accessLevel, session.canApprovePermissions]);
+    }, [session.accessLevel, session.active, session.canApprovePermissions, session.presence]);
 
     const [pendingQueueResumeFailed, setPendingQueueResumeFailed] = React.useState(false);
     React.useEffect(() => {
