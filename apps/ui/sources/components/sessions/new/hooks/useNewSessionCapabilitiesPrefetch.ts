@@ -71,11 +71,21 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
     // Cache-first + background refresh: for the actively selected machine, prefetch capabilities
     // if missing or stale. This updates the banners/agent availability on screen open, but avoids
     // any fetches on tap handlers.
+    const lastPrefetchedSelectedMachineKeyRef = React.useRef<string | null>(null);
     React.useEffect(() => {
+        if (!params.enabled) return;
         if (!params.selectedMachineId) return;
         const machine = params.machines.find((m) => m.id === params.selectedMachineId);
         if (!machine) return;
         if (!params.isMachineOnline(machine)) return;
+
+        const nextKey = [
+            machine.id,
+            String(machine.daemonStateVersion ?? ''),
+            String(params.serverId ?? ''),
+        ].join('|');
+        if (lastPrefetchedSelectedMachineKeyRef.current === nextKey) return;
+        lastPrefetchedSelectedMachineKeyRef.current = nextKey;
 
         InteractionManager.runAfterInteractions(() => {
             fireAndForget(
@@ -89,5 +99,5 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
                 { tag: `useNewSessionCapabilitiesPrefetch.prefetchSelectedMachine:${params.selectedMachineId}` },
             );
         });
-    }, [params.machines, params.selectedMachineId]);
+    }, [params.enabled, params.machines, params.selectedMachineId, params.serverId, params.isMachineOnline, params.prefetchMachineCapabilitiesIfStale, params.request, params.staleMs]);
 }
