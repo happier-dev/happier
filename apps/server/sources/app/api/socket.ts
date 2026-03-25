@@ -146,7 +146,23 @@ export function startSocket(app: Fastify) {
     });
 
     io.on("connection", async (socket) => {
-        log({ module: 'websocket' }, `New connection attempt from socket: ${socket.id}`);
+        const remoteAddress = socket.handshake.address;
+        const remotePort =
+            typeof (socket.conn as unknown as { remotePort?: unknown } | undefined)?.remotePort === 'number'
+                ? (socket.conn as unknown as { remotePort: number }).remotePort
+                : undefined;
+        const userAgent =
+            typeof socket.handshake.headers['user-agent'] === 'string'
+                ? socket.handshake.headers['user-agent']
+                : undefined;
+        const transport = (socket.conn as unknown as { transport?: { name?: string } } | undefined)?.transport?.name;
+        const remoteLabel = `${remoteAddress ?? 'unknown'}${typeof remotePort === 'number' ? `:${remotePort}` : ''}`;
+        const userAgentLabel = userAgent ? userAgent.slice(0, 160) : 'unknown';
+
+        log(
+            { module: 'websocket', socketId: socket.id, remoteAddress, userAgent, transport },
+            `New connection attempt from socket: ${socket.id} (remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
+        );
         const userId = (socket.data as any).userId as string | undefined;
         const clientType = (socket.data as any).clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
         const sessionId =
@@ -159,7 +175,20 @@ export function startSocket(app: Fastify) {
             return;
         }
 
-        log({ module: 'websocket' }, `Token verified: ${userId}, clientType: ${clientType || 'user-scoped'}, sessionId: ${sessionId || 'none'}, machineId: ${machineId || 'none'}, socketId: ${socket.id}`);
+        log(
+            {
+                module: 'websocket',
+                socketId: socket.id,
+                userId,
+                clientType: clientType || 'user-scoped',
+                sessionId: sessionId || 'none',
+                machineId: machineId || 'none',
+                remoteAddress,
+                userAgent,
+                transport,
+            },
+            `Token verified: ${userId}, clientType: ${clientType || 'user-scoped'}, sessionId: ${sessionId || 'none'}, machineId: ${machineId || 'none'}, socketId: ${socket.id} (remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
+        );
 
         // Store connection based on type
         const metadata = { clientType: clientType || 'user-scoped', sessionId, machineId };
@@ -208,14 +237,28 @@ export function startSocket(app: Fastify) {
             });
         }
 
-        socket.on('disconnect', () => {
+        socket.on('disconnect', (reason) => {
             websocketEventsCounter.inc({ event_type: 'disconnect' });
 
             // Cleanup connections
             eventRouter.removeConnection(userId, connection);
             decrementWebSocketConnection(connection.connectionType);
 
-            log({ module: 'websocket' }, `User disconnected: ${userId}`);
+            log(
+                {
+                    module: 'websocket',
+                    socketId: socket.id,
+                    userId,
+                    clientType: metadata.clientType,
+                    sessionId: sessionId || 'none',
+                    machineId: machineId || 'none',
+                    reason,
+                    remoteAddress,
+                    userAgent,
+                    transport,
+                },
+                `User disconnected: ${userId} (reason=${String(reason)}, socketId=${socket.id}, clientType=${metadata.clientType}, remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
+            );
 
             // Broadcast daemon offline status
             if (connection.connectionType === 'machine-scoped') {
@@ -247,12 +290,26 @@ export function startSocket(app: Fastify) {
             io,
             serverRoutedTransferEnabled,
             serverRoutedTransferMaxBytes: machineTransferFeatureEnv.serverRoutedMaxBytes,
+            serverRoutedTransferMaxActiveTransfersPerSocket: machineTransferFeatureEnv.serverRoutedMaxActiveTransfersPerSocket,
         });
         artifactUpdateHandler(userId, socket);
         accessKeyHandler(userId, socket);
 
         // Ready
-        log({ module: 'websocket' }, `User connected: ${userId}`);
+        log(
+            {
+                module: 'websocket',
+                socketId: socket.id,
+                userId,
+                clientType: metadata.clientType,
+                sessionId: sessionId || 'none',
+                machineId: machineId || 'none',
+                remoteAddress,
+                userAgent,
+                transport,
+            },
+            `User connected: ${userId} (socketId=${socket.id}, clientType=${metadata.clientType}, remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
+        );
     });
 
     onShutdown('api', async () => {

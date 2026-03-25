@@ -42,6 +42,7 @@ export type MachineTransferFeatureEnv = Readonly<{
   directPeerEnabled: boolean;
   serverRoutedEnabled: boolean;
   serverRoutedMaxBytes: number | null;
+  serverRoutedMaxActiveTransfersPerSocket: number;
 }>;
 
 export type TerminalFeatureEnv = Readonly<{
@@ -236,6 +237,11 @@ export function readMachineTransferFeatureEnv(env: NodeJS.ProcessEnv): MachineTr
     serverRoutedEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesTransferServerRoutedEnabled], true),
     serverRoutedMaxBytes: normalizeMachineTransferServerRoutedMaxBytes(
       env[FEATURE_ENV_KEYS.machinesTransferServerRoutedMaxBytes] ?? env[MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY],
+    ),
+    serverRoutedMaxActiveTransfersPerSocket: parseIntEnv(
+      env[FEATURE_ENV_KEYS.machinesTransferServerRoutedMaxActiveTransfersPerSocket],
+      128,
+      { min: 1, max: 10_000 },
     ),
   };
 }
