@@ -114,7 +114,7 @@ resolve_vm_machine_name_pattern_for_ui() {
   fi
   # UI machine rows for Lima guests are typically prefixed (e.g. `lima-<vm-name>`). Prefer a
   # suffix glob so we match both prefixed and unprefixed variants if the UI naming changes.
-  echo "*${VM_NAME}"
+  echo "*${VM_NAME}*"
   return 0
 }
 
@@ -381,15 +381,67 @@ payload_dir.mkdir(parents=True, exist_ok=True)
 PY
 }
 
+resolve_stack_runtime_cli_bin() {
+  local stack_name="${HAPPIER_QA_STACK_NAME:-}"
+  if [[ -z "${stack_name}" ]]; then
+    # Infer the stack name from the same UI-url-derived credentials path used elsewhere so the
+    # wrapper can run on an existing runtime snapshot even when the worktree cannot build.
+    local access_key_src=""
+    access_key_src="$(resolve_stack_cli_access_key_path_for_ui_url || true)"
+    if [[ -n "${access_key_src}" ]]; then
+      stack_name="$(python3 - <<'PY' "${access_key_src}" "$HOME/.happier/stacks" 2>/dev/null || true
+import sys
+from pathlib import Path
+
+raw = (sys.argv[1] or "").strip()
+stacks_root = Path(sys.argv[2]).expanduser().resolve()
+if not raw:
+  print("")
+  raise SystemExit(0)
+
+try:
+  path = Path(raw).expanduser().resolve()
+  rel = path.relative_to(stacks_root)
+  parts = rel.parts
+  print(parts[0] if parts else "")
+except Exception:
+  print("")
+PY
+)"
+    fi
+  fi
+  if [[ -z "${stack_name}" ]]; then
+    echo ""
+    return 0
+  fi
+  local candidate="$HOME/.happier/stacks/${stack_name}/runtime/current/cli/happier"
+  if [[ -x "${candidate}" ]]; then
+    echo "${candidate}"
+    return 0
+  fi
+  echo ""
+}
+
 run_host_happier() {
+  WSREPL_QA_HOST_HAPPIER_KIND=""
+  local runtime_cli_bin
+  runtime_cli_bin="$(resolve_stack_runtime_cli_bin)"
+  if [[ -n "${runtime_cli_bin}" ]]; then
+    WSREPL_QA_HOST_HAPPIER_KIND="stack_runtime"
+    "${runtime_cli_bin}" "$@"
+    return $?
+  fi
   if [[ -x "$HOME/.happier/bin/happier" ]]; then
+    WSREPL_QA_HOST_HAPPIER_KIND="user_install"
     "$HOME/.happier/bin/happier" "$@"
     return $?
   fi
   if command -v happier >/dev/null 2>&1; then
+    WSREPL_QA_HOST_HAPPIER_KIND="path"
     happier "$@"
     return $?
   fi
+  WSREPL_QA_HOST_HAPPIER_KIND="worktree_node"
   node "${REPO_DIR}/apps/cli/bin/happier.mjs" "$@"
 }
 
@@ -809,7 +861,7 @@ PY
   fi
 
   local cli_dist_rebuild_attempted=0
-  if grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${start_file}" "${status_file}" "${log_tail_file}" 2>/dev/null; then
+  if [[ "${WSREPL_QA_HOST_HAPPIER_KIND:-}" == "worktree_node" ]] && grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${start_file}" "${status_file}" "${log_tail_file}" 2>/dev/null; then
     cli_dist_rebuild_attempted=1
     echo "[wsrepl-qa] host daemon start/status reported a missing CLI dist entrypoint; rebuilding and retrying..." >&2
     (
@@ -886,7 +938,7 @@ PY
     # In dev worktrees the CLI entrypoint depends on `apps/cli/dist/**`. If another process is
     # rebuilding the CLI (or the dist folder is missing), `daemon start` can fail with a missing
     # entrypoint. Recover by rebuilding once and retrying so the QA harness doesn't fail flakily.
-    if [[ "${cli_dist_rebuild_attempted}" != "1" ]] && grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${start_file}" "${log_tail_file}" 2>/dev/null; then
+    if [[ "${cli_dist_rebuild_attempted}" != "1" && "${WSREPL_QA_HOST_HAPPIER_KIND:-}" == "worktree_node" ]] && grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${start_file}" "${log_tail_file}" 2>/dev/null; then
       echo "[wsrepl-qa] host daemon start failed due to missing CLI dist entrypoint; rebuilding and retrying..." >&2
       (
         cd "${REPO_DIR}"
