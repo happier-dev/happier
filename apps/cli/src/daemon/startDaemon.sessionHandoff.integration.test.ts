@@ -342,6 +342,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
         harness.apiMachine.setRPCHandlers.mockClear();
         harness.directPeerRegistry.publishTransfer.mockClear();
         harness.directPeerRegistry.clearPublishedTransfer.mockClear();
+        delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED;
     });
 
     it('forwards file-backed direct-peer publish requests into the daemon registry without inline fallback', async () => {
@@ -400,6 +401,24 @@ describe('startDaemon session handoff wiring (integration)', () => {
                     expiresAt: 30_000,
                 },
             ]);
+        } finally {
+            exitSpy.mockRestore();
+        }
+    });
+
+    it('does not start the direct peer HTTP server when direct peer local mode is disabled', async () => {
+        process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED = 'false';
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+        try {
+            const { startDirectPeerTransferServer } = await import('@/machines/transfer/directPeerTransport');
+            const { startDaemon } = await import('./startDaemon');
+            await startDaemon();
+
+            expect(startDirectPeerTransferServer).toHaveBeenCalledTimes(0);
+
+            const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0];
+            expect(handlers?.directPeerTransfer).toBeUndefined();
         } finally {
             exitSpy.mockRestore();
         }
