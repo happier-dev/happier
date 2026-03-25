@@ -236,7 +236,8 @@ const baseExpoConfig = {
         android: {
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
-                monochromeImage: "./sources/assets/images/icon-monochrome.png",
+                // Keep this path resolvable in repo checkouts; true monochrome art can be swapped in later.
+                monochromeImage: "./sources/assets/images/icon-adaptive.png",
                 backgroundColor: "#18171C"
             },
             permissions: [
