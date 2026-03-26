@@ -96,7 +96,7 @@ export function createManagedConnectionSupervisor(
 
       if (probe.status !== 'ready') {
         const delayMs =
-          probe.status === 'retry_later' && typeof probe.retryAfterMs === 'number'
+          probe.status === 'retry_later' && typeof probe.retryAfterMs === 'number' && Number.isFinite(probe.retryAfterMs)
             ? Math.max(1, probe.retryAfterMs)
             : computeManagedConnectionBackoffMs({
                 attempt: initialProbeAttempt,
@@ -218,7 +218,7 @@ export function createManagedConnectionSupervisor(
     if (probe.status !== 'ready') {
       const nextAttempt = attempt + 1;
       const delayMs =
-        probe.status === 'retry_later' && typeof probe.retryAfterMs === 'number'
+        probe.status === 'retry_later' && typeof probe.retryAfterMs === 'number' && Number.isFinite(probe.retryAfterMs)
           ? Math.max(1, probe.retryAfterMs)
           : computeManagedConnectionBackoffMs({
               attempt: nextAttempt,

@@ -41,6 +41,8 @@ describe('serverFetch runtime fetch override', () => {
 
         const resp = await (client as unknown as { serverFetch: typeof import('./client').serverFetch }).serverFetch(
             '/v1/health',
+            undefined,
+            { retry: 'none' },
         );
         expect(resp.status).toBe(200);
         expect(overrideFetch).toHaveBeenCalledTimes(1);

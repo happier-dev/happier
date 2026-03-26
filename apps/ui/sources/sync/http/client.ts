@@ -1,7 +1,11 @@
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { createEndpointSupervisedRequest } from '@/sync/runtime/connectivity/createEndpointSupervisedRequest';
+import { getEndpointSupervisorForServer } from '@/sync/runtime/connectivity/endpointSupervisorPool';
 import {
+    peekServerReachabilityToken,
     reportServerUnreachable,
     ServerReachabilityWaitTimeoutError,
     waitForServerReachable,
@@ -35,6 +39,12 @@ export class ServerFetchConnectivityTimeoutError extends Error {
 
 type ServerFetchOptions = Readonly<{
     includeAuth?: boolean;
+    /**
+     * When `none`, perform a single direct `runtimeFetch` attempt and skip reachability gating and
+     * endpoint supervision. This is used by higher-level sync loops that implement their own
+     * orchestration/backoff and must not get stuck behind nested connectivity supervisors.
+     */
+    retry?: 'default' | 'none';
 }>;
 
 const inFlightControllers = new Set<AbortController>();
@@ -89,6 +99,10 @@ function describeUrlForHint(rawUrl: string): { hostname: string; port: string } 
     return { hostname: parsed.hostname, port: parsed.port };
 }
 
+function redactUrlForLogs(raw: string): string {
+    return toServerUrlDisplay(raw) || '<invalid-url>';
+}
+
 function maybeLogRuntimeFetchFailure(params: {
     method: string;
     requestUrl: string;
@@ -100,20 +114,22 @@ function maybeLogRuntimeFetchFailure(params: {
 
     const errorName = params.error instanceof Error ? params.error.name : '';
     const errorMessage = params.error instanceof Error ? params.error.message : String(params.error ?? '');
-    const key = `${params.activeServerId}|${params.activeServerUrl}|${params.requestUrl}|${errorName}|${errorMessage}`;
+    const activeServerUrl = redactUrlForLogs(params.activeServerUrl);
+    const requestUrl = redactUrlForLogs(params.requestUrl);
+    const key = `${params.activeServerId}|${activeServerUrl}|${requestUrl}|${errorName}|${errorMessage}`;
     const now = Date.now();
     const last = lastDebugLogMsByKey.get(key) ?? 0;
     if (now - last < debugLogThrottleMs) return;
     lastDebugLogMsByKey.set(key, now);
 
     const msg =
-        `[serverFetch] runtimeFetch failed: ${params.method} ${params.requestUrl} ` +
-        `(activeServer=${params.activeServerUrl}, serverId=${params.activeServerId}) ` +
+        `[serverFetch] runtimeFetch failed: ${params.method} ${requestUrl} ` +
+        `(activeServer=${activeServerUrl}, serverId=${params.activeServerId}) ` +
         `${errorName ? `${errorName}: ` : ''}${errorMessage}`.trim();
     // eslint-disable-next-line no-console
     console.log(msg);
 
-    const hintUrl = describeUrlForHint(params.activeServerUrl);
+    const hintUrl = describeUrlForHint(activeServerUrl);
     if (hintUrl && isLoopbackHostname(hintUrl.hostname)) {
         // eslint-disable-next-line no-console
         console.log(
@@ -137,9 +153,10 @@ export async function serverFetch(
 
     if (isDebugEnabled() && !didLogActiveServerSnapshot) {
         didLogActiveServerSnapshot = true;
+        const logSafeServerUrl = redactUrlForLogs(snapshot.serverUrl);
         // eslint-disable-next-line no-console
         console.log(
-            `[serverFetch] active server snapshot: serverId=${snapshot.serverId}, serverUrl=${snapshot.serverUrl}, generation=${snapshot.generation}`,
+            `[serverFetch] active server snapshot: serverId=${snapshot.serverId}, serverUrl=${logSafeServerUrl}, generation=${snapshot.generation}`,
         );
     }
 
@@ -167,18 +184,20 @@ export async function serverFetch(
     }
     const hasAuthorization = explicitAuthHeader.trim().length > 0;
     if (hasAuthorization) {
+        const logSafeRequestUrl = redactUrlForLogs(requestUrl);
+        const logSafeActiveServerUrl = redactUrlForLogs(snapshot.serverUrl);
         // Fail-closed: if we have any Authorization header, we must be able to validate same-origin
         // to avoid accidentally sending credentials to an unexpected host (or the current web origin).
         if (!absoluteRequestUrl || !activeServerUrl) {
             throw new Error(
                 `Refused authenticated request because request/active server URL is not a valid absolute URL ` +
-                `(requestUrl=${requestUrl}, activeServerUrl=${snapshot.serverUrl})`,
+                `(requestUrl=${logSafeRequestUrl}, activeServerUrl=${logSafeActiveServerUrl})`,
             );
         }
         if ((absoluteRequestUrl.protocol !== 'http:' && absoluteRequestUrl.protocol !== 'https:') || (activeServerUrl.protocol !== 'http:' && activeServerUrl.protocol !== 'https:')) {
             throw new Error(
                 `Refused authenticated request because request/active server URL is not http(s) ` +
-                `(requestUrl=${requestUrl}, activeServerUrl=${snapshot.serverUrl})`,
+                `(requestUrl=${logSafeRequestUrl}, activeServerUrl=${logSafeActiveServerUrl})`,
             );
         }
         if (absoluteRequestUrl.origin !== activeServerUrl.origin) {
@@ -207,46 +226,70 @@ export async function serverFetch(
     }
 
     const method = String(init?.method ?? 'GET').toUpperCase();
+    const retryMode: 'default' | 'none' = options.retry ?? 'default';
     const isActiveOrigin =
         !isCrossOrigin
         && !!absoluteRequestUrl
         && !!activeServerUrl;
+    const endpointSupervisor =
+        isActiveOrigin
+            ? getEndpointSupervisorForServer({ serverId: snapshot.serverId, serverUrl: snapshot.serverUrl })
+            : null;
 
     let response: Response | null = null;
     try {
-        if (isActiveOrigin && usedToken) {
-            try {
-                await waitForServerReachable({
-                    serverUrl: snapshot.serverUrl,
-                    token: usedToken,
-                    signal: requestController.signal,
-                    timeoutMs: readServerReachabilityWaitTimeoutMs(),
-                    acceptAuthFailed: true,
-                });
-            } catch (error) {
-                const aborted =
-                    requestController.signal.aborted || (error instanceof Error && error.name === 'AbortError');
-                if (aborted) {
-                    const reason = (requestController.signal as unknown as { reason?: unknown }).reason;
-                    const serverSwitchAbort = reason === 'server-switch' || abortSequence !== localAbortSequence;
-                    if (serverSwitchAbort) {
-                        throw new ServerFetchAbortedForServerSwitchError();
-                    }
-                }
-                if (error instanceof ServerReachabilityWaitTimeoutError) {
-                    throw new ServerFetchConnectivityTimeoutError();
-                }
-                throw error;
-            }
-        }
-
         for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-                response = await runtimeFetch(requestUrl, {
-                    ...init,
-                    headers,
-                    signal: requestController.signal,
-                });
+                if (isActiveOrigin && retryMode !== 'none') {
+                    const tokenForReachability =
+                        usedToken
+                        ?? (peekServerReachabilityToken(snapshot.serverUrl) ?? null)
+                        ?? null;
+                    try {
+                        await waitForServerReachable({
+                            serverUrl: snapshot.serverUrl,
+                            token: tokenForReachability,
+                            signal: requestController.signal,
+                            timeoutMs: readServerReachabilityWaitTimeoutMs(),
+                            acceptAuthFailed: true,
+                        });
+                    } catch (error) {
+                        const aborted =
+                            requestController.signal.aborted || (error instanceof Error && error.name === 'AbortError');
+                        if (aborted) {
+                            const reason = (requestController.signal as unknown as { reason?: unknown }).reason;
+                            const serverSwitchAbort = reason === 'server-switch' || abortSequence !== localAbortSequence;
+                            if (serverSwitchAbort) {
+                                throw new ServerFetchAbortedForServerSwitchError();
+                            }
+                            throw error;
+                        }
+                        if (error instanceof ServerReachabilityWaitTimeoutError) {
+                            throw new ServerFetchConnectivityTimeoutError();
+                        }
+                        throw error;
+                    }
+                }
+
+                if (endpointSupervisor && retryMode !== 'none') {
+                    const supervisedFetch = createEndpointSupervisedRequest({
+                        serverId: snapshot.serverId,
+                        serverUrl: snapshot.serverUrl,
+                        token: usedToken,
+                        endpointSupervisor,
+                    });
+                    response = await supervisedFetch(requestUrl, {
+                        ...init,
+                        headers,
+                        signal: requestController.signal,
+                    });
+                } else {
+                    response = await runtimeFetch(requestUrl, {
+                        ...init,
+                        headers,
+                        signal: requestController.signal,
+                    });
+                }
             } catch (error) {
                 maybeLogRuntimeFetchFailure({
                     method,
@@ -264,6 +307,11 @@ export async function serverFetch(
                         throw new ServerFetchAbortedForServerSwitchError();
                     }
                     // Caller aborts should not poison reachability state.
+                    throw error;
+                }
+                if (error instanceof ServerFetchConnectivityTimeoutError) {
+                    // Reachability wait timeouts already represent a "paused/offline" state; do not report an extra
+                    // transport failure which can reset backoff scheduling.
                     throw error;
                 }
                 reportServerUnreachable(snapshot.serverUrl, error);

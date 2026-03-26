@@ -96,6 +96,23 @@ function createExternallyDisconnectableTransport(): TransportController {
     };
 }
 
+function parseRetryAfterMs(headers: Headers): number | undefined {
+    const raw = headers.get('Retry-After') ?? headers.get('retry-after');
+    if (!raw) return undefined;
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    const seconds = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(seconds) && seconds > 0) {
+        return seconds * 1000;
+    }
+    const timestamp = Date.parse(trimmed);
+    if (Number.isFinite(timestamp)) {
+        const deltaMs = timestamp - Date.now();
+        if (deltaMs > 0) return deltaMs;
+    }
+    return undefined;
+}
+
 async function runtimeFetchWithTimeout(
     input: RequestInfo | URL,
     init: RequestInit,
@@ -135,6 +152,13 @@ async function probeServerReadiness(params: Readonly<{ endpoint: string; token: 
             },
             readServerReachabilityProbeTimeoutMs(),
         );
+        if (healthResponse.status === 429) {
+            return {
+                status: 'retry_later',
+                retryAfterMs: parseRetryAfterMs(healthResponse.headers),
+                errorMessage: `Health check returned ${healthResponse.status}`,
+            };
+        }
         if (healthResponse.status >= 500) {
             return {
                 status: 'retry_later',
@@ -359,6 +383,13 @@ export function subscribeServerReachabilityState(
     return () => entry.subscribers.delete(listener);
 }
 
+export function peekServerReachabilityToken(serverUrl: string): string | null | undefined {
+    const normalized = canonicalizeServerUrl(String(serverUrl ?? ''));
+    if (!normalized) return undefined;
+    const entry = entriesByServerUrl.get(normalized);
+    return entry ? entry.token : undefined;
+}
+
 export async function waitForServerReachable(params: Readonly<{
     serverUrl: string;
     token: string | null;
@@ -399,6 +430,10 @@ export async function invalidateServerReachabilitySupervisor(params: Readonly<{
     const entry = getOrCreateEntry(params.serverUrl);
     const tokenChanged = entry.token !== params.token;
     entry.token = params.token;
+
+    if (!networkAllowed) {
+        return;
+    }
 
     if (entry.invalidateInFlight) {
         await entry.invalidateInFlight;

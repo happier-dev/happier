@@ -634,6 +634,46 @@ describe('createManagedConnectionSupervisor', () => {
     vi.useRealTimers();
   });
 
+  it('ignores non-finite retryAfterMs values for retry_later probes to avoid immediate retry loops', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
+    const harness = createTransportHarness();
+    const states: Array<{ phase: string; nextRetryAt: number | null }> = [];
+
+    const probeReadiness = vi
+      .fn<() => Promise<ReadinessProbeResult>>()
+      .mockResolvedValueOnce({ status: 'retry_later', retryAfterMs: Number.NaN, errorMessage: 'busy' })
+      .mockResolvedValueOnce({ status: 'ready' });
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => harness.transport,
+      probeReadiness,
+      probeBeforeInitialConnect: true,
+      onStateChange: (state) => {
+        states.push({ phase: state.phase, nextRetryAt: state.nextRetryAt });
+      },
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 10,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+
+    const offlineState = states.findLast((s) => s.phase === 'offline') ?? null;
+    expect(offlineState?.nextRetryAt).toBe(10);
+
+    await vi.advanceTimersByTimeAsync(9);
+    expect(probeReadiness).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(probeReadiness).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
   it('cancels pending retries on intentional stop', async () => {
     vi.useFakeTimers();
     const harness = createTransportHarness();

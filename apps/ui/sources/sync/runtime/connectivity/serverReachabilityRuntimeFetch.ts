@@ -14,6 +14,24 @@ function tryParseUrl(raw: string, base?: string): URL | null {
     }
 }
 
+function redactUrlForError(raw: string): string {
+    const value = String(raw ?? '').trim();
+    if (!value) return '<empty-url>';
+
+    try {
+        const parsed = new URL(value);
+        parsed.username = '';
+        parsed.password = '';
+        parsed.search = '';
+        parsed.hash = '';
+        return parsed.toString().replace(/\/+$/, '');
+    } catch {
+        return value
+            .replace(/\/\/[^\/?#]*@/, '//')
+            .replace(/[#?].*$/, '');
+    }
+}
+
 export async function runtimeFetchWithServerReachability(params: Readonly<{
     serverUrl: string;
     token: string | null;
@@ -24,20 +42,34 @@ export async function runtimeFetchWithServerReachability(params: Readonly<{
 }>): Promise<Response> {
     const headers = new Headers(params.init.headers ?? {});
     const explicitAuthHeader = headers.get('Authorization') ?? '';
-    const hasAuth = Boolean(params.token) || explicitAuthHeader.trim().length > 0;
+    const bearerTokenFromHeader = (() => {
+        const header = explicitAuthHeader.trim();
+        if (!header) return null;
+        const match = /^bearer\s+(.+)$/i.exec(header);
+        if (!match) return null;
+        const token = match[1]?.trim() ?? '';
+        return token || null;
+    })();
+
+    const effectiveToken = params.token ?? bearerTokenFromHeader;
+    const hasAuth = Boolean(effectiveToken) || explicitAuthHeader.trim().length > 0;
     if (hasAuth) {
         const server = tryParseUrl(params.serverUrl);
         const target = tryParseUrl(params.url, params.serverUrl);
         if (!server || !target) {
+            const logSafeRequestUrl = redactUrlForError(params.url);
+            const logSafeServerUrl = redactUrlForError(params.serverUrl);
             throw new Error(
                 `Refused authenticated request because request/server URL is not a valid absolute URL ` +
-                `(requestUrl=${params.url}, serverUrl=${params.serverUrl})`,
+                `(requestUrl=${logSafeRequestUrl}, serverUrl=${logSafeServerUrl})`,
             );
         }
         if ((server.protocol !== 'http:' && server.protocol !== 'https:') || (target.protocol !== 'http:' && target.protocol !== 'https:')) {
+            const logSafeRequestUrl = redactUrlForError(params.url);
+            const logSafeServerUrl = redactUrlForError(params.serverUrl);
             throw new Error(
                 `Refused authenticated request because request/server URL is not http(s) ` +
-                `(requestUrl=${params.url}, serverUrl=${params.serverUrl})`,
+                `(requestUrl=${logSafeRequestUrl}, serverUrl=${logSafeServerUrl})`,
             );
         }
         if (server.origin !== target.origin) {
@@ -47,7 +79,7 @@ export async function runtimeFetchWithServerReachability(params: Readonly<{
 
     await waitForServerReachable({
         serverUrl: params.serverUrl,
-        token: params.token,
+        token: effectiveToken,
         signal: params.signal ?? (params.init.signal ?? undefined),
         timeoutMs: typeof params.timeoutMs === 'number' ? params.timeoutMs : readServerReachabilityWaitTimeoutMs(),
         acceptAuthFailed: true,

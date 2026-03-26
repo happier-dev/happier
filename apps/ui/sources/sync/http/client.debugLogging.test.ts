@@ -36,7 +36,7 @@ describe('serverFetch debug logging', () => {
         await expect((client as unknown as { serverFetch: typeof import('./client').serverFetch }).serverFetch(
             '/v1/health',
             undefined,
-            { includeAuth: false },
+            { includeAuth: false, retry: 'none' },
         )).rejects.toThrow('Network request failed');
 
         expect(logSpy).toHaveBeenCalled();

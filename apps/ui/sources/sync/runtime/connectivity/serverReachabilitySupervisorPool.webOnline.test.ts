@@ -75,4 +75,44 @@ describe('serverReachabilitySupervisorPool (web online events)', () => {
         unsubscribe();
         await resetServerReachabilitySupervisors();
     });
+
+    it('does not start/invalidate supervisors when network is disallowed (background)', async () => {
+        const handlers: Record<string, Array<() => void>> = {};
+        const windowStub = {
+            addEventListener: (event: string, handler: () => void) => {
+                handlers[event] = handlers[event] ?? [];
+                handlers[event].push(handler);
+            },
+        };
+        vi.stubGlobal('window', windowStub as any);
+
+        const runtimeFetchSpy = vi.fn(async () => new Response(null, { status: 200, headers: new Headers() }));
+        setRuntimeFetch(runtimeFetchSpy);
+
+        const {
+            invalidateAllServerReachabilitySupervisors,
+            resetServerReachabilitySupervisors,
+            setServerReachabilityNetworkAllowed,
+            subscribeServerReachabilityState,
+        } = await import('./serverReachabilitySupervisorPool');
+
+        let lastPhase: string | null = null;
+        const unsubscribe = subscribeServerReachabilityState('https://example.test', (state) => {
+            lastPhase = state.phase;
+        });
+
+        setServerReachabilityNetworkAllowed(false);
+
+        expect(typeof handlers.online?.[0]).toBe('function');
+        handlers.online?.forEach((handler) => handler());
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+        await invalidateAllServerReachabilitySupervisors();
+
+        expect(runtimeFetchSpy).toHaveBeenCalledTimes(0);
+        expect(lastPhase).toBe('idle');
+
+        setServerReachabilityNetworkAllowed(true);
+        unsubscribe();
+        await resetServerReachabilitySupervisors();
+    });
 });
