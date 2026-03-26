@@ -232,12 +232,23 @@ export function readSessionHandoffFeatureEnv(env: NodeJS.ProcessEnv): SessionHan
 }
 
 export function readMachineTransferFeatureEnv(env: NodeJS.ProcessEnv): MachineTransferFeatureEnv {
+  // Keep these values in sync with the CLI/server-routed transfer policy in
+  // `packages/transfers/src/policy/serverRoutedTransferPolicy.ts`.
+  const DEFAULT_SERVER_ROUTED_TRANSFER_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
+  const SERVER_ROUTED_TRANSFER_MAX_BYTES_HARD_MAX = 8 * 1024 * 1024 * 1024; // 8 GiB
+
+  const configuredServerRoutedMaxBytes = normalizeMachineTransferServerRoutedMaxBytes(
+    env[FEATURE_ENV_KEYS.machinesTransferServerRoutedMaxBytes] ?? env[MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY],
+  );
+  const resolvedServerRoutedMaxBytes = Math.min(
+    configuredServerRoutedMaxBytes ?? DEFAULT_SERVER_ROUTED_TRANSFER_MAX_BYTES,
+    SERVER_ROUTED_TRANSFER_MAX_BYTES_HARD_MAX,
+  );
+
   return {
     directPeerEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesTransferDirectPeerEnabled], true),
     serverRoutedEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesTransferServerRoutedEnabled], true),
-    serverRoutedMaxBytes: normalizeMachineTransferServerRoutedMaxBytes(
-      env[FEATURE_ENV_KEYS.machinesTransferServerRoutedMaxBytes] ?? env[MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY],
-    ),
+    serverRoutedMaxBytes: resolvedServerRoutedMaxBytes,
     serverRoutedMaxActiveTransfersPerSocket: parseIntEnv(
       env[FEATURE_ENV_KEYS.machinesTransferServerRoutedMaxActiveTransfersPerSocket],
       128,

@@ -121,7 +121,8 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.features.sessions.handoff.enabled).toBe(true);
         expect(payload.features.machines.transfer.serverRouted.enabled).toBe(true);
         expect(payload.features.machines.transfer.directPeer.enabled).toBe(true);
-        expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBeNull();
+        // Must be bounded even when env is unset (prevents implicit unlimited server-routed streaming).
+        expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(2 * 1024 * 1024 * 1024);
     });
 
     it("disables only generic server-routed transfer when the env toggle is off", () => {

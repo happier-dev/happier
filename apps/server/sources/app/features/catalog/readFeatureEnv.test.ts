@@ -74,7 +74,8 @@ describe('readMachineTransferFeatureEnv', () => {
 
     expect(res.directPeerEnabled).toBe(true);
     expect(res.serverRoutedEnabled).toBe(true);
-    expect(res.serverRoutedMaxBytes).toBeNull();
+    // Must be bounded even when env is unset (prevents implicit unlimited server-routed streaming).
+    expect(res.serverRoutedMaxBytes).toBe(2 * 1024 * 1024 * 1024);
   });
 
   it('reads server-routed transfer max-bytes when configured', () => {
@@ -84,5 +85,14 @@ describe('readMachineTransferFeatureEnv', () => {
     const res = readMachineTransferFeatureEnv(env);
 
     expect(res.serverRoutedMaxBytes).toBe(8192);
+  });
+
+  it('hard-clamps server-routed max-bytes to a bounded ceiling', () => {
+    const env: NodeJS.ProcessEnv = {
+      HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES: String(999 * 1024 * 1024 * 1024),
+    };
+    const res = readMachineTransferFeatureEnv(env);
+
+    expect(res.serverRoutedMaxBytes).toBe(8 * 1024 * 1024 * 1024);
   });
 });
