@@ -10,7 +10,7 @@
     "submit": "eas submit --platform ios",
     "web": "cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo start --web",
     "test": "yarn -s test:unit",
-    "test:unit": "node ./scripts/withNodeHeapLimit.mjs vitest run --config vitest.config.ts",
+    "test:unit": "node ./scripts/withNodeHeapLimit.mjs vitest run --no-file-parallelism --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
     "prebuild": "rm -rf android ios && cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo prebuild",
