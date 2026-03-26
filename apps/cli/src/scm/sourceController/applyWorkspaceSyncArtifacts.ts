@@ -452,6 +452,7 @@ export async function applyWorkspaceSyncArtifacts(params: Readonly<{
             stagingRoot,
             expectedManifest: params.syncArtifacts.changedWorkspaceArtifacts.manifest,
             blobProvider: params.blobProvider,
+            assertCanContinue: params.assertCanContinue,
         });
         if (!staged.verification.isVerified) {
             throw new Error(`Workspace transfer integrity check failed for ${params.targetPath}`);

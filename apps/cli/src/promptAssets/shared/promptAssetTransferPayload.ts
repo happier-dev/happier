@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { PromptAssetReadResponseV1 } from '@happier-dev/protocol';
 
+import { configuration } from '@/configuration';
+import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
 import type { DownloadTransferSource } from '@/transfers/targets/downloadTransferSource';
 
 export type PromptAssetTransferPayload = Extract<PromptAssetReadResponseV1, { ok: true }>['item'];
@@ -26,16 +28,22 @@ export async function writePromptAssetTransferPayload(
   payload: PromptAssetTransferPayload,
 ): Promise<DownloadTransferSource> {
   const filePath = createTempPromptAssetPayloadPath();
+  if (estimateJsonUtf8BytesBounded(payload, configuration.promptTransferJsonMaxBytes) > configuration.promptTransferJsonMaxBytes) {
+    throw new Error('Prompt transfer payload exceeds size limit');
+  }
   const fileBody = JSON.stringify(payload);
+  const sizeBytes = Buffer.byteLength(fileBody, 'utf8');
+  if (sizeBytes > configuration.promptTransferJsonMaxBytes) {
+    throw new Error('Prompt transfer payload exceeds size limit');
+  }
 
   await mkdir(join(tmpdir(), 'happier', 'prompt-assets'), { recursive: true });
   await writeFile(filePath, fileBody, 'utf8');
 
-  const payloadStats = await stat(filePath);
   return {
     filePath,
     deleteFileOnClose: true,
-    sizeBytes: payloadStats.size,
+    sizeBytes,
     name: `${normalizePromptAssetTransferName(payload.title)}.prompt-asset.json`,
   };
 }

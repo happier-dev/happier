@@ -7,11 +7,17 @@ import type {
   PromptBundleEntryV1,
 } from '@happier-dev/protocol';
 
+import { configuration } from '@/configuration';
+
 type CollectedPromptBundleEntry = Readonly<{
   entry: PromptBundleEntryV1;
   createdAtMs: number;
   updatedAtMs: number;
 }>;
+
+const PROMPT_BUNDLE_BODY_OVERHEAD_BYTES = 8 * 1024;
+const PROMPT_BUNDLE_ENTRY_OVERHEAD_BASE_BYTES = 256;
+const PROMPT_BUNDLE_ENTRY_PATH_OVERHEAD_PER_CHAR_BYTES = 6;
 
 function assertNoSymlink(path: string): void {
   if (lstatSync(path).isSymbolicLink()) {
@@ -19,14 +25,29 @@ function assertNoSymlink(path: string): void {
   }
 }
 
+function resolvePromptTransferMaxBytes(maxBytes?: number | null): number {
+  const raw = typeof maxBytes === 'number' ? maxBytes : Number(maxBytes);
+  if (Number.isFinite(raw)) {
+    const normalized = Math.floor(raw);
+    if (normalized > 0) return normalized;
+  }
+  return configuration.promptTransferJsonMaxBytes;
+}
+
+function estimateBase64LengthBytes(rawBytes: number): number {
+  if (!Number.isFinite(rawBytes) || rawBytes <= 0) return 0;
+  return 4 * Math.ceil(rawBytes / 3);
+}
+
 function detectPromptBundleContentKind(buffer: Buffer): PromptBundleEntryV1['contentKind'] {
   const utf8 = buffer.toString('utf8');
   return Buffer.from(utf8, 'utf8').equals(buffer) ? 'utf8' : 'binary';
 }
 
-function collectPromptBundleEntryMetadata(rootDirectory: string): CollectedPromptBundleEntry[] {
+function collectPromptBundleEntryMetadata(rootDirectory: string, maxPayloadBytes: number): CollectedPromptBundleEntry[] {
   const output: CollectedPromptBundleEntry[] = [];
   const stack = [rootDirectory];
+  let remainingBytes = Math.max(0, Math.floor(maxPayloadBytes) - PROMPT_BUNDLE_BODY_OVERHEAD_BYTES);
 
   while (stack.length > 0) {
     const current = stack.pop()!;
@@ -42,8 +63,16 @@ function collectPromptBundleEntryMetadata(rootDirectory: string): CollectedPromp
       if (!dirent.isFile()) continue;
 
       const relativePath = relative(rootDirectory, absolutePath).split(sep).join('/');
-      const buffer = readFileSync(absolutePath);
       const stat = statSync(absolutePath);
+      const base64Bytes = estimateBase64LengthBytes(stat.size);
+      const pathOverheadBytes = PROMPT_BUNDLE_ENTRY_OVERHEAD_BASE_BYTES
+        + (PROMPT_BUNDLE_ENTRY_PATH_OVERHEAD_PER_CHAR_BYTES * relativePath.length);
+      if (base64Bytes + pathOverheadBytes > remainingBytes) {
+        throw new Error('Prompt transfer payload exceeds size limit');
+      }
+      remainingBytes -= base64Bytes + pathOverheadBytes;
+
+      const buffer = readFileSync(absolutePath);
 
       output.push({
         entry: {
@@ -74,14 +103,18 @@ function orderPromptBundleEntries(
 }
 
 export function collectPromptBundleDirectoryEntries(rootDirectory: string): PromptBundleEntryV1[] {
-  return collectPromptBundleEntryMetadata(rootDirectory).map((item) => item.entry);
+  return collectPromptBundleEntryMetadata(rootDirectory, configuration.promptTransferJsonMaxBytes).map((item) => item.entry);
 }
 
 export function buildPromptBundleBodyFromDirectory(params: Readonly<{
   rootDirectory: string;
   preferredFirstPath?: string | null;
+  maxPayloadBytes?: number | null;
 }>): PromptBundleBodyV1 {
-  const collected = collectPromptBundleEntryMetadata(params.rootDirectory);
+  const collected = collectPromptBundleEntryMetadata(
+    params.rootDirectory,
+    resolvePromptTransferMaxBytes(params.maxPayloadBytes ?? null),
+  );
   const timestamps = collected.length > 0
     ? {
         createdAtMs: Math.min(...collected.map((item) => item.createdAtMs)),

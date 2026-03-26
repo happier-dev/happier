@@ -185,4 +185,26 @@ describe('stageWorkspaceEntries', () => {
         await expect(access(join(stagingRoot.workspaceDirectory, 'docs'))).rejects.toThrow();
         await expect(access(join(stagingRoot.workspaceDirectory, 'blobs', 'sha256'))).rejects.toThrow();
     });
+
+    it('invokes assertCanContinue while staging so long staging phases can be cancelled', async () => {
+        const stagingRoot = await createWorkspaceStagingRoot({
+            parentDirectory: await makeTempDir('workspace-stage-entries-assert-continue-'),
+            stagingId: 'stage_entries_assert_continue',
+        });
+        const fixture = await createFileEntryFixture();
+        const assertCanContinue = vi.fn(async () => undefined);
+
+        const result = await stageWorkspaceEntries({
+            stagingRoot,
+            expectedManifest: fixture.manifest,
+            blobProvider: {
+                getBlobFilePath: (digest: string) => (digest === fixture.digest ? fixture.filePath : null),
+            },
+            assertCanContinue,
+        });
+
+        expect(result.verification.isVerified).toBe(true);
+        // directories + symlinks + files loops should consult liveness at least once each
+        expect(assertCanContinue).toHaveBeenCalledTimes(3);
+    });
 });

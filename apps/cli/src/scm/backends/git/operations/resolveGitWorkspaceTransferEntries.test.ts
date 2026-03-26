@@ -241,4 +241,59 @@ exec "${gitBinaryPath}" "$@"
             await rm(wrapperRoot, { recursive: true, force: true });
         }
     });
+
+    it('handles large git ls-files output without hitting exec maxBuffer limits', async () => {
+        const repoRoot = await makeTempDir('git-transfer-large-ls-files-');
+
+        try {
+            await runGit(repoRoot, ['init']);
+            await configureGitRepo(repoRoot);
+
+            const deepDirSegment = `seg-${'x'.repeat(80)}`;
+            const baseDir = join(repoRoot, deepDirSegment, deepDirSegment, deepDirSegment);
+            const bucketCount = 25;
+            const fileCount = 3500;
+
+            const createdDirs = new Set<string>();
+            const expectedRelativePath = join(
+                deepDirSegment,
+                deepDirSegment,
+                deepDirSegment,
+                'b0',
+                `file-0000-${'y'.repeat(120)}.txt`,
+            ).replace(/\\/g, '/');
+
+            for (let index = 0; index < fileCount; index += 1) {
+                const bucketDir = join(baseDir, `b${index % bucketCount}`);
+                if (!createdDirs.has(bucketDir)) {
+                    createdDirs.add(bucketDir);
+                    await mkdir(bucketDir, { recursive: true });
+                }
+
+                const fileName = `file-${String(index).padStart(4, '0')}-${'y'.repeat(120)}.txt`;
+                await writeFile(join(bucketDir, fileName), 'x', 'utf8');
+            }
+
+            const entries = await resolveGitWorkspaceTransferEntries({
+                context: {
+                    cwd: repoRoot,
+                    projectKey: `test:${repoRoot}`,
+                    detection: {
+                        isRepo: true,
+                        rootPath: repoRoot,
+                        mode: '.git',
+                    },
+                },
+                workspaceTransfer: {
+                    strategy: 'transfer_snapshot',
+                    includeIgnoredMode: 'exclude',
+                    ignoredIncludeGlobs: [],
+                },
+            });
+
+            expect(entries.some((entry) => entry.relativePath === expectedRelativePath)).toBe(true);
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
 });

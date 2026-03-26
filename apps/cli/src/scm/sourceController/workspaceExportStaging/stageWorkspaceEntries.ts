@@ -26,6 +26,7 @@ export async function stageWorkspaceEntries(params: Readonly<{
     stagingRoot: WorkspaceStagingRoot;
     expectedManifest: WorkspaceManifest;
     blobProvider?: WorkspaceExportBlobProvider;
+    assertCanContinue?: () => Promise<void>;
 }>): Promise<StageWorkspaceEntriesResult> {
     const fileEntries = params.expectedManifest.entries.filter(
         (entry): entry is WorkspaceFileManifestEntry => entry.kind === 'file',
@@ -44,6 +45,7 @@ export async function stageWorkspaceEntries(params: Readonly<{
 
     const stagedDirectories: StagedWorkspaceDirectory[] = [];
     for (const entry of directoryEntries) {
+        await params.assertCanContinue?.();
         stagedDirectories.push(await stageWorkspaceDirectory({
             stagingRoot: params.stagingRoot,
             relativePath: entry.relativePath,
@@ -52,6 +54,7 @@ export async function stageWorkspaceEntries(params: Readonly<{
 
     const stagedSymlinks: StagedWorkspaceSymlink[] = [];
     for (const entry of symlinkEntries) {
+        await params.assertCanContinue?.();
         stagedSymlinks.push(await stageWorkspaceSymlink({
             stagingRoot: params.stagingRoot,
             relativePath: entry.relativePath,
@@ -61,6 +64,7 @@ export async function stageWorkspaceEntries(params: Readonly<{
 
     const stagedBlobsByDigest = new Map<string, StagedWorkspaceFileBlob>();
     for (const entry of fileEntries) {
+        await params.assertCanContinue?.();
         const sourceFilePath = blobSourcePathsByDigest.get(entry.digest);
         if (!sourceFilePath) {
             throw new Error(`Missing staged blob source for digest ${entry.digest}`);

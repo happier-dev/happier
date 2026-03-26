@@ -132,6 +132,7 @@ export async function materializeWorkspaceExportArtifactsWithSourceController(pa
             stagingRoot,
             expectedManifest: params.workspaceExportArtifacts.manifest,
             blobProvider: params.blobProvider,
+            assertCanContinue: params.assertCanContinue,
         });
         if (!staged.verification.isVerified) {
             throw new Error(`Workspace transfer integrity check failed for ${targetPath}`);
