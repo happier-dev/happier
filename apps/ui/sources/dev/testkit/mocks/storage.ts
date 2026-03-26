@@ -31,6 +31,7 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         sessions: {},
         machines: {},
         getProjectForSession: () => null,
+        applySessionListRenderablePatches: () => undefined,
     } satisfies Partial<StorageState>);
 
     const defaults = {

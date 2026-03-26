@@ -12,6 +12,9 @@ process.env.HAPPIER_FEATURE_POLICY_ENV = '';
 // Define it up-front so Vitest can import those modules in Node without crashing during module eval.
 const g = globalThis as any;
 g.IS_REACT_ACT_ENVIRONMENT = true;
+if (!Object.prototype.hasOwnProperty.call(g, '__DEV__')) {
+    g.__DEV__ = true;
+}
 
 if (!Object.prototype.hasOwnProperty.call(g, 'self') || g.self == null) {
     try {
@@ -336,6 +339,22 @@ afterAll(async () => {
     const cleanupTimeoutMsRaw = Number.parseInt(process.env.HAPPIER_VITEST_AFTERALL_CLEANUP_TIMEOUT_MS ?? '', 10);
     const cleanupTimeoutMs = Number.isFinite(cleanupTimeoutMsRaw) && cleanupTimeoutMsRaw > 0 ? cleanupTimeoutMsRaw : 30_000;
     const debugCleanup = process.env.HAPPIER_VITEST_DEBUG_AFTERALL_CLEANUP === '1';
+
+    // Endpoint supervisors can start background timers and keep the Vitest fork alive even after all tests finish.
+    // Stop them before resetting reachability supervisors so the process can exit cleanly.
+    const endpointSupervisorMod = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+    if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: resetEndpointSupervisorPoolForTests (start)');
+    try {
+        await withTimeout(
+            endpointSupervisorMod.resetEndpointSupervisorPoolForTests(),
+            cleanupTimeoutMs,
+            'resetEndpointSupervisorPoolForTests',
+        );
+    } finally {
+        if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: resetEndpointSupervisorPoolForTests (end)');
+    }
+
+    maybeLogActiveHandles('after resetEndpointSupervisorPoolForTests');
 
     // `serverFetch(...)` can start background server reachability supervisors. Ensure they are
     // fully stopped at the end of the test run so the Vitest fork can exit cleanly.

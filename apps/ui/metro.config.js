@@ -8,6 +8,17 @@ const config = getSentryExpoConfig(__dirname, {
   isCSSEnabled: true,
 });
 
+// Metro defaults to Watchman (and, when unavailable, falls back to the native `find` crawler). In large monorepos,
+// both Watchman and the native `find` crawler can be unreliable in non-interactive "stack/runtime build" contexts:
+// - Watchman can hang for ~1 minute per `watch-project` (or fail on sandboxed runners)
+// - the native `find` path can exceed Node's max string length and crash
+//
+// In CI/e2e and stack builds, prefer Metro's Node filesystem crawler (slower but deterministic).
+const isStackRun = Boolean((process.env.HAPPIER_STACK_STACK ?? '').toString().trim());
+if (process.env.CI || isStackRun) {
+  config.resolver.useWatchman = false;
+}
+
 // Add support for .wasm files (required by Skia for all platforms)
 // Source: https://shopify.github.io/react-native-skia/docs/getting-started/installation/
 config.resolver.assetExts.push('wasm');
@@ -27,17 +38,51 @@ config.transformer.getTransformOptions = async () => ({
 // They may import Vitest APIs, which crash when executed in Expo runtime.
 const testRouteBlockList = /[\\/]sources[\\/]app[\\/].*\.(test|spec)\.[jt]sx?$/;
 const projectArtifactsBlockList = /[\\/]\.project[\\/]/;
+const nextBuildArtifactsBlockList = /[\\/]\.next[\\/]/;
+// Avoid scanning duplicate workspace-local `node_modules/**` trees (typically symlink-heavy) when Metro falls back
+// to the native `find` crawler (no Watchman). We still keep the monorepo root `node_modules` and `apps/ui/node_modules`.
+const workspaceNodeModulesBlockList =
+  /[\\/]apps[\\/](?!ui[\\/])[^\\/]+[\\/]node_modules[\\/]|[\\/]packages[\\/][^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
 config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList]
+  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
   : existingBlockList
-    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList]
-    : [testRouteBlockList, projectArtifactsBlockList];
+    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
+    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList];
 
 const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFolders : [];
 config.watchFolders = existingWatchFolders.filter(
   (folder, index, all) => typeof folder === 'string' && folder.length > 0 && all.indexOf(folder) === index,
 );
+
+const rootNodeModules = path.resolve(__dirname, "../../node_modules");
+const appNodeModules = path.resolve(__dirname, "node_modules");
+
+// Expo packages can be hoisted into the monorepo root `node_modules/**` and ship TypeScript entrypoints.
+// Metro needs these files in its watch set to compute SHA-1 hashes during export/build, but we still want
+// to avoid watching the entire monorepo `node_modules/**` tree.
+const watchedHoistedNodeModuleRoots = [
+  path.resolve(rootNodeModules, "expo-modules-core"),
+  path.resolve(rootNodeModules, "expo-system-ui"),
+];
+for (const folder of watchedHoistedNodeModuleRoots) {
+  if (!config.watchFolders.includes(folder)) {
+    config.watchFolders.push(folder);
+  }
+}
+
+// `packages/tests` contains UI e2e artifacts under `packages/tests/.project/**` which can grow very large.
+// When Metro falls back to the native `find` crawler (e.g. on machines without Watchman), scanning that tree
+// can exceed Node's max string length and crash the bundler. The UI runtime never needs to watch this package.
+const testsWorkspaceRoot = path.resolve(__dirname, "../../packages/tests");
+config.watchFolders = config.watchFolders.filter((folder) => folder !== testsWorkspaceRoot);
+
+// The UI runtime never imports `apps/docs` or `apps/website`, but those workspaces can contain very large build
+// artifacts (e.g. `.next/**`). When Metro falls back to the native `find` crawler, scanning them can crash with
+// `RangeError: Invalid string length`. Keep them out of the watcher set.
+const docsWorkspaceRoot = path.resolve(__dirname, "../docs");
+const websiteWorkspaceRoot = path.resolve(__dirname, "../website");
+config.watchFolders = config.watchFolders.filter((folder) => folder !== docsWorkspaceRoot && folder !== websiteWorkspaceRoot);
 
 // Kokoro (kokoro-js) ships a `.web.js` prebundle that Metro cannot transform (it contains non-literal dynamic imports).
 // For Expo web, force Metro to resolve the package to its ESM entry and shim Node builtins that the ESM file imports
@@ -51,6 +96,7 @@ const onnxruntimeWebStub = path.resolve(__dirname, "sources/platform/stubs/onnxr
 const kokoroJsStub = path.resolve(__dirname, "sources/platform/stubs/kokoroJsStub.ts");
 const transformersStub = path.resolve(__dirname, "sources/platform/stubs/huggingfaceTransformersStub.ts");
 const fontFaceObserverWebShim = path.resolve(__dirname, "sources/platform/shims/fontFaceObserverWebShim.ts");
+const expoSystemUiWebStub = path.resolve(__dirname, "sources/platform/stubs/expoSystemUiWebStub.ts");
 const expoAsyncRequireSetupShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoAsyncRequireSetupShim.ts");
 const expoMessageSocketShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoMessageSocketShim.ts");
 const workspaceEntryPoint = path.resolve(__dirname, "index.ts");
@@ -119,6 +165,11 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     return { type: "sourceFile", filePath: fontFaceObserverWebShim };
   }
 
+  // `expo-system-ui` is native-focused; the web bundle does not need to depend on it.
+  if (platform === "web" && resolvedModuleName === "expo-system-ui") {
+    return { type: "sourceFile", filePath: expoSystemUiWebStub };
+  }
+
   if (resolvedModuleName === "kokoro-js" || resolvedModuleName.startsWith("kokoro-js/")) {
     if (platform === "web") {
       return { type: "sourceFile", filePath: kokoroJsStub };
@@ -151,12 +202,42 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     return { type: "sourceFile", filePath: nodeUrlShim };
   }
 
+  const canTryNodeResolveFallback =
+    typeof resolvedModuleName === "string" &&
+    !resolvedModuleName.startsWith(".") &&
+    !path.isAbsolute(resolvedModuleName) &&
+    resolvedModuleName !== "happier";
+
   if (typeof defaultResolveRequest === "function") {
-    return defaultResolveRequest(context, moduleName, platform);
+    try {
+      const resolved = defaultResolveRequest(context, resolvedModuleName, platform);
+      if (resolved != null) return resolved;
+    } catch (error) {
+      if (!canTryNodeResolveFallback) throw error;
+    }
   }
+
   if (typeof context.resolveRequest === "function") {
-    return context.resolveRequest(context, moduleName, platform);
+    try {
+      const resolved = context.resolveRequest(context, resolvedModuleName, platform);
+      if (resolved != null) return resolved;
+    } catch (error) {
+      if (!canTryNodeResolveFallback) throw error;
+    }
   }
+
+  // If Metro cannot resolve a package and we are running without crawling `node_modules` as a watch folder,
+  // fall back to Node's resolution rooted at the monorepo `node_modules`. This keeps stack/runtime builds
+  // working on machines without Watchman, without scanning the entire `node_modules/**` tree.
+  if (canTryNodeResolveFallback) {
+    try {
+      const resolved = require.resolve(resolvedModuleName, { paths: [appNodeModules, rootNodeModules] });
+      return { type: "sourceFile", filePath: resolved };
+    } catch {
+      // ignore
+    }
+  }
+
   return null;
 };
 
