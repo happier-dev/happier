@@ -44,7 +44,12 @@ async function runGitNullSeparatedPathList(params: Readonly<{
         const results: string[] = [];
         let stdoutBytes = 0;
         let stderr = '';
-        let remainder: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+        // Node's Buffer type is generic over the backing ArrayBufferLike, but many
+        // constructors return `Buffer<ArrayBuffer>` specifically. Since stream chunks
+        // can be backed by either ArrayBuffer or SharedArrayBuffer, keep our internal
+        // buffer types widened to `ArrayBufferLike` to avoid invariant generic
+        // assignment issues.
+        let remainder = Buffer.alloc(0) as Buffer<ArrayBufferLike>;
         let settled = false;
 
         const settle = (fn: () => void) => {
@@ -66,11 +71,11 @@ async function runGitNullSeparatedPathList(params: Readonly<{
 
             let buffer = chunk;
             if (remainder.length > 0) {
-                const merged = Buffer.allocUnsafe(remainder.length + chunk.length);
+                const merged = Buffer.allocUnsafe(remainder.length + chunk.length) as Buffer<ArrayBufferLike>;
                 remainder.copy(merged, 0);
                 chunk.copy(merged, remainder.length);
                 buffer = merged;
-                remainder = Buffer.alloc(0);
+                remainder = Buffer.alloc(0) as Buffer<ArrayBufferLike>;
             }
 
             let start = 0;
@@ -86,7 +91,7 @@ async function runGitNullSeparatedPathList(params: Readonly<{
             }
 
             if (start < buffer.length) {
-                remainder = buffer.slice(start);
+                remainder = buffer.slice(start) as Buffer<ArrayBufferLike>;
             }
         };
 
