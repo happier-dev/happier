@@ -4,6 +4,8 @@ import { Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     SessionHandoffProgressCheckpointSchema,
+    SESSION_HANDOFF_PROGRESS_FULL_TIMELINE,
+    SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN,
     resolveSessionHandoffProgressTimeline,
     type SessionHandoffProgressCheckpoint,
     type SessionHandoffStatus,
@@ -22,6 +24,8 @@ type Props = CustomModalInjectedProps & Readonly<{
 }>;
 
 const CHECKPOINT_TIMELINE = SessionHandoffProgressCheckpointSchema.options;
+const FULL_TIMELINE = SESSION_HANDOFF_PROGRESS_FULL_TIMELINE;
+const FULL_TIMELINE_WITH_SOURCE_SCAN = SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN;
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -212,6 +216,13 @@ function isKnownCheckpoint(value: unknown): value is SessionHandoffProgressCheck
     return typeof value === 'string' && (CHECKPOINT_TIMELINE as readonly string[]).includes(value);
 }
 
+function checkpointsEqual(
+    left: readonly SessionHandoffProgressCheckpoint[],
+    right: readonly SessionHandoffProgressCheckpoint[],
+): boolean {
+    return left.length === right.length && left.every((checkpoint, index) => checkpoint === right[index]);
+}
+
 function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): string {
     switch (checkpoint) {
         case 'scan_source':
@@ -311,16 +322,20 @@ export function SessionHandoffProgressModal({ onClose, title, message, status }:
     // even when later checkpoints fall back to minimal-mode (e.g. import_session/finalize), so the
     // UI doesn't appear to "forget" completed phases mid-handoff.
     const hasSeenFullTimelineRef = React.useRef(false);
+    const hasSeenSourceScanRef = React.useRef(false);
     // Use the protocol's canonical resolver so the UI stays aligned with daemon semantics, but do
     // not rely on reference equality (resolver implementations can return a fresh array).
     const isFullTimelineForCheckpoint =
-        canonicalTimelineForCheckpoint.length === CHECKPOINT_TIMELINE.length
-        && canonicalTimelineForCheckpoint.every((checkpoint, index) => checkpoint === CHECKPOINT_TIMELINE[index]);
+        checkpointsEqual(canonicalTimelineForCheckpoint, FULL_TIMELINE)
+        || checkpointsEqual(canonicalTimelineForCheckpoint, FULL_TIMELINE_WITH_SOURCE_SCAN);
+    if (currentCheckpoint === 'scan_source') {
+        hasSeenSourceScanRef.current = true;
+    }
     if (currentCheckpoint && isFullTimelineForCheckpoint) {
         hasSeenFullTimelineRef.current = true;
     }
     const timeline = hasSeenFullTimelineRef.current
-        ? CHECKPOINT_TIMELINE
+        ? (hasSeenSourceScanRef.current ? FULL_TIMELINE_WITH_SOURCE_SCAN : FULL_TIMELINE)
         : canonicalTimelineForCheckpoint;
     const currentCheckpointIndex = currentCheckpoint ? timeline.indexOf(currentCheckpoint) : -1;
     const isAwaitingRecovery = effectiveStatus?.status === 'awaiting_recovery';

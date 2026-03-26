@@ -123,7 +123,7 @@ describe('SessionHandoffProgressModal', () => {
                     phase: 'preparing',
                     progress: {
                         updatedAtMs: 123,
-                        checkpoint: 'scan_source',
+                        checkpoint: 'plan',
                         planned: {},
                         transferred: {},
                         resumable: true,
@@ -133,8 +133,8 @@ describe('SessionHandoffProgressModal', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-handoff-progress-checkpoint-scan_source')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-checkpoint-plan')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-scan_source')).toBeNull();
 
         act(() => {
             screen.tree.update(
@@ -157,9 +157,9 @@ describe('SessionHandoffProgressModal', () => {
             );
         });
 
-        expect(screen.findByTestId('session-handoff-progress-checkpoint-scan_source')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-checkpoint-plan')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs')).toBeTruthy();
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-scan_source')).toBeNull();
         expect(screen.findByTestId('session-handoff-progress-checkpoint-import_session')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-checkpoint-finalize')).toBeTruthy();
     });

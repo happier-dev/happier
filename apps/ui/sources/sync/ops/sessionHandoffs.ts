@@ -1061,6 +1061,13 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     const preparedAgentRuntimeDescriptor = isAgentRuntimeDescriptorV1(preparedResponse.agentRuntimeDescriptorV1)
         ? preparedResponse.agentRuntimeDescriptorV1
         : undefined;
+    const resumeConnectedServices = (() => {
+        const metadata = (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as MetadataRecord | null;
+        if (!metadata) return undefined;
+        return Object.prototype.hasOwnProperty.call(metadata, 'connectedServices')
+            ? (metadata as unknown as Record<string, unknown>).connectedServices
+            : undefined;
+    })();
     const resumeResult = await resumeSession({
         sessionId: options.sessionId,
         machineId: options.targetMachineId,
@@ -1072,6 +1079,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         preferScopedMachineRpc: true,
         ...(preparedAgentRuntimeDescriptor ? { agentRuntimeDescriptorV1: preparedAgentRuntimeDescriptor } : {}),
         ...(preparedResponse.resume.environmentVariables ? { environmentVariables: preparedResponse.resume.environmentVariables } : {}),
+        ...(resumeConnectedServices !== undefined ? { connectedServices: resumeConnectedServices } : {}),
         transcriptStorage: preparedResponse.resume.transcriptStorage,
         ...buildCodexBackendTransportFields({
             codexBackendMode: preparedResponse.resume.codexBackendMode,

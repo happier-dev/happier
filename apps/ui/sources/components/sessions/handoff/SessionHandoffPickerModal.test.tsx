@@ -196,6 +196,62 @@ describe('SessionHandoffPickerModal', () => {
         expect(onClose).not.toHaveBeenCalled();
     });
 
+    it('forces conflictPolicy=replace_existing when workspace transfer strategy is sync_changes', async () => {
+        const onResolve = vi.fn();
+        const onClose = vi.fn();
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+
+        let tree!: ReactTestRenderer;
+        tree = (await renderScreen(<SessionHandoffPickerModal
+                    onClose={onClose}
+                    onResolve={onResolve}
+                    sessionId="sess_1"
+                    sourceMachineId="machine_source"
+                    serverId="server_a"
+                />)).tree;
+
+        await act(async () => {});
+
+        const machineSelector = tree.findByType('MachineSelector' as any);
+        await act(async () => {
+            invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
+        });
+
+        const dropdowns = tree.findAllByType('DropdownMenu' as any);
+        const strategyMenu = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceTransfer.strategy.title');
+        const conflictMenu = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.conflictPolicy.title');
+
+        expect(strategyMenu).toBeTruthy();
+        expect(conflictMenu).toBeTruthy();
+        expect(conflictMenu?.props.selectedId).toBe('create_sibling_copy');
+
+        await act(async () => {
+            invokeTestInstanceHandler(strategyMenu!, 'onSelect', 'sync_changes');
+        });
+
+        const dropdownsAfter = tree.findAllByType('DropdownMenu' as any);
+        const conflictMenuAfter = dropdownsAfter.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.conflictPolicy.title');
+        expect(conflictMenuAfter?.props.selectedId).toBe('replace_existing');
+
+        const startButton = findTestInstanceByTypeWithProps(tree, 'RoundButton' as any, { testID: 'session-handoff-start' });
+        await act(async () => {
+            await pressTestInstanceAsync(startButton!);
+        });
+
+        expect(onResolve).toHaveBeenCalledWith({
+            targetMachineId: 'machine_target',
+            targetSessionStorageMode: 'persisted',
+            workspaceTransfer: {
+                enabled: true,
+                strategy: 'sync_changes',
+                conflictPolicy: 'replace_existing',
+                includeIgnoredMode: 'include_selected',
+                ignoredIncludeGlobs: ['dist/**'],
+            },
+        });
+        expect(onClose).not.toHaveBeenCalled();
+    });
+
     it('forces workspace transfer off for sessions rooted at the machine home directory', async () => {
         sessionsByIdState = {
             sess_1: {

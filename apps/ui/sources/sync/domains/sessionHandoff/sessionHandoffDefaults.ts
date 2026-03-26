@@ -103,11 +103,18 @@ export const SESSION_HANDOFF_WORKSPACE_TRANSFER_STRATEGY_OPTIONS = [
 
 export function normalizeSessionHandoffDefaults(raw: unknown): SessionHandoffDefaultsV1 {
     const candidate = raw as Partial<SessionHandoffDefaultsV1> | null | undefined;
+    const workspaceTransferStrategy =
+        candidate?.workspaceTransferStrategy === 'sync_changes' ? 'sync_changes' : 'transfer_snapshot';
     return {
         v: 1,
         workspaceTransferEnabled: candidate?.workspaceTransferEnabled === true,
-        workspaceTransferStrategy: candidate?.workspaceTransferStrategy === 'sync_changes' ? 'sync_changes' : 'transfer_snapshot',
-        conflictPolicy: candidate?.conflictPolicy === 'replace_existing' ? 'replace_existing' : 'create_sibling_copy',
+        workspaceTransferStrategy,
+        conflictPolicy:
+            workspaceTransferStrategy === 'sync_changes'
+                ? 'replace_existing'
+                : candidate?.conflictPolicy === 'replace_existing'
+                    ? 'replace_existing'
+                    : 'create_sibling_copy',
         includeIgnoredMode: candidate?.includeIgnoredMode === 'include_selected' ? 'include_selected' : 'exclude',
         ignoredIncludeGlobs: Array.isArray(candidate?.ignoredIncludeGlobs)
             ? candidate.ignoredIncludeGlobs.filter((value): value is string => typeof value === 'string')
@@ -131,10 +138,14 @@ export function buildSessionHandoffWorkspaceTransfer(args: Readonly<{
     ignoredIncludeGlobs: readonly string[];
 }>): SessionHandoffWorkspaceTransfer | undefined {
     if (!args.workspaceTransferEnabled) return undefined;
+    const conflictPolicy =
+        args.workspaceTransferStrategy === 'sync_changes'
+            ? 'replace_existing'
+            : args.conflictPolicy;
     return {
         enabled: args.workspaceTransferEnabled,
         strategy: args.workspaceTransferStrategy,
-        conflictPolicy: args.conflictPolicy,
+        conflictPolicy,
         includeIgnoredMode: args.includeIgnoredMode,
         ignoredIncludeGlobs: [...args.ignoredIncludeGlobs],
     };

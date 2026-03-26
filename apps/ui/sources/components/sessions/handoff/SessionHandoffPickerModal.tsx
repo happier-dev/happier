@@ -378,7 +378,12 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                             }))}
                             onSelect={(itemId) => {
                                 if (workspaceTransferControlsDisabled) return;
-                                setWorkspaceTransferStrategy(itemId as 'transfer_snapshot' | 'sync_changes');
+                                const nextStrategy = itemId as 'transfer_snapshot' | 'sync_changes';
+                                setWorkspaceTransferStrategy(nextStrategy);
+                                if (nextStrategy === 'sync_changes' && conflictPolicy === 'create_sibling_copy') {
+                                    // `sync_changes` is only valid with `replace_existing` (protocol-enforced).
+                                    setConflictPolicy('replace_existing');
+                                }
                                 setOpenWorkspaceTransferStrategyMenu(false);
                             }}
                         />
@@ -400,11 +405,13 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                                     disabled: workspaceTransferControlsDisabled,
                                 },
                             }}
-                            items={SESSION_HANDOFF_CONFLICT_POLICY_OPTIONS.map((item) => ({
-                                id: item.id,
-                                title: t(item.titleKey),
-                                subtitle: t(item.subtitleKey),
-                            }))}
+                            items={SESSION_HANDOFF_CONFLICT_POLICY_OPTIONS
+                                .filter((item) => workspaceTransferStrategy !== 'sync_changes' || item.id !== 'create_sibling_copy')
+                                .map((item) => ({
+                                    id: item.id,
+                                    title: t(item.titleKey),
+                                    subtitle: t(item.subtitleKey),
+                                }))}
                             onSelect={(itemId) => {
                                 if (workspaceTransferControlsDisabled) return;
                                 setConflictPolicy(itemId as 'create_sibling_copy' | 'replace_existing');

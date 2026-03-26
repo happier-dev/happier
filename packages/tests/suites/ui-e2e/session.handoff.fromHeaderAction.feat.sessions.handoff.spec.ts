@@ -8,6 +8,7 @@ import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/te
 import { readCliAccessKey } from '../../src/testkit/cliAccessKey';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
+import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
@@ -71,10 +72,6 @@ async function waitForSessionInfoMachineTarget(params: {
   let lastServerHomeDir = '';
 
   await expect(params.page.getByTestId('session-handoff-modal')).toHaveCount(0, { timeout: 60_000 });
-  const handoffProgressTitle = params.page.getByText('Handing off session', { exact: true });
-  if (await handoffProgressTitle.count()) {
-    await expect(handoffProgressTitle).toHaveCount(0, { timeout: timeoutMs });
-  }
   const progressModal = params.page.getByTestId('session-handoff-progress-modal');
   if (await progressModal.count()) {
     await expect(progressModal).toHaveCount(0, { timeout: timeoutMs });
@@ -153,6 +150,22 @@ async function connectTerminalForHome(params: {
   serverBaseUrl: string;
   uiBaseUrl: string;
 }): Promise<void> {
+  function resolveConnectUrlForBrowser(paramsInner: { connectUrl: string; uiBaseUrl: string }): string {
+    try {
+      const connectUrl = new URL(paramsInner.connectUrl);
+      const uiUrl = new URL(paramsInner.uiBaseUrl);
+      const loopbackHosts = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']);
+      if (loopbackHosts.has(connectUrl.hostname) && loopbackHosts.has(uiUrl.hostname) && connectUrl.host !== uiUrl.host) {
+        connectUrl.protocol = uiUrl.protocol;
+        connectUrl.hostname = uiUrl.hostname;
+        connectUrl.port = uiUrl.port;
+      }
+      return connectUrl.toString();
+    } catch {
+      return paramsInner.connectUrl;
+    }
+  }
+
   const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
     testDir: params.testDir,
     cliHomeDir: params.cliHomeDir,
@@ -167,12 +180,22 @@ async function connectTerminalForHome(params: {
     },
   });
 
-  await params.page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-  await expect(params.page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-  await params.page.getByTestId('terminal-connect-approve').click();
-  await cliLogin.waitForSuccess();
+  try {
+    const connectUrlForBrowser = resolveConnectUrlForBrowser({
+      connectUrl: cliLogin.connectUrl,
+      uiBaseUrl: params.uiBaseUrl,
+    });
+    await gotoDomContentLoadedWithRetries(params.page, connectUrlForBrowser);
+    const approveButton = params.page.getByTestId('terminal-connect-approve');
+    await expect(approveButton).toHaveCount(1, { timeout: 60_000 });
+    await expect(approveButton).toBeEnabled({ timeout: 60_000 });
+    await approveButton.click({ noWaitAfter: true });
+    await cliLogin.waitForSuccess();
+  } finally {
+    await cliLogin.stop().catch(() => {});
+  }
+
   await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/`);
-  await cliLogin.stop().catch(() => {});
 }
 
 async function spawnClaudeSessionInWorkspace(params: Readonly<{
@@ -230,6 +253,11 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
     await mkdir(targetCliHomeDir, { recursive: true });
     await writeFile(resolve(join(sourceCliHomeDir, 'AGENTS.md')), '# UI e2e source fixture\n', 'utf8');
     await writeFile(resolve(join(targetCliHomeDir, 'AGENTS.md')), '# UI e2e target fixture\n', 'utf8');
+
+    await ensureCliDistBuilt(
+      { testDir: suiteDir, env: uiWebEnv },
+      { buildTimeoutMs: 600_000 },
+    );
 
     server = await startServerLight({
       testDir: suiteDir,
@@ -364,9 +392,11 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
     await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
-    await page.getByLabel('Open session actions').click();
-    await expect(page.getByRole('button', { name: /Hand off session/i })).toHaveCount(1, { timeout: 60_000 });
-    await page.getByRole('button', { name: /Hand off session/i }).click();
+    const sessionActionsTrigger = page.getByLabel('Open session actions');
+    await expect(sessionActionsTrigger).toHaveCount(1, { timeout: 60_000 });
+    await sessionActionsTrigger.click();
+    await expect(page.getByTestId('dropdown-option-session_handoff')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('dropdown-option-session_handoff').click();
 
     await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
@@ -375,12 +405,8 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
     await expect(page.getByTestId('dropdown-option-sync_changes')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('dropdown-option-sync_changes').click();
     await page.getByTestId('session-handoff-start').click();
-    await expect(page.getByText('This session is still running here')).toHaveCount(1, { timeout: 60_000 });
-    await expect(
-      page.getByText('Handoff will stop this session on this machine before transferring it to the selected machine.'),
-    ).toHaveCount(1, { timeout: 60_000 });
-    await page.getByRole('button', { name: 'Hand off and stop here' }).click();
-    await expect(page.getByTestId('session-handoff-progress-modal')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('web-modal-confirm').click();
 
     await waitForSessionInfoMachineTarget({
       page,
@@ -429,6 +455,8 @@ test.describe('ui e2e: session handoff from header action menu via forced server
     await mkdir(targetCliHomeDir, { recursive: true });
     await writeFile(resolve(join(sourceCliHomeDir, 'AGENTS.md')), '# UI e2e source fixture\n', 'utf8');
     await writeFile(resolve(join(targetCliHomeDir, 'AGENTS.md')), '# UI e2e target fixture\n', 'utf8');
+
+    await ensureCliDistBuilt({ testDir: suiteDir, env: uiWebEnv }, { buildTimeoutMs: 600_000 });
 
     server = await startServerLight({
       testDir: suiteDir,
@@ -559,9 +587,11 @@ test.describe('ui e2e: session handoff from header action menu via forced server
     await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
-    await page.getByLabel('Open session actions').click();
-    await expect(page.getByRole('button', { name: /Hand off session/i })).toHaveCount(1, { timeout: 60_000 });
-    await page.getByRole('button', { name: /Hand off session/i }).click();
+    const sessionActionsTrigger = page.getByLabel('Open session actions');
+    await expect(sessionActionsTrigger).toHaveCount(1, { timeout: 60_000 });
+    await sessionActionsTrigger.click();
+    await expect(page.getByTestId('dropdown-option-session_handoff')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('dropdown-option-session_handoff').click();
 
     await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
@@ -570,8 +600,8 @@ test.describe('ui e2e: session handoff from header action menu via forced server
     await expect(page.getByTestId('dropdown-option-sync_changes')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('dropdown-option-sync_changes').click();
     await page.getByTestId('session-handoff-start').click();
-    await page.getByRole('button', { name: 'Hand off and stop here' }).click();
-    await expect(page.getByTestId('session-handoff-progress-modal')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('web-modal-confirm').click();
 
     await waitForSessionInfoMachineTarget({
       page,
@@ -620,6 +650,8 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
     await mkdir(targetCliHomeDir, { recursive: true });
     await writeFile(resolve(join(sourceCliHomeDir, 'AGENTS.md')), '# UI e2e source fixture\n', 'utf8');
     await writeFile(resolve(join(targetCliHomeDir, 'AGENTS.md')), '# UI e2e target fixture\n', 'utf8');
+
+    await ensureCliDistBuilt({ testDir: suiteDir, env: uiWebEnv }, { buildTimeoutMs: 600_000 });
 
     server = await startServerLight({
       testDir: suiteDir,
@@ -748,21 +780,23 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
     await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
-    await page.getByLabel('Open session actions').click();
-    await expect(page.getByRole('button', { name: /Hand off session/i })).toHaveCount(1, { timeout: 60_000 });
-    await page.getByRole('button', { name: /Hand off session/i }).click();
+    const sessionActionsTrigger = page.getByLabel('Open session actions');
+    await expect(sessionActionsTrigger).toHaveCount(1, { timeout: 60_000 });
+    await sessionActionsTrigger.click();
+    await expect(page.getByTestId('dropdown-option-session_handoff')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('dropdown-option-session_handoff').click();
 
     await expect(page.getByTestId('session-handoff-modal')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId(`session-handoff-machine:${targetMachineId}`)).toHaveCount(1, { timeout: 120_000 });
     await page.getByTestId(`session-handoff-machine:${targetMachineId}`).click();
     await page.getByTestId('session-handoff-start').click();
-    await expect(page.getByText('This session is still running here')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByRole('button', { name: 'Hand off and stop here' }).click();
+    await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('web-modal-confirm').click();
 
-    await expect(page.getByText('Session stopped here before handoff completed')).toHaveCount(1, { timeout: 180_000 });
-    await expect(page.getByRole('button', { name: 'Restart on source' })).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByRole('button', { name: 'Keep stopped' })).toHaveCount(1, { timeout: 60_000 });
-    await page.getByRole('button', { name: 'Restart on source' }).click();
+    await expect(page.getByTestId('session-handoff-recovery-modal')).toHaveCount(1, { timeout: 180_000 });
+    await expect(page.getByTestId('session-handoff-recovery-restart-on-source')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('session-handoff-recovery-keep-stopped')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('session-handoff-recovery-restart-on-source').click();
 
     const composer = page.locator('textarea[data-testid="session-composer-input"]:visible').first();
     await expect(composer).toHaveCount(1, { timeout: 180_000 });
