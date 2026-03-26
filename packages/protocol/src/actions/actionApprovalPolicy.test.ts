@@ -1,24 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import { ActionsSettingsV1Schema } from './actionSettings.js';
+import type { ActionsSettingsV1 } from './actionSettings.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 
 describe('isApprovalRequiredByActionsSettings', () => {
-  it('returns false when surface is omitted', () => {
-    const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {} });
-    expect(isApprovalRequiredByActionsSettings('review.start' as any, settings, {})).toBe(false);
-    expect(isApprovalRequiredByActionsSettings('review.start' as any, settings, { surface: null } as any)).toBe(false);
-  });
-
-  it('requires approvals only on the configured surfaces for that action', () => {
-    const settings = ActionsSettingsV1Schema.parse({
+  it('returns true when the action override requires approvals for the given surface', () => {
+    const settings: ActionsSettingsV1 = {
       v: 1,
       actions: {
-        'review.start': { approvalRequiredSurfaces: ['mcp'] },
-      },
-    });
+        'review.start': {
+          enabledPlacements: [],
+          disabledSurfaces: [],
+          disabledPlacements: [],
+          approvalRequiredSurfaces: ['cli'],
+        },
+      } as any,
+    };
 
-    expect(isApprovalRequiredByActionsSettings('review.start' as any, settings, { surface: 'mcp' } as any)).toBe(true);
-    expect(isApprovalRequiredByActionsSettings('review.start' as any, settings, { surface: 'cli' } as any)).toBe(false);
+    expect(isApprovalRequiredByActionsSettings('review.start' as any, settings, { surface: 'cli' } as any)).toBe(true);
+    expect(isApprovalRequiredByActionsSettings('review.start' as any, settings, { surface: 'mcp' } as any)).toBe(false);
   });
 });

@@ -91,6 +91,20 @@ export type ActionExecutorDeps = Readonly<{
   // Session messaging (socket message event, server-scoped)
   sessionSendMessage: (args: Readonly<{ sessionId: string; message: string; serverId?: string | null }>) => Promise<unknown>;
   sessionTitleSet?: (args: Readonly<{ sessionId: string; title: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionStop?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionPermissionModeSet?: (args: Readonly<{ sessionId: string; permissionMode: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionModelSet?: (args: Readonly<{ sessionId: string; modelId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionArchiveSet?: (args: Readonly<{ sessionId: string; archived: boolean; serverId?: string | null }>) => Promise<unknown>;
+  sessionStatusGet?: (args: Readonly<{ sessionId: string; live?: boolean; serverId?: string | null }>) => Promise<unknown>;
+  sessionHistoryGet?: (args: Readonly<{
+    sessionId: string;
+    limit?: number;
+    format?: 'compact' | 'raw';
+    includeMeta?: boolean;
+    includeStructuredPayload?: boolean;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
+  sessionWaitIdle?: (args: Readonly<{ sessionId: string; timeoutSeconds?: number; serverId?: string | null }>) => Promise<unknown>;
 
   // Permission response (session RPC, server-scoped)
   sessionPermissionRespond: (args: Readonly<{
@@ -847,6 +861,86 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!title) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionTitleSet({ sessionId, title, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.stop') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionStop) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.stop' };
+          }
+          const res = await deps.sessionStop({ sessionId });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.permission_mode.set') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionPermissionModeSet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.permission_mode.set' };
+          }
+          const permissionMode = normalizeId((parsed.data as any).permissionMode);
+          if (!permissionMode) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const res = await deps.sessionPermissionModeSet({ sessionId, permissionMode });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.model.set') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionModelSet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.model.set' };
+          }
+          const modelId = normalizeId((parsed.data as any).modelId);
+          if (!modelId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const res = await deps.sessionModelSet({ sessionId, modelId });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.archive' || actionId === 'session.unarchive') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionArchiveSet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.archive' };
+          }
+          const res = await deps.sessionArchiveSet({ sessionId, archived: actionId === 'session.archive' });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.status.get') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionStatusGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.status.get' };
+          }
+          const live = (parsed.data as any).live === true;
+          const res = await deps.sessionStatusGet({ sessionId, live });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.history.get') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionHistoryGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.history.get' };
+          }
+          const limit = typeof (parsed.data as any).limit === 'number' ? (parsed.data as any).limit : 50;
+          const format = (parsed.data as any).format === 'raw' ? 'raw' : 'compact';
+          const includeMeta = (parsed.data as any).includeMeta === true;
+          const includeStructuredPayload = (parsed.data as any).includeStructuredPayload === true;
+          const res = await deps.sessionHistoryGet({ sessionId, limit, format, includeMeta, includeStructuredPayload });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.wait.idle') {
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionWaitIdle) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.wait.idle' };
+          }
+          const timeoutSeconds = typeof (parsed.data as any).timeoutSeconds === 'number' ? (parsed.data as any).timeoutSeconds : 300;
+          const res = await deps.sessionWaitIdle({ sessionId, timeoutSeconds });
           return { ok: true, result: res };
         }
 

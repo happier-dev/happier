@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { accountSettingsParse } from './accountSettings.js';
+import { isActionEnabledByActionsSettings } from '../../actions/actionSettings.js';
 
 describe('accountSettings', () => {
   it('defaults ready notification preview settings to enabled', () => {
@@ -102,5 +103,19 @@ describe('accountSettings', () => {
       'agent:claude': 'system-first',
     });
     expect(parsed.futureField).toEqual({ keep: true });
+  });
+
+  it('disables cross-session session-agent controls by default (opt-in)', () => {
+    const parsed = accountSettingsParse({});
+    const settings = parsed.actionsSettingsV1;
+
+    // External/CLI control plane remains enabled by default.
+    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'mcp' } as any)).toBe(true);
+    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'cli' } as any)).toBe(true);
+
+    // Session agents controlling other sessions is opt-in and must be fail-closed by default.
+    expect(isActionEnabledByActionsSettings('session.stop' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
+    expect(isActionEnabledByActionsSettings('session.message.send' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
+    expect(isActionEnabledByActionsSettings('session.list' as any, settings, { surface: 'session_agent' } as any)).toBe(false);
   });
 });
