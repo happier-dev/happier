@@ -11,7 +11,6 @@ function buildActionBackedTools(): readonly HappierBuiltInToolDefinition[] {
   const tools: HappierBuiltInToolDefinition[] = [];
 
   for (const spec of listActionSpecs()) {
-    if (spec.surfaces.mcp !== true) continue;
     const name = String(spec.bindings?.mcpToolName ?? '').trim();
     if (!name) continue;
 
