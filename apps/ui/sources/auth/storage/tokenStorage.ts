@@ -36,9 +36,17 @@ function normalizeUrl(raw: string): string {
 
     try {
         const parsed = new URL(trimmed);
-        const hostname = parsed.hostname.toLowerCase();
-        if (hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]' || hostname === 'localhost') {
+        const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
+        if (
+            hostname === '127.0.0.1'
+            || hostname === '::1'
+            || hostname === '[::1]'
+            || hostname === 'localhost'
+            || hostname.endsWith('.localhost')
+        ) {
             parsed.hostname = 'localhost';
+        } else {
+            parsed.hostname = hostname;
         }
 
         const normalizedPath = parsed.pathname.replace(/\/+$/, '');

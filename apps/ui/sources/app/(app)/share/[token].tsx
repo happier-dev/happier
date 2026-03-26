@@ -80,13 +80,13 @@ function normalizeMessageSeq(message: Readonly<{ seq?: number | null }>): number
         : undefined;
 }
 
-async function normalizePlainPublicShareMessages(messages: ReadonlyArray<ApiMessage>): Promise<NormalizedMessage[] | null> {
+async function normalizePlainPublicShareMessages(messages: ReadonlyArray<ApiMessage>): Promise<NormalizedMessage[]> {
     const normalized: NormalizedMessage[] = [];
     for (const message of messages) {
+        if (!message) continue;
+
         const content = await readStoredSessionRawRecord({ content: message.content });
-        if (!content) {
-            return null;
-        }
+        if (!content) continue;
 
         const normalizedMessage = normalizeRawMessage(
             message.id,
@@ -95,9 +95,7 @@ async function normalizePlainPublicShareMessages(messages: ReadonlyArray<ApiMess
             content,
             { seq: normalizeMessageSeq(message) },
         );
-        if (!normalizedMessage) {
-            return null;
-        }
+        if (!normalizedMessage) continue;
 
         normalized.push(normalizedMessage);
     }
@@ -192,12 +190,6 @@ export default memo(function PublicShareViewerScreen() {
 
             if (sessionEncryptionMode === 'plain') {
                 const normalized = await normalizePlainPublicShareMessages(shareMessages);
-                if (!normalized) {
-                    setError(t('errors.operationFailed'));
-                    setIsLoading(false);
-                    return;
-                }
-
                 sortNormalizedMessagesOldestFirst(normalized);
 
                 const reducerState = createReducer();

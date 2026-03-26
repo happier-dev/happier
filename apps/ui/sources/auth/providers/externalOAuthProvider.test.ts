@@ -29,7 +29,11 @@ function stubFetch(
     handler: (url: string, init?: RequestInit) => Promise<{ ok: boolean; status: number; body: unknown }>,
 ) {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async (input, init) => {
-        const result = await handler(String(input), init);
+        const url = String(input);
+        if (url.endsWith('/health')) {
+            return jsonResponse({ ok: true, status: 200, body: { ok: true } }) as Response;
+        }
+        const result = await handler(url, init);
         return jsonResponse(result) as Response;
     });
     vi.stubGlobal('fetch', fetchMock);

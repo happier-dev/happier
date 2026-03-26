@@ -47,6 +47,11 @@ function stubFetch(
     return fetchMock;
 }
 
+async function handleHealthCheck(url: string): Promise<FetchResult | null> {
+    if (!url.endsWith('/health')) return null;
+    return { ok: true, body: { ok: true } };
+}
+
 afterEach(() => {
     resetOAuthHarness();
     vi.restoreAllMocks();
@@ -68,6 +73,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url === 'http://api.example.test/v1/auth/external/github/finalize') {
                 expect(init?.method).toBe('POST');
                 return { ok: true, body: { success: true, token: 'tok_1' } };
@@ -103,6 +110,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         };
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 expect(init?.method).toBe('POST');
                 return { ok: true, body: { success: true, token: 'tok_1' } };
@@ -146,6 +155,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         };
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 expect(init?.method).toBe('POST');
                 const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
@@ -184,6 +195,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 expect(init?.method).toBe('POST');
                 const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
@@ -249,6 +262,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
                 expect(body.username).toBe('octocat_2');
@@ -260,7 +275,10 @@ describe('/oauth/[provider] (auth flow)', () => {
         const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
         const screen = await renderScreen(React.createElement(Screen));
         await flushOAuthEffects();
-        expect(fetchMock).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalledWith(
+            expect.stringContaining('/v1/auth/external/github/finalize'),
+            expect.anything(),
+        );
 
         const input = screen.findByTestId('oauth-username-input');
         expect(input).toBeTruthy();
@@ -289,6 +307,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         stubFetch(async (url) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 return { ok: true, body: { success: true, token: 'tok_1' } };
             }
@@ -323,6 +343,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url, init) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
                 expect(body.reset).toBe(true);
@@ -364,6 +386,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 return await finalizeDeferred;
             }
@@ -427,6 +451,8 @@ describe('/oauth/[provider] (auth flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url) => {
+            const health = await handleHealthCheck(url);
+            if (health) return health;
             if (url.endsWith('/v1/auth/external/github/finalize')) {
                 return await finalizeDeferred;
             }

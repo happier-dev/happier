@@ -22,6 +22,10 @@ afterEach(() => {
 });
 
 describe('oauth/[provider] return (provisioning choice)', () => {
+  function isReachabilityProbeUrl(url: string): boolean {
+    return url.endsWith('/health') || url.endsWith('/v1/auth/ping');
+  }
+
   async function renderOAuthReturnScreen() {
     const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -48,7 +52,11 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async (url: any, init?: any) => {
-      if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
+      const rawUrl = String(url);
+      if (isReachabilityProbeUrl(rawUrl)) {
+        return new Response('', { status: 200 });
+      }
+      if (typeof url === 'string' && rawUrl.includes('/v1/auth/external/github/finalize-keyless')) {
         const body = JSON.parse(String(init?.body ?? '{}'));
         if (body?.pending !== 'p3' || body?.proof !== 'proof_3') {
           return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
@@ -64,7 +72,8 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
     const screen = await renderOAuthReturnScreen();
     try {
-      expect(fetchMock).not.toHaveBeenCalled();
+      const nonReachabilityCalls = fetchMock.mock.calls.filter(([calledUrl]) => !isReachabilityProbeUrl(String(calledUrl)));
+      expect(nonReachabilityCalls).toHaveLength(0);
       expect(replaceSpy).not.toHaveBeenCalledWith('/');
 
       const choice = screen.findByTestId('oauth-provisioning-choice-plain');
@@ -73,7 +82,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       await pressTestInstanceAsync(choice, 'oauth-provisioning-choice-plain');
       await flushOAuthEffects(2);
 
-      expect(fetchMock).toHaveBeenCalled();
+      expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
       expect(clearPendingExternalAuthMock).toHaveBeenCalled();
       expect(loginWithCredentialsSpy).toHaveBeenCalled();
       expect(replaceSpy).toHaveBeenCalledWith('/');
@@ -103,7 +112,11 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async (url: any, init?: any) => {
-      if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
+      const rawUrl = String(url);
+      if (isReachabilityProbeUrl(rawUrl)) {
+        return new Response('', { status: 200 });
+      }
+      if (typeof url === 'string' && rawUrl.includes('/v1/auth/external/github/finalize-keyless')) {
         const body = JSON.parse(String(init?.body ?? '{}'));
         if (body?.pending !== 'p4' || body?.proof !== 'proof_4') {
           return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
@@ -121,7 +134,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     try {
       await flushOAuthEffects(8);
 
-      expect(fetchMock).toHaveBeenCalled();
+      expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
       expect(clearPendingExternalAuthMock).toHaveBeenCalled();
       expect(loginWithCredentialsSpy).toHaveBeenCalled();
       expect(replaceSpy).toHaveBeenCalledWith('/');

@@ -189,7 +189,7 @@ describe('PublicShareViewerScreen (plaintext)', () => {
         expect(seqs).toEqual([1, 2]);
     });
 
-    it('fails closed when a plaintext share message payload is malformed instead of silently skipping it', async () => {
+    it('skips malformed plaintext share messages and still renders the remaining messages', async () => {
         transcriptListSpy.mockClear();
         serverFetchSpy.mockReset();
 
@@ -223,12 +223,23 @@ describe('PublicShareViewerScreen (plaintext)', () => {
                 json: async () => ({
                     messages: [
                         {
-                            id: 'm1',
+                            id: 'bad',
                             seq: 1,
                             localId: null,
                             content: { t: 'encrypted', c: 'unexpected' },
                             createdAt: 3,
                             updatedAt: 3,
+                        },
+                        {
+                            id: 'm1',
+                            seq: 2,
+                            localId: null,
+                            content: {
+                                t: 'plain',
+                                v: { role: 'user', content: { type: 'text', text: 'hello' } },
+                            },
+                            createdAt: 4,
+                            updatedAt: 4,
                         },
                     ],
                 }),
@@ -239,6 +250,9 @@ describe('PublicShareViewerScreen (plaintext)', () => {
         await renderScreen(<PublicShareViewerScreen />);
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(transcriptListSpy).not.toHaveBeenCalled();
+        expect(transcriptListSpy).toHaveBeenCalled();
+        const last = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
+        const seqs = Array.isArray(last?.messages) ? last.messages.map((m: any) => (m as any)?.seq ?? null) : [];
+        expect(seqs).toEqual([2]);
     });
 });

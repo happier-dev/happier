@@ -85,6 +85,11 @@ describe('TokenStorage (web) server-scoped credentials', () => {
             secret: 'secret-loopback',
         });
 
+        await expect(TokenStorage.getCredentialsForServerUrl('http://qa-stack.localhost:3010')).resolves.toEqual({
+            token: 'token-loopback',
+            secret: 'secret-loopback',
+        });
+
         setServerUrl('http://localhost:3010');
         await expect(TokenStorage.getCredentials()).resolves.toEqual({
             token: 'token-loopback',
