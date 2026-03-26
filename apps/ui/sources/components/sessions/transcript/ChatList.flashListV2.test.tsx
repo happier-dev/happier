@@ -326,9 +326,13 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/components/sessions/transcript/thinking/resolveActiveThinkingMessageId', async () => await import('./thinking/resolveActiveThinkingMessageId'));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    settingsDefaults: {},
-}));
+vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/settings/settings')>();
+    return {
+        ...actual,
+        settingsDefaults: {},
+    };
+});
 
 vi.mock('./chatListNativeId', () => ({
     buildChatListNativeId: (sessionId: string, reactId: string) => `chat-list-${sessionId}-${reactId}`,

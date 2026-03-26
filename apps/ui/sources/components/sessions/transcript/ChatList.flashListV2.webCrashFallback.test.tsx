@@ -122,10 +122,6 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
   useReducedMotionPreference: () => false,
 }));
 
-vi.mock('@/utils/sessions/deriveTranscriptInteraction', () => ({
-  deriveTranscriptInteraction: () => ({ canSendMessages: true, canApprovePermissions: true, isSessionActive: true }),
-}));
-
 describe('ChatList (FlashList v2 web crash fallback)', () => {
   it('falls back to FlatList on web when FlashList throws "not enough layouts"', async () => {
     flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';

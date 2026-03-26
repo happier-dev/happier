@@ -210,13 +210,13 @@ vi.mock('@/components/sessions/transcript/thinking/resolveActiveThinkingMessageI
     resolveActiveThinkingMessageId: () => null,
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    settingsDefaults: {},
-}));
-
-vi.mock('@/utils/sessions/deriveTranscriptInteraction', () => ({
-    deriveTranscriptInteraction: () => ({ isReadonly: false }),
-}));
+vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        settingsDefaults: {},
+    };
+});
 
 vi.mock('./chatListNativeId', () => ({
     buildChatListNativeId: () => 'transcript-chat-list-native',

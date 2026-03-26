@@ -102,13 +102,6 @@ vi.mock('@/components/tools/shell/views/ToolFullView', () => ({
     },
 }));
 
-vi.mock('@/utils/sessions/deriveTranscriptInteraction', () => ({
-    deriveTranscriptInteraction: () => ({
-        canSendMessages: true,
-        canApprovePermissions: true,
-    }),
-}));
-
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });

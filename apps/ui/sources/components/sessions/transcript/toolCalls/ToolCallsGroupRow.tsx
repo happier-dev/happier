@@ -11,6 +11,7 @@ import { ToolCallsGroupView } from '@/components/sessions/transcript/turns/toolC
 import { TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
 import { layout } from '@/components/ui/layout/layout';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 
 export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
     sessionId: string;
@@ -44,9 +45,22 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
             .filter((message): message is ToolCallMessage => message?.kind === 'tool-call');
     }, [props.getMessageById, props.toolMessageIds, toolMessagesRaw]);
 
+    const toolMessagesForSession = React.useMemo(() => {
+        if (toolMessages.length === 0) return toolMessages;
+        const disabledReason = props.interaction.permissionDisabledReason;
+        return toolMessages.map((message) => {
+            const nextTool = resolveInactiveSessionToolCallFailure({
+                tool: message.tool,
+                permissionDisabledReason: disabledReason,
+            });
+            if (nextTool === message.tool) return message;
+            return { ...message, tool: nextTool };
+        });
+    }, [props.interaction.permissionDisabledReason, toolMessages]);
+
     let status: 'running' | 'completed' | 'error' = 'completed';
     let sawError = false;
-    for (const m of toolMessages) {
+    for (const m of toolMessagesForSession) {
         if (m.tool.state === 'running') {
             status = 'running';
             break;
@@ -55,12 +69,14 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
     }
     if (status !== 'running' && sawError) status = 'error';
 
-    const createdAt = toolMessages[0]?.createdAt ?? Date.now();
+    const createdAt = toolMessagesForSession[0]?.createdAt ?? Date.now();
 
     const setExpanded = React.useCallback((expanded: boolean) => {
         props.onSetExpanded({ toolCallsGroupId: props.toolCallsGroupId, toolMessageIds: props.toolMessageIds, expanded });
     }, [props.onSetExpanded, props.toolCallsGroupId, props.toolMessageIds]);
-    const webPrependAnchorId = props.toolMessageIds[props.toolMessageIds.length - 1] ?? props.toolCallsGroupId;
+    const webPrependAnchorId = toolMessagesForSession[toolMessagesForSession.length - 1]?.id ?? props.toolCallsGroupId;
+
+    if (toolMessagesForSession.length === 0) return null;
 
     return (
         <View testID={`${TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX}${webPrependAnchorId}`}>
@@ -70,7 +86,7 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
                         <ToolCallsGroupView
                             id={props.toolCallsGroupId}
                             status={status}
-                            toolMessages={toolMessages}
+                            toolMessages={toolMessagesForSession}
                             metadata={props.metadata}
                             sessionId={props.sessionId}
                             forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
