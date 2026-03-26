@@ -268,7 +268,7 @@ describe('McpServerEditorScreen', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/(app)/settings/mcp');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/mcp');
 
         vi.useRealTimers();
     });
@@ -356,7 +356,7 @@ describe('McpServerEditorScreen', () => {
             servers: [],
             bindings: [],
         });
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/(app)/settings/mcp');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/mcp');
         expect(routerBackSpy).not.toHaveBeenCalled();
     });
 

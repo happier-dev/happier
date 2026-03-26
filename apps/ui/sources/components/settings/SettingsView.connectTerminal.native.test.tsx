@@ -193,14 +193,15 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 describe('SettingsView (native connect terminal)', () => {
     it('shows terminal connect actions on native platforms', async () => {
+        vi.resetModules();
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
         tree = (await renderScreen(<SettingsView />)).tree;
 
         const items = tree.findAllByType('Item' as any);
-        const scanItem = items.find((item: any) => item?.props?.title === 'settings.scanQrCodeToAuthenticate');
-        const manualItem = items.find((item: any) => item?.props?.title === 'connect.enterUrlManually');
+        const scanItem = items.find((item: any) => item?.props?.testID === 'settings-connect-terminal-scan');
+        const manualItem = items.find((item: any) => item?.props?.testID === 'settings-connect-terminal-enter-url');
 
         expect(scanItem).toBeTruthy();
         expect(manualItem).toBeTruthy();

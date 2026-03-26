@@ -103,14 +103,12 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
     }, [mcpSettings, setMcpSettings]);
 
     const handleAddServer = React.useCallback(() => {
-        router.push('/(app)/settings/mcp-server');
+        // `router.push` expects the public route (group segments like `/(app)` are not valid here on web).
+        router.push('/settings/mcp-server');
     }, [router]);
 
     const handleOpenQuickInstall = React.useCallback((presetId: string) => {
-        router.push({
-            pathname: '/(app)/settings/mcp-server',
-            params: { addMode: 'quick-install', presetId },
-        } as any);
+        router.push(`/settings/mcp-server?addMode=quick-install&presetId=${encodeURIComponent(presetId)}`);
     }, [router]);
 
     const handleDeleteServer = React.useCallback(async (serverId: string) => {
@@ -196,7 +194,7 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
             if (imported.nextSettings !== mcpSettings) {
                 setMcpSettings(imported.nextSettings);
             }
-            router.push({ pathname: '/(app)/settings/mcp-server', params: { serverId: imported.entry.id } } as any);
+            router.push(`/settings/mcp-server?serverId=${encodeURIComponent(imported.entry.id)}`);
         } catch (error) {
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError'));
         }
@@ -228,10 +226,10 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
                     serverRows={serverRows}
                     machines={machines}
                     onToggleStrictMode={handleToggleStrictMode}
-                    onEditServer={(serverId) => router.push({ pathname: '/(app)/settings/mcp-server', params: { serverId } } as any)}
+                    onEditServer={(serverId) => router.push(`/settings/mcp-server?serverId=${encodeURIComponent(serverId)}`)}
                     onDeleteServer={handleDeleteServer}
                     onAddServer={handleAddServer}
-                    onOpenQuickInstall={handleOpenQuickInstall as any}
+                    onOpenQuickInstall={handleOpenQuickInstall}
                 />
             ) : null}
 

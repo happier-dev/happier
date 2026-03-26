@@ -233,10 +233,7 @@ describe('McpServersSettingsScreen', () => {
         expect(addServerIndex).toBeLessThan(quickInstallIndex);
 
         await screen.pressRow('settings.mcpServers.quickInstall.playwright');
-        expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/mcp-server',
-            params: { addMode: 'quick-install', presetId: 'playwright' },
-        });
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/mcp-server?addMode=quick-install&presetId=playwright');
 
         await selectHeaderTab(screen, 'detected');
         expect(screen.findRow('settings.mcpServers.detect.refresh')).toBeTruthy();
@@ -257,7 +254,7 @@ describe('McpServersSettingsScreen', () => {
         expect(screen.findRow('settings.mcpServers.addServer')).toBeTruthy();
         await screen.pressRow('settings.mcpServers.addServer');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/mcp-server');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/mcp-server');
 
         const configuredRowAfterReturn = screen.findRow('mcp.server.card.server-1');
         const deleteAction = configuredRowAfterReturn!.props.rightElement.props.actions[1];

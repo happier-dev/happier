@@ -32,7 +32,13 @@ import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServer
 import { parseImportedMcpServerJson } from '@/sync/domains/settings/mcpServers/parseImportedMcpServerJson';
 import { t } from '@/text';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
+import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
+
+type NavigationLike = Readonly<{
+    setOptions?: (options: Readonly<Record<string, unknown>>) => void;
+    dispatch?: (action: unknown) => void;
+}>;
 
 function createDefaultServerName(existingNames: ReadonlySet<string>): string {
     if (!existingNames.has('server')) return 'server';
@@ -103,6 +109,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
+    const nav = navigation as NavigationLike;
     const ignoreBeforeRemoveRef = React.useRef(false);
     const isDirtyRef = React.useRef(false);
     const machines = useAllMachines();
@@ -163,18 +170,18 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
 
     React.useEffect(() => {
         // Match profile edit behavior: disable iOS gesture navigation while the draft is dirty.
-        const setOptions = (navigation as any)?.setOptions;
+        const setOptions = nav.setOptions;
         if (typeof setOptions !== 'function') return;
         setOptions({ gestureEnabled: !isDirty });
-    }, [isDirty, navigation]);
+    }, [isDirty, nav.setOptions]);
 
     React.useEffect(() => {
-        const setOptions = (navigation as any)?.setOptions;
+        const setOptions = nav.setOptions;
         if (typeof setOptions !== 'function') return;
         return () => {
             setOptions({ gestureEnabled: true });
         };
-    }, [navigation]);
+    }, [nav.setOptions]);
 
     React.useEffect(() => {
         if (selectedMachineId && machines.some((machine) => machine.id === selectedMachineId)) return;
@@ -230,7 +237,8 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     }, [machines, theme.colors.textSecondary]);
 
     const closeToMcpServersSettings = React.useCallback(() => {
-        router.replace('/(app)/settings/mcp' as any);
+        // `router.replace` expects the public route (group segments like `/(app)` are not valid here on web).
+        router.replace('/settings/mcp');
     }, [router]);
 
     const commitDraft = React.useCallback((): boolean => {
@@ -251,7 +259,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
 
         try {
             const next = upsertMcpServerWithBindingsV1(normalizedSettings, parsedServer.data, parsedBindings);
-            setMcpSettings(next as any);
+            setMcpSettings(next);
             setIsDirty(false);
             return true;
         } catch (error) {
@@ -266,6 +274,12 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         ignoreBeforeRemoveRef.current = true;
         closeToMcpServersSettings();
     }, [closeToMcpServersSettings, commitDraft]);
+
+    const discardDraft = React.useCallback(() => {
+        setDraftServer(existingServer ?? createDraftServer(existingNames));
+        setDraftBindings(existingBindings);
+        setIsDirty(false);
+    }, [existingBindings, existingNames, existingServer]);
 
     const handleDeleteOrCancel = React.useCallback(async () => {
         if (!serverId) {
@@ -282,7 +296,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         if (!confirmed) return;
 
         const next = deleteMcpServerCatalogEntryV1(normalizedSettings, serverId);
-        setMcpSettings(next as any);
+        setMcpSettings(next);
         ignoreBeforeRemoveRef.current = true;
         closeToMcpServersSettings();
     }, [closeToMcpServersSettings, draftServer.name, normalizedSettings, serverId, setMcpSettings]);
@@ -305,7 +319,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
             Modal.alert(t('settings.mcpServersImportJsonWarningsTitle'), materialized.warnings.join('\n'));
         }
         setSecrets(materialized.nextSecrets);
-        setMcpSettings(materialized.nextSettings as any);
+        setMcpSettings(materialized.nextSettings);
         ignoreBeforeRemoveRef.current = true;
         closeToMcpServersSettings();
     }, [closeToMcpServersSettings, importInputMappings, importParseResult.servers, normalizedSettings, secrets, selectedMachineId, setMcpSettings, setSecrets]);
@@ -340,7 +354,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
             Modal.alert(t('settings.mcpServersImportJsonWarningsTitle'), warnings.join('\n'));
         }
         setSecrets(nextSecrets);
-        setMcpSettings(nextSettings as any);
+        setMcpSettings(nextSettings);
         ignoreBeforeRemoveRef.current = true;
         closeToMcpServersSettings();
     }, [closeToMcpServersSettings, normalizedSettings, quickInstallInputMappingsByPreset, secrets, selectedMachineId, selectedQuickInstallDrafts, setMcpSettings, setSecrets]);
@@ -359,13 +373,12 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     }, []);
 
     const continueNavigation = React.useCallback((action: unknown) => {
-        const nav: any = navigation;
-        if (action && typeof nav?.dispatch === 'function') {
+        if (action && typeof nav.dispatch === 'function') {
             nav.dispatch(action);
             return;
         }
         closeToMcpServersSettings();
-    }, [closeToMcpServersSettings, navigation]);
+    }, [closeToMcpServersSettings, nav.dispatch]);
 
     useUnsavedChangesBeforeRemoveGuard({
         navigation,
@@ -375,6 +388,18 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         onSave: commitDraft,
         onContinue: continueNavigation,
         tag: 'McpServerEditorScreen.beforeRemove',
+    });
+
+    useActiveUnsavedChangesGuard({
+        navigation,
+        guard: React.useMemo(() => ({
+            isDirtyRef,
+            ignoreRef: ignoreBeforeRemoveRef,
+            requestDecision: requestUnsavedChangesDecision,
+            onDiscard: discardDraft,
+            onSave: commitDraft,
+            tag: 'McpServerEditorScreen.shellGuard',
+        }), [commitDraft, discardDraft, requestUnsavedChangesDecision]),
     });
 
     const renderHeaderRight = React.useCallback(() => {
@@ -397,10 +422,10 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     }, [activeTab, isDirty, saveAndClose, saveDisabled, theme.colors.header.tint]);
 
     React.useEffect(() => {
-        const setOptions = (navigation as any)?.setOptions;
+        const setOptions = nav.setOptions;
         if (typeof setOptions !== 'function') return;
         setOptions({ headerRight: renderHeaderRight });
-    }, [navigation, renderHeaderRight]);
+    }, [nav.setOptions, renderHeaderRight]);
 
     if (serverId && !existingServer) {
         return (

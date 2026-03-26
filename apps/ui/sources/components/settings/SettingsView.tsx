@@ -250,6 +250,7 @@ export const SettingsView = React.memo(function SettingsView() {
             {!isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb) && (
                 <ItemGroup>
                     <Item
+                        testID="settings-connect-terminal-scan"
                         title={t('settings.scanQrCodeToAuthenticate')}
                         icon={<Ionicons name="qr-code-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={connectTerminal}
@@ -257,6 +258,7 @@ export const SettingsView = React.memo(function SettingsView() {
                         showChevron={false}
                     />
                     <Item
+                        testID="settings-connect-terminal-enter-url"
                         title={t('connect.enterUrlManually')}
                         icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={async () => {
@@ -406,7 +408,8 @@ export const SettingsView = React.memo(function SettingsView() {
                         title={t('settings.mcpServers')}
                         subtitle={t('settings.mcpServersSubtitle')}
                         icon={<Ionicons name="extension-puzzle-outline" size={29} color={theme.colors.accent.purple} />}
-                        onPress={() => router.push('/(app)/settings/mcp')}
+                        // `router.push` expects the public route (group segments like `/(app)` are not valid here on web).
+                        onPress={() => router.push('/settings/mcp')}
                     />
                 )}
                 {promptsLibraryEnabled ? (
