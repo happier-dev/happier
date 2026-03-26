@@ -306,9 +306,7 @@ async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseU
     await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new`);
 
     await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
-    await expect(params.page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 120_000 });
     await expect(params.page.getByTestId('new-session-composer-input')).toBeVisible({ timeout: 180_000 });
-    await expect(params.page.getByTestId('agent-input-agent-chip')).toBeVisible({ timeout: 120_000 });
 
     await expect(params.page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
     const machineSelectionResult = await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
@@ -334,45 +332,15 @@ async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseU
     }
     await params.page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
 
-    // Starting a session can show the backend picker dialog and/or a Vaul overlay that intercepts clicks.
-    const agentChip = params.page.getByTestId('agent-input-agent-chip');
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        await maybeSelectAiBackendFromDialog(params.page, 'Codex').catch(() => false);
-
-        await expect(agentChip).toHaveCount(1, { timeout: 60_000 });
-        await expect(agentChip).toBeVisible({ timeout: 60_000 });
-
-        const vaulOverlay = params.page.locator('[data-vaul-overlay][data-state="open"]');
-        if ((await vaulOverlay.count()) > 0) {
-            await params.page.keyboard.press('Escape').catch(() => {});
-            await vaulOverlay.click({ force: true }).catch(() => {});
-            await expect(vaulOverlay).toHaveCount(0, { timeout: 10_000 }).catch(() => {});
-        }
-
-        const anyDialog = params.page.getByRole('dialog');
-        if ((await anyDialog.count()) > 0) {
-            await params.page.keyboard.press('Escape').catch(() => {});
-            await expect(anyDialog).toHaveCount(0, { timeout: 10_000 }).catch(() => {});
-        }
-
-        try {
-            await agentChip.click({ trial: true, timeout: 5_000 });
-            break;
-        } catch (error) {
-            if (attempt >= 2) throw error;
-            await params.page.waitForTimeout(500);
-        }
-    }
-
-    await agentChip.click({ timeout: 60_000 });
-    const inlineCodexOption = params.page.getByTestId('new-session-agent:codex');
-    if ((await inlineCodexOption.count()) > 0) {
-        await expect(inlineCodexOption).toBeEnabled({ timeout: 60_000 });
-        await inlineCodexOption.click();
+    // Prefer the New Session Wizard's inline backend list (no overlays) over the agent-input chip pickers.
+    const codexOption = params.page.getByTestId('new-session-agent:codex');
+    if ((await codexOption.count()) > 0) {
+        await codexOption.scrollIntoViewIfNeeded().catch(() => {});
+        await expect(codexOption).toBeEnabled({ timeout: 120_000 });
+        await codexOption.click();
     } else {
         await maybeSelectAiBackendFromDialog(params.page, 'Codex').catch(() => false);
     }
-    await params.page.keyboard.press('Escape').catch(() => {});
 
     const pathChip = params.page.getByTestId('agent-input-path-chip');
     if ((await pathChip.count()) > 0) {
