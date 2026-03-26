@@ -30,6 +30,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   registerServerRoutedTransferResponder,
   requestServerRoutedTransferToFile,
+  resolveServerRoutedTransferTimeoutMs,
   type MachineTransferChannel,
   ServerRoutedInvalidOpenRequestError,
   ServerRoutedAbortTransferError,
@@ -56,6 +57,7 @@ import {
   createSessionHandoffProviderBundlePayloadSource,
   readSessionHandoffProviderBundleFile,
 } from '../../session/handoff/sessionHandoffProviderBundleFile';
+import { normalizeSessionHandoffTargetPathForLocalMachine } from '../../session/handoff/paths/sessionHandoffPathNormalization';
 import { createSessionHandoffSourceExportStore } from '../../session/handoff/state/sessionHandoffSourceExportStore';
 import {
   buildSessionHandoffProviderBundleTransferId,
@@ -280,6 +282,7 @@ function mapWorkspaceReplicationJobCheckpointToHandoffCheckpoint(
     case 'blob_transfer_started':
       return 'transfer_blobs';
     case 'blob_transfer_completed':
+      return 'stage_target';
     case 'apply_started':
     case 'apply_completed':
       return 'apply';
@@ -383,6 +386,7 @@ function buildPrepareJobRecord(input: Readonly<{
   jobId: string;
   handoffId: string;
   status: SessionHandoffStatus;
+  prepareTargetRequest?: SessionHandoffPrepareTargetRequest;
   prepareTargetResult?: SessionHandoffPrepareTargetResultGetResponse;
   createdAtMs: number;
   updatedAtMs?: number;
@@ -405,6 +409,7 @@ function buildPrepareJobRecord(input: Readonly<{
     ...(input.lastErrorMessage ? { lastErrorMessage: input.lastErrorMessage } : {}),
     ...(input.workspaceReplicationJobId ? { workspaceReplicationJobId: input.workspaceReplicationJobId } : {}),
     status: input.status,
+    ...(input.prepareTargetRequest ? { prepareTargetRequest: input.prepareTargetRequest } : {}),
     ...(input.prepareTargetResult ? { prepareTargetResult: input.prepareTargetResult } : {}),
   };
 }
@@ -737,6 +742,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     activeServerDir: configuration.activeServerDir,
   });
   const activePrepareJobs = new Map<string, Promise<void>>();
+  // Used to restart prepare-target durable jobs when only status/result polling continues after a daemon restart.
+  let restartPrepareTargetJobFromPersistedRequest: ((raw: unknown) => Promise<void>) | null = null;
   const prepareTargetJobLeaseOwnerId = `cli-daemon:${process.pid}:${randomUUID()}`;
   const prepareTargetJobLeaseTtlMs = resolveSessionHandoffPrepareTargetJobLeaseTtlMs();
   const prepareTargetJobRecoveryGraceMs = Math.min(
@@ -791,9 +798,20 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       ownerId: probeOwnerId,
     }).catch(() => undefined);
 
-    // With no active lease owner, the daemon cannot make forward progress without a new PREPARE_TARGET
-    // request (request inputs are not persisted). Fail closed into recovery instead of reporting a
-    // status with no runner.
+    if (job.cancelRequestedAtMs) {
+      // Preserve existing fail-closed behavior: if cancellation was requested and no runner/lease owner exists,
+      // mark the job aborted immediately instead of attempting a restart.
+    } else if (job.prepareTargetRequest && restartPrepareTargetJobFromPersistedRequest !== null) {
+      // Restart in the background. Callers can keep polling status/result without issuing a second PREPARE_TARGET call.
+      const restart = restartPrepareTargetJobFromPersistedRequest;
+      void restart(job.prepareTargetRequest).catch(() => undefined);
+      return job;
+    }
+
+    // With no active lease owner, the daemon cannot make forward progress without either:
+    // 1) a persisted prepareTargetRequest (so we can restart), or
+    // 2) a new PREPARE_TARGET call (so we can rehydrate the request inputs).
+    // Fail closed into recovery instead of reporting a status with no runner.
     const recovered = await prepareJobStore.update(job.jobId, (current) => {
       const { schemaVersion: _schemaVersion, ...rest } = current;
       const previousProgress = rest.status.progress;
@@ -853,19 +871,17 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	      return 'handoff_source_export_failed';
 	    };
 
-	    const configuredTimeoutMs =
-	      typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
-	        ? configuration.filesTransferSessionTtlMs
-	        : 30_000;
-    // Waiting for a source-export record is not the same as "session TTL", but it *must* be long
-    // enough to cover deferred export on large repos.
-    //
-    // Important: server-routed transfers have a hard per-transfer inactivity timeout, so this wait
-    // budget must stay comfortably below that ceiling or the recipient will time out before the
-    // first chunk is sent.
-    const timeoutMs = Math.min(75_000, configuredTimeoutMs);
-    const deadlineAtMs = Date.now() + timeoutMs;
-	    let delayMs = 25;
+	      // Waiting for a source-export record is not the same as "session TTL", but it *must* be long
+	      // enough to cover deferred export on large repos.
+	      //
+	      // Important: server-routed transfers have a per-transfer timeout for the open/ack/chunk
+	      // handshake. This wait budget must be derived from that timeout, not from unrelated
+	      // app↔daemon file-transfer TTLs, or deferred exports can abort with `transfer_not_found`
+	      // while still pending.
+	      const serverRoutedTimeoutMs = resolveServerRoutedTransferTimeoutMs();
+	      const timeoutMs = Math.max(1_000, serverRoutedTimeoutMs - 5_000);
+	      const deadlineAtMs = Date.now() + timeoutMs;
+		    let delayMs = 25;
 	    while (Date.now() < deadlineAtMs) {
 	      const record = await sourceExportStore.load(handoffId);
 	      if (record && predicate(record)) {
@@ -876,13 +892,13 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	      if (prepareJob && isTerminalHandoffStatus(prepareJob.status)) {
 	        throw new ServerRoutedAbortTransferError(resolveTerminalAbortReason(prepareJob.lastErrorMessage));
 	      }
-	      await new Promise<void>((resolve) => {
-	        setTimeout(resolve, delayMs);
-	      });
-	      delayMs = Math.min(500, Math.floor(delayMs * 1.5));
-	    }
-	    return null;
-	  };
+		      await new Promise<void>((resolve) => {
+		        setTimeout(resolve, delayMs);
+		      });
+		      delayMs = Math.min(2_000, Math.floor(delayMs * 1.5));
+		    }
+		    return null;
+		  };
 
   const disposeEphemeralServerRoutedPayloadSourcesForHandoff = async (handoffId: string): Promise<void> => {
     for (const [transferId, payloadSource] of [...ephemeralServerRoutedPayloadSources.entries()]) {
@@ -1541,7 +1557,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     }
   });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET, async (raw: unknown) => {
+  const handlePrepareTargetRaw = async (raw: unknown) => {
     const parsed = SessionHandoffPrepareTargetRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
@@ -1573,6 +1589,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     const pendingUpdatedAtMs = Date.now();
     const createdAtMs = persistedJob?.createdAtMs ?? pendingUpdatedAtMs;
     let workspaceReplicationJobId: string | undefined = persistedJob?.workspaceReplicationJobId;
+    let prepareTargetRequest: SessionHandoffPrepareTargetRequest | undefined =
+      persistedJob?.prepareTargetRequest ?? parsed.data;
     const isRestartingPersistedJob = Boolean(
       persistedJob
       && !isTerminalHandoffStatus(persistedJob.status)
@@ -1600,7 +1618,17 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             workspaceReplicationJobId,
           }
           : jobRecord;
-      await prepareJobStore.write(mergedJobRecord);
+      const mergedWithRequest =
+        prepareTargetRequest && !mergedJobRecord.prepareTargetRequest
+          ? {
+            ...mergedJobRecord,
+            prepareTargetRequest,
+          }
+          : mergedJobRecord;
+      if (mergedWithRequest.prepareTargetRequest) {
+        prepareTargetRequest = prepareTargetRequest ?? mergedWithRequest.prepareTargetRequest;
+      }
+      await prepareJobStore.write(mergedWithRequest);
     };
 
     await persistJobRecord(buildPrepareJobRecord({
@@ -1795,17 +1823,20 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             currentTargetManifest,
             sourceOffer,
             importedWorkspace,
-          } = await workspaceReplicationAdapter.prepareTargetWorkspace({
-            activeServerDir: configuration.activeServerDir,
-            actualTransportStrategy,
-            handoffId: parsed.data.handoffId,
-            sourceMachineId: parsed.data.sourceMachineId,
-            targetMachineId: parsed.data.targetMachineId,
-            targetPath: parsed.data.targetPath,
-            workspaceTransfer: resolvedWorkspaceTransfer,
-            metadata: persistedWorkspaceReplicationMetadata,
-            directPeerManifestEndpointCandidates:
-              persistedHandoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates,
+	          } = await workspaceReplicationAdapter.prepareTargetWorkspace({
+	            activeServerDir: configuration.activeServerDir,
+	            actualTransportStrategy,
+	            handoffId: parsed.data.handoffId,
+	            sourceMachineId: parsed.data.sourceMachineId,
+	            targetMachineId: parsed.data.targetMachineId,
+	            targetPath: normalizeSessionHandoffTargetPathForLocalMachine({
+	              requestedTargetPath: parsed.data.targetPath,
+	              homeDir: os.homedir(),
+	            }),
+	            workspaceTransfer: resolvedWorkspaceTransfer,
+	            metadata: persistedWorkspaceReplicationMetadata,
+	            directPeerManifestEndpointCandidates:
+	              persistedHandoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates,
             machineTransferChannel: params.machineTransferChannel,
             transfers: workspaceReplicationTransfers,
             blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
@@ -2013,7 +2044,13 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       handoffId: parsed.data.handoffId,
       status: pendingStatus,
     };
-  });
+  };
+
+  restartPrepareTargetJobFromPersistedRequest = async (raw: unknown): Promise<void> => {
+    await handlePrepareTargetRaw(raw);
+  };
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET, handlePrepareTargetRaw);
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT, async (raw: unknown) => {
     const parsed = SessionHandoffCommitRequestSchema.safeParse(raw);

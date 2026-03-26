@@ -8,6 +8,22 @@ function stripBrackets(hostname: string): string {
   return host;
 }
 
+export function isLoopbackHostname(hostname: string): boolean {
+  const host = stripBrackets(String(hostname ?? '').trim().toLowerCase()).replace(/\.$/, '');
+  if (!host) return false;
+  if (host === 'localhost') return true;
+
+  const ipVersion = net.isIP(host);
+  if (ipVersion === 4) {
+    return host.startsWith('127.');
+  }
+  if (ipVersion === 6) {
+    return host === '::1';
+  }
+
+  return false;
+}
+
 function isPrivateIpv4(hostname: string): boolean {
   const host = String(hostname ?? '').trim();
   const parts = host.split('.');

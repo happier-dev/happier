@@ -8,6 +8,7 @@ import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspa
 import { countWorkspaceReplicationBlobPacks } from '@/workspaces/replication/transport/buildWorkspaceReplicationBlobPacks';
 import {
   assertSafeWorkspaceReplicationPackId,
+  createWorkspaceReplicationPackIdForDigests,
 } from '@/workspaces/replication/transport/workspaceReplicationPackId';
 import { parseWorkspaceReplicationBlobPackRequestV1 } from '@/workspaces/replication/transport/workspaceReplicationBlobPackRequestV1';
 import { buildWorkspaceReplicationManifestDigestIndex } from '@/workspaces/replication/transport/workspaceReplicationManifestIndex';
@@ -174,6 +175,9 @@ export function createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope(
         throw new Error('Invalid direct-peer blob-pack request body');
       }
       const digests = openBody.digests;
+      if (createWorkspaceReplicationPackIdForDigests(digests) !== safePackId) {
+        throw new Error('Invalid direct-peer blob-pack request body');
+      }
       try {
         assertWorkspaceReplicationBlobPackRequestWithinLimits({
           digestIndex,

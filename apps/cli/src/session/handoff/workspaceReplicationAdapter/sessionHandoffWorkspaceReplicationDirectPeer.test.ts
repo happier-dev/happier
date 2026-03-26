@@ -174,6 +174,85 @@ describe('session handoff direct-peer workspace replication publication', () => 
     }
   });
 
+  it('rejects a direct-peer blob-pack open when packId does not match the requested digests', async () => {
+    vi.resetModules();
+    const { createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope } = await import(
+      './sessionHandoffWorkspaceReplicationDirectPeer'
+    );
+    const { buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId } = await import(
+      './sessionHandoffWorkspaceReplicationDirectPeer'
+    );
+    const { createWorkspaceReplicationPackIdForDigests } = await import(
+      '@/workspaces/replication/transport/workspaceReplicationPackId'
+    );
+
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-packid-mismatch-'));
+    try {
+      const blobPathsByDigest = new Map<string, string>();
+      const blobProviderRoot = join(activeServerDir, 'blob-provider');
+      await mkdir(blobProviderRoot, { recursive: true });
+
+      const payloadA = Buffer.from('payload-a', 'utf8');
+      const digestA = createSha256DigestForPayload(payloadA);
+      const fileA = join(blobProviderRoot, 'a.bin');
+      await writeFile(fileA, payloadA);
+      blobPathsByDigest.set(digestA, fileA);
+
+      const payloadB = Buffer.from('payload-b', 'utf8');
+      const digestB = createSha256DigestForPayload(payloadB);
+      const fileB = join(blobProviderRoot, 'b.bin');
+      await writeFile(fileB, payloadB);
+      blobPathsByDigest.set(digestB, fileB);
+
+	      const entries: WorkspaceManifest['entries'] = [
+	        {
+	          kind: 'file',
+	          relativePath: 'files/a.bin',
+	          digest: digestA,
+          sizeBytes: payloadA.byteLength,
+	          executable: false,
+	        },
+	        {
+	          kind: 'file',
+	          relativePath: 'files/b.bin',
+	          digest: digestB,
+	          sizeBytes: payloadB.byteLength,
+	          executable: false,
+	        },
+	      ];
+	      entries.sort((left, right) => compareStrings(left.relativePath, right.relativePath));
+
+      const manifest: WorkspaceManifest = { entries };
+
+      const onDemandScope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
+        handoffId: 'handoff-mismatch-1',
+        activeServerDir,
+        manifest,
+        blobProvider: {
+          getBlobFilePath: (digest: string) => blobPathsByDigest.get(digest) ?? null,
+        },
+      });
+
+      const packId = createWorkspaceReplicationPackIdForDigests([digestA, digestB]);
+      const transferId = buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId({
+        handoffId: 'handoff-mismatch-1',
+        packId,
+      });
+
+      await expect(onDemandScope.resolvePayloadSourceOnOpen({
+        transferId,
+        requestBody: {
+          t: 'workspace_replication_blob_pack_v1',
+          packId,
+          // Mismatch: claim a packId for [A,B] but request only [A].
+          digests: [digestA],
+        },
+      })).rejects.toThrow('Invalid direct-peer blob-pack request body');
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('sets maxResolvedTransfers high enough to serve pack-by-pack direct-peer requests for large manifests (no fixed 10k cap)', async () => {
     vi.resetModules();
     const { createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope } = await import(

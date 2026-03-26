@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 import {
+  SessionHandoffPrepareTargetRequestSchema,
   SessionHandoffPrepareTargetResultGetResponseSchema,
   SessionHandoffStatusSchema,
 } from '@happier-dev/protocol';
@@ -31,6 +32,9 @@ const SessionHandoffPrepareTargetJobRecordSchema = z
     lastErrorMessage: z.string().min(1).optional(),
     workspaceReplicationJobId: z.string().min(1).optional(),
     status: SessionHandoffStatusSchema,
+    // Persist the validated prepare-target request so the daemon can resume/restart the job after a restart,
+    // even when callers keep polling status/result without issuing a second PREPARE_TARGET call.
+    prepareTargetRequest: SessionHandoffPrepareTargetRequestSchema.optional(),
     prepareTargetResult: SessionHandoffPrepareTargetResultGetResponseSchema.optional(),
   })
   .strip()
@@ -101,6 +105,12 @@ export async function recoverSessionHandoffPrepareTargetJobsAfterRestart(input: 
   const jobs = await store.list();
   await Promise.all(jobs.map(async (job) => {
     if (isTerminalPrepareTargetStatusCode(job.status.status)) {
+      return;
+    }
+
+    // If we have enough persisted input to restart the job runner, keep the durable status non-terminal.
+    // The RPC surface can then resume the job when clients continue polling status/result after restart.
+    if (job.prepareTargetRequest) {
       return;
     }
 

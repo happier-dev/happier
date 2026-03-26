@@ -137,6 +137,25 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
             resumable: false,
           },
         },
+        prepareTargetRequest: {
+          handoffId,
+          sourceMachineId: 'machine_source',
+          targetMachineId: 'machine_target',
+          negotiatedTransportStrategy: 'direct_peer',
+          sourceSessionStorageMode: 'persisted',
+          targetPath: '/repo',
+          endpointCandidates: [],
+          handoffMetadataV2: {
+            providerBundleTransferPublication: {
+              transferId: `session-handoff:${handoffId}:provider-bundle`,
+              sizeBytes: 123,
+              manifestHash: 'hash',
+              endpointCandidates: [
+                { kind: 'http', url: 'http://127.0.0.1:1111', expiresAt: nowMs + 60_000, authorizationToken: 'tok' },
+              ],
+            },
+          },
+        },
       });
 
       await recoverSessionHandoffPrepareTargetJobsAfterRestart({
@@ -147,15 +166,14 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
       await expect(store.read(jobId)).resolves.toMatchObject({
         jobId,
         handoffId,
-        lastErrorMessage: 'Daemon restarted while the handoff prepare-target job was in progress',
+        status: {
+          status: 'pending',
+          phase: 'staging_target',
+        },
+      });
+      await expect(store.read(jobId)).resolves.not.toMatchObject({
         status: {
           status: 'awaiting_recovery',
-          phase: 'staging_target',
-          progress: {
-            current: {
-              phaseDetail: 'daemon_restart_missing_runner',
-            },
-          },
         },
       });
     } finally {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import os from 'node:os';
 
 import {
     DirectSessionsSourceSchema,
@@ -17,6 +18,10 @@ import type { AgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { compareWorkspaceManifests } from '../../../scm/sourceController/workspaceExportPackaging/compareWorkspaceManifests';
 import type { SessionHandoffProviderBundle } from '../types';
 import { readSessionHandoffProviderBundleFile } from '../sessionHandoffProviderBundleFile';
+import {
+    normalizeSessionHandoffTargetPathForLocalMachine,
+    resolveSessionHandoffLocalHomeDir,
+} from '../paths/sessionHandoffPathNormalization';
 import {
     createSessionHandoffPrepareTargetJobStore,
     type SessionHandoffPrepareTargetJobRecord,
@@ -679,12 +684,18 @@ export function createSessionHandoffPrepareTargetRuntime(params: PrepareTargetDe
                             sourceOffer,
                             importedWorkspace,
                         } = await params.workspaceReplicationAdapter.prepareTargetWorkspace({
+                            targetPath: normalizeSessionHandoffTargetPathForLocalMachine({
+                                requestedTargetPath: request.targetPath,
+                                homeDir: resolveSessionHandoffLocalHomeDir({
+                                    activeServerDir: params.activeServerDir,
+                                    fallbackHomeDir: os.homedir(),
+                                }),
+                            }),
                             activeServerDir: params.activeServerDir,
                             actualTransportStrategy,
                             handoffId: request.handoffId,
                             sourceMachineId: request.sourceMachineId,
                             targetMachineId: request.targetMachineId,
-                            targetPath: request.targetPath,
                             workspaceTransfer: resolvedWorkspaceTransfer,
                             metadata: persistedWorkspaceReplicationMetadata ?? undefined,
                             directPeerManifestEndpointCandidates:
