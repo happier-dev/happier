@@ -26,6 +26,10 @@ describe('Vitest lane separation', () => {
         expect(include).toContain('src/**/*.slow.test.ts');
     });
 
+    it('allows empty integration shards to exit cleanly', () => {
+        expect(integrationConfig.test?.passWithNoTests).toBe(true);
+    });
+
     it('does not force full dist builds in the fast CLI test scripts', () => {
         const packageJson = JSON.parse(
             readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),

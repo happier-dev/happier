@@ -98,7 +98,7 @@
     "dev:integration-test-env": "$npm_execpath run build && tsx --env-file .env.integration-test src/index.ts",
     "prepublishOnly": "$npm_execpath run build && $npm_execpath test",
     "release": "$npm_execpath install && release-it",
-    "build:shared": "node scripts/buildSharedDeps.mjs",
+    "build:shared": "yarn -s workspace @happier-dev/cli-common build && node scripts/buildSharedDeps.mjs",
     "pretypecheck": "yarn -s build:shared",
     "prebuild": "yarn -s build:shared",
     "pretest": "yarn -s build:shared",

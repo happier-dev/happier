@@ -1,11 +1,15 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import path, { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 
 import { resolveCliPackageRoot, syncPackageDist } from './syncPackageDist.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const MAX_CAPTURED_OUTPUT_CHARS = 4000;
 
 function resolveNpmInvocation(npmExecpath = process.env.npm_execpath) {
   const npmExecpathValue = String(npmExecpath ?? '').trim();
@@ -35,10 +39,48 @@ function parseTarballName(stdout) {
   }
 }
 
+function truncate(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (raw.length <= MAX_CAPTURED_OUTPUT_CHARS) return raw;
+  return `${raw.slice(0, MAX_CAPTURED_OUTPUT_CHARS)}\n…(truncated ${raw.length - MAX_CAPTURED_OUTPUT_CHARS} chars)`;
+}
+
+function formatSpawnFailure({ packageRoot, npmInvocation, packArgs, result }) {
+  const stdout = truncate(result?.stdout);
+  const stderr = truncate(result?.stderr);
+  const status = typeof result?.status === 'number' ? result.status : 'null';
+  const signal = result?.signal ?? 'null';
+  const errorMessage = result?.error ? String(result.error?.message ?? result.error) : '';
+  const invocationPrintable = [npmInvocation.command, ...packArgs]
+    .map((arg) => (String(arg).includes(' ') ? JSON.stringify(String(arg)) : String(arg)))
+    .join(' ');
+
+  return [
+    `[pack-tarball] npm pack failed`,
+    `cwd: ${packageRoot}`,
+    `invocation: ${invocationPrintable}`,
+    `status: ${status}`,
+    `signal: ${signal}`,
+    ...(errorMessage ? [`error: ${errorMessage}`] : []),
+    ...(stdout ? [`stdout:\n${stdout}`] : []),
+    ...(stderr ? [`stderr:\n${stderr}`] : []),
+  ].join('\n');
+}
+
+function resolveNpmCacheDir({ destDir, env }) {
+  const configured = String(env?.npm_config_cache ?? '').trim();
+  if (configured) return configured;
+  if (destDir) return path.join(destDir, '.npm-cache');
+  return path.join(os.tmpdir(), `happier-npm-cache-${process.pid}`);
+}
+
 export function packTarball(options = {}) {
   const packageRoot = resolve(String(options.packageRoot ?? resolveCliPackageRoot()));
   const spawn = options.spawnSync ?? spawnSync;
   const npmInvocation = options.npmInvocation ?? resolveNpmInvocation(options.npmExecpath);
+  const destDirRaw = String(options.destDir ?? '').trim();
+  const destDir = destDirRaw ? resolve(destDirRaw) : packageRoot;
 
   syncPackageDist({
     packageRoot,
@@ -49,17 +91,28 @@ export function packTarball(options = {}) {
     rmSync: options.rmSync,
   });
 
-  const result = spawn(npmInvocation.command, [...npmInvocation.args, 'pack', '--json'], {
+  const env = { ...process.env, ...(options.env ?? {}) };
+  const npmCacheDir = String(options.npmCacheDir ?? '').trim() || resolveNpmCacheDir({ destDir, env });
+  if (!String(env.npm_config_cache ?? '').trim()) {
+    env.npm_config_cache = npmCacheDir;
+  }
+
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.mkdirSync(String(env.npm_config_cache), { recursive: true });
+
+  const packArgs = [...npmInvocation.args, 'pack', '--json', '--pack-destination', destDir];
+  const result = spawn(npmInvocation.command, packArgs, {
     cwd: packageRoot,
+    env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   if (typeof result.status === 'number' && result.status !== 0) {
-    throw new Error(`[pack-tarball] npm pack exited with status ${result.status}`);
+    throw new Error(formatSpawnFailure({ packageRoot, npmInvocation, packArgs, result }));
   }
   if (result.error) {
-    throw result.error;
+    throw new Error(formatSpawnFailure({ packageRoot, npmInvocation, packArgs, result }));
   }
 
   const tarballName = parseTarballName(result.stdout);
@@ -67,8 +120,8 @@ export function packTarball(options = {}) {
     throw new Error('[pack-tarball] npm pack did not report a tarball filename');
   }
 
-  const tarballPath = resolve(packageRoot, tarballName);
-  if (!existsSync(tarballPath)) {
+  const tarballPath = resolve(destDir, tarballName);
+  if (!fs.existsSync(tarballPath)) {
     throw new Error(`[pack-tarball] missing tarball output: ${tarballPath}`);
   }
 
@@ -76,6 +129,23 @@ export function packTarball(options = {}) {
     packageRoot,
     tarballName,
     tarballPath,
+  };
+}
+
+function parseCliOptions(argv) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      'dest-dir': { type: 'string' },
+      'npm-cache-dir': { type: 'string' },
+    },
+    allowPositionals: true,
+    strict: false,
+  });
+
+  return {
+    destDir: values['dest-dir'],
+    npmCacheDir: values['npm-cache-dir'],
   };
 }
 
@@ -87,7 +157,8 @@ const invokedAsMain = (() => {
 
 if (invokedAsMain) {
   try {
-    const result = packTarball();
+    const { destDir, npmCacheDir } = parseCliOptions(process.argv.slice(2));
+    const result = packTarball({ destDir, npmCacheDir });
     console.log(result.tarballPath);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
