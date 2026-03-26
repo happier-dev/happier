@@ -15,7 +15,7 @@ const storageState = {
     },
     sessions: {
         'session-1': {
-            active: false,
+            active: true,
             metadata: {
                 machineId: 'machine-stale',
                 path: '/Users/leeroy/repo',
@@ -97,6 +97,7 @@ installNavigationShellCommonModuleMocks({
             useAllSessions: () => [
                 {
                     id: 'session-1',
+                    active: true,
                     presence: 'online',
                     metadata: {
                         name: 'Repo session',

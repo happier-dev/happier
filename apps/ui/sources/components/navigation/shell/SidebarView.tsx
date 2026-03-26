@@ -26,6 +26,8 @@ import { Text } from '@/components/ui/text/Text';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 
 export type SidebarViewProps = Readonly<{
     sidebarWidthPx?: number | null;
@@ -279,11 +281,17 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     });
 
     const handleNewSession = React.useCallback(() => {
-        router.push('/new');
+        const result = runGuardedNavigation(() => router.push('/new'));
+        if (result !== true) {
+            fireAndForget(result, { tag: 'SidebarView.nav.newSession' });
+        }
     }, [router]);
 
     const handleHome = React.useCallback(() => {
-        router.push('/');
+        const result = runGuardedNavigation(() => router.push('/'));
+        if (result !== true) {
+            fireAndForget(result, { tag: 'SidebarView.nav.home' });
+        }
     }, [router]);
 
     const headerActions = React.useMemo((): ItemAction[] => {
@@ -300,7 +308,12 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                         {inboxHasContent ? <View style={styles.indicatorDot} /> : null}
                     </View>
                 ),
-                onPress: () => router.push('/(app)/inbox'),
+                onPress: () => {
+                    const result = runGuardedNavigation(() => router.push('/(app)/inbox'));
+                    if (result !== true) {
+                        fireAndForget(result, { tag: 'SidebarView.nav.inbox' });
+                    }
+                },
             });
         }
 
@@ -321,19 +334,30 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                         ) : null}
                     </View>
                 ),
-                onPress: () => router.push('/(app)/friends'),
+                onPress: () => {
+                    const result = runGuardedNavigation(() => router.push('/(app)/friends'));
+                    if (result !== true) {
+                        fireAndForget(result, { tag: 'SidebarView.nav.friends' });
+                    }
+                },
             });
         }
 
         out.push({
             id: 'settings',
             title: t('settings.title'),
+            inlineTestID: 'nav-settings',
             icon: (
                 <View style={styles.iconButton}>
                     <Ionicons name="cog-outline" size={24} color={theme.colors.header.tint} />
                 </View>
             ),
-            onPress: () => router.push('/settings'),
+            onPress: () => {
+                const result = runGuardedNavigation(() => router.push('/settings'));
+                if (result !== true) {
+                    fireAndForget(result, { tag: 'SidebarView.nav.settings' });
+                }
+            },
         });
 
         out.push({
@@ -469,7 +493,12 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                         </Text>
                         {syncError?.kind === 'auth' ? (
                             <Pressable
-                                onPress={() => router.push('/restore')}
+                                onPress={() => {
+                                    const result = runGuardedNavigation(() => router.push('/restore'));
+                                    if (result !== true) {
+                                        fireAndForget(result, { tag: 'SidebarView.nav.restore' });
+                                    }
+                                }}
                                 style={styles.bannerButton}
                                 accessibilityRole="button"
                             >

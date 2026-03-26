@@ -1,4 +1,5 @@
 import React from 'react';
+import { Pressable, View } from 'react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -98,6 +99,62 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
+}));
+
+vi.mock('./MainView', () => ({
+    MainView: () => null,
+}));
+
+vi.mock('@/components/navigation/ConnectionStatusControl', () => ({
+    ConnectionStatusControl: () => null,
+}));
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        retryNow: vi.fn(),
+    },
+}));
+
+vi.mock('@/components/ui/lists/ItemRowActions', () => ({
+    ItemRowActions: (props: any) => {
+        const layoutWidthPx = typeof props.layoutWidthPx === 'number' ? props.layoutWidthPx : null;
+        const compactThreshold = typeof props.compactThreshold === 'number' ? props.compactThreshold : null;
+        const pinnedIds = new Set<string>(Array.isArray(props.pinnedActionIds) ? props.pinnedActionIds : []);
+        const isCompact = Boolean(layoutWidthPx !== null && compactThreshold !== null && layoutWidthPx < compactThreshold);
+
+        const actionList = Array.isArray(props.actions) ? props.actions : [];
+        const inlineActions = isCompact ? actionList.filter((action: any) => pinnedIds.has(action.id)) : actionList;
+        const overflowActions = isCompact ? actionList.filter((action: any) => !pinnedIds.has(action.id)) : [];
+
+        return React.createElement(
+            View,
+            null,
+            overflowActions.length > 0
+                ? React.createElement(
+                    Pressable,
+                    {
+                        key: 'overflow',
+                        testID: props.overflowTriggerTestID,
+                        accessibilityLabel: 'sidebar-header-actions-overflow',
+                        onPress: vi.fn(),
+                    },
+                    null,
+                )
+                : null,
+            inlineActions.map((action: any) =>
+                React.createElement(
+                    Pressable,
+                    {
+                        key: action.id,
+                        testID: action.inlineTestID,
+                        accessibilityLabel: action.title,
+                        onPress: action.onPress,
+                    },
+                    action.icon ?? null,
+                ),
+            ),
+        );
+    },
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -212,6 +269,29 @@ describe('SidebarView header automations button', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/');
     });
 
+    it('blocks shell navigation when an unsaved-changes guard is active and the user keeps editing', async () => {
+        const { setActiveUnsavedChangesGuard, clearActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
+
+        const isDirtyRef = { current: true };
+        setActiveUnsavedChangesGuard({
+            isDirtyRef,
+            requestDecision: async () => 'keepEditing',
+            tag: 'SidebarView.keepEditing',
+        });
+
+        const { SidebarView } = await import('./SidebarView');
+
+        const screen = await renderScreen(<SidebarView />);
+        const button = screen.findByProps({ accessibilityLabel: 'common.home' });
+        await act(async () => {
+            await pressTestInstanceAsync(button);
+        });
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+
+        clearActiveUnsavedChangesGuard();
+    });
+
     it('does not render automations button in header', async () => {
         const { SidebarView } = await import('./SidebarView');
         const screen = await renderScreen(<SidebarView />);
@@ -280,6 +360,7 @@ describe('SidebarView header automations button', () => {
 
         expect(screen.findAllByTestId('sidebar-header-actions-overflow')).toHaveLength(0);
         expect(screen.findAllByTestId('sidebar-inbox-button').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('nav-settings').length).toBeGreaterThan(0);
         expect(screen.findAllByTestId('nav-new-session').length).toBeGreaterThan(0);
     });
 
@@ -305,7 +386,7 @@ describe('SidebarView header automations button', () => {
             'overflow trigger',
         );
         const settings = requireTestInstance(
-            screen.findByProps({ accessibilityLabel: 'settings.title' }),
+            screen.findByTestId('nav-settings'),
             'settings button',
         );
         const newSession = requireTestInstance(
@@ -322,7 +403,7 @@ describe('SidebarView header automations button', () => {
             .map((child) => child.props?.testID ?? child.props?.accessibilityLabel)
             .filter(Boolean) as string[];
 
-        expect(order.indexOf('sidebar-header-actions-overflow')).toBeLessThan(order.indexOf('settings.title'));
+        expect(order.indexOf('sidebar-header-actions-overflow')).toBeLessThan(order.indexOf('nav-settings'));
         expect(order.indexOf('sidebar-header-actions-overflow')).toBeLessThan(order.indexOf('nav-new-session'));
     });
 });
