@@ -41,8 +41,15 @@ describe('useFeatureDecision - voice.agent dependency probing', () => {
 
         // The hook should have fetched the server snapshot to resolve the voice dependency
         expect(fetchMock).toHaveBeenCalled();
-        const fetchedUrl = String(fetchMock.mock.calls[0]?.[0] ?? '');
-        expect(fetchedUrl).toContain('/v1/features');
+        const toUrlString = (input: unknown): string => {
+            if (typeof input === 'string') return input;
+            if (input instanceof URL) return input.toString();
+            if (input && typeof (input as Request).url === 'string') return (input as Request).url;
+            return String(input);
+        };
+
+        const serverFeaturesCall = fetchMock.mock.calls.find(([input]) => toUrlString(input).includes('/v1/features'));
+        expect(serverFeaturesCall).toBeTruthy();
 
         // The final decision should be enabled since voice is enabled on the server
         expect(seen.at(-1)?.state).toBe('enabled');
@@ -75,4 +82,3 @@ describe('useFeatureDecision - voice.agent dependency probing', () => {
         expect(seen.at(-1)?.blockerCode).toBe('feature_disabled');
     }, 30_000);
 });
-

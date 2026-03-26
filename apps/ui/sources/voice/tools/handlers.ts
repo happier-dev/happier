@@ -88,18 +88,38 @@ function getPendingRequestsForSession(sessionId: string, session: unknown): Arra
     return getPendingSessionRequests(session);
   }
 
-  return [
-    ...listPendingPermissionRequests(candidateSession).map((request) => ({
+  const permissionRequests = (() => {
+    try {
+      return listPendingPermissionRequests(candidateSession);
+    } catch {
+      return [];
+    }
+  })();
+  const userActionRequests = (() => {
+    try {
+      return listPendingUserActionRequests(candidateSession);
+    } catch {
+      return [];
+    }
+  })();
+  const resolved = [
+    ...permissionRequests.map((request) => ({
       requestId: request.id,
       toolName: request.tool,
       requestKind: request.kind,
     })),
-    ...listPendingUserActionRequests(candidateSession).map((request) => ({
+    ...userActionRequests.map((request) => ({
       requestId: request.id,
       toolName: request.tool,
       requestKind: request.kind,
     })),
   ];
+
+  if (resolved.length > 0) {
+    return resolved;
+  }
+
+  return getPendingSessionRequests(session);
 }
 
 function listMatchingPendingRequestsAcrossSessions(

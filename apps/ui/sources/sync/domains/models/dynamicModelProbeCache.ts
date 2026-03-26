@@ -15,7 +15,7 @@ export const DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS = 60_000;
 export const DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS = 2_000;
 
 const PERSIST_KEY = 'dynamic-model-probe-cache-v1';
-const PERSIST_VERSION = 4;
+const PERSIST_VERSION = 5;
 const PERSIST_MAX_ENTRIES = 200;
 const PERSIST_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 

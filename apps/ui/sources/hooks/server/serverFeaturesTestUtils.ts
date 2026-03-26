@@ -207,7 +207,14 @@ export function stubServerFeaturesFetch(overrides: FixtureOverrides = {}): void 
 export function stubServerFeaturesFetchFailure(): void {
     vi.stubGlobal(
         'fetch',
-        vi.fn(async () => {
+        vi.fn(async (input: RequestInfo | URL) => {
+            const url = typeof input === 'string' ? input : String((input as any)?.url ?? input);
+            if (url.endsWith('/health')) {
+                return { ok: true, status: 200 } as any;
+            }
+            if (url.endsWith('/v1/auth/ping')) {
+                return { ok: true, status: 200 } as any;
+            }
             throw new Error('network down');
         }) as any,
     );

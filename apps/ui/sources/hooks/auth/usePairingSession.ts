@@ -5,6 +5,7 @@ import { buildPairingDeepLink } from '@/auth/pairing/pairingUrl';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getCachedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resolvePreferredShareableServerUrl } from '@/sync/domains/server/url/shareableServerUrl';
+import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import {
     pairingStart,
     pairingStatus,
@@ -106,6 +107,9 @@ export function usePairingSession(params: Readonly<{ enabled: boolean; isAuthent
         let cancelled = false;
 
         const poll = async () => {
+            if (!isRuntimeActive()) {
+                return;
+            }
             try {
                 const res = await pairingStatus({ pairId });
                 if (!res.ok) {

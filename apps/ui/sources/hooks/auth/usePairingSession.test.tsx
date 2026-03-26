@@ -3,6 +3,19 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
+const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: { OS: 'web' },
+        AppState: {
+            get currentState() {
+                return appState.currentState;
+            },
+        },
+    });
+});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,6 +51,7 @@ describe('usePairingSession (pairing deep link server URL)', () => {
         pairingStatusMock.mockClear();
         cachedCanonicalServerUrl = null;
         activeServerUrl = 'http://localhost:53288';
+        appState.currentState = 'active';
     });
 
     it('does not embed a loopback server URL in the deep link', async () => {
@@ -134,6 +148,51 @@ describe('usePairingSession (pairing deep link server URL)', () => {
             act(() => {
                 tree?.unmount();
             });
+        }
+    });
+
+    it('pauses pairing status polling while backgrounded', async () => {
+        vi.useFakeTimers();
+        appState.currentState = 'active';
+        const globalWithDocument = globalThis as unknown as { document?: { visibilityState?: string } };
+        const previousDocument = globalWithDocument.document;
+        const documentStub: { visibilityState: DocumentVisibilityState } = { visibilityState: 'hidden' };
+        globalWithDocument.document = documentStub;
+
+        const { usePairingSession } = await import('./usePairingSession');
+
+        let hookApi: ReturnType<typeof usePairingSession> | null = null;
+        function Probe() {
+            hookApi = usePairingSession({ enabled: true, isAuthenticated: true });
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<Probe />)).tree;
+        try {
+            await act(async () => {
+                const res = await hookApi!.startPairing();
+                expect(res.ok).toBe(true);
+            });
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1_100);
+            });
+
+            expect(pairingStatusMock).toHaveBeenCalledTimes(0);
+
+            documentStub.visibilityState = 'visible';
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1_100);
+            });
+
+            expect(pairingStatusMock).toHaveBeenCalled();
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            vi.useRealTimers();
+            globalWithDocument.document = previousDocument;
         }
     });
 });

@@ -201,10 +201,12 @@ export function resolveMachineCapabilitiesTimeoutMs(request: CapabilitiesDetectR
     const hasSlowLoginStatusCheck = hasSlowLoginStatusProbe(request);
     const isResumeChecklist = AGENT_IDS.some((agentId) => request.checklistId === resumeChecklistId(agentId));
     const isMachineDetailsChecklist = request.checklistId === CHECKLIST_IDS.MACHINE_DETAILS;
+    const isNewSessionChecklist = request.checklistId === CHECKLIST_IDS.NEW_SESSION;
     if (hasSlowLoginStatusCheck) return Math.max(fallback, DEFAULT_CLI_LOGIN_STATUS_TIMEOUT_MS);
     if (hasExecutionRunsCheck) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
     if (hasSlowVersionCheck || isResumeChecklist) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
     if (isMachineDetailsChecklist) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
+    if (isNewSessionChecklist) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
     return fallback;
 }
 

@@ -83,6 +83,13 @@ describe('useServerRetentionPolicies', () => {
 
         vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
+            if (url.endsWith('/health')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ ok: true }),
+                };
+            }
             const base = url.replace(/\/v1\/features$/, '');
             const payload = payloadByUrl.get(base);
             if (!payload) throw new Error(`Unexpected fetch: ${url}`);

@@ -1,5 +1,5 @@
-import type { AgentId } from '@/agents/catalog/catalog';
-import * as agentCatalog from '@/agents/catalog/catalog';
+import type { AgentId } from '@/agents/registry/registryCore';
+import { AGENT_IDS } from '@/agents/registry/registryCore';
 import { isProfileCompatibleWithAgent, type AIBackendProfile, type ProfileCompatibilitySummary } from './profileCompatibility';
 import { getBuiltInProfile } from './profileCatalog';
 
@@ -27,12 +27,7 @@ export type BuiltInProfileNameKey =
     | 'profiles.builtInNames.geminiApiKey'
     | 'profiles.builtInNames.geminiVertex';
 
-// Some tests partially mock `@/agents/catalog` and omit AGENT_IDS.
-// Keep profile helpers resilient by treating it as an optional runtime export.
-const allowedProfileClis =
-    (agentCatalog as Partial<{ AGENT_IDS: readonly string[] }>).AGENT_IDS ?? [];
-
-const ALLOWED_PROFILE_CLIS = new Set<string>(allowedProfileClis);
+const ALLOWED_PROFILE_CLIS = new Set<string>(AGENT_IDS as readonly string[]);
 
 export function getProfileSupportedAgentIds(profile: AIBackendProfile | null | undefined): AgentId[] {
     if (!profile) return [];
