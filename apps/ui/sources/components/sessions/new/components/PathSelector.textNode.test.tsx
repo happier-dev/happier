@@ -90,6 +90,24 @@ vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
 }));
 
 describe('PathSelector', () => {
+    it('does not suggest a hardcoded /projects path (case-sensitive filesystems)', async () => {
+        const { PathSelector } = await import('./PathSelector');
+
+        const tree = (await renderScreen(
+            <PathSelector
+                machineHomeDir="/home/luis"
+                selectedPath=""
+                onChangeSelectedPath={() => {}}
+                recentPaths={[]}
+                usePickerSearch={false}
+                favoriteDirectories={[]}
+                onChangeFavoriteDirectories={() => {}}
+            />,
+        )).tree;
+
+        expect(findTestInstanceByTypeWithProps(tree, 'Item', { title: '/home/luis/projects' })).toBeUndefined();
+    });
+
     it('submits the selected row immediately when confirm behavior is enabled', async () => {
         const onSubmitSelectedPath = vi.fn();
         const { PathSelector } = await import('./PathSelector');
@@ -147,6 +165,86 @@ describe('PathSelector', () => {
             serverId: 'server-1',
             initialPath: '/Users/leeroy/project',
         }));
+    });
+
+    it('uses the current typed draft as the browse modal starting path', async () => {
+        openMachinePathBrowserModalMock.mockReset();
+        openMachinePathBrowserModalMock.mockResolvedValueOnce('/Users/leeroy/from-browser');
+        const { PathSelector } = await import('./PathSelector');
+
+        const screen = await renderScreen(<PathSelector
+                    machineHomeDir="/Users/leeroy"
+                    selectedPath="/Users/leeroy/project"
+                    onChangeSelectedPath={vi.fn()}
+                    recentPaths={[]}
+                    usePickerSearch={false}
+                    favoriteDirectories={[]}
+                    onChangeFavoriteDirectories={() => {}}
+                    machineBrowse={{
+                        enabled: true,
+                        machineId: 'machine-1',
+                    }}
+                />);
+
+        const input = findTestInstanceByTypeWithProps(screen.tree, 'TextInput', { testID: 'path-selector-input' });
+        if (!input) {
+            throw new Error('Expected path selector input to render');
+        }
+
+        act(() => {
+            input.props.onChangeText('/Users/leeroy/Documents/Development/happier/dev');
+        });
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('path-browser-trigger');
+        });
+
+        expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            initialPath: '/Users/leeroy/Documents/Development/happier/dev',
+        }));
+    });
+
+    it('keeps typed path edits local until submit so the parent screen does not rerender on every keystroke', async () => {
+        const onChangeSelectedPath = vi.fn();
+        const onSubmitSelectedPath = vi.fn();
+        const { PathSelector } = await import('./PathSelector');
+
+        const screen = await renderScreen(<PathSelector
+                    machineHomeDir="/Users/leeroy"
+                    selectedPath="/Users/leeroy/project"
+                    onChangeSelectedPath={onChangeSelectedPath}
+                    onSubmitSelectedPath={onSubmitSelectedPath}
+                    submitBehavior="confirm"
+                    recentPaths={[]}
+                    usePickerSearch={false}
+                    favoriteDirectories={[]}
+                    onChangeFavoriteDirectories={() => {}}
+                    machineBrowse={{
+                        enabled: true,
+                        machineId: 'machine-1',
+                    }}
+                />);
+
+        const input = findTestInstanceByTypeWithProps(screen.tree, 'TextInput', { testID: 'path-selector-input' });
+        if (!input) {
+            throw new Error('Expected path selector input to render');
+        }
+
+        act(() => {
+            input.props.onChangeText('/Users/leeroy/Documents/Development/happier/dev');
+        });
+
+        expect(onChangeSelectedPath).not.toHaveBeenCalled();
+        expect(findTestInstanceByTypeWithProps(screen.tree, 'TextInput', { testID: 'path-selector-input' })?.props.value)
+            .toBe('/Users/leeroy/Documents/Development/happier/dev');
+
+        act(() => {
+            input.props.onSubmitEditing?.();
+        });
+
+        expect(onChangeSelectedPath).toHaveBeenCalledWith('/Users/leeroy/Documents/Development/happier/dev');
+        expect(onSubmitSelectedPath).toHaveBeenCalledWith('/Users/leeroy/Documents/Development/happier/dev');
     });
 
     it('does not render the browse button when machine browsing is not enabled', async () => {

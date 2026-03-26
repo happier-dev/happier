@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-
-import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
+import type { McpServersSettingsV1, SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import { createCapturingComponent, createPassThroughComponent, createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createUseSettingMock, installPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
@@ -11,70 +10,88 @@ import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { renderScreen } from '@/dev/testkit';
 
+type ReactActEnvironmentGlobal = typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-const capturedItems: Array<Record<string, unknown>> = [];
-const capturedItemGroups: Array<Record<string, unknown>> = [];
+type CapturedItemProps = Readonly<{
+    testID?: string;
+    rightElement?: unknown;
+    selected?: boolean;
+    subtitle?: unknown;
+} & Record<string, unknown>>;
+type CapturedItemGroupProps = Readonly<{ title?: React.ReactNode } & Record<string, unknown>>;
+
+const capturedItems: CapturedItemProps[] = [];
+const capturedItemGroups: CapturedItemGroupProps[] = [];
+
+const mcpServersSettingsFixture: McpServersSettingsV1 = {
+    v: 1,
+    strictMode: false,
+    servers: [
+        {
+            id: 'server-playwright',
+            name: 'playwright',
+            title: 'playwright',
+            transport: 'stdio',
+            stdio: { command: 'playwright', args: [] },
+            env: {},
+            createdAt: 1,
+            updatedAt: 2,
+        },
+    ],
+    bindings: [
+        {
+            id: 'binding-all',
+            serverId: 'server-playwright',
+            enabled: true,
+            target: { t: 'allMachines' },
+            createdAt: 1,
+            updatedAt: 2,
+        },
+    ],
+};
+const emptyMcpServersSettingsFixture: McpServersSettingsV1 = {
+    v: 1,
+    strictMode: false,
+    servers: [],
+    bindings: [],
+};
 
 installNewSessionComponentsCommonModuleMocks({
     icons: () => ({
         Ionicons: createPassThroughComponent('Ionicons'),
     }),
-	    reactNative: () => createReactNativeWebMock({
-	        View: createPassThroughComponent('View'),
-	        Pressable: createPassThroughComponent('Pressable'),
-	        ScrollView: createPassThroughComponent('ScrollView'),
+    reactNative: () => createReactNativeWebMock({
+        View: createPassThroughComponent('View'),
+        Pressable: createPassThroughComponent('Pressable'),
+        ScrollView: createPassThroughComponent('ScrollView'),
             ActivityIndicator: createPassThroughComponent('ActivityIndicator'),
-	    }),
-	    text: () => createTextModuleMock({
-	        // Some MCP strings are param-driven; keep tests stable by returning the key string.
-	        translate: (key) => key,
-	    }),
-	    unistyles: () => createUnistylesMock({
-	        theme: {
-	            colors: {
-	                groupped: { background: '#f5f5f5' },
+    }),
+    text: () => createTextModuleMock({
+        // Some MCP strings are param-driven; keep tests stable by returning the key string.
+        translate: (key) => key,
+    }),
+    unistyles: () => createUnistylesMock({
+        theme: {
+            colors: {
+                groupped: { background: '#f5f5f5' },
                 surface: '#fff',
                 divider: '#ddd',
                 textSecondary: '#666',
-	            },
-	        },
-	    }),
-	    storage: installPartialStorageModuleMock({
-	        useSetting: createUseSettingMock({
-	            values: {
-	                mcpServersSettingsV1: {
-	                    v: 1,
-	                    strictMode: false,
-	                    servers: [
-	                        {
-	                            id: 'server-playwright',
-	                            name: 'playwright',
-	                            title: 'playwright',
-	                            transport: 'stdio',
-	                            stdio: { command: 'playwright', args: [] },
-	                            env: {},
-	                            createdAt: 1,
-	                            updatedAt: 2,
-	                        },
-	                    ],
-	                    bindings: [
-	                        {
-	                            id: 'binding-all',
-	                            serverId: 'server-playwright',
-	                            enabled: true,
-	                            target: { t: 'allMachines' },
-	                            createdAt: 1,
-	                            updatedAt: 2,
-	                        },
-	                    ],
-	                    presets: [],
-	                } as any,
-	            },
-	        }),
-	    }),
-	});
+            },
+        },
+    }),
+    storage: installPartialStorageModuleMock({
+        useSetting: createUseSettingMock({
+            values: {
+                mcpServersSettingsV1: mcpServersSettingsFixture,
+            },
+        }),
+    }),
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemListStatic']));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -95,14 +112,14 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
     return {
         ...actual,
-	        getAgentCore: () => ({
-	            tools: {
-	                delivery: 'full',
-	            },
-	            displayNameKey: 'agents.mock.displayName',
-	        }),
-	    };
-	});
+        getAgentCore: () => ({
+            tools: {
+                delivery: 'full',
+            },
+            displayNameKey: 'agents.mock.displayName',
+        }),
+    };
+});
 
 vi.mock('@/components/settings/mcpServers/mcpServerUi', () => ({
     resolveAgentToolsDeliveryDescription: () => 'Tool delivery description',
@@ -170,7 +187,6 @@ describe('NewSessionMcpSelectionContent', () => {
                     onSelectionChange={() => {}}
                     onRefresh={() => {}}
                     onOpenSettings={() => {}}
-                    onClose={() => {}}
                     maxHeight={520}
                 />);
 
@@ -180,17 +196,19 @@ describe('NewSessionMcpSelectionContent', () => {
         const detectedGroup = capturedItemGroups
             .filter((group) => React.isValidElement(group.title))
             .find((group) => {
-                const titleEl = group.title as React.ReactElement<any>;
-                return (titleEl.props as any)?.title === 'newSession.mcpDetectedSectionTitleForAgent';
-            }) as any;
+                const titleEl = group.title as React.ReactElement<{ title: string }>;
+                return titleEl.props.title === 'newSession.mcpDetectedSectionTitleForAgent';
+            });
 
         expect(detectedGroup).toBeTruthy();
 
-        const titleEl = detectedGroup.title as React.ReactElement<any>;
-        const actions = (titleEl.props as any)?.actions as React.ReactNode;
+        const titleEl = detectedGroup!.title as React.ReactElement<{ actions?: React.ReactNode }>;
+        const actions = titleEl.props.actions;
         expect(React.isValidElement(actions)).toBe(true);
-        expect((actions as React.ReactElement<any>).props.testID).toBe('new-session.mcp.detected.refresh');
-        expect((actions as React.ReactElement<any>).props.loading).toBe(true);
+        const actionProps = (actions as React.ReactElement<{ testID?: string; loading?: boolean; accessibilityLabel?: string }>).props;
+        expect(actionProps.testID).toBe('new-session.mcp.detected.refresh');
+        expect(actionProps.loading).toBe(true);
+        expect(actionProps.accessibilityLabel).toBe('common.refresh');
     });
 
     it('does not render preview rows when session context is unavailable', async () => {
@@ -237,7 +255,6 @@ describe('NewSessionMcpSelectionContent', () => {
                     onSelectionChange={() => {}}
                     onRefresh={() => {}}
                     onOpenSettings={() => {}}
-                    onClose={() => {}}
                     maxHeight={520}
                 />);
 
@@ -315,21 +332,20 @@ describe('NewSessionMcpSelectionContent', () => {
                     onSelectionChange={() => {}}
                     onRefresh={() => {}}
                     onOpenSettings={() => {}}
-                    onClose={() => {}}
                     maxHeight={520}
                 />);
 
-	        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.built-in.happier')).toBe(false);
-	        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.managed-enabled')).toBe(true);
-	        expect(capturedItems.filter((item) => item.testID === 'new-session.mcp.row.server-playwright')).toHaveLength(1);
-	        const managed = capturedItems.find((item) => item.testID === 'new-session.mcp.row.server-playwright');
-	        expect(managed?.selected).toBe(false);
-	        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.detected.sequential-thinking')).toBe(true);
-	        expect(capturedItemGroups.some((group) => group.title === 'settings.mcpServersSourceBuiltIn')).toBe(false);
+        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.built-in.happier')).toBe(false);
+        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.managed-enabled')).toBe(true);
+        expect(capturedItems.filter((item) => item.testID === 'new-session.mcp.row.server-playwright')).toHaveLength(1);
+        const managed = capturedItems.find((item) => item.testID === 'new-session.mcp.row.server-playwright');
+        expect(managed?.selected).toBe(false);
+        expect(capturedItems.some((item) => item.testID === 'new-session.mcp.detected.sequential-thinking')).toBe(true);
+        expect(capturedItemGroups.some((group) => group.title === 'settings.mcpServersSourceBuiltIn')).toBe(false);
 
-	        const detected = capturedItems.find((item) => item.testID === 'new-session.mcp.detected.sequential-thinking');
-	        expect(detected?.subtitle).toBe('Scope · Auth');
-	    });
+        const detected = capturedItems.find((item) => item.testID === 'new-session.mcp.detected.sequential-thinking');
+        expect(detected?.subtitle).toBe('Scope · Auth');
+    });
 
     it('does not render an extra empty-state row when Happier servers exist but preview resolves empty', async () => {
         capturedItems.length = 0;
@@ -360,7 +376,6 @@ describe('NewSessionMcpSelectionContent', () => {
                     onSelectionChange={() => {}}
                     onRefresh={() => {}}
                     onOpenSettings={() => {}}
-                    onClose={() => {}}
                     maxHeight={520}
                 />);
 
@@ -446,18 +461,12 @@ describe('NewSessionMcpSelectionContent', () => {
         vi.doMock('@/sync/domains/state/storage', () => ({
             useSetting: createUseSettingMock({
                 values: {
-                    mcpServersSettingsV1: {
-                        v: 1,
-                        strictMode: false,
-                        servers: [],
-                        bindings: [],
-                        presets: [],
-                    } as any,
+                    mcpServersSettingsV1: emptyMcpServersSettingsFixture,
                 },
             }),
         }));
         vi.doMock('@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1', () => ({
-            normalizeMcpServersSettingsV1: (value: any) => value,
+            normalizeMcpServersSettingsV1: (value: McpServersSettingsV1) => value,
         }));
 
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
@@ -485,7 +494,6 @@ describe('NewSessionMcpSelectionContent', () => {
             onSelectionChange={() => {}}
             onRefresh={() => {}}
             onOpenSettings={() => {}}
-            onClose={() => {}}
             maxHeight={520}
         />);
 
@@ -494,10 +502,20 @@ describe('NewSessionMcpSelectionContent', () => {
         // Avoid rendering a second empty-state row for the detected/provider section.
         expect(capturedItems.some((item) => item.testID === 'new-session.mcp.detected-empty')).toBe(false);
 
-        const happierEmpty = capturedItems.find((item) => item.testID === 'new-session.mcp.happier-empty') as any;
-        const rightElement = happierEmpty?.rightElement as React.ReactNode;
-        expect(rightElement).toBeTruthy();
+        const happierEmpty = capturedItems.find((item) => item.testID === 'new-session.mcp.happier-empty');
+        expect(happierEmpty?.rightElement).toBeFalsy();
 
+        const happierGroup = capturedItemGroups
+            .filter((group) => React.isValidElement(group.title))
+            .find((group) => {
+                const titleEl = group.title as React.ReactElement<{ title: string }>;
+                return titleEl.props.title === 'newSession.mcpHappierSectionTitle';
+            });
+
+        expect(happierGroup).toBeTruthy();
+
+        const titleEl = happierGroup!.title as React.ReactElement<{ actions?: React.ReactNode }>;
+        const actions = titleEl.props.actions;
         const foundTestIds: string[] = [];
         const walk = (node: React.ReactNode) => {
             if (!node) return;
@@ -506,21 +524,22 @@ describe('NewSessionMcpSelectionContent', () => {
                 return;
             }
             if (React.isValidElement(node)) {
-                const testID = (node.props as any)?.testID;
+                const props = node.props as { testID?: unknown; children?: React.ReactNode };
+                const testID = props.testID;
                 if (typeof testID === 'string') {
                     foundTestIds.push(testID);
                 }
-                const children = (node.props as any)?.children;
+                const children = props.children;
                 if (children) {
                     walk(children);
                 }
             }
         };
-        walk(rightElement);
+        walk(actions);
 
         expect(foundTestIds).toEqual(expect.arrayContaining([
-            'new-session.mcp.happier.empty.refresh',
-            'new-session.mcp.happier.empty.open-settings',
+            'new-session.mcp.happier.refresh',
+            'new-session.mcp.happier.open-settings',
         ]));
     });
 });

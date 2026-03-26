@@ -47,12 +47,12 @@ export type NewSessionMcpSelectionContentProps = Readonly<{
     onSelectionChange: (selection: SessionMcpSelectionV1) => void;
     onRefresh: () => void;
     onOpenSettings: () => void;
-    onClose: () => void;
     maxHeight: number;
 }>;
 
 type GroupActionButtonProps = Readonly<{
     testID: string;
+    accessibilityLabel: string;
     icon: React.ComponentProps<typeof Ionicons>['name'];
     loading?: boolean;
     onPress: () => void;
@@ -66,6 +66,8 @@ function GroupActionButton(props: GroupActionButtonProps) {
     return (
         <Pressable
             testID={props.testID}
+            accessibilityRole="button"
+            accessibilityLabel={props.accessibilityLabel}
             onPress={isLoading ? undefined : props.onPress}
             disabled={isLoading}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -259,12 +261,14 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                                     <>
                                         <GroupActionButton
                                             testID="new-session.mcp.happier.refresh"
+                                            accessibilityLabel={t('common.refresh')}
                                             icon="refresh-outline"
                                             loading={props.loading}
                                             onPress={props.onRefresh}
                                         />
                                         <GroupActionButton
                                             testID="new-session.mcp.happier.open-settings"
+                                            accessibilityLabel={t('tabs.settings')}
                                             icon="settings-outline"
                                             onPress={props.onOpenSettings}
                                         />
@@ -279,21 +283,6 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                                 title={t('newSession.mcpHappierEmptyTitle')}
                                 subtitle={t('newSession.mcpHappierEmptySubtitle')}
                                 showChevron={false}
-                                rightElement={(
-                                    <View style={styles.emptyActions}>
-                                        <GroupActionButton
-                                            testID="new-session.mcp.happier.empty.refresh"
-                                            icon="refresh-outline"
-                                            loading={props.loading}
-                                            onPress={props.onRefresh}
-                                        />
-                                        <GroupActionButton
-                                            testID="new-session.mcp.happier.empty.open-settings"
-                                            icon="settings-outline"
-                                            onPress={props.onOpenSettings}
-                                        />
-                                    </View>
-                                )}
                             />
                         ) : (
                             <>
@@ -339,6 +328,7 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                                     actions={(
                                         <GroupActionButton
                                             testID="new-session.mcp.detected.refresh"
+                                            accessibilityLabel={t('common.refresh')}
                                             icon="refresh-outline"
                                             loading={props.loading}
                                             onPress={props.onRefresh}
@@ -452,10 +442,5 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     list: {
         backgroundColor: 'transparent',
-    },
-    emptyActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
     },
 }));

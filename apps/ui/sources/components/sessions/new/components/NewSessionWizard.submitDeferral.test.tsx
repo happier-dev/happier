@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
@@ -127,10 +126,14 @@ vi.mock('@/sync/sync', () => ({
 
 describe('NewSessionWizard submit deferral', () => {
     it('defers web submission by one animation frame before invoking handleCreateSession', async () => {
+        vi.useFakeTimers();
+        const { renderScreen } = await import('@/dev/testkit');
         const { NewSessionWizard } = await import('./NewSessionWizard');
+        const { Platform } = await import('react-native');
         const handleCreateSession = vi.fn();
         const prevRaf = (globalThis as any).requestAnimationFrame;
         delete (globalThis as any).requestAnimationFrame;
+        (Platform as any).OS = 'web';
 
         const screen = await renderScreen(<NewSessionWizard
                     layout={{
@@ -226,12 +229,11 @@ describe('NewSessionWizard submit deferral', () => {
 
             expect(handleCreateSession).not.toHaveBeenCalled();
 
-            await new Promise<void>((resolve) => {
-                setTimeout(resolve, 0);
-            });
+            await vi.runOnlyPendingTimersAsync();
 
             expect(handleCreateSession).toHaveBeenCalledTimes(1);
         } finally {
+            vi.useRealTimers();
             (globalThis as any).requestAnimationFrame = prevRaf;
             await screen.unmount();
         }

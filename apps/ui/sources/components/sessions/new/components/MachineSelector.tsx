@@ -82,6 +82,22 @@ export function MachineSelector({
         () => favoriteMachines.filter((machine) => !machine.revokedAt),
         [favoriteMachines],
     );
+    const favoriteMachineIdSet = React.useMemo(() => {
+        if (!showFavorites) return new Set<string>();
+        return new Set<string>(visibleFavoriteMachines.map((machine) => machine.id));
+    }, [showFavorites, visibleFavoriteMachines]);
+    const visibleRecentMachinesWithoutFavorites = React.useMemo(() => {
+        if (!showRecent) return visibleRecentMachines;
+        if (favoriteMachineIdSet.size === 0) return visibleRecentMachines;
+        return visibleRecentMachines.filter((machine) => !favoriteMachineIdSet.has(machine.id));
+    }, [favoriteMachineIdSet, showRecent, visibleRecentMachines]);
+    const visibleAllMachines = React.useMemo(() => {
+        const pinnedIds = new Set<string>();
+        if (showFavorites) for (const machine of visibleFavoriteMachines) pinnedIds.add(machine.id);
+        if (showRecent) for (const machine of visibleRecentMachinesWithoutFavorites) pinnedIds.add(machine.id);
+        if (pinnedIds.size === 0) return visibleMachines;
+        return visibleMachines.filter((machine) => !pinnedIds.has(machine.id));
+    }, [showFavorites, showRecent, visibleFavoriteMachines, visibleMachines, visibleRecentMachinesWithoutFavorites]);
 
     return (
         <SearchableListSelector<Machine>
@@ -146,8 +162,8 @@ export function MachineSelector({
                 showSearch,
                 allowCustomInput: false,
             }}
-            items={visibleMachines}
-            recentItems={visibleRecentMachines}
+            items={visibleAllMachines}
+            recentItems={visibleRecentMachinesWithoutFavorites}
             favoriteItems={visibleFavoriteMachines}
             selectedItem={selectedMachine}
             onSelect={onSelect}

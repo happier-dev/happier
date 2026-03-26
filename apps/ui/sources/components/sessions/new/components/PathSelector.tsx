@@ -139,6 +139,11 @@ export function PathSelector({
     const inputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
     const searchInputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
     const searchWasFocusedRef = useRef(false);
+    const [draftSelectedPath, setDraftSelectedPath] = useState(selectedPath);
+
+    useEffect(() => {
+        setDraftSelectedPath(selectedPath);
+    }, [selectedPath]);
 
     const [uncontrolledSearchQuery, setUncontrolledSearchQuery] = useState('');
     const isSearchQueryControlled = controlledSearchQuery !== undefined && onChangeSearchQueryProp !== undefined;
@@ -159,7 +164,6 @@ export function PathSelector({
         const homeDir = machineHomeDir || '/home';
         return [
             homeDir,
-            `${homeDir}/projects`,
             `${homeDir}/Documents`,
             `${homeDir}/Desktop`,
         ];
@@ -282,11 +286,11 @@ export function PathSelector({
     }, [favoriteDirectories, machineHomeDir, onChangeFavoriteDirectories]);
 
     const handleChangeSelectedPath = React.useCallback((text: string) => {
-        onChangeSelectedPath(text);
+        setDraftSelectedPath(text);
         if (submittedCustomPath && text.trim() !== submittedCustomPath) {
             setSubmittedCustomPath(null);
         }
-    }, [onChangeSelectedPath, submittedCustomPath]);
+    }, [submittedCustomPath]);
 
     const focusInputAtEnd = React.useCallback((value: string) => {
         if (!focusInputOnSelect) return;
@@ -301,6 +305,7 @@ export function PathSelector({
     }, [focusInputOnSelect]);
 
     const setPathAndFocus = React.useCallback((path: string) => {
+        setDraftSelectedPath(path);
         onChangeSelectedPath(path);
         if (submitBehavior === 'confirm') {
             onSubmitSelectedPath?.(path);
@@ -311,7 +316,7 @@ export function PathSelector({
     }, [focusInputAtEnd, onChangeSelectedPath, onSubmitSelectedPath, submitBehavior]);
 
     const handleSubmitPath = React.useCallback(() => {
-        const trimmed = selectedPath.trim();
+        const trimmed = draftSelectedPath.trim();
         if (!trimmed) return;
 
         if (trimmed !== selectedPath) {
@@ -322,7 +327,7 @@ export function PathSelector({
         if (submitBehavior !== 'confirm') {
             setSubmittedCustomPath(trimmed);
         }
-    }, [onChangeSelectedPath, onSubmitSelectedPath, selectedPath, submitBehavior]);
+    }, [draftSelectedPath, onChangeSelectedPath, onSubmitSelectedPath, selectedPath, submitBehavior]);
 
     const handleBrowseMachinePath = React.useCallback(async () => {
         if (!machineBrowse?.enabled || !machineBrowse.machineId) return;
@@ -330,9 +335,10 @@ export function PathSelector({
             machineId: machineBrowse.machineId,
             serverId: machineBrowse.serverId,
             title: machineBrowse.title,
-            initialPath: resolveAbsolutePath(selectedPath.trim(), machineHomeDir),
+            initialPath: resolveAbsolutePath(draftSelectedPath.trim(), machineHomeDir),
         });
         if (selected) {
+            setDraftSelectedPath(selected);
             onChangeSelectedPath(selected);
             if (submitBehavior === 'confirm') {
                 onSubmitSelectedPath?.(selected);
@@ -340,7 +346,7 @@ export function PathSelector({
             }
             setSubmittedCustomPath(null);
         }
-    }, [machineBrowse, machineHomeDir, onChangeSelectedPath, onSubmitSelectedPath, selectedPath, submitBehavior]);
+    }, [draftSelectedPath, machineBrowse, machineHomeDir, onChangeSelectedPath, onSubmitSelectedPath, submitBehavior]);
 
     const renderRightElement = React.useCallback((absolutePath: string, isSelected: boolean, isFavorite: boolean) => {
         return (
@@ -433,7 +439,7 @@ export function PathSelector({
                             <TextInput
                                 testID="path-selector-input"
                                 ref={inputRef}
-                                value={selectedPath}
+                                value={draftSelectedPath}
                                 onChangeText={handleChangeSelectedPath}
                                 placeholder={t('newSession.pathPicker.enterPathPlaceholder')}
                                 placeholderTextColor={theme.colors.input.placeholder}

@@ -13,9 +13,13 @@ import { renderScreen } from '@/dev/testkit';
 const captured = vi.hoisted(() => ({
     lastConfig: null as any,
     lastItems: null as any,
+    lastRecentItems: null as any,
+    lastFavoriteItems: null as any,
     reset() {
         this.lastConfig = null;
         this.lastItems = null;
+        this.lastRecentItems = null;
+        this.lastFavoriteItems = null;
     },
 }));
 
@@ -47,6 +51,8 @@ vi.mock('@/components/ui/forms/SearchableListSelector', () => ({
     SearchableListSelector: (props: any) => {
         captured.lastConfig = props?.config ?? null;
         captured.lastItems = props?.items ?? null;
+        captured.lastRecentItems = props?.recentItems ?? null;
+        captured.lastFavoriteItems = props?.favoriteItems ?? null;
         return null;
     },
 }));
@@ -95,5 +101,29 @@ describe('MachineSelector (disable offline)', () => {
 
         expect(Array.isArray(captured.lastItems)).toBe(true);
         expect((captured.lastItems as any[]).map((m) => m.id)).toEqual(['m-ok']);
+    });
+
+    it('omits recent and favorite machines from the all-section items to avoid duplicates', async () => {
+        captured.reset();
+
+        const machines: any[] = [
+            { id: 'm-1', active: true, activeAt: Date.now(), revokedAt: null, metadata: { displayName: 'One' } },
+            { id: 'm-2', active: true, activeAt: Date.now(), revokedAt: null, metadata: { displayName: 'Two' } },
+        ];
+
+        await renderScreen(React.createElement(MachineSelector as any, {
+                    machines,
+                    selectedMachine: null,
+                    recentMachines: [machines[0]],
+                    favoriteMachines: [machines[0]],
+                    onSelect: vi.fn(),
+                    showCliGlyphs: false,
+                    showRecent: true,
+                    showFavorites: true,
+                }));
+
+        expect((captured.lastRecentItems as any[]).map((m) => m.id)).toEqual([]);
+        expect((captured.lastFavoriteItems as any[]).map((m) => m.id)).toEqual(['m-1']);
+        expect((captured.lastItems as any[]).map((m) => m.id)).toEqual(['m-2']);
     });
 });
