@@ -18,6 +18,7 @@ if (logPath) {
 const toolName = process.env.FAKE_CLAUDE_TOOL_NAME || '';
 const toolInput = process.env.FAKE_CLAUDE_TOOL_INPUT ? JSON.parse(process.env.FAKE_CLAUDE_TOOL_INPUT) : {};
 const hangTurn = process.env.FAKE_CLAUDE_HANG_TURN === '1';
+const compactTurn = process.env.FAKE_CLAUDE_COMPACT_TURN === '1';
 const multiChunk = process.env.FAKE_CLAUDE_MULTI_CHUNK === '1';
 const emitToolFlow = process.env.FAKE_CLAUDE_EMIT_TOOL_FLOW === '1';
 const emitWriteFlow = process.env.FAKE_CLAUDE_EMIT_WRITE_FLOW === '1';
@@ -26,6 +27,7 @@ const emitUsage = process.env.FAKE_CLAUDE_EMIT_USAGE === '1';
 
 let turn = 0;
 let didInit = false;
+let didCompact = false;
 
 const args = process.argv.slice(2);
 const resumeIdx = args.findIndex((a) => a === '--resume' || a === '-r');
@@ -61,6 +63,11 @@ const rl = readline.createInterface({ input: process.stdin });
 	        'utf8',
 	      );
 	    }
+    if (compactTurn && turn === 1 && !didCompact) {
+      didCompact = true;
+      process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'bada10c6-9299-4c45-abc4-91db9c0f935d' }) + '\\n');
+      return;
+    }
 	    if (toolName && turn === 1) {
 	      // Request permission for a tool call; the parent will reply with a control_response.
 	      const reqId = 'req-1';
@@ -134,12 +141,13 @@ type BackendRunContext = {
 };
 
 async function withFakeClaudeBackend(
-  params: Readonly<{
+    params: Readonly<{
     dirPrefix: string;
     permissionPolicy: 'no_tools' | 'read_only' | 'workspace_write';
     toolName?: string;
     toolInput?: Record<string, unknown>;
     hangTurn?: boolean;
+    compactTurn?: boolean;
     multiChunk?: boolean;
     emitToolFlow?: boolean;
     emitWriteFlow?: boolean;
@@ -177,6 +185,7 @@ async function withFakeClaudeBackend(
       delete process.env.FAKE_CLAUDE_TOOL_INPUT;
     }
     process.env.FAKE_CLAUDE_HANG_TURN = params.hangTurn ? '1' : '0';
+    process.env.FAKE_CLAUDE_COMPACT_TURN = params.compactTurn ? '1' : '0';
     process.env.FAKE_CLAUDE_MULTI_CHUNK = params.multiChunk ? '1' : '0';
     process.env.FAKE_CLAUDE_EMIT_TOOL_FLOW = params.emitToolFlow ? '1' : '0';
     process.env.FAKE_CLAUDE_EMIT_WRITE_FLOW = params.emitWriteFlow ? '1' : '0';
@@ -224,6 +233,7 @@ describe('ClaudeSdkAgentBackend', () => {
     delete process.env.FAKE_CLAUDE_TOOL_NAME;
     delete process.env.FAKE_CLAUDE_TOOL_INPUT;
     delete process.env.FAKE_CLAUDE_HANG_TURN;
+    delete process.env.FAKE_CLAUDE_COMPACT_TURN;
     delete process.env.FAKE_CLAUDE_MULTI_CHUNK;
     delete process.env.FAKE_CLAUDE_EMIT_TOOL_FLOW;
     delete process.env.FAKE_CLAUDE_EMIT_WRITE_FLOW;
@@ -726,6 +736,49 @@ describe('ClaudeSdkAgentBackend', () => {
         ]);
 
         expect(settled.startsWith('rejected:')).toBe(true);
+        expect(seen.join(' ')).toContain('FAKE_ASSIST_2');
+      },
+    );
+  });
+
+  it('treats a compaction session init as a turn boundary so queued prompts can continue without stopping the thread', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-compact-',
+        permissionPolicy: 'no_tools',
+        compactTurn: true,
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'please compact');
+        expect(typeof (backend as any).waitForResponseComplete).toBe('function');
+
+        const firstCompletion = (backend as any).waitForResponseComplete().then(
+          () => 'resolved',
+          (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`,
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+
+        const firstSettled = await Promise.race([
+          firstCompletion,
+          new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 300)),
+        ]);
+
+        expect(firstSettled).toBe('resolved');
+
+        await backend.sendPrompt(sessionId, 'follow-up after compaction');
+        await (backend as any).waitForResponseComplete();
+
         expect(seen.join(' ')).toContain('FAKE_ASSIST_2');
       },
     );

@@ -8,11 +8,11 @@ import { buildOpenCodeAgentRuntimeDescriptor } from '@happier-dev/agents';
 import { buildOpenCodeSessionEnvironmentVariables } from '../utils/opencodeSessionAffinity';
 import { resolveOpenCodeCliLaunchSpec } from '../utils/resolveOpenCodeCliCommand';
 import type { ImportedSessionHandoffBundle, OpenCodeSessionBundle } from '../../../session/handoff/types';
+import { OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES } from './opencodeHandoffLimits';
 
 type ExecFileAsync = (command: string, args: readonly string[]) => Promise<Readonly<{ stdout: string; stderr: string }>>;
 
 const execFileAsync = promisify(execFileCallback) as unknown as ExecFileAsync;
-const OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES = 8 * 1024 * 1024;
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 function resolveOpenCodeImportFileName(remoteSessionId: string): string {
@@ -75,7 +75,9 @@ export async function importOpenCodeSessionBundle(params: Readonly<{
       remoteSessionId: params.bundle.remoteSessionId,
       directSource: {
         kind: 'opencodeServer',
-        baseUrl: params.bundle.affinity.serverBaseUrl,
+        // Only pin baseUrl when the exported affinity explicitly requested it. Otherwise, allow the
+        // target machine to resolve its default opencode server URL independently.
+        baseUrl: params.bundle.affinity.serverBaseUrlExplicit ? params.bundle.affinity.serverBaseUrl : null,
         directory: params.targetPath,
       },
       ...(backendMode ? {

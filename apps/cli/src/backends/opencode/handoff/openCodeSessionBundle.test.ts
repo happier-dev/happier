@@ -28,6 +28,24 @@ async function createNodeShebangExecutable(name: string): Promise<{ commandPath:
   return { commandPath, runtimePath };
 }
 
+async function createNodeShebangExecutableWithLargeExport(params: Readonly<{
+  name: string;
+  remoteSessionId: string;
+  payloadBytes: number;
+}>): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'happier-opencode-cli-node-large-'));
+  const commandPath = join(root, params.name);
+  const script = [
+    '#!/usr/bin/env node',
+    `const payload = "a".repeat(${params.payloadBytes});`,
+    `process.stdout.write(JSON.stringify({ id: "${params.remoteSessionId}", payload }));`,
+    '',
+  ].join('\n');
+  await writeFile(commandPath, script, 'utf8');
+  await chmod(commandPath, 0o755);
+  return commandPath;
+}
+
 describe('opencode session handoff bundle', () => {
   it('exports the session via the resolved opencode CLI command and captures affinity metadata', async () => {
     const execFile = vi.fn<(command: string, args: readonly string[]) => Promise<{ stdout: string; stderr: string }>>(async () => ({
@@ -60,6 +78,29 @@ describe('opencode session handoff bundle', () => {
         serverBaseUrlExplicit: true,
       },
     });
+  });
+
+  it('exports large sessions without hitting Node execFile maxBuffer defaults', async () => {
+    const remoteSessionId = `op_sess_large_${process.pid}_${Date.now()}`;
+    const commandPath = await createNodeShebangExecutableWithLargeExport({
+      name: 'opencode',
+      remoteSessionId,
+      payloadBytes: 2 * 1024 * 1024,
+    });
+
+    const result = await exportOpenCodeSessionBundle({
+      metadata: {},
+      remoteSessionId,
+      processEnv: { HAPPIER_OPENCODE_PATH: commandPath },
+    });
+
+    expect(result.providerId).toBe('opencode');
+    expect(result.remoteSessionId).toBe(remoteSessionId);
+    const decoded = Buffer.from(result.exportJsonBase64, 'base64').toString('utf8');
+    const parsed = JSON.parse(decoded) as { id?: unknown; payload?: unknown };
+    expect(parsed.id).toBe(remoteSessionId);
+    expect(typeof parsed.payload).toBe('string');
+    expect((parsed.payload as string).length).toBe(2 * 1024 * 1024);
   });
 
   it('imports the session via the resolved opencode CLI command and returns resume metadata', async () => {
@@ -133,6 +174,47 @@ describe('opencode session handoff bundle', () => {
       },
       approvedNewDirectoryCreation: true,
       transcriptStorage: 'direct',
+    });
+  });
+
+  it('does not pin the opencode server baseUrl when the exported affinity marks it as non-explicit', async () => {
+    const execFile = vi.fn<(command: string, args: readonly string[]) => Promise<{ stdout: string; stderr: string }>>(async () => ({
+      stdout: '',
+      stderr: '',
+    }));
+    const commandPath = await createFakeExecutable('opencode');
+    const root = await mkdtemp(join(tmpdir(), 'happier-opencode-handoff-import-non-explicit-url-'));
+    const targetPath = join(root, 'workspace');
+
+    const result = await importOpenCodeSessionBundle({
+      bundle: {
+        providerId: 'opencode',
+        remoteSessionId: 'op_sess_non_explicit_url',
+        exportJsonBase64: Buffer.from('{"id":"op_sess_non_explicit_url"}', 'utf8').toString('base64'),
+        affinity: {
+          backendMode: 'server',
+          serverBaseUrl: 'http://127.0.0.1:4096',
+          serverBaseUrlExplicit: false,
+        },
+      },
+      targetPath,
+      execFile,
+      processEnv: { HAPPIER_OPENCODE_PATH: commandPath },
+    });
+
+    expect(result.directSource).toEqual({
+      kind: 'opencodeServer',
+      baseUrl: null,
+      directory: targetPath,
+    });
+    expect(result.agentRuntimeDescriptorV1?.provider).toMatchObject({
+      backendMode: 'server',
+      vendorSessionId: 'op_sess_non_explicit_url',
+    });
+    expect(result.agentRuntimeDescriptorV1?.provider).not.toHaveProperty('serverBaseUrl');
+    expect(result.agentRuntimeDescriptorV1?.provider).not.toHaveProperty('serverBaseUrlExplicit');
+    expect(result.resume.environmentVariables).toEqual({
+      HAPPIER_OPENCODE_BACKEND_MODE: 'server',
     });
   });
 

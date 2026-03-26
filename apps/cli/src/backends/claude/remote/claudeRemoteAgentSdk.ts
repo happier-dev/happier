@@ -558,12 +558,25 @@ export async function claudeRemoteAgentSdk(opts: {
         const checkpointIds: string[] = [];
         const checkpointIdSet = new Set<string>();
         let didFinalizeTurn = false;
+        let awaitingNextTurnStart = false;
 
         function recordCheckpointId(id: string) {
             if (checkpointIdSet.has(id)) return;
             checkpointIdSet.add(id);
             checkpointIds.push(id);
         }
+
+        const isUserTextMessage = (message: unknown): boolean => {
+            const msg = message as any;
+            return (
+                msg?.message?.role === 'user' &&
+                ((typeof msg.message.content === 'string' && msg.message.content.trim().length > 0) ||
+                    (Array.isArray(msg.message.content) &&
+                        msg.message.content.some(
+                            (c: any) => c?.type === 'text' && typeof c.text === 'string' && c.text.trim().length > 0,
+                        )))
+            );
+        };
 
         const ABORTED = Symbol('aborted');
         const waitForAbort = (signal: AbortSignal): Promise<typeof ABORTED> =>
@@ -718,6 +731,7 @@ export async function claudeRemoteAgentSdk(opts: {
         const finalizeCurrentTurn = async (params?: { completionEvent?: string }) => {
             if (didFinalizeTurn) return;
             didFinalizeTurn = true;
+            awaitingNextTurnStart = true;
             updateThinking(false);
             if (params?.completionEvent) {
                 opts.onCompletionEvent?.(params.completionEvent);
@@ -893,11 +907,11 @@ export async function claudeRemoteAgentSdk(opts: {
             //
             // Important: Claude Code can emit system/status/progress messages between stream_event stop and the
             // assembled assistant/user message. Do not flush pending tool blocks on those intermediary messages.
-            const messageType = (message as any)?.type;
-            if (pendingToolUseMessage && (messageType === 'assistant' || messageType === 'user' || messageType === 'result')) {
+            const incomingMessageType = (message as any)?.type;
+            if (pendingToolUseMessage && (incomingMessageType === 'assistant' || incomingMessageType === 'user' || incomingMessageType === 'result')) {
                 if (messageContainsToolUseId(message, pendingToolUseMessage.toolUseId)) {
                     pendingToolUseMessage = null;
-                } else if (messageType === 'user' && !messageContainsToolResultForToolUseId(message, pendingToolUseMessage.toolUseId)) {
+                } else if (incomingMessageType === 'user' && !messageContainsToolResultForToolUseId(message, pendingToolUseMessage.toolUseId)) {
                     // Not a boundary that implies the tool ran (tool_result) and not the assembled tool_use;
                     // keep buffering so we can still dedupe when the assistant tool_use arrives.
                 } else {
@@ -910,7 +924,7 @@ export async function claudeRemoteAgentSdk(opts: {
                 }
             }
 
-            if (pendingToolResultMessage && (messageType === 'assistant' || messageType === 'user' || messageType === 'result')) {
+            if (pendingToolResultMessage && (incomingMessageType === 'assistant' || incomingMessageType === 'user' || incomingMessageType === 'result')) {
                 if (messageContainsToolResultForToolUseId(message, pendingToolResultMessage.toolUseId)) {
                     pendingToolResultMessage = null;
                 } else {
@@ -928,6 +942,15 @@ export async function claudeRemoteAgentSdk(opts: {
                 if (!deduped) continue;
                 emitMessage(deduped);
                 recordSeenToolBlocks(deduped, seen);
+
+                if (
+                    awaitingNextTurnStart &&
+                    didFinalizeTurn &&
+                    (incomingMessageType === 'assistant' || (incomingMessageType === 'user' && isUserTextMessage(message)))
+                ) {
+                    awaitingNextTurnStart = false;
+                    didFinalizeTurn = false;
+                }
 
                 if (message && message.type === 'system' && message.subtype === 'init') {
                     const init = message as SDKSystemMessage;
@@ -947,17 +970,9 @@ export async function claudeRemoteAgentSdk(opts: {
 
             if (message && message.type === 'user') {
                 const msg = message as any;
-                const isUserTextMessage =
-                    msg.message?.role === 'user' &&
-                    ((typeof msg.message.content === 'string' && msg.message.content.trim().length > 0) ||
-                        (Array.isArray(msg.message.content) &&
-                            msg.message.content.some(
-                                (c: any) => c?.type === 'text' && typeof c.text === 'string' && c.text.trim().length > 0,
-                            )));
-
                 if (
                     enableFileCheckpointing &&
-                    isUserTextMessage &&
+                    isUserTextMessage(msg) &&
                     typeof msg.uuid === 'string' &&
                     msg.uuid.length > 0 &&
                     msg.uuid !== lastCheckpointId
