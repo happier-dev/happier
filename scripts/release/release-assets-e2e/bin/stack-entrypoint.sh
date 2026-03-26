@@ -68,7 +68,10 @@ fi
 
 if [[ -n "$HAPPIER_TGZ" && -f "$HAPPIER_TGZ" ]]; then
   echo "[stack] installing happier-cli from tarball: $HAPPIER_TGZ"
-  npm install -g "$HAPPIER_TGZ" >/dev/null
+  # `@happier-dev/stack` also exposes a `happier` shim. When we test installing the CLI
+  # tarball in the same environment, npm can fail with EEXIST on the `happier` bin link.
+  # Use --force so the CLI wins (this is an isolated e2e container).
+  npm install -g --force "$HAPPIER_TGZ" >/dev/null
   HAPPIER_PREFIX=(happier)
 elif [[ "$HAPPIER_CLI_INSTALL_MODE" == "npx" ]]; then
   echo "[stack] running happier-cli via npx: $HAPPIER_NPM_SPEC"
