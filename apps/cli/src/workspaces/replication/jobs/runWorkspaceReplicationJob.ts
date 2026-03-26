@@ -1,15 +1,10 @@
 import type { WorkspaceReplicationJobRecord, WorkspaceReplicationJobStore } from './workspaceReplicationJobStore';
 import { WorkspaceReplicationJobCancelRequestedError } from '../safety/workspaceReplicationJobCancelRequestedError';
-
-const TERMINAL_JOB_STATUSES = new Set<WorkspaceReplicationJobRecord['status']['status']>([
-  'completed',
-  'aborted',
-  'failed',
-  'awaiting_recovery',
-]);
+import { WorkspaceReplicationError } from '../workspaceReplicationError';
+import { isTerminalWorkspaceReplicationJobStatus } from './workspaceReplicationJobTerminalStatuses';
 
 function isTerminalJobRecord(record: WorkspaceReplicationJobRecord): boolean {
-  return TERMINAL_JOB_STATUSES.has(record.status.status);
+  return isTerminalWorkspaceReplicationJobStatus(record.status.status);
 }
 
 function resolveJobFailureMessage(error: unknown): string {
@@ -31,7 +26,10 @@ export async function runWorkspaceReplicationJob(params: Readonly<{
 }>): Promise<WorkspaceReplicationJobRecord> {
   const current = await params.jobStore.read(params.jobId);
   if (!current) {
-    throw new Error(`Workspace replication job not found: ${params.jobId}`);
+    throw new WorkspaceReplicationError({
+      code: 'job_not_found',
+      message: `Workspace replication job not found: ${params.jobId}`,
+    });
   }
   if (isTerminalJobRecord(current)) {
     return current;
@@ -54,7 +52,10 @@ export async function runWorkspaceReplicationJob(params: Readonly<{
     // Always return the canonical post-merge record so orchestration logic can't proceed with stale state.
     const merged = await params.jobStore.read(params.jobId);
     if (!merged) {
-      throw new Error(`Workspace replication job not found after write: ${params.jobId}`);
+      throw new WorkspaceReplicationError({
+        code: 'job_not_found',
+        message: `Workspace replication job not found after write: ${params.jobId}`,
+      });
     }
     return merged;
   } catch (error) {

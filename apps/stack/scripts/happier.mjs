@@ -8,6 +8,8 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getComponentDir, getRootDir, getStackName } from './utils/paths/paths.mjs';
 import { resolveCliHomeDir } from './utils/stack/dirs.mjs';
 import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv } from './utils/server/urls.mjs';
+import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
+import { resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { readCliDistIntegrity } from './utils/cli/cliDistIntegrity.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
@@ -207,7 +209,14 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
 
   const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName();
-  const serverPort = resolveServerPortFromEnv({ env: process.env, defaultPort: 3005 });
+  const runtimeStatePath = join(resolveStackEnvPath(stackName, process.env).baseDir, 'stack.runtime.json');
+  const serverPort = await resolveLocalServerPortForStack({
+    env: process.env,
+    stackMode: true,
+    stackName,
+    runtimeStatePath,
+    defaultPort: 3005,
+  });
   const prefixServerSelection = readPrefixServerSelection(argv);
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env });
 
@@ -245,8 +254,20 @@ async function main() {
 
   let env = { ...process.env };
   env.HAPPIER_HOME_DIR = env.HAPPIER_HOME_DIR || cliHomeDir;
+  // IMPORTANT:
+  // When running under a stack-scoped wrapper (`hstack stack happier <name>` / `hstack <stack> happier`),
+  // the user's CLI settings.json may still point at Happier Cloud (or another server). We must not let that
+  // override the stack-local server URL; otherwise stack-scoped commands would silently target the wrong
+  // server and resolve credentials from the wrong per-server directory.
+  const isStackScopedInvocation =
+    Boolean(String(env.HAPPIER_STACK_ENV_FILE ?? '').trim()) ||
+    Boolean(String(env.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim()) ||
+    Boolean(String(env.HAPPIER_STACK_STACK ?? '').trim());
+
   const settingsDefaults =
-    !prefixServerSelection.hasExplicitSelection ? readActiveServerUrlsFromCliSettings(env.HAPPIER_HOME_DIR) : null;
+    !isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection
+      ? readActiveServerUrlsFromCliSettings(env.HAPPIER_HOME_DIR)
+      : null;
   if (settingsDefaults) {
     if (settingsDefaults.localServerUrl && settingsDefaults.localServerUrl !== settingsDefaults.serverUrl) {
       env.HAPPIER_PUBLIC_SERVER_URL = settingsDefaults.serverUrl;

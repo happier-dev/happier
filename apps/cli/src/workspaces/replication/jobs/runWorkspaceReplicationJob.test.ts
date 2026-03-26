@@ -5,6 +5,35 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('runWorkspaceReplicationJob', () => {
+    it('throws a WorkspaceReplicationError when the job does not exist', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-run-job-missing-'));
+
+        try {
+            const { createWorkspaceReplicationJobStore } = await import('./workspaceReplicationJobStore');
+            const { runWorkspaceReplicationJob } = await import('./runWorkspaceReplicationJob');
+            const { WorkspaceReplicationError } = await import('../workspaceReplicationError');
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+
+            await expect(runWorkspaceReplicationJob({
+                jobStore,
+                jobId: 'job_missing_1',
+                run: async (current) => current,
+            })).rejects.toMatchObject({
+                name: 'WorkspaceReplicationError',
+                code: 'job_not_found',
+            });
+
+            await expect(runWorkspaceReplicationJob({
+                jobStore,
+                jobId: 'job_missing_1',
+                run: async (current) => current,
+            })).rejects.toBeInstanceOf(WorkspaceReplicationError);
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true });
+        }
+    });
+
     it('persists the callback result with an updated timestamp', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-run-job-'));
 

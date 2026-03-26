@@ -196,6 +196,34 @@ test('hstack stack happier <name> uses stack.runtime.json ports when env file do
   assert.equal(out.serverUrl, 'http://127.0.0.1:4777');
 });
 
+test('hstack happier (HAPPIER_STACK_STACK set) uses stack.runtime.json ports when env file does not pin HAPPIER_STACK_SERVER_PORT', async (t) => {
+  const fixture = await createHappyStackFixture(t, {
+    prefix: 'happier-stack-happy-runtime-ports-',
+    message: 'runtime-ports-env',
+    serverPort: 4888,
+    includePinnedServerPortInEnvFile: false,
+    // Simulate a stale owner pid but a still-running server process.
+    runtimeOwnerPid: 999999,
+    runtimeServerPid: process.pid,
+  });
+
+  const res = await runNodeCapture([join(rootDir, 'bin', 'happier.mjs')], {
+    cwd: rootDir,
+    env: {
+      ...fixture.baseEnv,
+      HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_ENV_FILE: join(fixture.storageDir, fixture.stackName, 'env'),
+    },
+  });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim());
+  assert.equal(out.message, 'runtime-ports-env');
+  assert.equal(out.stack, fixture.stackName);
+  assert.equal(out.serverUrl, 'http://127.0.0.1:4888');
+  assert.equal(out.webappUrl, 'http://localhost:4888');
+});
+
 test('hstack stack happier <name> --identity=<name> uses identity-scoped HAPPIER_HOME_DIR', async (t) => {
   const fixture = await createHappyStackFixture(t, {
     prefix: 'happier-stack-stack-happy-identity-',

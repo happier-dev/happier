@@ -1,6 +1,64 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Install ultra-early traps so that a SIGTERM during script parsing still yields a summary.json.
+# This must not depend on functions defined later in the file (large heredocs can delay parsing).
+#
+# Note: we optimistically seed VM_NAME from argv[1] so the early summary has a stable vmName/reportRoot.
+# Later argument parsing will override VM_NAME/SAFE_VM_NAME as needed.
+VM_NAME="${1:-happier-wsrepl-qa}"
+SAFE_VM_NAME="${VM_NAME//[^A-Za-z0-9._-]/_}"
+FINALIZED=0
+FAILURE_STAGE=""
+FAILURE_REASON=""
+STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+REPORT_ROOT="${WSREPL_QA_OUTPUT_DIR:-output/wsrepl-lima-matrix/$(date +"%Y%m%d-%H%M%S")-${SAFE_VM_NAME}}"
+PLAYWRIGHT_OUTDIR="${REPORT_ROOT}/playwright/attempt-01"
+mkdir -p "${REPORT_ROOT}" >/dev/null 2>&1 || true
+
+wsrepl_early_write_summary() {
+  if [[ "${FINALIZED}" == "1" ]]; then
+    return 0
+  fi
+  FINALIZED=1
+  local status="${1:-1}"
+  local ended_at
+  ended_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  local failure_stage_json="null"
+  local failure_reason_json="null"
+  if [[ -n "${FAILURE_STAGE}" ]]; then
+    failure_stage_json="\"${FAILURE_STAGE}\""
+  fi
+  if [[ -n "${FAILURE_REASON}" ]]; then
+    failure_reason_json="\"${FAILURE_REASON}\""
+  fi
+  cat > "${REPORT_ROOT}/summary.json" <<EOF
+{
+  "kind": "wsrepl_lima_matrix_wrapper",
+  "vmName": "${VM_NAME}",
+  "reportRoot": "${REPORT_ROOT}",
+  "playwrightOutDir": "${PLAYWRIGHT_OUTDIR}",
+  "startedAt": "${STARTED_AT}",
+  "endedAt": "${ended_at}",
+  "status": ${status},
+  "failureStage": ${failure_stage_json},
+  "failureReason": ${failure_reason_json}
+}
+EOF
+}
+
+wsrepl_early_terminate_due_to_signal() {
+  local exit_code="${1:-143}"
+  local signal_name="${2:-term}"
+  FAILURE_STAGE="terminated"
+  FAILURE_REASON="signal_${signal_name}"
+  exit "${exit_code}"
+}
+
+trap 'status=$?; wsrepl_early_write_summary "${status}"; exit "${status}"' EXIT
+trap 'wsrepl_early_terminate_due_to_signal 143 term' TERM
+trap 'wsrepl_early_terminate_due_to_signal 130 int' INT
+
 # Host↔Lima workspace replication/handoff QA harness (non-destructive).
 #
 # This runner:
@@ -30,6 +88,11 @@ set -euo pipefail
 #   WSREPL_QA_TIMEOUT_MS=...  # default: 1800000 (30min) when HAPPIER_QA_TIMEOUT_MS is unset
 #   WSREPL_QA_DAEMON_START_RETRIES=...  # default: 1 (retry wrapper-managed host daemon restarts on transient failures)
 #   WSREPL_QA_DAEMON_START_RETRY_DELAY_MS=...  # default: 250 (delay between host daemon start retries)
+#   WSREPL_QA_HOST_DAEMON_WATCHDOG=1  # enable a best-effort watchdog that restarts the host daemon while Playwright runs
+#   WSREPL_QA_HOST_DAEMON_WATCHDOG_INTERVAL_MS=...  # default: 1000 (how often the watchdog probes)
+#   WSREPL_QA_MACHINE_ID_POLL_RETRIES=...  # default: 40 (poll daemon status until machineId is persisted)
+#   WSREPL_QA_MACHINE_ID_POLL_DELAY_MS=...  # default: 250 (delay between machineId polls)
+#   WSREPL_QA_HOST_HOME_REL=...  # if set, run the host daemon under $HOME/<rel> (isolated from stack-managed CLI home)
 #   WSREPL_QA_FORCE_VM_RECONFIGURE=1  # force stop/reconfigure/start via macos-lima-vm.sh (default is reuse-first)
 #   WSREPL_QA_VM_HAPPIER_MODE=skip|require|autoupdate  # default: require (fail closed if the guest is running an unexpected Happier build)
 #     - autoupdate builds a Linux CLI artifact from this repo and installs it into the VM
@@ -199,6 +262,15 @@ mkdir -p "${REPORT_ROOT}"
 echo "[wsrepl-qa] vm: ${VM_NAME}"
 echo "[wsrepl-qa] report dir: ${REPORT_ROOT}"
 
+FINALIZED=0
+FAILURE_STAGE=""
+FAILURE_REASON=""
+STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+PLAYWRIGHT_OUTDIR="${REPORT_ROOT}/playwright"
+DAEMON_DIAG_DIR="${REPORT_ROOT}/daemon"
+PLAYWRIGHT_ATTEMPT=1
+PLAYWRIGHT_ROOTDIR=""
+
 write_json_file() {
   local file_path="$1"
   shift
@@ -213,6 +285,55 @@ path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
 PY
 }
+
+ensure_summary() {
+  if [[ "${FINALIZED}" == "1" ]]; then
+    return 0
+  fi
+  FINALIZED=1
+  local status="$1"
+  local ended_at
+  ended_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  # Early summary: keep it minimal, but always write a usable wrapper artifact even if we were
+  # interrupted before later helper functions were defined.
+  local payload
+  payload="$(python3 - "$VM_NAME" "$REPORT_ROOT" "$PLAYWRIGHT_OUTDIR" "$STARTED_AT" "$ended_at" "$status" "$FAILURE_STAGE" "$FAILURE_REASON" <<'PY'
+import json
+import sys
+
+vm_name, report_root, playwright_outdir, started_at, ended_at, status, failure_stage, failure_reason = sys.argv[1:]
+payload = {
+  "kind": "wsrepl_lima_matrix_wrapper",
+  "vmName": vm_name,
+  "reportRoot": report_root,
+  "playwrightOutDir": playwright_outdir,
+  "startedAt": started_at,
+  "endedAt": ended_at,
+  "status": int(status),
+  "failureStage": (failure_stage or "").strip() or None,
+  "failureReason": (failure_reason or "").strip() or None,
+}
+print(json.dumps(payload))
+PY
+)"
+
+  write_json_file "${REPORT_ROOT}/summary.json" "${payload}"
+}
+
+terminate_due_to_signal() {
+  local exit_code="${1:-143}"
+  local signal_name="${2:-term}"
+  FAILURE_STAGE="terminated"
+  FAILURE_REASON="signal_${signal_name}"
+  exit "${exit_code}"
+}
+
+# Install early traps so that a mid-run kill always yields a summary.json, even if the wrapper
+# is terminated before it reaches the later trap installation.
+trap 'status=$?; ensure_summary "${status}"; exit "${status}"' EXIT
+trap 'terminate_due_to_signal 143 term' TERM
+trap 'terminate_due_to_signal 130 int' INT
 
 write_wsrepl_build_marker() {
   local file_path="$1"
@@ -325,16 +446,6 @@ finally:
     pass
 PY
 }
-
-FINALIZED=0
-STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-PLAYWRIGHT_OUTDIR="${REPORT_ROOT}/playwright"
-DAEMON_DIAG_DIR="${REPORT_ROOT}/daemon"
-FAILURE_STAGE=""
-FAILURE_REASON=""
-PLAYWRIGHT_ATTEMPT=1
-PLAYWRIGHT_ROOTDIR=""
-
 init_daemon_diagnostic_placeholders() {
   mkdir -p "${DAEMON_DIAG_DIR}"
   for name in \
@@ -365,6 +476,54 @@ read_wsrepl_daemon_log_tail_lines() {
   fi
   echo "${raw}"
   return 0
+}
+
+read_wsrepl_machine_id_poll_retries() {
+  local raw="${WSREPL_QA_MACHINE_ID_POLL_RETRIES:-}"
+  if [[ -z "${raw}" ]]; then
+    echo "40"
+    return 0
+  fi
+  if [[ "${raw}" -lt 0 ]]; then
+    echo "0"
+    return 0
+  fi
+  echo "${raw}"
+  return 0
+}
+
+read_wsrepl_machine_id_poll_delay_s() {
+  local raw="${WSREPL_QA_MACHINE_ID_POLL_DELAY_MS:-}"
+  if [[ -z "${raw}" ]]; then
+    raw="250"
+  fi
+  python3 - <<'PY' "${raw}" 2>/dev/null || true
+import sys
+try:
+  ms = int(sys.argv[1])
+except Exception:
+  ms = 250
+if ms < 0:
+  ms = 0
+print(f"{ms/1000.0:.3f}")
+PY
+}
+
+read_wsrepl_host_daemon_watchdog_interval_s() {
+  local raw="${WSREPL_QA_HOST_DAEMON_WATCHDOG_INTERVAL_MS:-}"
+  if [[ -z "${raw}" ]]; then
+    raw="1000"
+  fi
+  python3 - <<'PY' "${raw}" 2>/dev/null || true
+import sys
+try:
+  ms = int(sys.argv[1])
+except Exception:
+  ms = 1000
+if ms < 0:
+  ms = 0
+print(f"{ms/1000.0:.3f}")
+PY
 }
 
 refresh_daemon_log_tail_best_effort() {
@@ -508,9 +667,19 @@ run_host_happier() {
 
 resolve_stack_cli_access_key_path_for_ui_url() {
   local explicit="${HAPPIER_QA_ACCESS_KEY_PATH:-}"
-  if [[ -n "${explicit}" && -f "${explicit}" ]]; then
-    echo "${explicit}"
-    return 0
+  if [[ -n "${explicit}" ]]; then
+    # For watchdog stack hint resolution we only need the path shape to recover
+    # `<cli_root>/servers/<serverId>/access.key`. Prefer explicit caller input
+    # even if the file is not present yet (it may appear after the daemon seeds
+    # credentials), but fail closed if the path doesn't look like an access key.
+    if [[ -f "${explicit}" ]]; then
+      echo "${explicit}"
+      return 0
+    fi
+    if [[ "${explicit}" == */access.key ]]; then
+      echo "${explicit}"
+      return 0
+    fi
   fi
 
   local stacks_root="$HOME/.happier/stacks"
@@ -825,6 +994,7 @@ restart_host_daemon_and_capture_logs() {
   local status_file="${DAEMON_DIAG_DIR}/host.daemon.status.txt"
   local log_path_file="${DAEMON_DIAG_DIR}/host.daemon.log.path.txt"
   local log_tail_file="${DAEMON_DIAG_DIR}/host.daemon.log.tail.txt"
+  local provider_install_file=""
 
   local stack_cli_root=""
   local stack_active_server_id=""
@@ -833,6 +1003,63 @@ restart_host_daemon_and_capture_logs() {
   if [[ -n "${stack_home_hint}" ]]; then
     stack_cli_root="$(printf "%s" "${stack_home_hint}" | cut -d '|' -f 1)"
     stack_active_server_id="$(printf "%s" "${stack_home_hint}" | cut -d '|' -f 2)"
+  fi
+
+  # Optionally run the host daemon in an isolated home directory so other stack tooling (or other QA
+  # runs) does not stop it mid-matrix. When enabled, we pre-seed the stack server credentials into
+  # the isolated home so the daemon registers under the same account as the UI.
+  local host_home_rel="${WSREPL_QA_HOST_HOME_REL:-}"
+  local stack_access_key_src=""
+  if [[ -n "${host_home_rel}" && -n "${stack_active_server_id}" ]]; then
+    stack_access_key_src="$(resolve_stack_cli_access_key_path_for_ui_url || true)"
+    if [[ -n "${stack_access_key_src}" && -f "${stack_access_key_src}" ]]; then
+      local host_home_dir="$HOME/${host_home_rel}"
+      local host_access_key_dst="${host_home_dir}/servers/${stack_active_server_id}/access.key"
+      mkdir -p "$(dirname "${host_access_key_dst}")"
+      cp "${stack_access_key_src}" "${host_access_key_dst}"
+      chmod 600 "${host_access_key_dst}" 2>/dev/null || true
+      stack_cli_root="${host_home_dir}"
+    fi
+  fi
+
+  local host_provider_install_id=""
+  host_provider_install_id="${HAPPIER_QA_PREFERRED_AGENT_ENGINES%%,*}"
+  if [[ -z "${host_provider_install_id}" ]]; then
+    host_provider_install_id="codex"
+  fi
+  provider_install_file="${DAEMON_DIAG_DIR}/host.provider.install.${host_provider_install_id}.txt"
+
+  if [[ "${WSREPL_QA_SKIP_HOST_PROVIDER_INSTALL:-0}" != "1" ]]; then
+    echo "[wsrepl-qa] ensure host provider installed: ${host_provider_install_id}..."
+    set +e
+    if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+      if [[ -n "${server_url}" ]]; then
+        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" \
+          run_host_happier install provider "${host_provider_install_id}" >"${provider_install_file}" 2>&1
+      else
+        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" \
+          run_host_happier install provider "${host_provider_install_id}" >"${provider_install_file}" 2>&1
+      fi
+    else
+      if [[ -n "${server_url}" ]]; then
+        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+        HAPPIER_SERVER_URL="${server_url}" \
+          run_host_happier install provider "${host_provider_install_id}" >"${provider_install_file}" 2>&1
+      else
+        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+          run_host_happier install provider "${host_provider_install_id}" >"${provider_install_file}" 2>&1
+      fi
+    fi
+    local provider_install_status=$?
+    set -e
+    if [[ "${provider_install_status}" != "0" ]]; then
+      FAILURE_STAGE="host_provider_install"
+      FAILURE_REASON="host_provider_install_failed"
+      echo "[wsrepl-qa] failed to install host provider ${host_provider_install_id}; see ${provider_install_file}" >&2
+      return 1
+    fi
   fi
 
   local daemon_start_retries="${WSREPL_QA_DAEMON_START_RETRIES:-1}"
@@ -983,6 +1210,69 @@ PY
     else
       printf "%s\n" "(no daemon log file found)" > "${log_tail_file}"
     fi
+  fi
+
+  refresh_host_daemon_status_only_best_effort() {
+    if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+      if [[ -n "${server_url}" ]]; then
+        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
+      else
+        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon status >"${status_file}" 2>&1 || true
+      fi
+    else
+      if [[ -n "${server_url}" ]]; then
+        HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
+      else
+        run_host_happier daemon status >"${status_file}" 2>&1 || true
+      fi
+    fi
+  }
+
+  poll_host_machine_id_if_needed_best_effort() {
+    local machine_id
+    machine_id="$(extract_machine_id_from_daemon_status_file "${status_file}")"
+    if [[ -n "${machine_id}" ]]; then
+      return 0
+    fi
+
+    local retries
+    retries="$(read_wsrepl_machine_id_poll_retries)"
+    if [[ -z "${retries}" || "${retries}" -lt 1 ]]; then
+      return 0
+    fi
+
+    local delay_s
+    delay_s="$(read_wsrepl_machine_id_poll_delay_s)"
+    local attempt=0
+    while [[ "${attempt}" -lt "${retries}" ]]; do
+      attempt=$((attempt + 1))
+      sleep "${delay_s}"
+      refresh_host_daemon_status_only_best_effort
+      machine_id="$(extract_machine_id_from_daemon_status_file "${status_file}")"
+      if [[ -n "${machine_id}" ]]; then
+        return 0
+      fi
+    done
+    return 0
+  }
+
+  # `machineId` is persisted asynchronously by the daemon after it registers with the server.
+  # Poll best-effort only when the caller did not already pin the host/source machine id, and
+  # only when we will need it for step derivation or new-session creation.
+  local should_poll_host_machine_id="0"
+  if [[ "${WSREPL_QA_DERIVE_STEPS_LATER:-0}" == "1" ]]; then
+    should_poll_host_machine_id="1"
+  fi
+  case "$(printf "%s" "${HAPPIER_QA_CREATE_SESSION:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|y)
+      should_poll_host_machine_id="1"
+      ;;
+    *)
+      ;;
+  esac
+
+  if [[ "${should_poll_host_machine_id}" == "1" && -z "${WSREPL_QA_HOST_MACHINE_ID:-}" && -z "${HAPPIER_QA_SOURCE_MACHINE_ID:-}" && -s "${status_file}" ]] && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
+    poll_host_machine_id_if_needed_best_effort
   fi
 
   if [[ "${start_status}" == "0" ]]; then
@@ -1354,11 +1644,59 @@ PY
 	    printf "%s\n" "(no daemon log file found)" > "${log_tail_file}"
 	  fi
 
-      # `happier daemon status` is a doctor-style command and may exit 0 even when the daemon
-      # isn't running. Detect health from the rendered output we captured above.
-      if ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
-        return 0
-      fi
+	  poll_guest_machine_id_if_needed_best_effort() {
+	    local machine_id
+	    machine_id="$(extract_machine_id_from_daemon_status_file "${status_file}")"
+	    if [[ -n "${machine_id}" ]]; then
+	      return 0
+	    fi
+
+	    local retries
+	    retries="$(read_wsrepl_machine_id_poll_retries)"
+	    if [[ -z "${retries}" || "${retries}" -lt 1 ]]; then
+	      return 0
+	    fi
+
+	    local delay_s
+	    delay_s="$(read_wsrepl_machine_id_poll_delay_s)"
+	    local attempt=0
+	    while [[ "${attempt}" -lt "${retries}" ]]; do
+	      attempt=$((attempt + 1))
+	      sleep "${delay_s}"
+	      limactl shell "${VM_NAME}" -- env \
+	        HAPPIER_SERVER_URL="${server_url}" \
+	        ${guest_happier_home_rel:+WSREPL_QA_GUEST_HOME_REL="${guest_happier_home_rel}"} \
+	        ${guest_active_server_id:+HAPPIER_ACTIVE_SERVER_ID="${guest_active_server_id}"} \
+	        bash -lc '
+	        set -euo pipefail
+	        if [[ -n "${WSREPL_QA_GUEST_HOME_REL:-}" ]]; then
+	          export HAPPIER_HOME_DIR="$HOME/${WSREPL_QA_GUEST_HOME_REL}"
+	        fi
+	        HAPPY=""
+	        if [[ -x "$HOME/.happier/bin/happier" ]]; then
+	          HAPPY="$HOME/.happier/bin/happier"
+	        elif command -v happier >/dev/null 2>&1; then
+	          HAPPY="happier"
+	        fi
+	        if [[ -z "$HAPPY" ]]; then exit 0; fi
+	        "$HAPPY" daemon status 2>&1 || true
+	      ' >"${status_file}" 2>&1 || true
+	      machine_id="$(extract_machine_id_from_daemon_status_file "${status_file}")"
+	      if [[ -n "${machine_id}" ]]; then
+	        return 0
+	      fi
+	    done
+	    return 0
+	  }
+
+	  # `happier daemon status` is a doctor-style command and may exit 0 even when the daemon
+	  # isn't running. Detect health from the rendered output we captured above.
+	  if ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
+	    if [[ -z "${WSREPL_QA_VM_MACHINE_ID:-}" && "${WSREPL_QA_DERIVE_STEPS_LATER:-0}" == "1" ]]; then
+	      poll_guest_machine_id_if_needed_best_effort
+	    fi
+	    return 0
+	  fi
 
       # Guest daemon can be waiting for credentials (same as host). That is non-fatal for the
       # harness, but the matrix itself requires the daemon to actually come online.
@@ -1578,7 +1916,83 @@ PY
   write_json_file "${REPORT_ROOT}/summary.json" "${payload}"
 }
 
-trap 'status=$?; refresh_post_playwright_diagnostics_best_effort || true; ensure_summary "${status}"; exit "${status}"' EXIT
+resolve_playwright_session_id_best_effort() {
+  python3 - "$PLAYWRIGHT_OUTDIR" "${HAPPIER_QA_SESSION_ID:-}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+playwright_outdir = Path(sys.argv[1])
+explicit = (sys.argv[2] or "").strip()
+if explicit:
+  print(explicit)
+  raise SystemExit(0)
+
+meta_path = playwright_outdir / "meta.json"
+if not meta_path.exists():
+  print("")
+  raise SystemExit(0)
+
+try:
+  payload = json.loads(meta_path.read_text(encoding="utf-8"))
+except Exception:
+  print("")
+  raise SystemExit(0)
+
+raw = payload.get("sessionId") if isinstance(payload, dict) else None
+if isinstance(raw, str) and raw.strip():
+  print(raw.strip())
+else:
+  print("")
+PY
+}
+
+resolve_final_status() {
+  local status="$1"
+  RESOLVED_FINAL_STATUS="${status}"
+  if [[ "${status}" != "0" ]]; then
+    return 0
+  fi
+
+  local resolved_session_id
+  resolved_session_id="$(resolve_playwright_session_id_best_effort || true)"
+  resolved_session_id="$(printf "%s" "${resolved_session_id}" | tr -d '\n' | tr -d '\r')"
+
+  if [[ -z "${resolved_session_id}" ]]; then
+    FAILURE_STAGE="${FAILURE_STAGE:-playwright}"
+    FAILURE_REASON="${FAILURE_REASON:-missing_session_id}"
+    RESOLVED_FINAL_STATUS="1"
+    return 0
+  fi
+
+  RESOLVED_FINAL_STATUS="${status}"
+  return 0
+}
+
+RESOLVED_FINAL_STATUS=""
+trap 'status=$?; resolve_final_status "${status}"; final_status="${RESOLVED_FINAL_STATUS:-${status}}"; refresh_post_playwright_diagnostics_best_effort || true; ensure_summary "${final_status}"; exit "${final_status}"' EXIT
+
+terminate_due_to_signal() {
+  local exit_code="${1:-143}"
+  local signal_name="${2:-term}"
+  # Ensure the wrapper records a nonzero summary status when interrupted, instead of
+  # accidentally reporting success based on the last successful command.
+  FAILURE_STAGE="terminated"
+  FAILURE_REASON="signal_${signal_name}"
+
+  # Best-effort: stop any background jobs (watchdogs, etc.) so we don't leak processes.
+  local bg_pids
+  bg_pids="$(jobs -pr 2>/dev/null || true)"
+  if [[ -n "${bg_pids}" ]]; then
+    kill ${bg_pids} >/dev/null 2>&1 || true
+    wait ${bg_pids} >/dev/null 2>&1 || true
+  fi
+
+  exit "${exit_code}"
+}
+
+trap 'terminate_due_to_signal 143 term' TERM
+trap 'terminate_due_to_signal 130 int' INT
 
 LIMA_HOME_DIR="${LIMA_HOME:-${HOME}/.lima}"
 LIMA_DIR="${LIMA_HOME_DIR}/${VM_NAME}"
@@ -1866,6 +2280,22 @@ if [[ -z "${HAPPIER_QA_SESSION_PATH:-}" && -n "${WSREPL_QA_LARGE_REPO_PATH:-}" ]
   export HAPPIER_QA_SESSION_PATH="${WSREPL_QA_LARGE_REPO_PATH}"
 fi
 
+# Prefer the canonical large-repo fixture when available so “unset session path” runs
+# still exercise the intended large-repo handoff matrix (but keep the repo fallback
+# for dev/smoke runs when the fixture is not present).
+if [[ -z "${HAPPIER_QA_SESSION_PATH:-}" && -z "${WSREPL_QA_LARGE_REPO_PATH:-}" ]]; then
+  # Prefer a non-hidden fixture location when present. Lima guests mount the macOS home directory,
+  # but cannot reliably traverse host `chmod 700` parents like `.happier` due to UID/GID/perms
+  # mapping, which can surface as ENOENT during target staging.
+  SAFE_WSREPL_QA_LARGE_REPO_PATH="${HOME}/wsrepl-qa-fixtures/large-repo-k8s"
+  LEGACY_WSREPL_QA_LARGE_REPO_PATH="${HOME}/.happier/wsrepl-qa-fixtures/large-repo-k8s"
+  if [[ -d "${SAFE_WSREPL_QA_LARGE_REPO_PATH}" ]]; then
+    export HAPPIER_QA_SESSION_PATH="${SAFE_WSREPL_QA_LARGE_REPO_PATH}"
+  elif [[ -d "${LEGACY_WSREPL_QA_LARGE_REPO_PATH}" ]]; then
+    export HAPPIER_QA_SESSION_PATH="${LEGACY_WSREPL_QA_LARGE_REPO_PATH}"
+  fi
+fi
+
 # Default session path to the repo worktree so the Playwright harness never falls back to its
 # own hardcoded default (keeps wrapper summary + runner behavior aligned).
 if [[ -z "${HAPPIER_QA_SESSION_PATH:-}" ]]; then
@@ -1894,6 +2324,9 @@ fi
   # “hidden claude” drift where the wrapper silently forces `claude` even when the stack/UI
   # hides/disables it.
   if [[ -z "${HAPPIER_QA_PREFERRED_AGENT_ENGINES:-}" ]]; then
+    # Default to the fake Claude CLI fixture for stable, non-authenticated session creation in QA.
+    # `codex` can require real provider auth and otherwise fail silently at session creation time,
+    # which would prevent the matrix from exercising workspace replication at all.
     export HAPPIER_QA_PREFERRED_AGENT_ENGINES="claude"
   fi
 
@@ -2461,11 +2894,108 @@ run_playwright_attempt() {
     return 2
   fi
   mkdir -p "${outdir}"
+
+  # The host daemon is normally run under a stack-scoped home directory so it shares credentials
+  # with the UI. The watchdog must probe status using the same home+activeServerId or it will
+  # report "Daemon is not running" and restart continuously.
+  local watchdog_cli_root=""
+  local watchdog_active_server_id=""
+  local watchdog_stack_hint=""
+  watchdog_stack_hint="$(resolve_stack_cli_home_and_active_server_id_for_ui_url || true)"
+  if [[ -n "${watchdog_stack_hint}" ]]; then
+    watchdog_cli_root="$(printf "%s" "${watchdog_stack_hint}" | cut -d '|' -f 1)"
+    watchdog_active_server_id="$(printf "%s" "${watchdog_stack_hint}" | cut -d '|' -f 2)"
+  fi
+  local host_home_rel="${WSREPL_QA_HOST_HOME_REL:-}"
+  if [[ -n "${host_home_rel}" && -n "${watchdog_active_server_id}" ]]; then
+    local overridden_home="$HOME/${host_home_rel}"
+    if [[ -d "${overridden_home}" && -f "${overridden_home}/servers/${watchdog_active_server_id}/access.key" ]]; then
+      watchdog_cli_root="${overridden_home}"
+    fi
+  fi
+
+  local watchdog_pid=""
+  if [[ "${WSREPL_QA_HOST_DAEMON_WATCHDOG:-0}" == "1" ]]; then
+    local interval_s
+    interval_s="$(read_wsrepl_host_daemon_watchdog_interval_s)"
+    (
+      set +e
+      set +u
+      set +o pipefail
+      consecutive_not_running=0
+      while true; do
+        sleep "${interval_s}"
+        # `happier daemon status` can exit 0 even when unhealthy; treat explicit "not running" as unhealthy.
+        if [[ -n "${watchdog_cli_root}" && -n "${watchdog_active_server_id}" ]]; then
+          status_out="$(HAPPIER_SERVER_URL="${host_server_url:-}" HAPPIER_HOME_DIR="${watchdog_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${watchdog_active_server_id}" run_host_happier daemon status 2>&1)"
+          status_code=$?
+        else
+          status_out="$(HAPPIER_SERVER_URL="${host_server_url:-}" run_host_happier daemon status 2>&1)"
+          status_code=$?
+        fi
+        if [[ "${status_code}" != "0" ]]; then
+          consecutive_not_running=0
+          printf "%s\n" "[wsrepl-qa] host daemon watchdog: restarting daemon (status_code=${status_code})" >> "${outdir}/host-daemon-watchdog.log" 2>&1 || true
+          restart_host_daemon_and_capture_logs "${host_server_url:-}" || true
+          continue
+        fi
+
+        if printf "%s" "${status_out}" | grep -qi "Daemon is not running"; then
+          consecutive_not_running=$((consecutive_not_running + 1))
+        else
+          consecutive_not_running=0
+        fi
+
+        # Avoid flapping: a daemon can momentarily report "not running" during version restarts.
+        if [[ "${consecutive_not_running}" -ge 3 ]]; then
+          consecutive_not_running=0
+          printf "%s\n" "[wsrepl-qa] host daemon watchdog: restarting daemon (status_code=${status_code})" >> "${outdir}/host-daemon-watchdog.log" 2>&1 || true
+          restart_host_daemon_and_capture_logs "${host_server_url:-}" || true
+        fi
+      done
+    ) &
+    watchdog_pid="$!"
+  fi
+
   HAPPIER_QA_OUTDIR="${outdir}" \
-  run_with_timeout_ms "${HAPPIER_QA_TIMEOUT_MS}" \
-    node "${REPO_DIR}/.project/scripts/qa/playwright-session-handoff-wsrepl-matrix.mjs" \
-    2>&1 | tee "${outdir}/runner.log"
-  return "${PIPESTATUS[0]}"
+    run_with_timeout_ms "${HAPPIER_QA_TIMEOUT_MS}" \
+      node "${REPO_DIR}/.project/scripts/qa/playwright-session-handoff-wsrepl-matrix.mjs" \
+      2>&1 | tee "${outdir}/runner.log"
+  local status="${PIPESTATUS[0]}"
+
+  if [[ -n "${watchdog_pid}" ]]; then
+    kill "${watchdog_pid}" >/dev/null 2>&1 || true
+    wait "${watchdog_pid}" >/dev/null 2>&1 || true
+  fi
+
+  return "${status}"
+}
+
+playwright_attempt_wrote_fatal_json() {
+  local outdir="${1:-}"
+  if [[ -z "${outdir}" ]]; then
+    return 1
+  fi
+  local fatal_path="${outdir}/fatal.json"
+  if [[ ! -f "${fatal_path}" ]]; then
+    return 1
+  fi
+  python3 - "${fatal_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+  payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+  raise SystemExit(1)
+
+ok = payload.get("ok")
+if ok is False:
+  raise SystemExit(0)
+raise SystemExit(1)
+PY
 }
 
 should_retry_for_daemon_rpc_unavailable() {
@@ -2501,6 +3031,15 @@ if [[ "${playwright_status}" == "124" ]]; then
   FAILURE_REASON="timeout"
   exit 124
 fi
+# The Playwright harness can fail while still exiting 0 (it writes fatal.json/meta.json and relies
+# on the wrapper to fail closed). Treat this as a failure so we don't publish a green summary.
+if [[ "${playwright_status}" == "0" ]]; then
+  if playwright_attempt_wrote_fatal_json "${PLAYWRIGHT_OUTDIR}"; then
+    FAILURE_STAGE="playwright"
+    FAILURE_REASON="playwright_fatal_json"
+    playwright_status=1
+  fi
+fi
 if [[ "${playwright_status}" != "0" ]]; then
   if should_retry_for_daemon_rpc_unavailable "${PLAYWRIGHT_OUTDIR}"; then
     echo "[wsrepl-qa] Playwright failed with daemon RPC unavailable; restarting daemons and retrying once..." >&2
@@ -2521,9 +3060,22 @@ if [[ "${playwright_status}" != "0" ]]; then
     if [[ "${playwright_status}" != "0" ]]; then
       exit "${playwright_status}"
     fi
+    if [[ ! -f "${PLAYWRIGHT_OUTDIR}/meta.json" ]]; then
+      FAILURE_STAGE="playwright"
+      FAILURE_REASON="playwright_missing_meta_json_after_retry"
+      echo "[wsrepl-qa] Playwright attempt succeeded but did not write meta.json: ${PLAYWRIGHT_OUTDIR}/meta.json" >&2
+      exit 2
+    fi
   else
     exit "${playwright_status}"
   fi
+fi
+
+if [[ ! -f "${PLAYWRIGHT_OUTDIR}/meta.json" ]]; then
+  FAILURE_STAGE="playwright"
+  FAILURE_REASON="playwright_missing_meta_json"
+  echo "[wsrepl-qa] Playwright attempt succeeded but did not write meta.json: ${PLAYWRIGHT_OUTDIR}/meta.json" >&2
+  exit 2
 fi
 
 echo ""

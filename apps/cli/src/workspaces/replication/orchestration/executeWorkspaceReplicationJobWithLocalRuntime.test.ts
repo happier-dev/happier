@@ -182,12 +182,19 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
         const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-target-workspace-progress-'));
 
         try {
-            const { createWorkspaceReplicationCasStore } = await import('../cas/workspaceReplicationCasStore');
-            const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
-            const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
-            const { createWorkspaceReplicationBlobPackPayloadSource } = await import('../transport/createWorkspaceReplicationBlobPackPayloadSource');
-            const { writeWorkspaceReplicationSourceOfferToFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
-            const { executeWorkspaceReplicationJobWithLocalRuntime } = await import('./executeWorkspaceReplicationJobWithLocalRuntime');
+            const originalBlobPackTargetBytes = process.env.HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_TARGET_BYTES;
+            // Keep the test fast by forcing small pack boundaries instead of creating hundreds of blobs.
+            process.env.HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_TARGET_BYTES = '1';
+            const configMod = await import('@/configuration');
+            configMod.reloadConfiguration();
+
+            try {
+                const { createWorkspaceReplicationCasStore } = await import('../cas/workspaceReplicationCasStore');
+                const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+                const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+                const { createWorkspaceReplicationBlobPackPayloadSource } = await import('../transport/createWorkspaceReplicationBlobPackPayloadSource');
+                const { writeWorkspaceReplicationSourceOfferToFile } = await import('../transport/workspaceReplicationSourceOfferFileFormat');
+                const { executeWorkspaceReplicationJobWithLocalRuntime } = await import('./executeWorkspaceReplicationJobWithLocalRuntime');
 
             const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
             const scope = {
@@ -204,13 +211,14 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
             const blobIndex: Array<WorkspaceReplicationSourceOffer['blobIndex'][number]> = [];
             let totalBytes = 0;
 
-            // Force >1 blob pack with the default max-blobs=256 by creating 257 distinct blobs.
+            // Force >1 blob pack by configuring a tiny target-bytes cap (above).
             await mkdir(join(sourceWorkspaceRoot, 'files'), { recursive: true });
             fileEntries.push({
                 kind: 'directory',
                 relativePath: 'files',
             });
-            for (let i = 0; i < 257; i += 1) {
+            const blobCount = 3;
+            for (let i = 0; i < blobCount; i += 1) {
                 const contents = `blob-${i}\n`;
                 const digest = sha256DigestOfString(contents);
                 const relPath = `files/file-${i}.txt`;
@@ -325,12 +333,16 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
             expect(requestCount).toBeGreaterThanOrEqual(2);
             expect(observedTransferredBytesDuringTransfer).toBeGreaterThan(0);
             expect(result.status.status).toBe('completed');
-            expect(result.status.progressCounters).toMatchObject({
-                plannedFiles: 257,
-                plannedBytes: totalBytes,
-                transferredFiles: 257,
-                transferredBytes: totalBytes,
-            });
+                expect(result.status.progressCounters).toMatchObject({
+                    plannedFiles: blobCount,
+                    plannedBytes: totalBytes,
+                    transferredFiles: blobCount,
+                    transferredBytes: totalBytes,
+                });
+            } finally {
+                process.env.HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_TARGET_BYTES = originalBlobPackTargetBytes;
+                configMod.reloadConfiguration();
+            }
         } finally {
             await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
             await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);

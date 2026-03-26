@@ -79,21 +79,49 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
     activeServerDir: params.activeServerDir,
   });
 
-  let cachedScannedTargetManifest:
+  // One-way-safe requires a *post-transfer* safety check to prevent overwriting mid-transfer edits.
+  // Keep separate caches so a pre-transfer scan can't be (incorrectly) reused after blob transfer.
+  let cachedScannedTargetManifestBeforeTransfer:
+    | Awaited<ReturnType<typeof scanWorkspaceManifestIntoCas>>
+    | null = null;
+  let cachedScannedTargetManifestAfterTransfer:
     | Awaited<ReturnType<typeof scanWorkspaceManifestIntoCas>>
     | null = null;
 
-  async function getScannedTargetManifest(offer: WorkspaceReplicationSourceOffer) {
-    if (cachedScannedTargetManifest) {
-      return cachedScannedTargetManifest;
-    }
-    cachedScannedTargetManifest = await scanWorkspaceManifestIntoCas({
+  async function scanTargetManifestIntoCas(offer: WorkspaceReplicationSourceOffer) {
+    return await scanWorkspaceManifestIntoCas({
       activeServerDir: params.activeServerDir,
       relationshipId: offer.relationshipId,
       workspaceRoot: params.apply.targetPath,
       scmRegistry: params.apply.registry,
     });
-    return cachedScannedTargetManifest;
+  }
+
+  function isAfterTransferCheckpoint(checkpoint: string): boolean {
+    return checkpoint === 'blob_transfer_completed'
+      || checkpoint === 'apply_started'
+      || checkpoint === 'apply_completed'
+      || checkpoint === 'baseline_committed';
+  }
+
+  async function getScannedTargetManifest(paramsForScan: Readonly<{
+    jobCheckpoint: string;
+    offer: WorkspaceReplicationSourceOffer;
+  }>) {
+    const isAfterTransfer = isAfterTransferCheckpoint(paramsForScan.jobCheckpoint);
+    if (isAfterTransfer) {
+      if (cachedScannedTargetManifestAfterTransfer) {
+        return cachedScannedTargetManifestAfterTransfer;
+      }
+      cachedScannedTargetManifestAfterTransfer = await scanTargetManifestIntoCas(paramsForScan.offer);
+      return cachedScannedTargetManifestAfterTransfer;
+    }
+
+    if (cachedScannedTargetManifestBeforeTransfer) {
+      return cachedScannedTargetManifestBeforeTransfer;
+    }
+    cachedScannedTargetManifestBeforeTransfer = await scanTargetManifestIntoCas(paramsForScan.offer);
+    return cachedScannedTargetManifestBeforeTransfer;
   }
 
   return await executeWorkspaceReplicationJob({
@@ -103,7 +131,7 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
     jobId: params.jobId,
     now: params.now,
     resolveSourceOfferById: params.resolveSourceOfferById,
-    assertSafeToApply: async ({ offer }) => {
+    assertSafeToApply: async ({ job, offer }) => {
       if (params.relationshipScope.mode !== 'one_way_safe') {
         return null;
       }
@@ -135,7 +163,10 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
         });
       }
 
-      const targetManifest = toMutableWorkspaceManifest(await getScannedTargetManifest(offer));
+      const targetManifest = toMutableWorkspaceManifest(await getScannedTargetManifest({
+        jobCheckpoint: job.status.checkpoint,
+        offer,
+      }));
       const safePlan = buildOneWaySafeReplicationPlan({
         baseline,
         sourceManifest: toMutableWorkspaceManifest(offer.manifest),
@@ -236,7 +267,10 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
 
             let currentTargetManifest: { entries: typeof offer.manifest.entries; fingerprint?: string } | undefined;
             if (params.apply.strategy === 'sync_changes') {
-                const scanned = await getScannedTargetManifest(offer);
+                const scanned = await getScannedTargetManifest({
+                    jobCheckpoint: job.status.checkpoint,
+                    offer,
+                });
                 currentTargetManifest = {
                     entries: scanned.entries.map((entry) => ({ ...entry })),
                 };

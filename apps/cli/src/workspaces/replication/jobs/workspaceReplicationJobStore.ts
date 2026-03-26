@@ -10,6 +10,7 @@ import {
   resolveWorkspaceReplicationJobPath,
 } from '../state/workspaceReplicationPaths';
 import { WORKSPACE_REPLICATION_SCHEMA_VERSION } from '../state/workspaceReplicationSchemaVersion';
+import { isTerminalWorkspaceReplicationJobStatus } from './workspaceReplicationJobTerminalStatuses';
 
 export const WorkspaceReplicationJobPhaseSchema = z.enum([
   'planning',
@@ -147,13 +148,6 @@ export type WorkspaceReplicationJobStore = Readonly<{
   ) => Promise<WorkspaceReplicationJobRecord | null>;
 }>;
 
-const TERMINAL_JOB_STATUSES = new Set<WorkspaceReplicationJobRecord['status']['status']>([
-  'completed',
-  'aborted',
-  'failed',
-  'awaiting_recovery',
-]);
-
 const CHECKPOINT_ORDER: readonly WorkspaceReplicationJobRecord['status']['checkpoint'][] = [
   'job_created',
   'relationship_resolved',
@@ -166,7 +160,7 @@ const CHECKPOINT_ORDER: readonly WorkspaceReplicationJobRecord['status']['checkp
 ] as const;
 
 function isTerminalJobStatus(status: WorkspaceReplicationJobRecord['status']['status']): boolean {
-  return TERMINAL_JOB_STATUSES.has(status);
+  return isTerminalWorkspaceReplicationJobStatus(status);
 }
 
 function compareCheckpoint(

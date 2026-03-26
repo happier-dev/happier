@@ -5,16 +5,10 @@ import {
   resolveWorkspaceReplicationJobLeaseTtlMs,
   tryAcquireWorkspaceReplicationJobLease,
 } from '../state/workspaceReplicationJobLease';
-
-const TERMINAL_JOB_STATUSES = new Set<WorkspaceReplicationJobRecord['status']['status']>([
-  'completed',
-  'aborted',
-  'failed',
-  'awaiting_recovery',
-]);
+import { isTerminalWorkspaceReplicationJobStatus } from './workspaceReplicationJobTerminalStatuses';
 
 function isTerminalJobRecord(record: WorkspaceReplicationJobRecord): boolean {
-  return TERMINAL_JOB_STATUSES.has(record.status.status);
+  return isTerminalWorkspaceReplicationJobStatus(record.status.status);
 }
 
 export async function abortWorkspaceReplicationJob(params: Readonly<{

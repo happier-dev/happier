@@ -193,6 +193,28 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     nowMs: () => resolveNowMs(params.now),
   });
 
+  {
+    // Persist durable attempt metadata as soon as we acquire the job lease so that even
+    // early exits (scope lock, cancellation, etc.) record which runner/attempt touched the job.
+    const acquiredLease = leaseAttempt.lease;
+    if (acquiredLease?.attempt && acquiredLease.leaseId) {
+      current = await runWorkspaceReplicationJob({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        run: async (record) => ({
+          ...record,
+          lastAttempt: {
+            attemptNumber: acquiredLease.attempt ?? 1,
+            leaseId: acquiredLease.leaseId ?? 'unknown',
+            ownerId: leaseOwnerId,
+            acquiredAtMs: acquiredLease.acquiredAtMs,
+          },
+        }),
+      });
+    }
+  }
+
   const scopeRelationshipId = current.relationshipId;
   const scopeDirectionId = current.directionId;
   if (!scopeRelationshipId || !scopeDirectionId) {
@@ -280,6 +302,18 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
   };
 
   try {
+    // Cancellation is higher priority than scope locking. If a job is already canceled (or already
+    // aborted), abort and clean up staging without attempting to acquire the scope lease.
+    const cancelledBeforeScopeLease = await abortIfCancellationRequested({
+      activeServerDir: params.activeServerDir,
+      jobStore: params.jobStore,
+      jobId: params.jobId,
+      now: params.now,
+    });
+    if (cancelledBeforeScopeLease) {
+      return cancelledBeforeScopeLease;
+    }
+
     const scopeLeaseAttempt = await tryAcquireWorkspaceReplicationScopeLease({
       activeServerDir: params.activeServerDir,
       relationshipId: scopeRelationshipId,
@@ -290,6 +324,16 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     });
 
     if (!scopeLeaseAttempt.acquired) {
+      const cancelledWhileScopeLocked = await abortIfCancellationRequested({
+        activeServerDir: params.activeServerDir,
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+      });
+      if (cancelledWhileScopeLocked) {
+        return cancelledWhileScopeLocked;
+      }
+
       const nowMs = resolveNowMs(params.now);
       const updated = await runWorkspaceReplicationJob({
         jobStore: params.jobStore,
@@ -323,31 +367,6 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       ttlMs: scopeLeaseTtlMs,
       nowMs: () => resolveNowMs(params.now),
     });
-
-    const acquiredLease = leaseAttempt.lease;
-    if (acquiredLease?.attempt && acquiredLease.leaseId) {
-      await runWorkspaceReplicationJob({
-        jobStore: params.jobStore,
-        jobId: params.jobId,
-        now: params.now,
-        run: async (record) => ({
-          ...record,
-          lastAttempt: {
-            attemptNumber: acquiredLease.attempt ?? 1,
-            leaseId: acquiredLease.leaseId ?? 'unknown',
-            ownerId: leaseOwnerId,
-            acquiredAtMs: acquiredLease.acquiredAtMs,
-          },
-        }),
-      });
-      current = await params.jobStore.read(params.jobId);
-      if (!current) {
-        throw new WorkspaceReplicationError({
-          code: 'job_not_found',
-          message: `Workspace replication job not found: ${params.jobId}`,
-        });
-      }
-    }
 
     if (leaseAttempt.lease?.attempt && leaseAttempt.lease.attempt > 1) {
       await runWorkspaceReplicationJob({
