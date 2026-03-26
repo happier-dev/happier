@@ -42,7 +42,12 @@ export const AppState = {
     currentState: 'active',
     addEventListener: () => ({ remove: () => {} }),
 } as const;
-export const InteractionManager = { runAfterInteractions: (fn: () => void) => fn() } as const;
+export const InteractionManager = {
+    runAfterInteractions: (fn: () => void) => {
+        fn();
+        return { cancel: () => {} };
+    },
+} as const;
 export const Linking = {
     canOpenURL: async () => true,
     openURL: async () => {},

@@ -23,9 +23,27 @@ export async function createPartialStorageModuleMock(
 }
 
 export function createStorageModuleStub<TOverrides extends object>(overrides: TOverrides): StorageModule {
+    // Keep default hook results stable across renders so hooks that include them in dependency arrays
+    // (via `useMemo`/`useEffect`) don't thrash in unit tests unless a caller opts in to custom data.
+    const allMachines = [] as ReturnType<StorageModule['useAllMachines']>;
+    const allSessions = [] as ReturnType<StorageModule['useAllSessions']>;
+    const store = createStorageStoreMock({
+        sessions: {},
+        machines: {},
+        getProjectForSession: () => null,
+    } satisfies Partial<StorageState>);
+
+    const defaults = {
+        storage: store,
+        useSettings: () => ({} as Settings),
+        useSetting: createUseSettingMock(),
+        useAllMachines: () => allMachines,
+        useAllSessions: () => allSessions,
+    } satisfies Partial<StorageModule>;
+
     // Stub helpers intentionally allow partial boundary-shaped fixtures without forcing
     // every callsite to satisfy the full storage module surface at compile time.
-    return overrides as unknown as StorageModule;
+    return { ...defaults, ...(overrides as Partial<StorageModule>) } as StorageModule;
 }
 
 export type CreateUseSettingMockOptions = Readonly<{

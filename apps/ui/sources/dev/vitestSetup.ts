@@ -120,6 +120,144 @@ console.error = (...args: unknown[]) => {
     originalConsoleError(...args);
 };
 
+function maybeLogActiveHandles(tag: string): void {
+    if (process.env.HAPPIER_VITEST_DEBUG_ACTIVE_HANDLES !== '1') return;
+    dumpActiveHandlesAlways(tag, process.env.HAPPIER_VITEST_DEBUG_ACTIVE_HANDLES_VERBOSE === '1');
+}
+
+function dumpActiveHandlesAlways(tag: string, verbose: boolean): void {
+    const anyProcess = process as any;
+    if (typeof anyProcess._getActiveHandles !== 'function') return;
+    const handles: unknown[] = anyProcess._getActiveHandles();
+    const counts = new Map<string, number>();
+    for (const handle of handles) {
+        const name =
+            typeof handle === 'object' && handle && (handle as any).constructor && typeof (handle as any).constructor.name === 'string'
+                ? (handle as any).constructor.name
+                : typeof handle;
+        counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    const summary = Array.from(counts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, count]) => `${name}:${count}`)
+        .join(', ');
+    const stdinPaused = typeof (process.stdin as any)?.isPaused === 'function' ? (process.stdin as any).isPaused() : null;
+    const stdinDataListeners = typeof (process.stdin as any)?.listenerCount === 'function'
+        ? (process.stdin as any).listenerCount('data')
+        : null;
+    originalConsoleError(
+        `[vitest] active handles (${tag}): ${summary || '<none>'}` +
+        `${stdinPaused == null ? '' : `, stdinPaused=${stdinPaused}`}` +
+        `${stdinDataListeners == null ? '' : `, stdinDataListeners=${stdinDataListeners}`}`,
+    );
+
+    if (!verbose) return;
+
+    const allowlisted = new Set(['Pipe', 'Socket']);
+    const suspicious = handles
+        .map((handle) => {
+            const name =
+                typeof handle === 'object' && handle && (handle as any).constructor && typeof (handle as any).constructor.name === 'string'
+                    ? (handle as any).constructor.name
+                    : typeof handle;
+            return { name, handle };
+        })
+        .filter(({ name }) => !allowlisted.has(name));
+
+    if (suspicious.length === 0) return;
+
+    const details = suspicious.slice(0, 5).map(({ name, handle }) => {
+        if (name === 'TLSSocket' || name === 'Socket') {
+            const anyHandle = handle as any;
+            const remote = typeof anyHandle.remoteAddress === 'string'
+                ? `${anyHandle.remoteAddress}${typeof anyHandle.remotePort === 'number' ? `:${anyHandle.remotePort}` : ''}`
+                : null;
+            const servername = typeof anyHandle.servername === 'string' ? anyHandle.servername : null;
+            return `${name}(${[remote ? `remote=${remote}` : null, servername ? `servername=${servername}` : null].filter(Boolean).join(',') || 'n/a'})`;
+        }
+        return name;
+    }).join(', ');
+
+    originalConsoleError(`[vitest] active handles details (${tag}): ${details}${suspicious.length > 5 ? ` (+${suspicious.length - 5} more)` : ''}`);
+}
+
+function pauseStdinForTests(): void {
+    try {
+        const stdin = process.stdin as any;
+        if (stdin && typeof stdin.pause === 'function') {
+            stdin.pause();
+        }
+        if (stdin && typeof stdin.removeAllListeners === 'function') {
+            stdin.removeAllListeners('data');
+            stdin.removeAllListeners('readable');
+        }
+        if (stdin && typeof stdin.unref === 'function') {
+            stdin.unref();
+        }
+    } catch {
+        // ignore
+    }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+                reject(new Error(`[vitest] timed out after ${ms}ms: ${label}`));
+            }, ms);
+        });
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timeoutId != null) {
+            clearTimeout(timeoutId);
+        }
+    }
+}
+
+async function dumpWhyIsNodeRunning(tag: string): Promise<void> {
+    if (process.env.HAPPIER_VITEST_DEBUG_WHY_NODE_RUNNING !== '1') return;
+    try {
+        const mod = await import('why-is-node-running');
+        const whyIsNodeRunning = (mod as unknown as { default?: unknown }).default ?? mod;
+        if (typeof whyIsNodeRunning !== 'function') return;
+        originalConsoleError(`[vitest] why-is-node-running dump (${tag})`);
+        whyIsNodeRunning();
+    } catch {
+        // ignore
+    }
+}
+
+async function closeUndiciGlobalDispatcherForTests(): Promise<void> {
+    try {
+        const undici = await import('undici');
+        const getGlobalDispatcher = (undici as unknown as { getGlobalDispatcher?: () => unknown }).getGlobalDispatcher;
+        if (typeof getGlobalDispatcher !== 'function') return;
+        const dispatcher = getGlobalDispatcher() as unknown as {
+            close?: () => Promise<void> | void;
+            destroy?: () => Promise<void> | void;
+        } | null;
+        if (!dispatcher) return;
+        if (typeof dispatcher.close === 'function') {
+            await dispatcher.close();
+            return;
+        }
+        if (typeof dispatcher.destroy === 'function') {
+            await dispatcher.destroy();
+        }
+    } catch {
+        // ignore (undici may not be available in some runtimes)
+    }
+}
+
+if (process.env.HAPPIER_VITEST_ENABLE_SIGNAL_DUMP === '1') {
+    // NOTE: Node uses SIGUSR1 to toggle the inspector, so use SIGUSR2 for our own dumps.
+    process.on('SIGUSR2', () => {
+        dumpActiveHandlesAlways('SIGUSR2', true);
+        void dumpWhyIsNodeRunning('SIGUSR2');
+    });
+}
+
 installVitestRnShim({ traceFile: process.env.VITEST_TRACE_LOAD ?? null });
 
 // `react-native` includes Flow syntax. Even with Vite aliases, some dependencies still
@@ -153,6 +291,21 @@ beforeEach(() => {
     // stable in-memory implementation for tests.
     vi.stubGlobal('localStorage', createMemoryStorage(localStorageBacking) as unknown as Storage);
     vi.stubGlobal('sessionStorage', createMemoryStorage(sessionStorageBacking) as unknown as Storage);
+
+    if (process.env.HAPPIER_VITEST_FORBID_FETCH === '1') {
+        vi.stubGlobal('fetch', (async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url =
+                typeof input === 'string'
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input && typeof (input as Request).url === 'string'
+                            ? (input as Request).url
+                            : String(input);
+            const method = String(init?.method ?? 'GET').toUpperCase();
+            throw new Error(`[vitest] unexpected fetch: ${method} ${url}`);
+        }) as unknown as typeof fetch);
+    }
 });
 
 afterEach(() => {
@@ -172,19 +325,47 @@ afterEach(() => {
     // test files (Vitest workers may reuse the same global between sequential test files).
     vi.unstubAllGlobals();
 
+    pauseStdinForTests();
+
     restoreDomGlobalsToOriginal();
 });
 
 afterAll(async () => {
+    maybeLogActiveHandles('before afterAll cleanup');
+
+    const cleanupTimeoutMsRaw = Number.parseInt(process.env.HAPPIER_VITEST_AFTERALL_CLEANUP_TIMEOUT_MS ?? '', 10);
+    const cleanupTimeoutMs = Number.isFinite(cleanupTimeoutMsRaw) && cleanupTimeoutMsRaw > 0 ? cleanupTimeoutMsRaw : 30_000;
+    const debugCleanup = process.env.HAPPIER_VITEST_DEBUG_AFTERALL_CLEANUP === '1';
+
     // `serverFetch(...)` can start background server reachability supervisors. Ensure they are
     // fully stopped at the end of the test run so the Vitest fork can exit cleanly.
-    // Best-effort only: never block the suite on teardown (a stuck supervisor stop would hang the run).
-    void (async () => {
-        const actual = await vi.importActual<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>(
-            '@/sync/runtime/connectivity/serverReachabilitySupervisorPool',
-        );
-        await actual.resetServerReachabilitySupervisors();
-    })();
+    //
+    // IMPORTANT: this must be awaited. Background retry timers inside the connection supervisor keep the
+    // fork process alive, which can otherwise hang the suite after the last test file completes.
+    const mod = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: resetServerReachabilitySupervisors (start)');
+    try {
+        await withTimeout(mod.resetServerReachabilitySupervisors(), cleanupTimeoutMs, 'resetServerReachabilitySupervisors');
+    } finally {
+        if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: resetServerReachabilitySupervisors (end)');
+    }
+
+    maybeLogActiveHandles('after resetServerReachabilitySupervisors');
+
+    if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: closeUndiciGlobalDispatcherForTests (start)');
+    try {
+        await withTimeout(closeUndiciGlobalDispatcherForTests(), cleanupTimeoutMs, 'closeUndiciGlobalDispatcherForTests');
+    } finally {
+        if (debugCleanup) originalConsoleError('[vitest] afterAll cleanup: closeUndiciGlobalDispatcherForTests (end)');
+    }
+
+    maybeLogActiveHandles('after closeUndiciGlobalDispatcherForTests');
+
+    pauseStdinForTests();
+
+    maybeLogActiveHandles('after pauseStdinForTests');
+
+    await dumpWhyIsNodeRunning('afterAll');
 });
 
 vi.mock('react-native-mmkv', () => {
