@@ -141,10 +141,29 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
     const actionSpec = getActionSpec('session.handoff');
 
     React.useEffect(() => {
-        // The picker can open before the UI has ever fetched a fresh machine list (common in QA flows
-        // that start daemons after the UI is already running). Force a refresh so newly-registered
-        // machines show up immediately.
-        void sync.refreshMachinesThrottled({ force: true });
+        // The picker can open before Sync has hydrated credentials (common in QA flows that inject
+        // credentials into storage and then immediately navigate to the handoff UI). A one-shot
+        // refresh would no-op in that window and the modal would render only the local machine.
+        //
+        // Retry for a short bounded window so newly-registered machines appear deterministically.
+        let cancelled = false;
+
+        const run = async () => {
+            const startedAt = Date.now();
+            while (!cancelled && (Date.now() - startedAt) < 10_000) {
+                if (sync.getCredentials()) {
+                    await sync.refreshMachinesThrottled({ force: true });
+                    return;
+                }
+                await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+            }
+        };
+
+        void run();
+
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     const sessions = useSessions() ?? [];

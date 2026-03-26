@@ -5,6 +5,7 @@ import { findTestInstanceByTypeWithProps, invokeTestInstanceHandler, pressTestIn
 import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
 
 const refreshMachinesThrottledMock = vi.fn(async () => {});
+let credentialsReady = true;
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -98,12 +99,14 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: {
         refreshMachinesThrottled: refreshMachinesThrottledMock,
+        getCredentials: () => (credentialsReady ? ({ token: 'test' } as any) : null),
     },
 }));
 
 describe('SessionHandoffPickerModal', () => {
     beforeEach(() => {
         refreshMachinesThrottledMock.mockClear();
+        credentialsReady = true;
         machineListByServerIdState = {
             server_a: [
                 { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
@@ -494,5 +497,32 @@ describe('SessionHandoffPickerModal', () => {
         expect(machineSelector.props.machines).toEqual([
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
+    });
+
+    it('retries the machine refresh once credentials are hydrated', async () => {
+        vi.useFakeTimers();
+        credentialsReady = false;
+
+        const onResolve = vi.fn();
+        const onClose = vi.fn();
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+
+        await renderScreen(<SessionHandoffPickerModal
+            onClose={onClose}
+            onResolve={onResolve}
+            sessionId="sess_1"
+            sourceMachineId="machine_source"
+            serverId="server_a"
+        />);
+
+        await act(async () => {});
+        expect(refreshMachinesThrottledMock).not.toHaveBeenCalled();
+
+        credentialsReady = true;
+        await vi.advanceTimersByTimeAsync(300);
+        await act(async () => {});
+
+        expect(refreshMachinesThrottledMock).toHaveBeenCalled();
+        vi.useRealTimers();
     });
 });

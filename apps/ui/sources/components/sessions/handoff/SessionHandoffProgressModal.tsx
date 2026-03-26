@@ -238,14 +238,73 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
 export function SessionHandoffProgressModal({ onClose, title, message, status }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const isFailureState = status?.status === 'failed' || status?.status === 'aborted' || status?.status === 'awaiting_recovery';
-    const isReadyForCutover = status?.status === 'ready_for_cutover';
-    const isCompleted = status?.status === 'completed';
+
+    // Keep a monotonic "effective" status so the checkpoint selection never regresses when
+    // daemon status updates arrive out of order or omit progress on terminal transitions.
+    const [effectiveStatus, setEffectiveStatus] = React.useState<SessionHandoffStatus | undefined>(status);
+    const effectiveStatusRef = React.useRef<SessionHandoffStatus | undefined>(status);
+    const lastProgressUpdatedAtMsRef = React.useRef<number | null>(status?.progress?.updatedAtMs ?? null);
+
+    React.useEffect(() => {
+        effectiveStatusRef.current = effectiveStatus;
+    }, [effectiveStatus]);
+
+    React.useEffect(() => {
+        if (!status) {
+            setEffectiveStatus(undefined);
+            effectiveStatusRef.current = undefined;
+            lastProgressUpdatedAtMsRef.current = null;
+            return;
+        }
+
+        const previous = effectiveStatusRef.current;
+        if (!previous || previous.handoffId !== status.handoffId) {
+            setEffectiveStatus(status);
+            effectiveStatusRef.current = status;
+            lastProgressUpdatedAtMsRef.current = status.progress?.updatedAtMs ?? null;
+            return;
+        }
+
+        const previousCode = previous.status;
+        const nextCode = status.status;
+        const previousIsTerminal = previousCode === 'completed' || previousCode === 'aborted' || previousCode === 'failed';
+        const nextIsTerminal = nextCode === 'completed' || nextCode === 'aborted' || nextCode === 'failed';
+        if (previousIsTerminal && !nextIsTerminal) {
+            return;
+        }
+
+        const previousUpdatedAtMs = lastProgressUpdatedAtMsRef.current;
+        const nextUpdatedAtMs = status.progress?.updatedAtMs ?? null;
+        if (
+            typeof previousUpdatedAtMs === 'number'
+            && typeof nextUpdatedAtMs === 'number'
+            && nextUpdatedAtMs < previousUpdatedAtMs
+        ) {
+            return;
+        }
+
+        const merged: SessionHandoffStatus = {
+            ...status,
+            ...(status.progress ? {} : previous.progress ? { progress: previous.progress } : {}),
+            ...(status.workspacePreflightSummary ? {} : previous.workspacePreflightSummary ? { workspacePreflightSummary: previous.workspacePreflightSummary } : {}),
+        };
+        setEffectiveStatus(merged);
+        effectiveStatusRef.current = merged;
+
+        const mergedUpdatedAtMs = merged.progress?.updatedAtMs ?? null;
+        if (typeof mergedUpdatedAtMs === 'number') {
+            lastProgressUpdatedAtMsRef.current = mergedUpdatedAtMs;
+        }
+    }, [status]);
+
+    const isFailureState = effectiveStatus?.status === 'failed' || effectiveStatus?.status === 'aborted' || effectiveStatus?.status === 'awaiting_recovery';
+    const isReadyForCutover = effectiveStatus?.status === 'ready_for_cutover';
+    const isCompleted = effectiveStatus?.status === 'completed';
     const canShowActiveProgress = !isFailureState && !isReadyForCutover;
-    const progressFraction = canShowActiveProgress ? computeProgressFraction(status) : null;
-    const summaryChips = buildSummaryChips(status);
+    const progressFraction = canShowActiveProgress ? computeProgressFraction(effectiveStatus) : null;
+    const summaryChips = buildSummaryChips(effectiveStatus);
     const progressLabel = progressFraction === null ? null : `${Math.round(progressFraction * 100)}%`;
-    const checkpointFromProgress = isKnownCheckpoint(status?.progress?.checkpoint) ? status?.progress?.checkpoint : null;
+    const checkpointFromProgress = isKnownCheckpoint(effectiveStatus?.progress?.checkpoint) ? effectiveStatus?.progress?.checkpoint : null;
     const currentCheckpoint = checkpointFromProgress;
     const canonicalTimelineForCheckpoint = resolveSessionHandoffProgressTimeline(checkpointFromProgress);
     // Once the daemon has emitted any "full timeline" checkpoint, keep rendering the full timeline
@@ -264,10 +323,10 @@ export function SessionHandoffProgressModal({ onClose, title, message, status }:
         ? CHECKPOINT_TIMELINE
         : canonicalTimelineForCheckpoint;
     const currentCheckpointIndex = currentCheckpoint ? timeline.indexOf(currentCheckpoint) : -1;
-    const isAwaitingRecovery = status?.status === 'awaiting_recovery';
+    const isAwaitingRecovery = effectiveStatus?.status === 'awaiting_recovery';
     const currentDetailLabel =
-        status?.progress?.current?.relativePath
-        ?? (isFailureState || isReadyForCutover ? status?.progress?.current?.phaseDetail : undefined)
+        effectiveStatus?.progress?.current?.relativePath
+        ?? (isFailureState || isReadyForCutover ? effectiveStatus?.progress?.current?.phaseDetail : undefined)
         ?? (currentCheckpoint ? translateCheckpoint(currentCheckpoint) : null);
     const resolvedTitle =
         title
@@ -312,13 +371,13 @@ export function SessionHandoffProgressModal({ onClose, title, message, status }:
                     )}
                     <Text style={styles.message}>{resolvedMessage}</Text>
                 </View>
-                {status ? (
+                {effectiveStatus ? (
                     <View style={styles.progressSection}>
                         {currentCheckpoint && currentCheckpointIndex >= 0 ? (
                             <View testID="session-handoff-progress-timeline" style={styles.timeline}>
                                 {timeline.map((checkpoint, index) => {
                                     const isDone =
-                                        status.status === 'completed'
+                                        effectiveStatus.status === 'completed'
                                         || (currentCheckpointIndex >= 0 && index < currentCheckpointIndex);
                                     const isCurrent = currentCheckpointIndex >= 0 && index === currentCheckpointIndex;
                                     return (

@@ -384,6 +384,106 @@ describe('SessionHandoffProgressModal', () => {
         expect(screen.findByTestId('session-handoff-progress-checkpoint-finalize')?.props.accessibilityState?.selected).toBe(false);
     });
 
+    it('ignores stale progress updates (by updatedAtMs) so the checkpoint selection never regresses', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+
+        const renderProps = {
+            onClose: () => {},
+        };
+
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                {...renderProps}
+                status={{
+                    handoffId: 'handoff_out_of_order_1',
+                    status: 'in_progress',
+                    phase: 'transferring',
+                    progress: {
+                        updatedAtMs: 200,
+                        checkpoint: 'transfer_blobs',
+                        planned: {},
+                        transferred: {},
+                        resumable: true,
+                    },
+                    recoveryActions: [],
+                }}
+            />,
+        );
+
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs')?.props.accessibilityState?.selected).toBe(true);
+
+        act(() => {
+            screen.tree.update(
+                <SessionHandoffProgressModal
+                    {...renderProps}
+                    status={{
+                        handoffId: 'handoff_out_of_order_1',
+                        status: 'in_progress',
+                        phase: 'staging_target',
+                        progress: {
+                            updatedAtMs: 100,
+                            checkpoint: 'plan',
+                            planned: {},
+                            transferred: {},
+                            resumable: true,
+                        },
+                        recoveryActions: [],
+                    }}
+                />,
+            );
+        });
+
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs')?.props.accessibilityState?.selected).toBe(true);
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-plan')?.props.accessibilityState?.selected).toBe(false);
+    });
+
+    it('keeps the last daemon checkpoint visible when a terminal status update arrives without progress', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+
+        const renderProps = {
+            onClose: () => {},
+        };
+
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                {...renderProps}
+                status={{
+                    handoffId: 'handoff_terminal_without_progress_1',
+                    status: 'in_progress',
+                    phase: 'transferring',
+                    progress: {
+                        updatedAtMs: 200,
+                        checkpoint: 'transfer_blobs',
+                        planned: {},
+                        transferred: {},
+                        resumable: true,
+                    },
+                    recoveryActions: [],
+                }}
+            />,
+        );
+
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs')?.props.accessibilityState?.selected).toBe(true);
+
+        act(() => {
+            screen.tree.update(
+                <SessionHandoffProgressModal
+                    {...renderProps}
+                    status={{
+                        handoffId: 'handoff_terminal_without_progress_1',
+                        status: 'aborted',
+                        phase: 'finalizing',
+                        recoveryActions: [],
+                    }}
+                />,
+            );
+        });
+
+        expect(screen.getTextContent()).toContain('sessionHandoff.failure.title');
+        expect(screen.getTextContent()).toContain('sessionHandoff.failure.message');
+        expect(screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs')?.props.accessibilityState?.selected).toBe(true);
+    });
+
     it('anchors ready_for_cutover to the daemon-reported checkpoint (import_session)', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
 
