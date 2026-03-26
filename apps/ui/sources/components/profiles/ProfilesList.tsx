@@ -79,6 +79,7 @@ export interface ProfilesListProps {
 }
 
 type ProfileRowProps = {
+    testID: string;
     profile: AIBackendProfile;
     displayName: string;
     isSelected: boolean;
@@ -142,6 +143,7 @@ const ProfileRow = React.memo(function ProfileRow(props: ProfileRowProps) {
 
     return (
         <Item
+            testID={props.testID}
             key={props.profile.id}
             title={props.displayName}
             subtitle={subtitle}
@@ -330,6 +332,7 @@ export function ProfilesList(props: ProfilesListProps) {
                 >
                     {props.includeDefaultEnvironmentRow && isDefaultEnvironmentFavorite && (
                         <Item
+                            testID="profiles-list-row:default-environment"
                             title={t('profiles.noProfile')}
                             subtitle={t('profiles.noProfileDescription')}
                             leftElement={<Ionicons name="home-outline" size={29} color={theme.colors.textSecondary} />}
@@ -363,6 +366,7 @@ export function ProfilesList(props: ProfilesListProps) {
                         return (
                             <ProfileRow
                                 key={profile.id}
+                                testID={`profiles-list-row:${profile.id}`}
                                 profile={profile}
                                 displayName={displayName}
                                 isSelected={isSelected}
@@ -408,6 +412,7 @@ export function ProfilesList(props: ProfilesListProps) {
                         return (
                             <ProfileRow
                                 key={profile.id}
+                                testID={`profiles-list-row:${profile.id}`}
                                 profile={profile}
                                 displayName={displayName}
                                 isSelected={isSelected}
@@ -442,6 +447,7 @@ export function ProfilesList(props: ProfilesListProps) {
             >
                 {props.includeDefaultEnvironmentRow && !isDefaultEnvironmentFavorite && (
                     <Item
+                        testID="profiles-list-row:default-environment"
                         title={t('profiles.noProfile')}
                         subtitle={t('profiles.noProfileDescription')}
                         leftElement={<Ionicons name="home-outline" size={29} color={theme.colors.textSecondary} />}
@@ -476,6 +482,7 @@ export function ProfilesList(props: ProfilesListProps) {
                     return (
                         <ProfileRow
                             key={profile.id}
+                            testID={`profiles-list-row:${profile.id}`}
                             profile={profile}
                             displayName={displayName}
                             isSelected={isSelected}
@@ -500,6 +507,7 @@ export function ProfilesList(props: ProfilesListProps) {
             {props.includeAddProfileRow && props.onAddProfilePress && (
                 <ItemGroup title="" selectableItemCountOverride={1}>
                     <Item
+                        testID="profiles-list-add-profile"
                         title={t('profiles.addProfile')}
                         subtitle={t('profiles.subtitle')}
                         leftElement={<Ionicons name="add-circle-outline" size={29} color={theme.colors.button.secondary.tint} />}

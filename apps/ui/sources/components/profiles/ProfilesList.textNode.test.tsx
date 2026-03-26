@@ -4,6 +4,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installProfilesCommonModuleMocks } from './profilesTestHelpers';
 
+const profilesListState = vi.hoisted(() => ({
+    groups: {
+        favoriteIds: new Set<string>(),
+        favoriteProfiles: [],
+        customProfiles: [],
+        builtInProfiles: [],
+    } as any,
+}));
 
 const actEnvironment = globalThis as typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -83,12 +91,7 @@ vi.mock('@/components/profiles/profileActions', () => ({
 vi.mock('@/components/profiles/profileListModel', () => ({
     getDefaultProfileListStrings: () => ({}),
     getProfileSubtitle: () => 'Subtitle',
-    buildProfilesListGroups: () => ({
-        favoriteIds: new Set<string>(),
-        favoriteProfiles: [],
-        customProfiles: [],
-        builtInProfiles: [],
-    }),
+    buildProfilesListGroups: () => profilesListState.groups,
 }));
 
 vi.mock('@/components/profiles/profileDisplay', () => ({
@@ -154,5 +157,39 @@ describe('ProfilesList', () => {
         act(() => {
             tree.unmount();
         });
+    });
+
+    it('assigns stable `testID`s to profile rows for E2E automation', async () => {
+        profilesListState.groups = {
+            favoriteIds: new Set<string>(),
+            favoriteProfiles: [],
+            customProfiles: [],
+            builtInProfiles: [
+                {
+                    id: 'anthropic',
+                    name: 'Anthropic',
+                    isBuiltIn: true,
+                    compatibility: {},
+                    compatibilityByTargetKey: {},
+                    environmentVariables: [],
+                },
+            ],
+        };
+
+        const { ProfilesList } = await import('./ProfilesList');
+        const screen = await renderScreen(
+            <ProfilesList
+                customProfiles={[]}
+                favoriteProfileIds={[]}
+                onFavoriteProfileIdsChange={() => {}}
+                selectedProfileId={null}
+                onPressDefaultEnvironment={() => {}}
+                machineId={null}
+                includeDefaultEnvironmentRow
+            />,
+        );
+
+        expect(screen.findAllByProps({ testID: 'profiles-list-row:default-environment' }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ testID: 'profiles-list-row:anthropic' }).length).toBeGreaterThan(0);
     });
 });
