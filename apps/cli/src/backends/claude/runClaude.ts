@@ -744,6 +744,9 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
         try {
             if (session) {
+                // Dispose the local permission bridge while the session transport is still alive so it can
+                // cancel and persist any outstanding local-mode permission requests.
+                disposeLocalPermissionBridge();
                 if (outcome.archive) {
                     await archiveAndCloseRuntimeSession(session, credentials, outcome.archiveReason);
                 }
@@ -763,7 +766,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             stopCaffeinate();
 
             // Stop Hook server and cleanup settings file
-            disposeLocalPermissionBridge();
             hookServer.stop();
             cleanupHookSettingsFile(hookSettingsPath);
 
@@ -860,6 +862,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Note: currentSession is set by onSessionReady callback during loop()
     (currentSession as import('./session').Session | null)?.cleanup();
 
+    // Dispose the local permission bridge while the session transport is still alive so it can
+    // cancel and persist any outstanding local-mode permission requests.
+    disposeLocalPermissionBridge();
+
     // Send session death message
     session.sendSessionDeath();
 
@@ -876,7 +882,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     logger.debug('Stopped sleep prevention');
 
     // Stop Hook server and cleanup settings file
-    disposeLocalPermissionBridge();
     hookServer.stop();
     cleanupHookSettingsFile(hookSettingsPath);
     logger.debug('Stopped Hook server and cleaned up settings file');
@@ -1458,6 +1463,9 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                 coordinator.cancel();
                 coordinator.artifacts.deferredSession.cancel();
                 cleanupClaudeSessionBestEffort(currentSession);
+                // Dispose the local permission bridge while the session transport is still alive so it can
+                // cancel and persist any outstanding local-mode permission requests.
+                disposeLocalPermissionBridge();
                 coordinator.artifacts.deferredSession.sendSessionDeath();
                 await coordinator.artifacts.deferredSession.flush();
                 await coordinator.artifacts.deferredSession.close();
@@ -1467,7 +1475,6 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
 
             try {
                 stopCaffeinate();
-                disposeLocalPermissionBridge();
                 coordinator.artifacts.hookServer?.stop();
                 if (coordinator.artifacts.hookSettingsPath) {
                     cleanupHookSettingsFile(coordinator.artifacts.hookSettingsPath);
@@ -1504,6 +1511,9 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     // Best-effort cleanup for normal exits (signals handled via terminationHandlers).
     try {
         cleanupClaudeSessionBestEffort(currentSession);
+        // Dispose the local permission bridge while the session transport is still alive so it can
+        // cancel and persist any outstanding local-mode permission requests.
+        disposeLocalPermissionBridge();
         coordinator.artifacts.deferredSession.sendSessionDeath();
         await coordinator.artifacts.deferredSession.flush();
         await coordinator.artifacts.deferredSession.close();
@@ -1512,7 +1522,6 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     }
     try {
         stopCaffeinate();
-        disposeLocalPermissionBridge();
         coordinator.artifacts.hookServer?.stop();
         if (coordinator.artifacts.hookSettingsPath) {
             cleanupHookSettingsFile(coordinator.artifacts.hookSettingsPath);

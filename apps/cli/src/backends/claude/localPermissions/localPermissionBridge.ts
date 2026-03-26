@@ -21,7 +21,7 @@ import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNam
 import {
     CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
     isClaudeLocalPermissionBridgeAgentStateRequest,
-} from '../utils/permissionRequestSource';
+} from '@happier-dev/agents';
 
 type PendingPermissionRequest = {
     id: string;

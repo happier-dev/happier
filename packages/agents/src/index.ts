@@ -135,6 +135,11 @@ export {
     resolveLatestPermissionIntent,
 } from './permissions/index.js';
 
+export {
+    CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+    isClaudeLocalPermissionBridgeAgentStateRequest,
+} from './providers/claude/permissionRequestSource.js';
+
 export { computeMonotonicUpdatedAt, type MonotonicUpdatedAtPolicy } from './sessionControls/monotonic.js';
 export {
   UNSUPPORTED_AGENT_SESSION_CAPABILITIES,

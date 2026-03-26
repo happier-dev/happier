@@ -563,72 +563,130 @@ describe.sequential('claudeRemoteLauncher', () => {
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
-	  it('restarts the Claude runtime when the queued prompt mode hash changes, including across relaunch boundaries', async () => {
-	    const firstSeen = createDeferred<any>();
-	    const secondSeen = createDeferred<any>();
-	    const thirdSeen = createDeferred<any>();
+  it('relaunches between turns when a spawn-only setting changes (reasoning effort), preserving message order', async () => {
+    const firstSeen = createDeferred<any>();
+    const secondDispatchFirstSeen = createDeferred<any>();
+    const firstDispatchSawRestartBoundary = createDeferred<void>();
 
     mockClaudeRemoteDispatch
       .mockImplementationOnce(async (opts: unknown) => {
         const dispatchOpts = opts as any;
-        firstSeen.resolve(await dispatchOpts.nextMessage?.());
-        // Second call should return null (launcher buffers pending + relaunches).
-        expect(await dispatchOpts.nextMessage?.()).toBeNull();
+        const first = await dispatchOpts.nextMessage?.();
+        firstSeen.resolve(first);
+        const second = await dispatchOpts.nextMessage?.();
+        expect(second).toBeNull();
+        firstDispatchSawRestartBoundary.resolve(undefined);
       })
       .mockImplementationOnce(async (opts: unknown) => {
         const dispatchOpts = opts as any;
-        secondSeen.resolve(await dispatchOpts.nextMessage?.());
-        // After relaunch, a second mode change should also trigger buffering + relaunch.
-        expect(await dispatchOpts.nextMessage?.()).toBeNull();
-      })
-      .mockImplementationOnce(async (opts: unknown) => {
-        const dispatchOpts = opts as any;
-        thirdSeen.resolve(await dispatchOpts.nextMessage?.());
+        secondDispatchFirstSeen.resolve(await dispatchOpts.nextMessage?.());
         await waitForAbort(dispatchOpts.signal);
       });
 
-	    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
-	    session.queue.push('one', { permissionMode: 'default', reasoningEffort: 'low' } satisfies EnhancedMode);
-	    session.queue.push('two', { permissionMode: 'default', reasoningEffort: 'max' } satisfies EnhancedMode);
-	    session.queue.push('three', { permissionMode: 'default', reasoningEffort: 'medium' } satisfies EnhancedMode);
-	    // Ensure nextMessage never deadlocks in a regression case where the launcher fails to restart.
-	    // This doesn't affect the mode-hash behavior under test; it just guarantees eventual null.
-	    session.queue.close();
+    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+
+    session.queue.push('first', {
+      permissionMode: 'default',
+      claudeRemoteAgentSdkEnabled: true,
+      model: 'claude-opus-4-6',
+    } satisfies EnhancedMode);
 
     const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
     const launcherPromise = claudeRemoteLauncher(session);
 
+    const first = await firstSeen.promise;
+    expect(first?.message).toContain('first');
+
+    // Change reasoning effort: this must restart between turns (Agent SDK effort is spawn-only),
+    // but the message must be preserved and delivered after restart.
+    session.queue.push('second', {
+      permissionMode: 'default',
+      claudeRemoteAgentSdkEnabled: true,
+      model: 'claude-opus-4-6',
+      reasoningEffort: 'low',
+    } satisfies EnhancedMode);
+
+    await firstDispatchSawRestartBoundary.promise;
+
+    const second = await secondDispatchFirstSeen.promise;
+    expect(second?.message).toContain('second');
+
     const switchHandler = await switchHandlerReady;
-    try {
-      const unset = Symbol('unset');
-      let first: any = unset;
-      let second: any = unset;
-      let third: any = unset;
-      void firstSeen.promise.then((value) => { first = value; });
-      void secondSeen.promise.then((value) => { second = value; });
-      void thirdSeen.promise.then((value) => { third = value; });
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
 
-	      await expect.poll(() => first, { timeout: 10_000 }).not.toBe(unset);
-	      expect(first).not.toBeNull();
-	      expect(first?.message).toContain('one');
-	      expect(first?.message).not.toContain('two');
-	      expect(first?.mode?.reasoningEffort).toBe('low');
+  it('continues to detect mode changes after a relaunch boundary by updating the current mode hash when replaying a pending message', async () => {
+    const firstDispatchFirstSeen = createDeferred<any>();
+    const firstDispatchSawRestartBoundary = createDeferred<void>();
 
-	      await expect.poll(() => second, { timeout: 10_000 }).not.toBe(unset);
-	      expect(second).not.toBeNull();
-	      expect(second?.message).toContain('two');
-	      expect(second?.message).not.toContain('three');
-	      expect(second?.mode?.reasoningEffort).toBe('max');
+    const secondDispatchFirstSeen = createDeferred<any>();
+    const secondDispatchSawRestartBoundary = createDeferred<void>();
 
-	      await expect.poll(() => third, { timeout: 10_000 }).not.toBe(unset);
-	      expect(third).not.toBeNull();
-	      expect(third?.message).toContain('three');
-	      expect(third?.mode?.reasoningEffort).toBe('medium');
-	    } finally {
-	      expect(await switchHandler({ to: 'local' })).toBe(true);
-	      await expect(launcherPromise).resolves.toBe('switch');
-	    }
-	  }, 30_000);
+    const thirdDispatchFirstSeen = createDeferred<any>();
+
+    mockClaudeRemoteDispatch
+      .mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as any;
+        firstDispatchFirstSeen.resolve(await dispatchOpts.nextMessage?.());
+        expect(await dispatchOpts.nextMessage?.()).toBeNull();
+        firstDispatchSawRestartBoundary.resolve(undefined);
+      })
+      .mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as any;
+        secondDispatchFirstSeen.resolve(await dispatchOpts.nextMessage?.());
+        expect(await dispatchOpts.nextMessage?.()).toBeNull();
+        secondDispatchSawRestartBoundary.resolve(undefined);
+      })
+      .mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as any;
+        thirdDispatchFirstSeen.resolve(await dispatchOpts.nextMessage?.());
+        await waitForAbort(dispatchOpts.signal);
+      });
+
+    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+
+    session.queue.push('low1', {
+      permissionMode: 'default',
+      claudeRemoteAgentSdkEnabled: true,
+      model: 'claude-opus-4-6',
+      reasoningEffort: 'low',
+    } satisfies EnhancedMode);
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    const firstDispatchFirst = await firstDispatchFirstSeen.promise;
+    expect(firstDispatchFirst?.message).toContain('low1');
+
+    session.queue.push('max2', {
+      permissionMode: 'default',
+      claudeRemoteAgentSdkEnabled: true,
+      model: 'claude-opus-4-6',
+      reasoningEffort: 'max',
+    } satisfies EnhancedMode);
+
+    await firstDispatchSawRestartBoundary.promise;
+
+    const secondDispatchFirst = await secondDispatchFirstSeen.promise;
+    expect(secondDispatchFirst?.message).toContain('max2');
+
+    session.queue.push('low3', {
+      permissionMode: 'default',
+      claudeRemoteAgentSdkEnabled: true,
+      model: 'claude-opus-4-6',
+      reasoningEffort: 'low',
+    } satisfies EnhancedMode);
+
+    await secondDispatchSawRestartBoundary.promise;
+
+    const thirdDispatchFirst = await thirdDispatchFirstSeen.promise;
+    expect(thirdDispatchFirst?.message).toContain('low3');
+
+    const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
 
   it('persists the last assistant uuid into session metadata when observed in remote messages', async () => {
     const { session, client, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });

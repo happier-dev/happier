@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 
 import type { ImportedSessionHandoffBundle } from '../../../session/handoff/types';
 import type { ClaudeSessionBundle } from '../../../session/handoff/types';
@@ -24,6 +24,7 @@ export async function importClaudeSessionBundle(params: Readonly<{
 }>): Promise<ImportedSessionHandoffBundle> {
   const explicitClaudeConfigDir = resolveClaudeConfigDirOverride(params.env);
   const resolvedClaudeConfigDir = explicitClaudeConfigDir ?? join(homedir(), '.claude');
+  const projectId = resolvePath(params.targetPath).replace(/[^a-zA-Z0-9-]/g, '-');
   const projectDir = getProjectPath(params.targetPath, resolvedClaudeConfigDir);
   await mkdir(projectDir, { recursive: true });
 
@@ -35,8 +36,8 @@ export async function importClaudeSessionBundle(params: Readonly<{
     remoteSessionId: params.bundle.remoteSessionId,
     directSource: {
       kind: 'claudeConfig',
-      configDir: explicitClaudeConfigDir,
-      projectId: null,
+      configDir: resolvedClaudeConfigDir,
+      projectId,
     },
       resume: {
       directory: params.targetPath,

@@ -18,6 +18,7 @@ import { resolveClaudeCodeExperimentalEnvOverlay } from '@/backends/claude/spawn
 import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
+import { resolveClaudeEffortForModel } from '@/backends/claude/utils/claudeEffort';
 import { resolveClaudeCodeXdgIsolation } from '@/backends/claude/utils/resolveClaudeCodeXdgIsolation';
 import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
 
@@ -437,12 +438,10 @@ export async function claudeRemoteAgentSdk(opts: {
             typeof opts.resumeSessionAt === 'string' && opts.resumeSessionAt.trim().length > 0
                 ? opts.resumeSessionAt.trim()
                 : null;
-        const resolvedEffort = (() => {
-            const argEffort = typeof argOverrides.effort === 'string' ? argOverrides.effort.trim() : '';
-            if (argEffort.length > 0) return argEffort;
-            const modeEffort = typeof mode.reasoningEffort === 'string' ? mode.reasoningEffort.trim() : '';
-            return modeEffort.length > 0 ? modeEffort : null;
-        })();
+        const resolvedEffort = resolveClaudeEffortForModel({
+            modelId: argOverrides.model ?? mode.model,
+            effort: argOverrides.effort ?? mode.reasoningEffort,
+        });
             const queryOptions: Record<string, unknown> = {
                 abortController,
                 cwd: opts.path,
@@ -558,6 +557,7 @@ export async function claudeRemoteAgentSdk(opts: {
         let lastCheckpointId: string | null = null;
         const checkpointIds: string[] = [];
         const checkpointIdSet = new Set<string>();
+        let didFinalizeTurn = false;
 
         function recordCheckpointId(id: string) {
             if (checkpointIdSet.has(id)) return;
@@ -713,6 +713,17 @@ export async function claudeRemoteAgentSdk(opts: {
                     nextMessagePump = null;
                 }
             })();
+        };
+
+        const finalizeCurrentTurn = async (params?: { completionEvent?: string }) => {
+            if (didFinalizeTurn) return;
+            didFinalizeTurn = true;
+            updateThinking(false);
+            if (params?.completionEvent) {
+                opts.onCompletionEvent?.(params.completionEvent);
+            }
+            await opts.onReady();
+            scheduleNextMessagePump();
         };
 
         // Fire-and-forget capability publication.
@@ -926,6 +937,11 @@ export async function claudeRemoteAgentSdk(opts: {
                             `${init.session_id}.jsonl`,
                         );
                         opts.onSessionFound(init.session_id, { transcript_path: transcriptPath, transcriptPath });
+                        if (isCompactCommand) {
+                            opts.onCompletionEvent?.('Compaction completed');
+                            isCompactCommand = false;
+                            await finalizeCurrentTurn();
+                        }
                     }
                 }
 
@@ -961,15 +977,17 @@ export async function claudeRemoteAgentSdk(opts: {
             }
 
             if (message && message.type === 'result') {
-                updateThinking(false);
-
-                if (isCompactCommand) {
-                    opts.onCompletionEvent?.('Compaction completed');
-                    isCompactCommand = false;
+                if (didFinalizeTurn) {
+                    continue;
                 }
 
-                await opts.onReady();
-                scheduleNextMessagePump();
+                if (isCompactCommand) {
+                    isCompactCommand = false;
+                    await finalizeCurrentTurn({ completionEvent: 'Compaction completed' });
+                    continue;
+                }
+
+                await finalizeCurrentTurn();
             }
         }
     } catch (e) {

@@ -703,4 +703,78 @@ describe('claudeRemoteAgentSdk stream events', () => {
         expect(block?.content).toContain('Spawned successfully');
         expect(block?.content).toContain('agent_id:');
     });
+
+    it('treats compact-session init as a turn boundary so queued prompts keep flowing without waiting for stop', async () => {
+        const onReady = vi.fn();
+        const onSessionFound = vi.fn();
+
+        let releaseStream!: () => void;
+        const streamClosed = new Promise<void>((resolve) => {
+            releaseStream = resolve;
+        });
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'system',
+                        subtype: 'init',
+                        session_id: 'sess_compacted_2',
+                    } as any;
+                    await streamClosed;
+                },
+                close: vi.fn(() => {
+                    releaseStream();
+                }),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (!didSendFirst) {
+                didSendFirst = true;
+                return {
+                    message: '/compact',
+                    mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
+                };
+            }
+
+            return {
+                message: 'follow-up after compaction',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
+            };
+        });
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady,
+            onSessionFound,
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        try {
+            await vi.waitFor(() => {
+                expect(onReady).toHaveBeenCalledTimes(1);
+            });
+            await vi.waitFor(() => {
+                expect(nextMessage).toHaveBeenCalledTimes(2);
+            });
+            expect(onSessionFound).toHaveBeenCalledWith('sess_compacted_2', expect.anything());
+        } finally {
+            releaseStream();
+            await runnerPromise.catch(() => {});
+        }
+    });
 });

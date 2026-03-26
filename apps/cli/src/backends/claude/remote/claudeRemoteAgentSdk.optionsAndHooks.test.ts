@@ -154,7 +154,10 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         const nextMessage = vi.fn(async () => {
             if (didSendFirst) return null;
             didSendFirst = true;
-            return { message: 'hello', mode: makeMode({ permissionMode: 'default', reasoningEffort: 'high' } as any) };
+            return {
+                message: 'hello',
+                mode: makeMode({ permissionMode: 'default', model: 'claude-opus-4-6', reasoningEffort: 'max' } as any),
+            };
         });
 
         await claudeRemoteAgentSdk({
@@ -173,7 +176,56 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         } as any);
 
         expect(capturedOptions).toBeTruthy();
-        expect(capturedOptions.effort).toBe('high');
+        expect(capturedOptions.model).toBe('claude-opus-4-6');
+        expect(capturedOptions.effort).toBe('max');
+    });
+
+    it('omits effort when the mode specifies reasoningEffort=high (provider default)', async () => {
+        let capturedOptions: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return {
+                message: 'hello',
+                mode: makeMode({ permissionMode: 'default', model: 'claude-opus-4-6', reasoningEffort: 'high' } as any),
+            };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedOptions).toBeTruthy();
+        expect(capturedOptions.model).toBe('claude-opus-4-6');
+        expect('effort' in capturedOptions ? capturedOptions.effort : undefined).toBeUndefined();
     });
 
     it('uses the resolved JavaScript runtime path instead of a raw node default', async () => {

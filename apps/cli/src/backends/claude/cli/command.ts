@@ -25,9 +25,26 @@ import { requireJavaScriptRuntimeExecutable } from '@/runtime/js/requireJavaScri
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import { readProviderCliOverride } from '@/runtime/managedTools/providerCliResolution';
 import { isBun } from '@/utils/runtime';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { handleResumeCommand } from '@/cli/commands/resume';
 import packageJson from '../../../../package.json';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+
+function readResumeFlagValue(args: readonly string[] | null | undefined): { flagIndex: number; valueIndex: number; value: string } | null {
+  const list = Array.isArray(args) ? args : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const flag = list[i];
+    if (flag !== '--resume' && flag !== '-r') continue;
+    const next = list[i + 1];
+    if (typeof next !== 'string') return null;
+    if (next.startsWith('-')) return null; // `--resume` without an explicit id
+    const trimmed = next.trim();
+    if (!trimmed) return null;
+    return { flagIndex: i, valueIndex: i + 1, value: trimmed };
+  }
+  return null;
+}
 
 export function stripHappyInternalSettingsFlag(
   args: readonly string[],
@@ -58,7 +75,8 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
   const args = [...context.args];
 
   // Support `happier claude ...` while keeping `happier ...` as the default Claude flow.
-  if (args.length > 0 && args[0] === 'claude') {
+  const explicitClaudeSubcommand = args.length > 0 && args[0] === 'claude';
+  if (explicitClaudeSubcommand) {
     args.shift();
   }
 
@@ -265,6 +283,17 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
       void ensureDaemonRunningForSessionCommand().catch((error) => {
         logger.debug('[claude] Failed to auto-start daemon (non-fatal)', error);
       });
+    }
+  }
+
+  if (!explicitClaudeSubcommand) {
+    const resume = readResumeFlagValue(options.claudeArgs);
+    if (resume) {
+      const exists = await fetchSessionById({ token: credentials.token, sessionId: resume.value }).catch(() => null);
+      if (exists) {
+        await handleResumeCommand([resume.value], { terminalRuntime: context.terminalRuntime, rawArgv: context.rawArgv });
+        return;
+      }
     }
   }
 

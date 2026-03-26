@@ -28,7 +28,7 @@ import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
 import { computeNextMetadataStringOverrideV1, SESSION_MODE_OVERRIDE_KEY } from '@happier-dev/agents';
-import { isClaudeLocalPermissionBridgeAgentStateRequest } from './permissionRequestSource';
+import { isClaudeLocalPermissionBridgeAgentStateRequest } from '@happier-dev/agents';
 
 type PermissionResponse = PermissionRpcPayload;
 
@@ -949,6 +949,33 @@ export class PermissionHandler {
         this.metadataWatcherAbort = null;
         this.permissionRequestPushNotifier?.dispose();
         this.permissionRequestPushNotifier = null;
+        for (const [, pending] of this.pendingRequests.entries()) {
+            pending.reject(new Error('Session disposed'));
+        }
+        this.pendingRequests.clear();
+        updateAgentStateBestEffort(
+            this.session.client,
+            (currentState) => {
+                const pendingRequests = cloneStringKeyedRecordToNullProto(currentState.requests);
+                const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
+
+                for (const [id, request] of Object.entries(pendingRequests)) {
+                    const entry = clonePlainObjectToNullProto(request) ?? Object.create(null);
+                    entry.completedAt = Date.now();
+                    entry.status = 'canceled';
+                    entry.reason = 'Session disposed';
+                    completedRequests[id] = entry;
+                }
+
+                return {
+                    ...currentState,
+                    requests: Object.create(null),
+                    completedRequests,
+                };
+            },
+            '[Claude]',
+            'dispose_pending_requests',
+        );
     }
 
     /**

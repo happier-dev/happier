@@ -163,10 +163,11 @@ describe('claude session handoff bundle', () => {
     });
 
     expect(result.remoteSessionId).toBe('claude_session_1');
+    const projectId = targetPath.replace(/[^a-zA-Z0-9-]/g, '-');
     expect(result.directSource).toEqual({
       kind: 'claudeConfig',
       configDir: join(root, '.claude-target'),
-      projectId: null,
+      projectId,
     });
     expect(result.resume).toEqual({
       directory: targetPath,
@@ -180,7 +181,6 @@ describe('claude session handoff bundle', () => {
       approvedNewDirectoryCreation: true,
     });
 
-    const projectId = targetPath.replace(/[^a-zA-Z0-9-]/g, '-');
     const importedPath = join(root, '.claude-target', 'projects', projectId, 'claude_session_1.jsonl');
     await expect(readFile(importedPath, 'utf8')).resolves.toBe('{"type":"assistant"}\n');
   });
@@ -231,7 +231,7 @@ describe('claude session handoff bundle', () => {
     expect(result.directSource).toEqual({
       kind: 'claudeConfig',
       configDir,
-      projectId: null,
+      projectId: targetPath.replace(/[^a-zA-Z0-9-]/g, '-'),
     });
       expect(result.resume).toEqual({
         directory: targetPath,
@@ -270,8 +270,8 @@ describe('claude session handoff bundle', () => {
 
       expect(result.directSource).toEqual({
         kind: 'claudeConfig',
-        configDir: null,
-        projectId: null,
+        configDir: join(root, '.claude'),
+        projectId: targetPath.replace(/[^a-zA-Z0-9-]/g, '-'),
       });
       expect(result.resume.environmentVariables).toEqual({
         CLAUDE_CONFIG_DIR: join(root, '.claude'),

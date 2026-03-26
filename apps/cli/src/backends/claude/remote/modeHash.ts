@@ -2,6 +2,7 @@ import { hashObject } from '@/utils/deterministicJson';
 
 import type { EnhancedMode } from '@/backends/claude/loop';
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
+import { resolveClaudeEffortForModel } from '@/backends/claude/utils/claudeEffort';
 
 function resolveClaudeRemoteSettingSourcesOverrideForAgentSdk(mode: EnhancedMode): readonly ('user' | 'project' | 'local')[] | null {
     const rawV2 = (mode as any).claudeRemoteSettingSourcesV2 as unknown;
@@ -29,10 +30,6 @@ function resolveClaudeRemoteSettingSourcesOverrideForAgentSdk(mode: EnhancedMode
 
 export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
     const agentSdkEnabled = mode.claudeRemoteAgentSdkEnabled === true;
-    const normalizedReasoningEffort = (() => {
-        const raw = typeof mode.reasoningEffort === 'string' ? mode.reasoningEffort.trim() : '';
-        return raw.length > 0 ? raw : null;
-    })();
     const effectiveAgentModeId = (() => {
         const raw = typeof mode.agentModeId === 'string' ? mode.agentModeId.trim() : '';
         if (raw) return raw;
@@ -45,16 +42,23 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
         agentModeId: effectiveAgentModeId,
     });
 
+    // Spawn-only config for Claude: effort is a query-start option in the Agent SDK and has no dynamic setter.
+    // We normalize effort to the effective value the provider would actually apply (treating "high" as default).
+    const resolvedEffort = resolveClaudeEffortForModel({
+        modelId: mode.model,
+        effort: mode.reasoningEffort,
+    });
+
     if (!agentSdkEnabled) {
         return hashObject({
             claudeSdkPermissionMode,
             agentModeId: effectiveAgentModeId || null,
             replaySeedAllowed: mode.replaySeedAllowed !== false,
             model: mode.model,
+            effort: resolvedEffort,
             fallbackModel: mode.fallbackModel,
             customSystemPrompt: mode.customSystemPrompt,
             appendSystemPrompt: mode.appendSystemPrompt,
-            reasoningEffort: normalizedReasoningEffort,
             claudeRemoteDisableTodos: mode.claudeRemoteDisableTodos,
         });
     }
@@ -71,8 +75,8 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
         claudeRemoteDisableTodos: mode.claudeRemoteDisableTodos,
         claudeRemoteStrictMcpServerConfig: mode.claudeRemoteStrictMcpServerConfig,
         claudeRemoteAdvancedOptionsJson: mode.claudeRemoteAdvancedOptionsJson,
+        effort: resolvedEffort,
         // Restart-required (SDK has no dynamic setter)
-        reasoningEffort: normalizedReasoningEffort,
         fallbackModel: mode.fallbackModel,
         customSystemPrompt: mode.customSystemPrompt,
         appendSystemPrompt: mode.appendSystemPrompt,

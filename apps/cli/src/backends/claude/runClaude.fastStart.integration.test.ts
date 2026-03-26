@@ -8,6 +8,22 @@ import { configuration } from '@/configuration';
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void };
 
+const localPermissionBridgeMockState = vi.hoisted(() => ({ events: [] as string[] }));
+
+vi.mock('@/backends/claude/localPermissions/localPermissionBridge', () => ({
+  DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE: {
+    continue: true,
+    suppressOutput: true,
+    hookSpecificOutput: { hookEventName: 'PermissionRequest' },
+  },
+  ClaudeLocalPermissionBridge: class ClaudeLocalPermissionBridge {
+    activate() {}
+    dispose() {
+      localPermissionBridgeMockState.events.push('dispose');
+    }
+  },
+}));
+
 function createDeferred<T>(): Deferred<T> {
   let resolveFn: ((value: T) => void) | null = null;
   const promise = new Promise<T>((resolve) => {
@@ -322,6 +338,69 @@ describe('runClaude fast-start', () => {
     if (testError) {
       throw testError;
     }
+  });
+
+  it('disposes the local permission bridge before closing the session', async () => {
+    vi.resetModules();
+    localPermissionBridgeMockState.events.length = 0;
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    autoSessionReady = true;
+    initResolved = false;
+    backendInitDelayMs = 0;
+
+    const previousSessionImpl = sessionSyncClientSpy.getMockImplementation();
+    sessionSyncClientSpy.mockImplementation((resp: any) => {
+      const base = previousSessionImpl ? (previousSessionImpl as any)(resp) : {};
+      return {
+        ...base,
+        close: vi.fn(async () => {
+          localPermissionBridgeMockState.events.push('close');
+        }),
+      };
+    });
+
+    const { runClaude } = await import('./runClaude');
+    const credentials = createLegacyCredentials();
+    let testError: unknown = null;
+    const runPromise = runClaude(credentials, { startedBy: 'terminal', startingMode: 'local' }).catch((e) => {
+      testError = e;
+    });
+
+    try {
+      await expect(waitFor(loopStarted.promise, loopStartWaitMs)).resolves.toBeUndefined();
+      await waitFor(
+        new Promise<void>((resolve) => {
+          const timer = setInterval(() => {
+            if (initResolved) {
+              clearInterval(timer);
+              resolve();
+            }
+          }, 10);
+          timer.unref?.();
+        }),
+        5_000,
+      );
+    } catch (e) {
+      testError = e;
+    } finally {
+      loopExit.resolve(0);
+      await runPromise;
+      if (previousSessionImpl) {
+        sessionSyncClientSpy.mockImplementation(previousSessionImpl);
+      }
+    }
+
+    if (testError) {
+      throw testError;
+    }
+
+    const disposeIndex = localPermissionBridgeMockState.events.indexOf('dispose');
+    const closeIndex = localPermissionBridgeMockState.events.indexOf('close');
+    expect(disposeIndex).toBeGreaterThanOrEqual(0);
+    expect(closeIndex).toBeGreaterThanOrEqual(0);
+    expect(disposeIndex).toBeLessThan(closeIndex);
   });
 
   it('uses fast-start attach when permission intent is inferred from Claude CLI args', async () => {
