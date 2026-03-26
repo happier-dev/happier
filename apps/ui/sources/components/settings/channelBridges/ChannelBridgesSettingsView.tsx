@@ -10,6 +10,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { layout } from '@/components/ui/layout/layout';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { Text } from '@/components/ui/text/Text';
+import type { FeatureId } from '@happier-dev/protocol';
 import { FeatureDiagnosticsPanel } from '@/components/settings/features/FeatureDiagnosticsPanel';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { t } from '@/text';
@@ -30,6 +31,11 @@ export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSett
             '--require-topics false',
         ].join(' ');
     }, []);
+
+    const diagnosticsFeatureIds = React.useMemo(() => ([
+        'channelBridges',
+        'channelBridges.telegram',
+    ] as const satisfies readonly FeatureId[]), []);
 
     return (
         <ItemList style={{ paddingTop: 0 }} testID="settings-channel-bridges-screen">
@@ -65,13 +71,8 @@ export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSett
                     </ItemGroup>
                 ) : null}
 
-                {decision ? (
-                    <ItemGroup title={t('settingsChannelBridges.diagnosticsTitle')}>
-                        <FeatureDiagnosticsPanel decision={decision} />
-                    </ItemGroup>
-                ) : null}
+                {supported ? <FeatureDiagnosticsPanel featureIds={diagnosticsFeatureIds} /> : null}
             </View>
         </ItemList>
     );
 });
-

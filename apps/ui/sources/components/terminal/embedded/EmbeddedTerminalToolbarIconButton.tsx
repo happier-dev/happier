@@ -20,9 +20,12 @@ export const EmbeddedTerminalToolbarIconButton = React.memo((props: EmbeddedTerm
             accessibilityLabel={props.accessibilityLabel}
             hitSlop={8}
             onPress={props.onPress}
-            style={({ pressed, hovered }) => ({
-                opacity: pressed ? 0.68 : hovered ? 0.82 : 1,
-            })}
+            style={(state) => {
+                const hovered = (state as typeof state & { hovered?: boolean }).hovered === true;
+                return {
+                    opacity: state.pressed ? 0.68 : hovered ? 0.82 : 1,
+                };
+            }}
         >
             <Ionicons name={props.icon} size={18} color={theme.colors.textSecondary} />
         </Pressable>

@@ -73,7 +73,6 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                             <View
                                 style={[
                                     styles.iconLayer,
-                                    Platform.OS === 'web' ? styles.iconLayerTransition : null,
                                     isHovered ? styles.iconLayerHidden : null,
                                 ]}
                             >
@@ -83,7 +82,6 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                                 style={[
                                     styles.iconLayer,
                                     styles.iconLayerOverlay,
-                                    Platform.OS === 'web' ? styles.iconLayerTransition : null,
                                     isHovered ? null : styles.iconLayerHidden,
                                 ]}
                             >
@@ -189,11 +187,6 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         left: 0,
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    iconLayerTransition: {
-        transitionProperty: 'opacity',
-        transitionDuration: '140ms',
-        transitionTimingFunction: 'ease',
     },
     iconLayerHidden: {
         opacity: 0,
