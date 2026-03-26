@@ -1,6 +1,5 @@
 import { z } from "zod";
-import type { PermissionMode } from "@/constants/PermissionModes";
-import type { ModelMode } from "@/sync/domains/permissions/permissionTypes";
+import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import { 
     createAgentRuntimeDescriptorV1Schema,
     createAcpConfigOptionOverridesV1Schema,
@@ -298,8 +297,10 @@ export const AgentStateSchema = z.object({
     requests: z.record(z.string(), z.object({
         tool: z.string(),
         kind: z.string().optional(),
+        source: z.string().optional(),
         arguments: z.any(),
         createdAt: z.number().nullish(),
+        pushNotifiedAt: z.number().optional(),
         /**
          * Optional provider-provided permission suggestions for this request.
          * (e.g. Claude Agent SDK `permission_suggestions`).
@@ -309,6 +310,7 @@ export const AgentStateSchema = z.object({
     completedRequests: z.record(z.string(), z.object({
         tool: z.string(),
         kind: z.string().optional(),
+        source: z.string().optional(),
         arguments: z.any(),
         createdAt: z.number().nullish(),
         completedAt: z.number().nullish(),

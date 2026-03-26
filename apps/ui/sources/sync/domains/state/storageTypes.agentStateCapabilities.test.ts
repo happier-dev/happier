@@ -19,4 +19,14 @@ describe('AgentStateSchema capabilities', () => {
         expect(parsed.capabilities?.localPermissionBridgeInLocalMode).toBe(true);
     });
 
+    it('preserves request source fields when present', () => {
+        const parsed = AgentStateSchema.parse({
+            requests: {
+                req1: { tool: 'Bash', arguments: {}, source: 'claude_local_permission_bridge' },
+            },
+        });
+
+        expect((parsed.requests as any)?.req1?.source).toBe('claude_local_permission_bridge');
+    });
+
 });

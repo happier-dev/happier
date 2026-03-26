@@ -1,6 +1,7 @@
 import { MMKV } from 'react-native-mmkv';
 import { z } from 'zod';
-import { Settings, settingsDefaults, settingsParse, SettingsSchema } from '../settings/settings';
+import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/settings';
+import type { Settings } from '../settings/settings';
 import { voiceSettingsParse } from '../settings/voiceSettings';
 import { LocalSettings, localSettingsDefaults, localSettingsParse } from '../settings/localSettings';
 import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
@@ -18,6 +19,7 @@ import {
 } from '@/sync/domains/automations/automationDraft';
 import { ReviewCommentDraftSchema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { SessionActionDraftSchema } from '@/sync/domains/sessionActions/sessionActionDraftMeta';
+import { PROVIDER_SETTINGS_SHAPE } from '@/agents/providers/registry/providerSettingArtifacts';
 import {
     AcpConfigOptionOverridesV1Schema,
     BackendTargetRefSchema,
@@ -29,6 +31,11 @@ import {
     type SessionMcpSelectionV1,
 } from '@happier-dev/protocol';
 var persistedStorage: MMKV | null = null;
+
+const pendingSettingsSchemaByKey: Readonly<Record<string, z.ZodTypeAny>> = Object.freeze({
+    ...ACCOUNT_SETTING_ARTIFACTS.shape,
+    ...PROVIDER_SETTINGS_SHAPE,
+});
 
 function deviceAnalyticsIdKey(): string {
     return 'device-analytics-id-v1';
@@ -225,20 +232,20 @@ function parseDraftEntryIntent(value: unknown): NewSessionDraft['entryIntent'] {
     return value === 'automation' || value === 'session' ? value : null;
 }
 
-export function loadSettings(): { settings: Settings, version: number | null } {
+export function loadSettings(): { settings: unknown; version: number | null } {
     const mmkv = getPersistenceStorage();
     const settings = mmkv.getString('settings');
     if (settings) {
         try {
             const parsed = JSON.parse(settings);
             const version = typeof parsed.version === 'number' ? parsed.version : null;
-            return { settings: settingsParse(parsed.settings), version };
+            return { settings: parsed.settings, version };
         } catch (e) {
             console.error('Failed to parse settings', e);
-            return { settings: { ...settingsDefaults }, version: null };
+            return { settings: {}, version: null };
         }
     }
-    return { settings: { ...settingsDefaults }, version: null };
+    return { settings: {}, version: null };
 }
 
 export function loadDeviceAnalyticsId(): string | null {
@@ -271,23 +278,29 @@ function parsePendingSettings(raw: unknown): Partial<Settings> {
     const input = raw as Record<string, unknown>;
     const out: Partial<Settings> = {};
 
-    (Object.keys(SettingsSchema.shape) as Array<Extract<keyof typeof SettingsSchema.shape, string>>).forEach((key) => {
-        if (!Object.prototype.hasOwnProperty.call(input, key)) return;
+    for (const [rawKey, rawValue] of Object.entries(input)) {
+        const key = typeof rawKey === 'string' ? rawKey.trim() : '';
+        if (!key) continue;
+        if (rawValue === undefined) continue;
+        if (typeof rawValue === 'function') continue;
 
-        // Voice is parsed with a tolerant parser in settingsParse to avoid dropping the entire object
-        // due to a single invalid nested field. Pending settings must follow the same rule so we do
-        // not lose unsynced voice deltas (e.g. BYO API keys) on restart.
+        // Voice is parsed with a tolerant parser to avoid dropping the entire object due to a
+        // single invalid nested field. Pending settings must follow the same rule so we do not
+        // lose unsynced voice deltas (e.g. BYO API keys) on restart.
         if (key === 'voice') {
-            (out as any).voice = voiceSettingsParse(input[key]);
-            return;
+            const parsedVoice = voiceSettingsParse(rawValue);
+            if (parsedVoice) (out as any).voice = parsedVoice;
+            continue;
         }
 
-        const schema = SettingsSchema.shape[key] as z.ZodTypeAny;
-        const parsed = schema.safeParse(input[key]);
-        if (parsed.success) {
-            (out as any)[key] = parsed.data;
-        }
-    });
+        const schema = pendingSettingsSchemaByKey[key];
+        if (!schema) continue;
+
+        const parsed = schema.safeParse(rawValue);
+        if (!parsed.success) continue;
+
+        (out as any)[key] = parsed.data;
+    }
 
     return out;
 }
