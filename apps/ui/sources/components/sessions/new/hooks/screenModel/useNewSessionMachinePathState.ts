@@ -88,13 +88,20 @@ export function useNewSessionMachinePathState(params: Readonly<{
     // Handle machine route param from picker screens (main's navigation pattern)
     React.useEffect(() => {
         const machineId = normalizeMachineIdParam(params.machineIdParam);
+        if (!machineId) {
+            lastAppliedMachineParamRef.current = '';
+            return;
+        }
+        // Only mark the param "applied" once we've actually applied it. This prevents the initial
+        // render from consuming the param before machine snapshots hydrate (critical for QA/e2e).
         if (machineId === lastAppliedMachineParamRef.current) {
+            return;
+        }
+        if (!hasMachine(machineId)) {
             return;
         }
 
         lastAppliedMachineParamRef.current = machineId;
-        if (!machineId) return;
-        if (!hasMachine(machineId)) return;
         if (machineId === selectedMachineId) return;
         setSelectedMachineId(machineId);
         hasUserEditedPathRef.current = false;

@@ -59,6 +59,43 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
+    it('applies a route machineId once it becomes available after machines hydrate', async () => {
+        const now = Date.now();
+        const initialMachines = toMachines(
+            { id: 'machine-other', metadata: { homeDir: '/other' }, activeAt: now - 10_000 },
+        );
+        const hydratedMachines = toMachines(
+            { id: 'machine-other', metadata: { homeDir: '/other' }, activeAt: now - 10_000 },
+            { id: 'machine-target', metadata: { homeDir: '/target' }, activeAt: now - 10_000 },
+        );
+
+        const hook = await renderMachinePathState({
+            machines: initialMachines,
+            recentMachinePaths: [],
+            machineIdParam: 'machine-target',
+            pathParam: null,
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-other',
+            selectedPath: '/other',
+        });
+
+        await hook.rerender({
+            machines: hydratedMachines,
+            recentMachinePaths: [],
+            machineIdParam: 'machine-target',
+            pathParam: null,
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-target',
+            selectedPath: '/target',
+        });
+
+        await hook.unmount();
+    });
+
     it('treats machines as eligible for initial selection when they are online via activeAt even if active=false', async () => {
         const now = Date.now();
 

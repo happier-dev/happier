@@ -36,6 +36,20 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 type ProfileAvailability = Readonly<{ available: boolean; reason?: string }>;
 
+const TEMPORARY_CLI_WARNING_GLOBAL_MACHINE_KEY = '__global__';
+const temporaryHiddenCliWarningKeysByMachineId: Record<string, Readonly<Record<string, boolean>>> = {};
+
+function readTemporaryHiddenCliWarningKeys(machineId: string | null | undefined): Readonly<Record<string, boolean>> {
+    const key = machineId ?? TEMPORARY_CLI_WARNING_GLOBAL_MACHINE_KEY;
+    return temporaryHiddenCliWarningKeysByMachineId[key] ?? {};
+}
+
+function writeTemporaryHiddenCliWarningKey(machineId: string | null | undefined, warningKey: string): void {
+    const key = machineId ?? TEMPORARY_CLI_WARNING_GLOBAL_MACHINE_KEY;
+    const existing = temporaryHiddenCliWarningKeysByMachineId[key] ?? {};
+    temporaryHiddenCliWarningKeysByMachineId[key] = { ...existing, [warningKey]: true };
+}
+
 export function useNewSessionAvailabilityState(params: Readonly<{
     selectedMachineId: string | null;
     selectedMachine: Machine | null;
@@ -230,7 +244,14 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         wizardInstallableDeps.length,
     ]);
 
-    const [hiddenCliWarningKeys, setHiddenCliWarningKeys] = React.useState<Record<string, boolean>>({});
+    const [hiddenCliWarningKeys, setHiddenCliWarningKeys] = React.useState<Record<string, boolean>>(() => ({
+        ...readTemporaryHiddenCliWarningKeys(params.selectedMachineId),
+    }));
+    React.useEffect(() => {
+        setHiddenCliWarningKeys({
+            ...readTemporaryHiddenCliWarningKeys(params.selectedMachineId),
+        });
+    }, [params.selectedMachineId]);
 
     const isCliBannerDismissed = React.useCallback((agentId: AgentId): boolean => {
         const warningKey = getAgentCore(agentId).cli.detectKey;
@@ -241,6 +262,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     const dismissCliBanner = React.useCallback((agentId: AgentId, scope: 'machine' | 'global' | 'temporary') => {
         const warningKey = getAgentCore(agentId).cli.detectKey;
         if (scope === 'temporary') {
+            writeTemporaryHiddenCliWarningKey(params.selectedMachineId, warningKey);
             setHiddenCliWarningKeys((prev) => ({ ...prev, [warningKey]: true }));
             return;
         }

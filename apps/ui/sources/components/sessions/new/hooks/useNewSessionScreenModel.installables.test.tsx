@@ -441,11 +441,15 @@ vi.mock('@/components/sessions/new/hooks/newSessionModelModePolicy', () => ({
     coerceNewSessionModelMode: ({ modelMode }: any) => modelMode,
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    settingsDefaults: testSettingsDefaults,
-    isProfileCompatibleWithAnyAgent: (profile: any, agentIds: readonly string[]) =>
-        profileCompatibilityState.isProfileCompatibleWithAnyAgent(profile, agentIds),
-}));
+vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        settingsDefaults: testSettingsDefaults,
+        isProfileCompatibleWithAnyAgent: (profile: any, agentIds: readonly string[]) =>
+            profileCompatibilityState.isProfileCompatibleWithAnyAgent(profile, agentIds),
+    };
+});
 
 vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
     const actual = await importOriginal<any>();
@@ -757,7 +761,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(previewTexts).toContain('Lower latency coding model.');
     });
 
-    it('renders backend picker options with ACP mode previews when the backend exposes them', async () => {
+    it('threads ACP session mode options into the session-mode control when the backend exposes them', async () => {
         settingsState.lastUsedAgent = 'claude';
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
@@ -797,18 +801,28 @@ describe('useNewSessionScreenModel (installables)', () => {
         const hook = await renderNewSessionScreenModel();
         let model = hook.getCurrent();
 
-        const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string }) =>
+        const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string; onApply?: () => void; renderDetailContent?: () => React.ReactNode; detailContent?: React.ReactNode }) =>
             option.id === buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' }));
 
-        const customPresetDetailContent = customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent ?? null;
-        expect(customPresetDetailContent).toBeTruthy();
+        expect(customPresetOption).toBeTruthy();
 
-        const detailScreen = await renderScreen(<>{customPresetDetailContent}</>);
-        const modePreviewItems = detailScreen.findAllByTestId('agent-input-session-mode-option:review');
-        expect(modePreviewItems).toHaveLength(1);
-        const previewTexts = detailScreen.findAll((node) => typeof node.props?.children === 'string')
-            .map((node) => node.props.children);
-        expect(previewTexts).toContain('Review');
+        const detailElement = (customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent) as React.ReactElement<{
+            onSelectionChange?: (selection: { modelId: string; sessionModeId: string }) => void;
+        }> | undefined;
+        expect(detailElement).toBeTruthy();
+
+        await invokeHookAction(() => {
+            detailElement?.props.onSelectionChange?.({
+                modelId: 'default',
+                sessionModeId: 'plan',
+            });
+            customPresetOption?.onApply?.();
+        });
+
+        model = hook.getCurrent();
+
+        const modeOptions = model?.simpleProps?.acpSessionModeOptions ?? [];
+        expect(modeOptions.some((option: { id: string }) => option.id === 'review')).toBe(true);
     });
 
     it('applies backend-specific model and ACP mode selections from the engine picker detail pane', async () => {

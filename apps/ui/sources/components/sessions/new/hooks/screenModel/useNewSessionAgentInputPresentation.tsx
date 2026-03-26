@@ -21,6 +21,7 @@ import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSe
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import { t } from '@/text';
 import { createNewSessionLinkedFilesActionChip } from '@/components/sessions/agentInput/definitions/createLinkedFilesActionChip';
+import { AutomationSettingsPopoverContent } from '@/components/sessions/agentInput/components/AutomationSettingsPopoverContent';
 
 type ThemeLike = Readonly<{
     colors: Readonly<{
@@ -97,7 +98,21 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         params.setAutomationDraft(sanitizeNewSessionAutomationDraft(next));
     }, [params.setAutomationDraft]);
 
-    const automationSection = null;
+    const automationSection = React.useMemo(() => {
+        if (!params.automationFeatureEnabled) return null;
+        if (!params.showAutomationActionChips) return null;
+        return (
+            <AutomationSettingsPopoverContent
+                value={params.effectiveAutomationDraft}
+                onChange={handleAutomationSettingsChange}
+            />
+        );
+    }, [
+        handleAutomationSettingsChange,
+        params.automationFeatureEnabled,
+        params.effectiveAutomationDraft,
+        params.showAutomationActionChips,
+    ]);
 
     const handleAppendLinkedPath = React.useCallback((path: string) => {
         params.setSessionPrompt((prev) => {

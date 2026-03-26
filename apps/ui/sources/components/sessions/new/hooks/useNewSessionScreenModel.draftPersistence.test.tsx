@@ -1680,7 +1680,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(routerPushMock).toHaveBeenCalledWith(expect.objectContaining({
             pathname: '/new/pick/profile-edit',
         }));
-        expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(1);
+        expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(0);
 
         await act(async () => {
             (useCreateNewSessionArgsRef.current?.disableDraftPersistence as (() => void) | undefined)?.();
@@ -1693,7 +1693,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
 
         expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
-        expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(1);
+        expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(0);
     });
 
     it('keeps the default environment selected even when a workspace graph still carries a legacy default profile', async () => {

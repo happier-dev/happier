@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -214,5 +215,144 @@ describe('useNewSessionAvailabilityState', () => {
         await hook.rerender({ machine: { ...baseMachine, active: true, activeAt: Date.now() } });
         expect(cliRefreshA).toHaveBeenCalledTimes(2);
         expect(capabilitiesRefreshA).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps temporary CLI banner dismissals across hook remounts (same app session)', async () => {
+        vi.resetModules();
+
+        const { useNewSessionAvailabilityState } = await import('./useNewSessionAvailabilityState');
+
+        const setDismissedCliWarnings = vi.fn();
+        const machine: Machine = {
+            id: 'm1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: Date.now(),
+            revokedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 1,
+        };
+
+        const hookA = await renderHook(() => useNewSessionAvailabilityState({
+            selectedMachineId: machine.id,
+            selectedMachine: machine,
+            capabilityServerId: 'server-1',
+            settings: {} as any,
+            agentType: 'claude' as any,
+            resumeSessionId: null,
+            enabledAgentIds: ['claude', 'codex'] as any,
+            agentNewSessionOptionStateByAgentId: {},
+            resolvedBackendEntries: [],
+            selectedBackendEntry: null,
+            setBackendTarget: vi.fn(),
+            machines: [machine],
+            dismissedCliWarnings: null,
+            setDismissedCliWarnings,
+            allProfiles: [],
+        }));
+
+        expect(hookA.getCurrent().isCliBannerDismissed('claude' as any)).toBe(false);
+
+        await act(async () => {
+            hookA.getCurrent().dismissCliBanner('claude' as any, 'temporary');
+        });
+        await hookA.rerender();
+
+        expect(hookA.getCurrent().isCliBannerDismissed('claude' as any)).toBe(true);
+        expect(setDismissedCliWarnings).not.toHaveBeenCalled();
+
+        await hookA.unmount();
+
+        const hookB = await renderHook(() => useNewSessionAvailabilityState({
+            selectedMachineId: machine.id,
+            selectedMachine: machine,
+            capabilityServerId: 'server-1',
+            settings: {} as any,
+            agentType: 'claude' as any,
+            resumeSessionId: null,
+            enabledAgentIds: ['claude', 'codex'] as any,
+            agentNewSessionOptionStateByAgentId: {},
+            resolvedBackendEntries: [],
+            selectedBackendEntry: null,
+            setBackendTarget: vi.fn(),
+            machines: [machine],
+            dismissedCliWarnings: null,
+            setDismissedCliWarnings,
+            allProfiles: [],
+        }));
+
+        expect(hookB.getCurrent().isCliBannerDismissed('claude' as any)).toBe(true);
+    });
+
+    it('treats temporary CLI banner dismissals as machine-scoped', async () => {
+        vi.resetModules();
+
+        const { useNewSessionAvailabilityState } = await import('./useNewSessionAvailabilityState');
+
+        const setDismissedCliWarnings = vi.fn();
+        const baseMachine: Machine = {
+            id: 'm1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: Date.now(),
+            revokedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 1,
+        };
+
+        const hookA = await renderHook(() => useNewSessionAvailabilityState({
+            selectedMachineId: baseMachine.id,
+            selectedMachine: baseMachine,
+            capabilityServerId: 'server-1',
+            settings: {} as any,
+            agentType: 'claude' as any,
+            resumeSessionId: null,
+            enabledAgentIds: ['claude', 'codex'] as any,
+            agentNewSessionOptionStateByAgentId: {},
+            resolvedBackendEntries: [],
+            selectedBackendEntry: null,
+            setBackendTarget: vi.fn(),
+            machines: [baseMachine],
+            dismissedCliWarnings: null,
+            setDismissedCliWarnings,
+            allProfiles: [],
+        }));
+
+        await act(async () => {
+            hookA.getCurrent().dismissCliBanner('claude' as any, 'temporary');
+        });
+        await hookA.rerender();
+
+        expect(hookA.getCurrent().isCliBannerDismissed('claude' as any)).toBe(true);
+        await hookA.unmount();
+
+        const otherMachine: Machine = { ...baseMachine, id: 'm2' };
+        const hookB = await renderHook(() => useNewSessionAvailabilityState({
+            selectedMachineId: otherMachine.id,
+            selectedMachine: otherMachine,
+            capabilityServerId: 'server-1',
+            settings: {} as any,
+            agentType: 'claude' as any,
+            resumeSessionId: null,
+            enabledAgentIds: ['claude', 'codex'] as any,
+            agentNewSessionOptionStateByAgentId: {},
+            resolvedBackendEntries: [],
+            selectedBackendEntry: null,
+            setBackendTarget: vi.fn(),
+            machines: [otherMachine],
+            dismissedCliWarnings: null,
+            setDismissedCliWarnings,
+            allProfiles: [],
+        }));
+
+        expect(hookB.getCurrent().isCliBannerDismissed('claude' as any)).toBe(false);
     });
 });

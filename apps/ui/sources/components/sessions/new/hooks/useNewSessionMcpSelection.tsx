@@ -214,10 +214,9 @@ export function useNewSessionMcpSelection(params: Readonly<{
         return createMcpActionChip({
             label: chipLabel,
             selectedCount,
-            popoverContent: ({ requestClose, maxHeight }) => (
+            popoverContent: ({ maxHeight }) => (
                 <NewSessionMcpSelectionContent
                     {...contentProps}
-                    onClose={requestClose}
                     maxHeight={Math.min(760, Math.max(420, maxHeight))}
                 />
             ),

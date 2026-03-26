@@ -20,7 +20,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 
 describe('useNewSessionAgentInputPresentation', () => {
-    it('keeps automation editing inside the action chip popover instead of rendering an inline automation section', async () => {
+    it('exposes an inline automation settings section when automation controls are enabled', async () => {
         const { useNewSessionAgentInputPresentation } = await import('./useNewSessionAgentInputPresentation');
         const routerMock = createExpoRouterMock();
         const router = {
@@ -106,7 +106,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             setWindowsRemoteSessionLaunchModeOverride: vi.fn(),
         }));
 
-        expect(hook.getCurrent().automationSection).toBeNull();
+        expect(hook.getCurrent().automationSection).not.toBeNull();
         expect(hook.getCurrent().agentInputExtraActionChips.some((chip) => chip.key === 'new-session-automate')).toBe(true);
     });
 

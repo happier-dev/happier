@@ -667,7 +667,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }).mode;
     }, [selectedMachine?.metadata, settings, windowsRemoteSessionLaunchModeOverride]);
     const handleOpenMcpSettings = React.useCallback(() => {
-        router.push('/(app)/settings/mcp' as any);
+        // `router.push` expects the public route (group segments like `/(app)` are not valid here on web).
+        router.push('/settings/mcp' as any);
     }, [router]);
     const { mcpChip } = useNewSessionMcpSelection({
         selectedMachineId,
@@ -888,6 +889,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                 }}
                 showSearch={useMachinePickerSearch}
                 searchPlacement="header"
+                testIdPrefix="new-session-machine"
             />
         ),
         maxHeightCap: 560,
