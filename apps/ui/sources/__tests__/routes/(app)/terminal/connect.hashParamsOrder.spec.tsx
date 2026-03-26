@@ -48,6 +48,7 @@ describe('TerminalConnectScreen hash parsing', () => {
                 hash: '#server=https%3A%2F%2Fexample.test&key=abcdefghijklmnop',
                 pathname: '/terminal/connect',
                 search: '',
+                href: 'https://ui.example.test/terminal/connect#server=https%3A%2F%2Fexample.test&key=abcdefghijklmnop',
             },
             history: { replaceState: vi.fn() },
         } as unknown as Window;
@@ -81,6 +82,7 @@ describe('TerminalConnectScreen hash parsing', () => {
                 hash: '#server=https%3A%2F%2Fexample.test',
                 pathname: '/terminal/connect',
                 search: '',
+                href: 'https://ui.example.test/terminal/connect#server=https%3A%2F%2Fexample.test',
             },
             history: { replaceState: vi.fn() },
         } as unknown as Window;
@@ -103,6 +105,29 @@ describe('TerminalConnectScreen hash parsing', () => {
                 hash: '',
                 pathname: '/terminal/connect',
                 search: '',
+                href: 'https://ui.example.test/terminal/connect',
+            },
+            history: { replaceState: vi.fn() },
+        } as unknown as Window;
+
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
+
+        const screen = await renderScreen(<Screen />);
+        await act(async () => {});
+
+        const renderedItems = screen.findAllByType('Item' as any);
+        const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
+        expect(publicKeyItem).toBeTruthy();
+        expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
+    });
+
+    it('parses key from the query string when hash is empty', async () => {
+        globalWindow.window = {
+            location: {
+                hash: '',
+                pathname: '/terminal/connect',
+                search: '?server=https%3A%2F%2Fexample.test&key=abcdefghijklmnop',
+                href: 'https://ui.example.test/terminal/connect?server=https%3A%2F%2Fexample.test&key=abcdefghijklmnop',
             },
             history: { replaceState: vi.fn() },
         } as unknown as Window;

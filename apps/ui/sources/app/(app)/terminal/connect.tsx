@@ -14,7 +14,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { clearPendingTerminalConnect, getPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
-import { buildTerminalConnectDeepLink } from '@/utils/path/terminalConnectUrl';
+import { buildTerminalConnectDeepLink, parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnistyles } from 'react-native-unistyles';
@@ -41,27 +41,23 @@ export default function TerminalConnectScreen() {
     // Extract key from hash on web platform
     useEffect(() => {
         if (Platform.OS === 'web' && typeof window !== 'undefined' && !hashProcessed) {
-            const rawHash = window.location.hash || '';
-            if (rawHash.length > 1) {
-                const params = new URLSearchParams(rawHash.slice(1)); // remove '#'
-                const key = (params.get('key') ?? '').trim();
-                const server = (params.get('server') ?? '').trim();
-                if (key) setPublicKey(key);
-                if (server) setServerUrlFromHash(server);
+            const parsed = parseTerminalConnectUrl(window.location.href);
+            if (parsed?.publicKeyB64Url) {
+                setPublicKey(parsed.publicKeyB64Url);
 
-                // Persist the connect link in storage so dev strict-mode remounts still have access
-                // after we clear the URL hash.
-                if (key) {
-                    const desiredServerUrl = normalizeServerUrl(server) || getActiveServerUrl();
+                const desiredServerUrl = normalizeServerUrl(parsed.serverUrl ?? '') || getActiveServerUrl();
+                if (desiredServerUrl) {
+                    // Persist the connect link in storage so dev strict-mode remounts still have access
+                    // after we clear the URL (hash/query) for safety.
                     setPendingTerminalConnect({
-                        publicKeyB64Url: key,
+                        publicKeyB64Url: parsed.publicKeyB64Url,
                         serverUrl: desiredServerUrl,
                     });
                     setServerUrlFromHash(desiredServerUrl);
                 }
-                
-                // Clear the hash from URL to prevent exposure in browser history
-                window.history.replaceState(null, '', window.location.pathname + window.location.search);
+
+                // Clear sensitive params from the URL to avoid exposing the key in history.
+                window.history.replaceState(null, '', window.location.pathname);
             } else {
                 const pending = getPendingTerminalConnect();
                 if (pending?.publicKeyB64Url) {
