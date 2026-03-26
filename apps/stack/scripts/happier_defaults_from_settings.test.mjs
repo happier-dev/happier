@@ -92,6 +92,56 @@ test('hstack happier defaults serverUrl/webappUrl from existing CLI settings (no
   assert.equal(parsed.homeDir, homeDir);
 });
 
+test('hstack happier prefers existing CLI settings over stack defaults even when stack env is pinned', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-settings-cloud-over-stack-' });
+
+  const homeDir = join(fixture.dir, '.happy-home');
+  await mkdir(homeDir, { recursive: true });
+  await writeFile(
+    join(homeDir, 'settings.json'),
+    JSON.stringify({
+      schemaVersion: 6,
+      onboardingCompleted: true,
+      activeServerId: 'cloud',
+      servers: {
+        cloud: {
+          id: 'cloud',
+          name: 'cloud',
+          serverUrl: 'https://api.happier.dev',
+          webappUrl: 'https://app.happier.dev',
+          createdAt: 1,
+          updatedAt: 1,
+          lastUsedAt: 1,
+        },
+      },
+    }),
+    'utf-8',
+  );
+
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STACK: 'test-stack',
+    HAPPIER_STACK_SERVER_PORT: '53288',
+    HAPPIER_STACK_ENV_FILE: join(rootDir, 'scripts', 'nonexistent-env'),
+    HAPPIER_STACK_REPO_DIR: fixture.dir,
+    HAPPIER_HOME_DIR: homeDir,
+  };
+  delete env.HAPPIER_SERVER_URL;
+  delete env.HAPPIER_PUBLIC_SERVER_URL;
+  delete env.HAPPIER_LOCAL_SERVER_URL;
+  delete env.HAPPIER_WEBAPP_URL;
+  delete env.HAPPIER_ACTIVE_SERVER_ID;
+
+  const res = await runNodeCapture([hstackBinPath(rootDir), 'happier'], { cwd: rootDir, env });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  const parsed = JSON.parse(res.stdout.trim());
+  assert.equal(parsed.serverUrl, 'https://api.happier.dev');
+  assert.equal(parsed.webappUrl, 'https://app.happier.dev');
+  assert.equal(parsed.activeServerId, null);
+  assert.equal(parsed.homeDir, homeDir);
+});
+
 test('hstack happier defaults serverUrl via localServerUrl when present in settings', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-settings-local-defaults-' });

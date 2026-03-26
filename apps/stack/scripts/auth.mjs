@@ -1598,7 +1598,7 @@ async function cmdLogin({ argv, json }) {
   const explicitWebappUrl =
     (argvKvValue(argv, '--webapp-url') || (kv.get('--webapp-url') ?? '')).toString().trim();
   const methodRaw = (argvKvValue(argv, '--method') || (kv.get('--method') ?? '')).toString().trim().toLowerCase();
-  const method = methodRaw === 'mobile' ? 'mobile' : methodRaw === 'web' || methodRaw === 'browser' ? 'web' : '';
+  let method = methodRaw === 'mobile' ? 'mobile' : methodRaw === 'web' || methodRaw === 'browser' ? 'web' : '';
   if (methodRaw && !method) {
     throw new Error(`[auth] login: invalid --method=${methodRaw} (expected: web|browser|mobile)`);
   }
@@ -1677,7 +1677,7 @@ async function cmdLogin({ argv, json }) {
   const executableLooksLikeScript =
     cliExecutable.endsWith('.mjs') || cliExecutable.endsWith('.js') || cliExecutable.endsWith('.cjs');
   const loginCommand = executableLooksLikeScript ? process.execPath : cliExecutable;
-  const loginArgs = executableLooksLikeScript ? [cliExecutable, 'auth', 'login'] : ['auth', 'login'];
+  let loginArgs = executableLooksLikeScript ? [cliExecutable, 'auth', 'login'] : ['auth', 'login'];
   if (force || argv.includes('--force')) {
     loginArgs.push('--force');
   }
@@ -1760,7 +1760,42 @@ async function cmdLogin({ argv, json }) {
     if (action === 'wait') {
       // eslint-disable-next-line no-console
       console.error(`[auth] ${stackName}: stack runtime is already starting; waiting for health before guided login...`);
-      await waitForGuidedServerReadyOrThrow('already starting');
+      if (serviceMode && method !== 'web') {
+        // Service-mode stacks tend to be the crash-looping case: auth must not sit around
+        // waiting for a UI that is not going to stabilize. Fall back immediately to mobile.
+        // eslint-disable-next-line no-console
+        console.error(`[auth] ${stackName}: service-mode stack is not becoming healthy; falling back to mobile login.`);
+        method = 'mobile';
+        env.HAPPIER_AUTH_METHOD = 'mobile';
+        const methodIdx = loginArgs.indexOf('--method');
+        if (methodIdx >= 0) {
+          loginArgs[methodIdx + 1] = 'mobile';
+        } else {
+          loginArgs = [...loginArgs, '--method', 'mobile'];
+        }
+      } else {
+        try {
+          await waitForGuidedServerReadyOrThrow('already starting');
+        } catch (waitErr) {
+          if (method === 'web') {
+            throw waitErr;
+          }
+          // The runtime is alive but the UI is not becoming healthy. Fall back to mobile auth so
+          // the user can still complete authentication without a browser-backed stack UI.
+          // eslint-disable-next-line no-console
+          console.error(
+            `[auth] ${stackName}: the stack UI did not become healthy in time; falling back to mobile login.`
+          );
+          method = 'mobile';
+          env.HAPPIER_AUTH_METHOD = 'mobile';
+          const methodIdx = loginArgs.indexOf('--method');
+          if (methodIdx >= 0) {
+            loginArgs[methodIdx + 1] = 'mobile';
+          } else {
+            loginArgs = [...loginArgs, '--method', 'mobile'];
+          }
+        }
+      }
     } else {
       let startOk = action === 'start';
       if (!startOk) {

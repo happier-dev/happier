@@ -305,6 +305,65 @@ test('hstack auth login suggests runtime-backed start when a runtime-backed stac
   }
 });
 
+test('hstack auth login falls back to mobile when a runtime-backed stack stays unhealthy during auth startup', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  let fixture;
+  try {
+    try {
+      const markerPath = join(await mkdtemp(join(tmpdir(), 'hstack-auth-runtime-mobile-fallback-')), 'runtime-cli-args.log');
+      fixture = await buildGuidedNoExpoFixture({
+        stackName: 'dev-built',
+        runtimeSnapshot: true,
+        runtimeOwnerAlive: true,
+        startServer: false,
+        runtimeCliScript:
+          '#!/bin/sh\n' +
+          'set -eu\n' +
+          'printf "%s\\n" "$@" >> "$RUNTIME_AUTH_MARKER"\n' +
+          'printf "method=%s\\n" "${HAPPIER_AUTH_METHOD-}" >> "$RUNTIME_AUTH_MARKER"\n' +
+          'printf "%s\\n" "--" >> "$RUNTIME_AUTH_MARKER"\n' +
+          'exit 0\n',
+      });
+      fixture.markerPath = markerPath;
+      const envFilePath = join(fixture.tmp, 'storage', 'dev-built', 'env');
+      const envFileRaw = await readFile(envFilePath, 'utf-8');
+      await writeFile(
+        envFilePath,
+        `${envFileRaw}HAPPIER_STACK_SERVICE_MODE=1\nHAPPIER_STACK_AUTH_SERVER_READY_TIMEOUT_MS=1000\n`,
+        'utf-8'
+      );
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+    const res = await runNodeCapture([authScriptPath(rootDir), 'login'], {
+      cwd: rootDir,
+      env: {
+        ...fixture.env,
+        HAPPIER_STACK_SERVICE_MODE: '1',
+        HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+        RUNTIME_AUTH_MARKER: fixture.markerPath,
+      },
+      input: '\n\n',
+    });
+    assert.equal(res.code, 0, `expected exit 0 after falling back to mobile auth\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    const markerRaw = await readFile(fixture.markerPath, 'utf-8');
+    assert.match(markerRaw, /^auth$/m, `expected runtime cli to receive auth command\n${markerRaw}`);
+    assert.match(markerRaw, /^login$/m, `expected runtime cli to receive login command\n${markerRaw}`);
+    assert.match(markerRaw, /^method=mobile$/m, `expected runtime cli to fall back to mobile auth\n${markerRaw}`);
+  } finally {
+    if (fixture?.markerPath) {
+      await rm(dirname(fixture.markerPath), { recursive: true, force: true }).catch(() => {});
+    }
+    if (fixture) await fixture.cleanup();
+  }
+});
+
 test('hstack auth login suggests stack start for non-Expo guided login when the stack is unhealthy', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);

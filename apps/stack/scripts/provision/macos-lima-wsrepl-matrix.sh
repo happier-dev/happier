@@ -9,12 +9,12 @@ set -euo pipefail
 # - runs a Playwright-driven session-handoff workspace-transfer matrix against a real stack UI
 #
 # Usage (macOS host, from apps/stack/):
-#   ./scripts/provision/macos-lima-wsrepl-matrix.sh [vm-name]
+#   ./scripts/provision/macos-lima-wsrepl-matrix.sh [vm-name] [vm-name-2 ...]
 #
 # Required env for the Playwright matrix:
 #   HAPPIER_QA_SESSION_ID=...
 #   HAPPIER_QA_STEPS_JSON='[{"targetMachineId":"...","strategy":"transfer_snapshot"},{"targetMachineId":"...","strategy":"sync_changes"}]'
-#   (or name-based, preferred for stability across stacks)
+#   (name-based selection is supported as a fallback, but ids are preferred for determinism)
 #   HAPPIER_QA_STEPS_JSON='[{"targetMachineNamePattern":"lima-*","strategy":"transfer_snapshot"},{"targetMachineNamePattern":"my-host","strategy":"sync_changes"}]'
 #
 # Convenience env (repeatable matrix defaults):
@@ -43,7 +43,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/provision/macos-lima-wsrepl-matrix.sh [vm-name]
+  ./scripts/provision/macos-lima-wsrepl-matrix.sh [vm-name] [vm-name-2 ...]
 
 Examples:
   WSREPL_QA_OUTPUT_DIR=output/wsrepl-lima-matrix-local \
@@ -80,8 +80,17 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
-VM_NAME="${1:-happier-wsrepl-qa}"
+
+VM_NAMES=()
+if [[ "$#" -gt 0 ]]; then
+  VM_NAMES=("$@")
+else
+  VM_NAMES=("happier-wsrepl-qa")
+fi
+
+VM_NAME="${VM_NAMES[0]}"
 SAFE_VM_NAME="${VM_NAME//[^A-Za-z0-9._-]/_}"
+EXTRA_VM_NAMES=("${VM_NAMES[@]:1}")
 
 timestamp() {
   date +"%Y%m%d-%H%M%S"
@@ -323,6 +332,8 @@ PLAYWRIGHT_OUTDIR="${REPORT_ROOT}/playwright"
 DAEMON_DIAG_DIR="${REPORT_ROOT}/daemon"
 FAILURE_STAGE=""
 FAILURE_REASON=""
+PLAYWRIGHT_ATTEMPT=1
+PLAYWRIGHT_ROOTDIR=""
 
 init_daemon_diagnostic_placeholders() {
   mkdir -p "${DAEMON_DIAG_DIR}"
@@ -340,6 +351,56 @@ init_daemon_diagnostic_placeholders() {
       printf "%s\n" "(not collected)" > "${DAEMON_DIAG_DIR}/${name}"
     fi
   done
+}
+
+read_wsrepl_daemon_log_tail_lines() {
+  local raw="${WSREPL_QA_DAEMON_LOG_TAIL_LINES:-}"
+  if [[ -z "${raw}" ]]; then
+    echo "4000"
+    return 0
+  fi
+  if [[ "${raw}" -lt 1 ]]; then
+    echo "4000"
+    return 0
+  fi
+  echo "${raw}"
+  return 0
+}
+
+refresh_daemon_log_tail_best_effort() {
+  local log_path_file="${1:-}"
+  local log_tail_file="${2:-}"
+  if [[ -z "${log_path_file}" || -z "${log_tail_file}" ]]; then
+    return 0
+  fi
+  if [[ ! -f "${log_path_file}" ]]; then
+    return 0
+  fi
+  local log_path
+  log_path="$(head -n 1 "${log_path_file}" 2>/dev/null | tr -d '\r' || true)"
+  if [[ -z "${log_path}" || ! -f "${log_path}" ]]; then
+    return 0
+  fi
+  local tail_lines
+  tail_lines="$(read_wsrepl_daemon_log_tail_lines)"
+  tail -n "${tail_lines}" "${log_path}" > "${log_tail_file}" 2>&1 || true
+  return 0
+}
+
+refresh_post_playwright_diagnostics_best_effort() {
+  # Refresh the daemon log tails at the end of the run so failure reports include the *actual*
+  # handoff/transfer errors (initial tails are captured right after daemon start).
+  refresh_daemon_log_tail_best_effort "${DAEMON_DIAG_DIR}/host.daemon.log.path.txt" "${DAEMON_DIAG_DIR}/host.daemon.log.tail.txt"
+  refresh_daemon_log_tail_best_effort "${DAEMON_DIAG_DIR}/guest.daemon.log.path.txt" "${DAEMON_DIAG_DIR}/guest.daemon.log.tail.txt"
+
+  if [[ -d "${REPORT_ROOT}/vms" ]]; then
+    local candidate
+    local diag_dir
+    while IFS= read -r candidate; do
+      diag_dir="$(dirname "${candidate}")"
+      refresh_daemon_log_tail_best_effort "${candidate}" "${diag_dir}/guest.daemon.log.tail.txt"
+    done < <(find "${REPORT_ROOT}/vms" -type f -path "*/daemon/guest.daemon.log.path.txt" 2>/dev/null || true)
+  fi
 }
 
 resolve_expected_worktree_git_rev() {
@@ -1429,6 +1490,23 @@ try:
 except Exception:
   pass
 
+meta_session_id = None
+meta_session_path = None
+try:
+  meta_path = Path(playwright_outdir) / "meta.json"
+  if meta_path.exists():
+    meta_payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    if isinstance(meta_payload, dict):
+      raw_session_id = meta_payload.get("sessionId")
+      if isinstance(raw_session_id, str) and raw_session_id.strip():
+        meta_session_id = raw_session_id.strip()
+      raw_session_path = meta_payload.get("sessionPath")
+      if isinstance(raw_session_path, str) and raw_session_path.strip():
+        meta_session_path = raw_session_path.strip()
+except Exception:
+  meta_session_id = None
+  meta_session_path = None
+
 fatal_message = None
 try:
   fatal_path = Path(playwright_outdir) / "fatal.json"
@@ -1453,6 +1531,9 @@ if status_int == 0:
 elif resolved_failure_reason is None and fatal_message:
   resolved_failure_reason = fatal_message
   resolved_failure_stage = resolved_failure_stage or "playwright"
+
+resolved_session_id = (session_id or "").strip() or meta_session_id
+resolved_session_path = (session_path or "").strip() or meta_session_path
 payload = {
   "kind": "wsrepl_lima_matrix_wrapper",
   "vmName": vm_name,
@@ -1461,8 +1542,8 @@ payload = {
   "startedAt": started_at,
   "endedAt": ended_at,
   "status": status_int,
-  "sessionId": session_id or None,
-  "sessionPath": session_path or None,
+  "sessionId": resolved_session_id or None,
+  "sessionPath": resolved_session_path or None,
   "stepsJson": steps_json or None,
   "parameters": {
     "hostMachineId": (host_machine_id or "").strip() or None,
@@ -1497,7 +1578,7 @@ PY
   write_json_file "${REPORT_ROOT}/summary.json" "${payload}"
 }
 
-trap 'status=$?; ensure_summary "${status}"; exit "${status}"' EXIT
+trap 'status=$?; refresh_post_playwright_diagnostics_best_effort || true; ensure_summary "${status}"; exit "${status}"' EXIT
 
 LIMA_HOME_DIR="${LIMA_HOME:-${HOME}/.lima}"
 LIMA_DIR="${LIMA_HOME_DIR}/${VM_NAME}"
@@ -1785,6 +1866,12 @@ if [[ -z "${HAPPIER_QA_SESSION_PATH:-}" && -n "${WSREPL_QA_LARGE_REPO_PATH:-}" ]
   export HAPPIER_QA_SESSION_PATH="${WSREPL_QA_LARGE_REPO_PATH}"
 fi
 
+# Default session path to the repo worktree so the Playwright harness never falls back to its
+# own hardcoded default (keeps wrapper summary + runner behavior aligned).
+if [[ -z "${HAPPIER_QA_SESSION_PATH:-}" ]]; then
+  export HAPPIER_QA_SESSION_PATH="${REPO_DIR}"
+fi
+
 if [[ -n "${HAPPIER_QA_SESSION_PATH:-}" ]]; then
   if [[ ! -d "${HAPPIER_QA_SESSION_PATH}" ]]; then
     echo "[wsrepl-qa] HAPPIER_QA_SESSION_PATH does not exist or is not a directory: ${HAPPIER_QA_SESSION_PATH}" >&2
@@ -1802,8 +1889,11 @@ if [[ -z "${HAPPIER_QA_SESSION_ID:-}" && -z "${HAPPIER_QA_CREATE_SESSION:-}" ]];
 fi
 
   # Default the matrix to a deterministic engine choice (and allow override).
+  #
+  # IMPORTANT: keep the wrapper default aligned with the Playwright harness default to avoid
+  # “hidden claude” drift where the wrapper silently forces `claude` even when the stack/UI
+  # hides/disables it.
   if [[ -z "${HAPPIER_QA_PREFERRED_AGENT_ENGINES:-}" ]]; then
-    # Default to an engine that does not require a system-installed provider CLI inside the Lima guest.
     export HAPPIER_QA_PREFERRED_AGENT_ENGINES="claude"
   fi
 
@@ -1814,6 +1904,13 @@ fi
     if [[ -z "${HAPPIER_CLAUDE_PATH:-}" || ! -f "${HAPPIER_CLAUDE_PATH:-}" ]]; then
       export HAPPIER_CLAUDE_PATH="${REPO_DIR}/packages/tests/src/fixtures/fake-claude-code-cli.js"
     fi
+  fi
+
+  # The handoff path exports a provider bundle and requires a vendor handoff id. Ensure the initial
+  # QA session actually starts the provider runtime so the vendor resume id is persisted into session
+  # metadata before the first handoff step.
+  if [[ -z "${HAPPIER_QA_SESSION_SEED_PROMPT:-}" ]]; then
+    export HAPPIER_QA_SESSION_SEED_PROMPT="ping"
   fi
 
 # Default the Playwright source machine id once we know the host daemon machine id.
@@ -1899,6 +1996,28 @@ echo "[wsrepl-qa] ensure VM exists + port forwarding (reuse-first)..."
   ensure_vm_ready
 } 2>&1 | tee "${REPORT_ROOT}/ensure-vm.log"
 
+if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
+  for extra_vm in "${EXTRA_VM_NAMES[@]}"; do
+    safe_extra_vm="${extra_vm//[^A-Za-z0-9._-]/_}"
+    extra_root="${REPORT_ROOT}/vms/${safe_extra_vm}"
+    mkdir -p "${extra_root}"
+    echo "[wsrepl-qa] ensure additional VM exists + port forwarding (reuse-first): ${extra_vm}"
+    (
+      VM_NAME="${extra_vm}"
+      LIMA_HOME_DIR="${LIMA_HOME:-${HOME}/.lima}"
+      LIMA_DIR="${LIMA_HOME_DIR}/${VM_NAME}"
+      LIMA_YAML="${LIMA_DIR}/lima.yaml"
+      ensure_vm_ready
+    ) 2>&1 | tee "${extra_root}/ensure-vm.log"
+
+    # Best-effort: seed any provider fixtures needed by the Playwright matrix.
+    (
+      VM_NAME="${extra_vm}"
+      seed_guest_fake_claude_cli_if_needed
+    ) >/dev/null 2>&1 || true
+  done
+fi
+
 echo "[wsrepl-qa] seed guest fake Claude CLI (if needed)..."
 seed_guest_fake_claude_cli_if_needed
 
@@ -1910,6 +2029,9 @@ if [[ -z "${HAPPIER_UI_URL:-}" ]]; then
     "import { resolveQaUiUrl, ensureQaUiUrlHasHmrDisabled } from './.project/scripts/qa/resolveQaUiUrl.mjs'; console.log(ensureQaUiUrlHasHmrDisabled(resolveQaUiUrl()));" \
     2>/dev/null || true)"
   export HAPPIER_UI_URL
+fi
+if [[ -n "${HAPPIER_UI_URL:-}" ]]; then
+  echo "[wsrepl-qa] ui url: ${HAPPIER_UI_URL}"
 fi
 
 host_server_url="${HAPPIER_SERVER_URL:-}"
@@ -1989,11 +2111,17 @@ else:
 PY
 )"
 fi
+if [[ -n "${host_server_url:-}" ]]; then
+  echo "[wsrepl-qa] host server url: ${host_server_url}"
+fi
 
 echo "[wsrepl-qa] restart host daemon and capture logs..."
 restart_host_daemon_and_capture_logs "${host_server_url}"
 
 guest_server_url="$(rewrite_server_url_for_lima_guest "${host_server_url}")"
+if [[ -n "${guest_server_url:-}" ]]; then
+  echo "[wsrepl-qa] guest server url: ${guest_server_url}"
+fi
 
 WSREPL_QA_VM_HAPPIER_MODE="${WSREPL_QA_VM_HAPPIER_MODE:-require}"
 case "${WSREPL_QA_VM_HAPPIER_MODE}" in
@@ -2088,6 +2216,26 @@ guest_provider_install_log="${DAEMON_DIAG_DIR}/guest.provider.install.${guest_pr
 echo "[wsrepl-qa] ensure guest provider installed: ${guest_provider_install_id}..."
 ensure_guest_provider_cli_installed "${guest_provider_install_id}" "${guest_provider_install_log}"
 
+if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
+  for extra_vm in "${EXTRA_VM_NAMES[@]}"; do
+    safe_extra_vm="${extra_vm//[^A-Za-z0-9._-]/_}"
+    extra_daemon_dir="${REPORT_ROOT}/vms/${safe_extra_vm}/daemon"
+    mkdir -p "${extra_daemon_dir}"
+    echo "[wsrepl-qa] restart additional guest daemon and capture logs: ${extra_vm}"
+    (
+      VM_NAME="${extra_vm}"
+      DAEMON_DIAG_DIR="${extra_daemon_dir}"
+      restart_guest_daemon_and_capture_logs "${guest_server_url}" || true
+
+      # Best-effort only: do not fail the whole wrapper if an additional VM lacks Happier/provider tooling.
+      if limactl shell "${VM_NAME}" -- bash -lc '[[ -x "$HOME/.happier/bin/happier" ]] || command -v happier >/dev/null 2>&1' >/dev/null 2>&1; then
+        extra_provider_log="${DAEMON_DIAG_DIR}/guest.provider.install.${guest_provider_install_id}.txt"
+        ensure_guest_provider_cli_installed "${guest_provider_install_id}" "${extra_provider_log}" || true
+      fi
+    )
+  done
+fi
+
 if [[ -z "${WSREPL_QA_HOST_MACHINE_ID:-}" ]]; then
   derived_host_machine_id="$(extract_machine_id_from_daemon_status_file "${DAEMON_DIAG_DIR}/host.daemon.status.txt")"
   if [[ -n "${derived_host_machine_id}" ]]; then
@@ -2177,10 +2325,119 @@ limactl list 2>&1 | tee "${REPORT_ROOT}/lima.list.txt" >/dev/null
 limactl info "${VM_NAME}" 2>&1 | tee "${REPORT_ROOT}/lima.info.txt" >/dev/null
 limactl shell "${VM_NAME}" -- bash -lc "set -euo pipefail; uname -a; id; df -h; command -v node >/dev/null 2>&1 && node --version || true; command -v free >/dev/null 2>&1 && free -m || true" \
   2>&1 | tee "${REPORT_ROOT}/guest.diag.txt" >/dev/null
+if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
+  for extra_vm in "${EXTRA_VM_NAMES[@]}"; do
+    safe_extra_vm="${extra_vm//[^A-Za-z0-9._-]/_}"
+    extra_root="${REPORT_ROOT}/vms/${safe_extra_vm}"
+    mkdir -p "${extra_root}"
+    limactl info "${extra_vm}" 2>&1 | tee "${extra_root}/lima.info.txt" >/dev/null
+    limactl shell "${extra_vm}" -- bash -lc "set -euo pipefail; uname -a; id; df -h; command -v node >/dev/null 2>&1 && node --version || true; command -v free >/dev/null 2>&1 && free -m || true" \
+      2>&1 | tee "${extra_root}/guest.diag.txt" >/dev/null
+  done
+fi
 set -e
 
 echo "[wsrepl-qa] run Playwright matrix (artifacts under report dir)..."
+PLAYWRIGHT_ROOTDIR="${REPORT_ROOT}/playwright"
+PLAYWRIGHT_ATTEMPT=1
+PLAYWRIGHT_OUTDIR="${PLAYWRIGHT_ROOTDIR}/attempt-01"
 mkdir -p "${PLAYWRIGHT_OUTDIR}"
+
+# Best-effort: expose the stack activeServerDir to the Playwright harness so it can capture
+# `session-handoff/*` durable records for each failed attempt.
+infer_stack_name_for_wsrepl() {
+  local stacks_root="${1:-}"
+  local server_url="${2:-}"
+  if [[ -z "${stacks_root}" || -z "${server_url}" ]]; then
+    return 1
+  fi
+  python3 - "$stacks_root" "$server_url" <<'PY'
+import json
+import sys
+from pathlib import Path
+from urllib.parse import urlparse
+
+stacks_root = Path(sys.argv[1]).expanduser()
+server_url = sys.argv[2]
+
+port = 0
+try:
+  parsed = urlparse(server_url)
+  port = int(parsed.port or 0)
+except Exception:
+  port = 0
+
+def safe_json(path: Path):
+  try:
+    return json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return None
+
+best = None
+if port and stacks_root.exists():
+  for entry in stacks_root.iterdir():
+    if not entry.is_dir():
+      continue
+    runtime_path = entry / "stack.runtime.json"
+    if not runtime_path.exists():
+      continue
+    payload = safe_json(runtime_path) or {}
+    ports = payload.get("ports", {}) or {}
+    runtime_port = int(ports.get("server") or 0)
+    if runtime_port != port:
+      continue
+    updated_at = str(payload.get("updatedAt") or "").strip()
+    updated_at_ms = 0
+    if updated_at:
+      try:
+        from datetime import datetime
+        updated_at_ms = int(datetime.fromisoformat(updated_at.replace("Z", "+00:00")).timestamp() * 1000)
+      except Exception:
+        updated_at_ms = 0
+    mtime_ms = 0
+    try:
+      mtime_ms = int(runtime_path.stat().st_mtime * 1000)
+    except Exception:
+      mtime_ms = 0
+    key = (updated_at_ms, mtime_ms, entry.name)
+    if best is None or key > best[0]:
+      best = (key, payload.get("stackName") or entry.name)
+
+print((best[1] if best else "") or "")
+PY
+}
+
+resolve_stack_server_slug_for_active_dir() {
+  local stack_name="${1:-}"
+  if [[ -z "${stack_name}" ]]; then
+    return 1
+  fi
+  python3 - "$stack_name" <<'PY'
+import re
+import sys
+
+name = sys.argv[1].strip()
+match = re.match(r"^(?P<prefix>.+)-(?P<date>[0-9]{8})$", name)
+print((match.group("prefix") if match else name) or "")
+PY
+}
+
+if [[ -z "${HAPPIER_QA_STACK_NAME:-}" ]]; then
+  inferred_stack_name="$(infer_stack_name_for_wsrepl "$HOME/.happier/stacks" "${host_server_url:-}" 2>/dev/null || true)"
+  if [[ -n "${inferred_stack_name}" ]]; then
+    export HAPPIER_QA_STACK_NAME="${inferred_stack_name}"
+  fi
+fi
+
+if [[ -n "${HAPPIER_QA_STACK_NAME:-}" && -z "${HAPPIER_QA_ACTIVE_SERVER_DIR:-}" ]]; then
+  stack_server_slug="$(resolve_stack_server_slug_for_active_dir "${HAPPIER_QA_STACK_NAME}" 2>/dev/null || true)"
+  stack_home_dir="$HOME/.happier/stacks/${HAPPIER_QA_STACK_NAME}"
+  candidate_active_server_dir="${stack_home_dir}/cli/servers/${stack_server_slug}"
+  if [[ -d "${candidate_active_server_dir}" ]]; then
+    export HAPPIER_QA_STACK_HOME_DIR="${stack_home_dir}"
+    export HAPPIER_QA_ACTIVE_SERVER_DIR="${candidate_active_server_dir}"
+  fi
+fi
 
 # Ensure the Playwright runner uses the same storage scope token as the stack UI.
 # Without a consistent EXPO_PUBLIC_HAPPY_STORAGE_SCOPE, the UI can ignore the seeded
@@ -2197,19 +2454,76 @@ if [[ -z "${EXPO_PUBLIC_HAPPIER_SERVER_URL:-}" && -n "${host_server_url:-}" ]]; 
 fi
 
 FAILURE_STAGE="playwright"
+run_playwright_attempt() {
+  local outdir="${1:-}"
+  if [[ -z "${outdir}" ]]; then
+    echo "[wsrepl-qa] internal error: missing outdir for Playwright attempt" >&2
+    return 2
+  fi
+  mkdir -p "${outdir}"
+  HAPPIER_QA_OUTDIR="${outdir}" \
+  run_with_timeout_ms "${HAPPIER_QA_TIMEOUT_MS}" \
+    node "${REPO_DIR}/.project/scripts/qa/playwright-session-handoff-wsrepl-matrix.mjs" \
+    2>&1 | tee "${outdir}/runner.log"
+  return "${PIPESTATUS[0]}"
+}
+
+should_retry_for_daemon_rpc_unavailable() {
+  local outdir="${1:-}"
+  if [[ -z "${outdir}" ]]; then
+    return 1
+  fi
+  local fatal_path="${outdir}/fatal.json"
+  if [[ ! -f "${fatal_path}" ]]; then
+    # The Playwright harness writes fatal.json at failure time; on some systems the file can land
+    # slightly after the process exits due to buffering. Poll briefly before giving up.
+    local attempt=0
+    while [[ "${attempt}" -lt 20 && ! -f "${fatal_path}" ]]; do
+      attempt=$((attempt + 1))
+      sleep 0.05
+    done
+    if [[ ! -f "${fatal_path}" ]]; then
+      return 1
+    fi
+  fi
+  if grep -q "Daemon RPC is not available" "${fatal_path}" && grep -q "RPC method not available" "${fatal_path}"; then
+    return 0
+  fi
+  return 1
+}
+
+playwright_status=0
 set +e
-HAPPIER_QA_OUTDIR="${PLAYWRIGHT_OUTDIR}" \
-run_with_timeout_ms "${HAPPIER_QA_TIMEOUT_MS}" \
-  node "${REPO_DIR}/.project/scripts/qa/playwright-session-handoff-wsrepl-matrix.mjs" \
-  2>&1 | tee "${PLAYWRIGHT_OUTDIR}/runner.log"
-playwright_status="${PIPESTATUS[0]}"
+run_playwright_attempt "${PLAYWRIGHT_OUTDIR}"
+playwright_status="$?"
 set -e
 if [[ "${playwright_status}" == "124" ]]; then
   FAILURE_REASON="timeout"
   exit 124
 fi
 if [[ "${playwright_status}" != "0" ]]; then
-  exit "${playwright_status}"
+  if should_retry_for_daemon_rpc_unavailable "${PLAYWRIGHT_OUTDIR}"; then
+    echo "[wsrepl-qa] Playwright failed with daemon RPC unavailable; restarting daemons and retrying once..." >&2
+    restart_host_daemon_and_capture_logs "${host_server_url}"
+    restart_guest_daemon_and_capture_logs "${guest_server_url}"
+
+    PLAYWRIGHT_ATTEMPT=2
+    PLAYWRIGHT_OUTDIR="${PLAYWRIGHT_ROOTDIR}/attempt-02"
+    playwright_status=0
+    set +e
+    run_playwright_attempt "${PLAYWRIGHT_OUTDIR}"
+    playwright_status="$?"
+    set -e
+    if [[ "${playwright_status}" == "124" ]]; then
+      FAILURE_REASON="timeout"
+      exit 124
+    fi
+    if [[ "${playwright_status}" != "0" ]]; then
+      exit "${playwright_status}"
+    fi
+  else
+    exit "${playwright_status}"
+  fi
 fi
 
 echo ""

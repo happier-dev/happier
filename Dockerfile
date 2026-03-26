@@ -6,23 +6,27 @@ ARG BUILDPLATFORM
 # Shared deps (alpine) for website/docs/webapp builds
 FROM node:${NODE_VERSION}-alpine AS deps-alpine
 WORKDIR /repo
-RUN apk add --no-cache libc6-compat
+# Some workspace deps (e.g. node-pty) may not have prebuilt binaries for all architectures
+# and will fall back to node-gyp. Install the minimal toolchain + Python for reliable builds.
+RUN apk add --no-cache libc6-compat python3 build-base
 ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
-COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/protocol packages/release-runtime packages/audio-stream-native packages/sherpa-native
-COPY apps/ui/package.json apps/ui/
-COPY apps/server/package.json apps/server/
-COPY apps/cli/package.json apps/cli/
-COPY apps/website/package.json apps/website/
-COPY apps/docs/package.json apps/docs/
-COPY packages/agents/package.json packages/agents/
-COPY packages/cli-common/package.json packages/cli-common/
-COPY packages/protocol/package.json packages/protocol/
-COPY packages/release-runtime/package.json packages/release-runtime/
-COPY packages/audio-stream-native/package.json packages/audio-stream-native/
-COPY packages/sherpa-native/package.json packages/sherpa-native/
+ COPY package.json yarn.lock ./
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native
+ COPY apps/ui/package.json apps/ui/
+ COPY apps/server/package.json apps/server/
+ COPY apps/cli/package.json apps/cli/
+ COPY apps/website/package.json apps/website/
+ COPY apps/docs/package.json apps/docs/
+ COPY packages/agents/package.json packages/agents/
+ COPY packages/cli-common/package.json packages/cli-common/
+ COPY packages/connection-supervisor/package.json packages/connection-supervisor/
+ COPY packages/protocol/package.json packages/protocol/
+ COPY packages/release-runtime/package.json packages/release-runtime/
+ COPY packages/transfers/package.json packages/transfers/
+ COPY packages/audio-stream-native/package.json packages/audio-stream-native/
+ COPY packages/sherpa-native/package.json packages/sherpa-native/
 
 COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
@@ -36,23 +40,25 @@ RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
 # running Node/Yarn under QEMU for linux/arm64 has proven unstable (SIGILL).
 FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-alpine AS deps-alpine-build
 WORKDIR /repo
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat python3 build-base
 ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
-COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/protocol packages/release-runtime packages/audio-stream-native packages/sherpa-native
-COPY apps/ui/package.json apps/ui/
-COPY apps/server/package.json apps/server/
-COPY apps/cli/package.json apps/cli/
-COPY apps/website/package.json apps/website/
-COPY apps/docs/package.json apps/docs/
-COPY packages/agents/package.json packages/agents/
-COPY packages/cli-common/package.json packages/cli-common/
-COPY packages/protocol/package.json packages/protocol/
-COPY packages/release-runtime/package.json packages/release-runtime/
-COPY packages/audio-stream-native/package.json packages/audio-stream-native/
-COPY packages/sherpa-native/package.json packages/sherpa-native/
+ COPY package.json yarn.lock ./
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native
+ COPY apps/ui/package.json apps/ui/
+ COPY apps/server/package.json apps/server/
+ COPY apps/cli/package.json apps/cli/
+ COPY apps/website/package.json apps/website/
+ COPY apps/docs/package.json apps/docs/
+ COPY packages/agents/package.json packages/agents/
+ COPY packages/cli-common/package.json packages/cli-common/
+ COPY packages/connection-supervisor/package.json packages/connection-supervisor/
+ COPY packages/protocol/package.json packages/protocol/
+ COPY packages/release-runtime/package.json packages/release-runtime/
+ COPY packages/transfers/package.json packages/transfers/
+ COPY packages/audio-stream-native/package.json packages/audio-stream-native/
+ COPY packages/sherpa-native/package.json packages/sherpa-native/
 
 COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
@@ -68,19 +74,21 @@ WORKDIR /repo
 ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
-COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/protocol packages/release-runtime packages/audio-stream-native packages/sherpa-native
-COPY apps/ui/package.json apps/ui/
-COPY apps/server/package.json apps/server/
-COPY apps/cli/package.json apps/cli/
-COPY apps/website/package.json apps/website/
-COPY apps/docs/package.json apps/docs/
-COPY packages/agents/package.json packages/agents/
-COPY packages/cli-common/package.json packages/cli-common/
-COPY packages/protocol/package.json packages/protocol/
-COPY packages/release-runtime/package.json packages/release-runtime/
-COPY packages/audio-stream-native/package.json packages/audio-stream-native/
-COPY packages/sherpa-native/package.json packages/sherpa-native/
+ COPY package.json yarn.lock ./
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native
+ COPY apps/ui/package.json apps/ui/
+ COPY apps/server/package.json apps/server/
+ COPY apps/cli/package.json apps/cli/
+ COPY apps/website/package.json apps/website/
+ COPY apps/docs/package.json apps/docs/
+ COPY packages/agents/package.json packages/agents/
+ COPY packages/cli-common/package.json packages/cli-common/
+ COPY packages/connection-supervisor/package.json packages/connection-supervisor/
+ COPY packages/protocol/package.json packages/protocol/
+ COPY packages/release-runtime/package.json packages/release-runtime/
+ COPY packages/transfers/package.json packages/transfers/
+ COPY packages/audio-stream-native/package.json packages/audio-stream-native/
+ COPY packages/sherpa-native/package.json packages/sherpa-native/
 
 COPY docker/scripts/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
 RUN chmod +x /usr/local/bin/yarn-install-with-retry
@@ -158,12 +166,17 @@ ENV HAPPIER_EMBEDDED_POLICY_ENV=$HAPPIER_EMBEDDED_POLICY_ENV
 COPY .github/feature-policy ./.github/feature-policy
 COPY apps/ui ./apps/ui
 COPY packages/agents ./packages/agents
+COPY packages/connection-supervisor ./packages/connection-supervisor
 COPY packages/protocol ./packages/protocol
+COPY packages/transfers ./packages/transfers
 
-RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @happier-dev/agents postinstall:real
+RUN yarn workspace @happier-dev/protocol postinstall:real \
+    && yarn workspace @happier-dev/agents postinstall:real \
+    && yarn workspace @happier-dev/connection-supervisor postinstall:real \
+    && yarn workspace @happier-dev/transfers postinstall:real
 RUN yarn workspace @happier-dev/app postinstall:real
 RUN rm -rf apps/ui/dist
-RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist
+RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist --max-workers 1
 RUN if [ -n "$SENTRY_AUTH_TOKEN" ]; then cd apps/ui && SENTRY_AUTH_TOKEN="$SENTRY_AUTH_TOKEN" SENTRY_URL="$SENTRY_URL" SENTRY_RELEASE="$SENTRY_RELEASE" npx --yes sentry-expo-upload-sourcemaps dist; else echo "[docker] SENTRY_AUTH_TOKEN not set; skipping Sentry source maps upload"; fi
 
 FROM nginxinc/nginx-unprivileged:alpine AS webapp

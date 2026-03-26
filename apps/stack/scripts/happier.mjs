@@ -215,9 +215,6 @@ async function main() {
   const { publicServerUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort, stackName });
 
   const cliHomeDir = resolveCliHomeDir();
-  const stackDefaultsPinned =
-    Boolean((process.env.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim()) ||
-    Boolean((process.env.HAPPIER_STACK_SERVER_PORT ?? '').toString().trim());
 
   const cliLaunchSpec = runtimeLaunchContext.snapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null;
   const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli');
@@ -248,23 +245,23 @@ async function main() {
 
   let env = { ...process.env };
   env.HAPPIER_HOME_DIR = env.HAPPIER_HOME_DIR || cliHomeDir;
-  if (!stackDefaultsPinned && !prefixServerSelection.hasExplicitSelection && !env.HAPPIER_SERVER_URL && !env.HAPPIER_WEBAPP_URL) {
-    const settingsDefaults = readActiveServerUrlsFromCliSettings(env.HAPPIER_HOME_DIR);
-    if (settingsDefaults) {
-      if (settingsDefaults.localServerUrl && settingsDefaults.localServerUrl !== settingsDefaults.serverUrl) {
-        env.HAPPIER_PUBLIC_SERVER_URL = settingsDefaults.serverUrl;
-        env.HAPPIER_LOCAL_SERVER_URL = settingsDefaults.localServerUrl;
-        env.HAPPIER_SERVER_URL = settingsDefaults.localServerUrl;
-      } else {
-        delete env.HAPPIER_PUBLIC_SERVER_URL;
-        delete env.HAPPIER_LOCAL_SERVER_URL;
-        env.HAPPIER_SERVER_URL = settingsDefaults.serverUrl;
-      }
-      env.HAPPIER_WEBAPP_URL = settingsDefaults.webappUrl;
+  const settingsDefaults =
+    !prefixServerSelection.hasExplicitSelection ? readActiveServerUrlsFromCliSettings(env.HAPPIER_HOME_DIR) : null;
+  if (settingsDefaults) {
+    if (settingsDefaults.localServerUrl && settingsDefaults.localServerUrl !== settingsDefaults.serverUrl) {
+      env.HAPPIER_PUBLIC_SERVER_URL = settingsDefaults.serverUrl;
+      env.HAPPIER_LOCAL_SERVER_URL = settingsDefaults.localServerUrl;
+      env.HAPPIER_SERVER_URL = settingsDefaults.localServerUrl;
+    } else {
+      delete env.HAPPIER_PUBLIC_SERVER_URL;
+      delete env.HAPPIER_LOCAL_SERVER_URL;
+      env.HAPPIER_SERVER_URL = settingsDefaults.serverUrl;
     }
+    env.HAPPIER_WEBAPP_URL = settingsDefaults.webappUrl;
+    delete env.HAPPIER_ACTIVE_SERVER_ID;
   }
   // Only set default env vars when no explicit server selection flags are present
-  if (!prefixServerSelection.hasExplicitSelection) {
+  if (!prefixServerSelection.hasExplicitSelection && !settingsDefaults) {
     env.HAPPIER_SERVER_URL = env.HAPPIER_SERVER_URL || internalServerUrl;
     env.HAPPIER_WEBAPP_URL = env.HAPPIER_WEBAPP_URL || publicServerUrl;
   }
@@ -285,7 +282,7 @@ async function main() {
     } else {
       delete env.HAPPIER_ACTIVE_SERVER_ID;
     }
-  } else {
+  } else if (!settingsDefaults) {
     env = applyStackActiveServerScopeEnv({
       env,
       stackName,
