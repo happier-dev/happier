@@ -16,6 +16,8 @@ type ActivityBadgeSessionOptions = Readonly<{
 }>;
 
 function hasSessionBadgeAttention(session: Session, options?: ActivityBadgeSessionOptions): boolean {
+    const isSessionActive = session.active === true;
+
     if (options?.showUnread !== false) {
         const hasUnread = computeHasUnreadActivity({
             sessionSeq: session.seq ?? 0,
@@ -26,7 +28,7 @@ function hasSessionBadgeAttention(session: Session, options?: ActivityBadgeSessi
         if (hasUnread) return true;
     }
 
-    if (options?.showPendingPermissionRequests !== false) {
+    if (isSessionActive && options?.showPendingPermissionRequests !== false) {
         const hasPendingPermissionRequests =
             typeof session.pendingPermissionRequestCount === 'number'
                 ? session.pendingPermissionRequestCount > 0
@@ -34,7 +36,7 @@ function hasSessionBadgeAttention(session: Session, options?: ActivityBadgeSessi
         if (hasPendingPermissionRequests) return true;
     }
 
-    if (options?.showPendingUserActionRequests !== false) {
+    if (isSessionActive && options?.showPendingUserActionRequests !== false) {
         const hasPendingUserActionRequests =
             typeof session.pendingUserActionRequestCount === 'number'
                 ? session.pendingUserActionRequestCount > 0
