@@ -226,10 +226,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
     let currentModelId: string | null = null;
     let currentReasoningEffort: string | null = null;
     let currentServiceTier: string | null = null;
-    let hasServiceTierOverride = false;
-    let pendingTurnStartSeqInclusive: number | null = null;
-    let pendingTurnUserMessageSeq: number | null = null;
-    const completedTurnSeqRanges: CompletedTurnSeqRange[] = [];
+        let hasServiceTierOverride = false;
+        let pendingTurnStartSeqInclusive: number | null = null;
+        const completedTurnSeqRanges: CompletedTurnSeqRange[] = [];
     const streamEventBridge = createCodexAppServerStreamEventBridge();
     const turnChangeCollector = new TurnChangeSetCollector({
         provider: 'codex',
@@ -656,10 +655,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
     }>): Promise<void> => {
         const activeTurn = pendingTurn;
         const completedTurnStartSeqInclusive = pendingTurnStartSeqInclusive;
-        const completedTurnUserMessageSeq = pendingTurnUserMessageSeq;
         pendingTurn = null;
         pendingTurnStartSeqInclusive = null;
-        pendingTurnUserMessageSeq = null;
         turnInFlight = false;
         setThinking(false);
         if (options?.flushReason) {
@@ -712,8 +709,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
         latestPendingTurnId = null;
         if (options?.flushReason === 'turn-end' && completedTurnStartSeqInclusive !== null) {
+            const completedTurnUserMessageSeq = readLastObservedUserMessageSeq(params.session);
             const completedTurnSeqRange = captureCompletedTurnSeqRange({
-                userMessageSeq: completedTurnUserMessageSeq ?? completedTurnStartSeqInclusive,
+                userMessageSeq: completedTurnUserMessageSeq > 0 ? completedTurnUserMessageSeq : completedTurnStartSeqInclusive,
                 startSeqInclusive: completedTurnStartSeqInclusive,
                 endSeqInclusive: readLastObservedMessageSeq(params.session),
             });
@@ -1073,7 +1071,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
             }
             const client = await ensureClient();
             pendingTurnStartSeqInclusive = readLastObservedMessageSeq(params.session);
-            pendingTurnUserMessageSeq = readLastObservedUserMessageSeq(params.session);
             turnChangeCollector.beginTurn();
             const activeTurn = createPendingTurn(activeThreadId);
             pendingTurn = activeTurn;

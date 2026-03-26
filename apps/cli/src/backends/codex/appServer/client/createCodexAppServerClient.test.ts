@@ -113,6 +113,50 @@ describe('createCodexAppServerClient', () => {
         });
     });
 
+    it('serializes circular request params without crashing the transport', async () => {
+        await withTempDir('happier-codex-app-server-client-circular-params-', async (root) => {
+            const fakeAppServer = await writeFakeCodexAppServerScript({
+                dir: root,
+                bodyLines: [
+                    'for await (const line of rl) {',
+                    '  if (!line.trim()) continue;',
+                    '  const msg = JSON.parse(line);',
+                    '  if (msg.method === "initialize") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake", version: "0.0.0" } } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  if (msg.method === "initialized") continue;',
+                    '  if (msg.method === "state/read") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { params: msg.params } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
+                    '}',
+                ],
+            });
+
+            const circularParams: { nested: { ok: boolean }; self?: unknown } = {
+                nested: { ok: true },
+            };
+            circularParams.self = circularParams;
+
+            const client = await createCodexAppServerClient({
+                processEnv: createCodexAppServerProcessEnv(fakeAppServer),
+            });
+
+            try {
+                await expect(client.request('state/read', circularParams)).resolves.toEqual({
+                    params: {
+                        nested: { ok: true },
+                        self: '[Circular]',
+                    },
+                });
+            } finally {
+                await client.dispose();
+            }
+        });
+    });
+
     it('keeps handlers active until unregistered', async () => {
         await withTempDir('happier-codex-app-server-client-persistent-handlers-', async (root) => {
             const fakeAppServer = await writeFakeCodexAppServerScript({

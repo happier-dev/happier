@@ -153,16 +153,20 @@ vi.mock('@/agent/runtime/sessionModeOverrideSync', () => ({
   })),
 }));
 
-vi.mock('@/agent/runtime/sessionConfigOptionOverrideSync', () => ({
-  createSessionConfigOptionOverrideSynchronizer: vi.fn(() => ({
-    syncFromMetadata: vi.fn(),
-    flushPendingAfterStart: configOptionSyncFlushPendingAfterStartSpy,
-  })),
-  createAcpConfigOptionOverrideSynchronizer: vi.fn(() => ({
-    syncFromMetadata: vi.fn(),
-    flushPendingAfterStart: configOptionSyncFlushPendingAfterStartSpy,
-  })),
-}));
+vi.mock('@/agent/runtime/sessionConfigOptionOverrideSync', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agent/runtime/sessionConfigOptionOverrideSync')>();
+  return {
+    ...actual,
+    createSessionConfigOptionOverrideSynchronizer: vi.fn(() => ({
+      syncFromMetadata: vi.fn(),
+      flushPendingAfterStart: configOptionSyncFlushPendingAfterStartSpy,
+    })),
+    createAcpConfigOptionOverrideSynchronizer: vi.fn(() => ({
+      syncFromMetadata: vi.fn(),
+      flushPendingAfterStart: configOptionSyncFlushPendingAfterStartSpy,
+    })),
+  };
+});
 
 vi.mock('@/backends/codex/utils/metadataOverridesWatcher', () => ({
   runMetadataOverridesWatcherLoop: vi.fn(),

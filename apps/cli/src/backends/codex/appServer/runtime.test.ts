@@ -1257,6 +1257,54 @@ describe('createCodexAppServerRuntime', () => {
         });
     });
 
+    it('rolls back before a user message even when user-message seq increments after the onUserMessage callback fires', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-rollback-user-message-seq-order-');
+
+        let lastObservedMessageSeq = 0;
+        let lastObservedUserMessageSeq = 0;
+        const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
+            updater({ machineId: 'machine_1' }),
+        );
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata,
+                getLastObservedMessageSeq: vi.fn(() => lastObservedMessageSeq),
+                getLastObservedUserMessageSeq: vi.fn(() => lastObservedUserMessageSeq),
+                // Simulate session client updating the seq counters after the user-message callback begins.
+                sendAgentMessageCommitted: vi.fn(async () => {
+                    lastObservedMessageSeq = 3;
+                    lastObservedUserMessageSeq = 1;
+                }),
+                sendTranscriptDraftDelta: vi.fn(),
+                sendCodexMessage: vi.fn(),
+            } as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-streams');
+
+        await expect((runtime as any).rollbackConversation({
+            v: 1,
+            target: {
+                type: 'before_user_message',
+                userMessageSeq: 1,
+            },
+        })).resolves.toMatchObject({ ok: true });
+
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    method: 'thread/rollback',
+                    params: { threadId: 'thread-started', numTurns: 1 },
+                }),
+            ]),
+        );
+    });
+
     it('rolls back multiple turns before a target user message and records the rolled-back seq range', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-rollback-before-user-message-');
 

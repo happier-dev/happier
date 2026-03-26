@@ -50,7 +50,7 @@ export async function seedCodexAppServerPendingSessionOverrides(params: Readonly
     metadata,
     lastAppliedUpdatedAt: 0,
   });
-  if (pendingMode) {
+  if (pendingMode && pendingMode.modeId.trim().length > 0) {
     try {
       await params.runtime.setSessionMode(pendingMode.modeId);
     } catch (error) {

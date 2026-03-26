@@ -8,6 +8,7 @@ import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process
 import { resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation';
 import { appendCodexCliConfigOverridesArgs } from '../../utils/appendCodexCliConfigOverridesArgs';
 import { readCodexAppServerRequestTimeoutMs } from './codexAppServerRpcTimeout';
+import { safeJsonStringify } from '@/utils/safeJson';
 
 type JsonRpcMessage = Readonly<{
     id?: number | string | null;
@@ -178,7 +179,14 @@ export async function createCodexAppServerClient(params: Readonly<{
         if (state.fatalError) {
             throw state.fatalError;
         }
-        const payload = `${JSON.stringify(message)}\n`;
+        let payload: string;
+        try {
+            payload = `${safeJsonStringify(message)}\n`;
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            const method = typeof message.method === 'string' ? message.method : 'notification';
+            throw new Error(`Failed to serialize Codex app-server ${method} message: ${reason}`);
+        }
         const nextWrite = writeChain.then(async () => {
             const stdin = child.stdin;
             if (!stdin || stdin.writableEnded || stdin.destroyed) {
