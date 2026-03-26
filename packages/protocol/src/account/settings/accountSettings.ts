@@ -47,7 +47,29 @@ export type NotificationsSettingsV1 = z.infer<typeof NotificationsSettingsV1Sche
 
 export const DEFAULT_NOTIFICATIONS_SETTINGS_V1: NotificationsSettingsV1 = NotificationsSettingsV1Schema.parse({});
 
-export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1 });
+export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1Schema.parse({
+  v: 1,
+  actions: {
+    // Fail-closed: session agents must not control other sessions by default.
+    // Users can explicitly opt in per action via settings.
+    'session.stop': { disabledSurfaces: ['session_agent'] },
+    'session.title.set': { disabledSurfaces: ['session_agent'] },
+    'session.permission_mode.set': { disabledSurfaces: ['session_agent'] },
+    'session.model.set': { disabledSurfaces: ['session_agent'] },
+    'session.archive': { disabledSurfaces: ['session_agent'] },
+    'session.unarchive': { disabledSurfaces: ['session_agent'] },
+    'session.status.get': { disabledSurfaces: ['session_agent'] },
+    'session.history.get': { disabledSurfaces: ['session_agent'] },
+    'session.wait.idle': { disabledSurfaces: ['session_agent'] },
+    'session.message.send': { disabledSurfaces: ['session_agent'] },
+    'session.permission.respond': { disabledSurfaces: ['session_agent'] },
+    'session.user_action.answer': { disabledSurfaces: ['session_agent'] },
+    'session.mode.set': { disabledSurfaces: ['session_agent'] },
+    'session.list': { disabledSurfaces: ['session_agent'] },
+    'session.activity.get': { disabledSurfaces: ['session_agent'] },
+    'session.messages.recent.get': { disabledSurfaces: ['session_agent'] },
+  },
+});
 
 const BackendEnabledByTargetKeySchema = z.record(z.string(), z.boolean()).catch({});
 const BackendCliSourcePreferenceSchema = z.enum(['system-first', 'managed-first']);

@@ -48,14 +48,12 @@ type DispatchDeps = Readonly<{
 
 const ACTION_TOOL_NAMES = new Set(
   listActionSpecs()
-    .filter((spec) => spec.surfaces.mcp === true)
     .map((spec) => String(spec.bindings?.mcpToolName ?? '').trim())
     .filter((toolName) => toolName.length > 0),
 );
 
 const ACTION_ID_BY_TOOL_NAME = new Map(
   listActionSpecs()
-    .filter((spec) => spec.surfaces.mcp === true)
     .map((spec) => [String(spec.bindings?.mcpToolName ?? '').trim(), spec.id] as const)
     .filter(([toolName]) => toolName.length > 0),
 );
@@ -118,11 +116,11 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   toolName: string;
   args: unknown;
   sessionId: string;
-  surface?: 'mcp' | 'cli';
+  surface?: 'mcp' | 'cli' | 'session_agent';
   deps: DispatchDeps;
 }>): Promise<HappierBuiltInToolDispatchResult> {
   const isActionEnabled = params.deps.isActionEnabled ?? (() => true);
-  const surface = params.surface ?? 'mcp';
+  const surface = params.surface ?? 'session_agent';
 
   const gatedManualActionId = SURFACE_GATED_MANUAL_TOOL_ACTION_IDS.get(params.toolName) ?? null;
   if (

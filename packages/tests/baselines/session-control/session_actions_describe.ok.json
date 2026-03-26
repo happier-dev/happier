@@ -27,7 +27,8 @@
         "ui_slash_command": true,
         "voice_tool": true,
         "voice_action_block": true,
-        "mcp": true,
+        "session_agent": true,
+        "mcp": false,
         "cli": true
       },
       "inputHints": {

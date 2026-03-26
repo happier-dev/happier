@@ -550,4 +550,27 @@ describe('built-in Happier tools', () => {
     });
     expect(startExecutionRun).not.toHaveBeenCalled();
   });
+
+  it('dispatches action-backed tools that are only surfaced on the session_agent surface', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ ok: true }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'session_message_send',
+      args: { sessionId: 'sess-1', message: 'hello' },
+      sessionId: 'sess-1',
+      surface: 'session_agent',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun: async () => unsupported(),
+        executeActionByToolName,
+      },
+    });
+
+    expect(result).toEqual(ok({ ok: true }));
+    expect(executeActionByToolName).toHaveBeenCalledWith(
+      'session_message_send',
+      { sessionId: 'sess-1', message: 'hello' },
+      'sess-1',
+    );
+  });
 });

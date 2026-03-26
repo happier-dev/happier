@@ -463,14 +463,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }> {
   const policyAllowsAction = deps.isActionEnabled ?? ((_id: ActionId, _ctx: ActionExecutorContext) => true);
-  const isActionEnabled = (spec: ActionSpec, ctx: ActionExecutorContext) =>
-    isActionSpecSurfacedOn(spec, ctx.surface) && policyAllowsAction(spec.id, ctx);
+  const isActionEnabledByPolicy = (spec: ActionSpec, ctx: ActionExecutorContext) => policyAllowsAction(spec.id, ctx);
+  const isActionEnabledBySurface = (spec: ActionSpec, ctx: ActionExecutorContext) => isActionSpecSurfacedOn(spec, ctx.surface);
+  const isActionEnabled = (spec: ActionSpec, ctx: ActionExecutorContext) => isActionEnabledBySurface(spec, ctx) && isActionEnabledByPolicy(spec, ctx);
 
   const execute = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult> => {
     const ctx: ActionExecutorContext = context ?? {};
 
     const spec = getActionSpec(actionId);
-    if (!isActionEnabled(spec, ctx)) {
+    const bypassSurfaceGate = actionId === 'action.spec.search';
+    if (bypassSurfaceGate ? !isActionEnabledByPolicy(spec, ctx) : !isActionEnabled(spec, ctx)) {
       return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
     }
     const parsed = (spec.inputSchema as any).safeParse(input ?? {});

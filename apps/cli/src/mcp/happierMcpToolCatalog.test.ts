@@ -9,9 +9,9 @@ describe('HAPPIER_MCP_TOOL_CATALOG_NAMES', () => {
     expect(new Set(HAPPIER_MCP_TOOL_CATALOG_NAMES).size).toBe(HAPPIER_MCP_TOOL_CATALOG_NAMES.length);
   });
 
-  it('includes every ActionSpec mcpToolName for surfaces.mcp actions', () => {
+  it('includes every ActionSpec mcpToolName for session_agent surfaced actions', () => {
     const expected = listActionSpecs()
-      .filter((spec) => spec.surfaces.mcp === true)
+      .filter((spec) => spec.surfaces.session_agent === true)
       .map((spec) => String(spec.bindings?.mcpToolName ?? '').trim())
       .filter((name) => name.length > 0);
 

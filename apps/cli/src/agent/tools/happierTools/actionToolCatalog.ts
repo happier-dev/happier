@@ -3,7 +3,7 @@ import { listActionSpecs, type ActionId } from '@happier-dev/protocol';
 import type { HappierBuiltInToolDefinition } from './types';
 
 type ActionEnabledPredicate = (id: ActionId) => boolean;
-type HappierBuiltInToolSurface = 'mcp' | 'cli' | 'session_agent';
+export type HappierBuiltInToolSurface = 'mcp' | 'cli' | 'session_agent';
 
 const ACTION_TOOL_ENTRIES = Object.freeze(
   listActionSpecs()

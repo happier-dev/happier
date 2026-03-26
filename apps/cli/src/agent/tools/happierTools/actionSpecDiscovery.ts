@@ -86,7 +86,7 @@ type GetActionSpecPayload = Readonly<{
 
 export async function searchActionSpecsForSurface(
   args: unknown,
-  surface: 'mcp' | 'cli',
+  surface: 'mcp' | 'cli' | 'session_agent',
   isActionEnabled: (id: ActionId) => boolean,
 ): Promise<ActionSpecDiscoveryResult<SearchActionSpecsPayload>> {
   const parsed = actionSpecSearchSchema.safeParse(args ?? {});
@@ -107,7 +107,7 @@ export async function searchActionSpecsForSurface(
 
 export async function getActionSpecForSurface(
   args: unknown,
-  surface: 'mcp' | 'cli',
+  surface: 'mcp' | 'cli' | 'session_agent',
   isActionEnabled: (id: ActionId) => boolean,
 ): Promise<ActionSpecDiscoveryResult<GetActionSpecPayload>> {
   const parsed = actionSpecGetSchema.safeParse(args);
@@ -130,7 +130,7 @@ export async function getActionSpecForSurface(
 
 export async function resolveActionOptionsForSurface(
   args: unknown,
-  surface: 'mcp' | 'cli',
+  surface: 'mcp' | 'cli' | 'session_agent',
   isActionEnabled: (id: ActionId) => boolean,
   resolveActionOptions: ResolveActionOptions,
 ): Promise<ActionSpecDiscoveryResult<ResolveActionOptionsPayload>> {
