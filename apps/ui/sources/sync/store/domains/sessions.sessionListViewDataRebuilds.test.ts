@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildSessionListRenderableFromSession } from '../../domains/session/listing/sessionListRenderable';
+
 beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -182,6 +184,59 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         ]);
 
         expect(get().sessionListViewData).toBe(initial);
+    });
+
+    it('preserves transient renderable visibility flags across applySessions refreshes', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        get().sessionListRenderables = {
+            s1: {
+                ...buildSessionListRenderableFromSession({
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                } as any),
+                keepVisibleWhenInactive: true,
+            },
+        };
+
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 2,
+                active: false,
+                activeAt: 2,
+                archivedAt: null,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 2,
+            } as any,
+        ]);
+
+        expect(get().sessionListRenderables['s1']?.keepVisibleWhenInactive).toBe(true);
     });
 
     it('rebuilds sessionListViewData when a peer session update changes another stale session reachable target', async () => {

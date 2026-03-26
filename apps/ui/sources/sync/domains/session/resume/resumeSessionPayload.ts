@@ -4,9 +4,11 @@ import {
     AgentRuntimeDescriptorV1Schema,
     BackendTargetRefSchema,
     SessionAttachMetadataIdentityPolicySchema,
+    SessionAuthoringValueV1Schema,
     type SessionAttachMetadataIdentityPolicy,
     type AgentRuntimeDescriptorV1,
     type BackendTargetRefV1,
+    type SessionAuthoringValueV1,
 } from '@happier-dev/protocol';
 import { isPermissionMode, type PermissionMode } from '../../permissions/permissionTypes';
 
@@ -20,6 +22,7 @@ export type ResumeHappySessionRpcParams = CodexBackendTransportFields & {
     resume?: string;
     agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
     environmentVariables?: Record<string, string>;
+    connectedServices?: SessionAuthoringValueV1['connectedServices'];
     transcriptStorage?: 'direct' | 'persisted';
     attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy;
     permissionMode?: PermissionMode;
@@ -41,6 +44,7 @@ const ResumeHappySessionRpcParamsSchema = z.object({
     resume: z.string().min(1).optional(),
     agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
     environmentVariables: z.record(z.string(), z.string()).optional(),
+    connectedServices: SessionAuthoringValueV1Schema.shape.connectedServices.optional(),
     transcriptStorage: z.enum(['direct', 'persisted']).optional(),
     attachMetadataIdentityPolicy: SessionAttachMetadataIdentityPolicySchema.optional(),
     permissionMode: z.string().refine((value) => isPermissionMode(value)).optional(),
@@ -52,7 +56,15 @@ const ResumeHappySessionRpcParamsSchema = z.object({
 });
 
 export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionRpcInput): ResumeHappySessionRpcParams {
-    const { modelId, modelUpdatedAt, codexBackendMode, experimentalCodexAcp, agentRuntimeDescriptorV1, ...rest } = input;
+    const {
+        modelId,
+        modelUpdatedAt,
+        codexBackendMode,
+        experimentalCodexAcp,
+        agentRuntimeDescriptorV1,
+        connectedServices,
+        ...rest
+    } = input;
     const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
     const includeModelOverride =
         normalizedModelId.length > 0 &&
@@ -66,6 +78,7 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         type: 'resume-session',
         ...rest,
         ...codexTransportFields,
+        ...(connectedServices === undefined || connectedServices === null ? {} : { connectedServices }),
         ...(() => {
             if (agentRuntimeDescriptorV1) {
                 return { agentRuntimeDescriptorV1 };

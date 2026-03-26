@@ -31,7 +31,7 @@ import {
     SESSION_LIST_ROW_HEIGHT_DEFAULT,
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
 } from './sessionListRowHeights';
-import { stopSessionAndMaybeArchive } from '../sessionStopArchiveFlow';
+import { clearSessionVisibleWhenInactive, stopSessionAndMaybeArchive } from '../sessionStopArchiveFlow';
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
@@ -533,6 +533,7 @@ export const SessionItem = React.memo(
         const [mutatingSession, performMutation] = useHappyAction(async () => {
             if (isActiveSession) {
                 await stopSessionAndMaybeArchive({
+                    sessionId: resolvedSession.id,
                     hideInactiveSessions: Boolean(hideInactiveSessions),
                     isPinned: Boolean(pinned),
                     stopSession: async () => await sessionStopWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
@@ -547,6 +548,7 @@ export const SessionItem = React.memo(
             if (!result.success) {
                 throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
             }
+            clearSessionVisibleWhenInactive(resolvedSession.id);
         });
 
         const handleSwipeAction = React.useCallback(() => {

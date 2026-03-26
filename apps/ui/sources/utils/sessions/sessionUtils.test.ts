@@ -92,6 +92,33 @@ describe('getSessionStatus', () => {
         expect(status.shouldShowStatus).toBe(true);
     });
 
+    it('does not surface permission_required when a session is inactive (even if stale pending flags exist)', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const status = getSessionStatus({
+            id: 's-renderable',
+            seq: 1,
+            createdAt: 0,
+            updatedAt: 0,
+            active: false,
+            activeAt: 0,
+            archivedAt: null,
+            pendingVersion: 0,
+            pendingCount: 0,
+            metadataVersion: 0,
+            agentStateVersion: 0,
+            metadata: null,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+            accessLevel: undefined,
+            canApprovePermissions: undefined,
+            hasPendingPermissionRequests: true,
+            hasPendingUserActionRequests: false,
+        } as any, 1_000, 0);
+
+        expect(status.state).toBe('waiting');
+    });
+
     it('returns action_required when the agent has pending user-action requests', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = createBaseSession({
@@ -107,6 +134,33 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('action_required');
         expect(status.isConnected).toBe(true);
         expect(status.shouldShowStatus).toBe(true);
+    });
+
+    it('does not surface action_required when a session is inactive (even if stale pending flags exist)', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const status = getSessionStatus({
+            id: 's-renderable',
+            seq: 1,
+            createdAt: 0,
+            updatedAt: 0,
+            active: false,
+            activeAt: 0,
+            archivedAt: null,
+            pendingVersion: 0,
+            pendingCount: 0,
+            metadataVersion: 0,
+            agentStateVersion: 0,
+            metadata: null,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+            accessLevel: undefined,
+            canApprovePermissions: undefined,
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: true,
+        } as any, 1_000, 0);
+
+        expect(status.state).toBe('waiting');
     });
 
     it('does not return permission_required when agentState.requests is stale relative to completedRequests', async () => {

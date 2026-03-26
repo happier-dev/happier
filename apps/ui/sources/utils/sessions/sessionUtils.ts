@@ -248,6 +248,7 @@ export function shouldShowAbortButtonForSessionState(state: SessionState): boole
  */
 export function getSessionStatus(session: SessionStatusSource, nowMs: number = Date.now(), vibingIndex?: number): SessionStatus {
     const isOnline = session.presence === "online";
+    const isSessionActive = session.active === true;
     const hasPermissions = hasPendingPermissionRequests(session);
     const hasUserActions = hasPendingUserActionRequests(session);
 
@@ -275,8 +276,9 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         };
     }
 
-    // Check if user action is required (structured prompt), then permissions.
-    if (hasUserActions) {
+    // Pending permission/action prompts are only meaningful while the provider process is running.
+    // Do not surface stale "action_required"/"permission_required" states for inactive sessions.
+    if (isSessionActive && hasUserActions) {
         return {
             state: 'action_required',
             isConnected: true,
@@ -288,7 +290,7 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         };
     }
 
-    if (hasPermissions) {
+    if (isSessionActive && hasPermissions) {
         return {
             state: 'permission_required',
             isConnected: true,

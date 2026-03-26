@@ -11,6 +11,7 @@ import {
     buildSessionListRenderableFromSession,
     didSessionListRenderableProjectGroupingFieldsChange,
     didSessionListRenderableStructuralFieldsChange,
+    preserveSessionListRenderableTransientState,
     type SessionListRenderableSession,
 } from '../../domains/session/listing/sessionListRenderable';
 import { nowServerMs } from '../../runtime/time';
@@ -41,7 +42,7 @@ import { buildSessionListCacheEntriesFromRenderables } from '../../domains/state
 import { projectManager } from '../../runtime/orchestration/projectManager';
 import { isModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
-import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import { parsePermissionIntentAlias, resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import {
     applyReachableTargetsToSessionListRenderables,
@@ -465,20 +466,22 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     modelModeUpdatedAt: mergedModelModeUpdatedAt,
                 };
 
-                mergedRenderables[session.id] = buildSessionListRenderableFromSession(mergedSessions[session.id]!);
+                const nextRenderableBase = buildSessionListRenderableFromSession(mergedSessions[session.id]!);
+                const previousRenderable = state.sessionListRenderables?.[session.id];
+                mergedRenderables[session.id] = previousRenderable
+                    ? preserveSessionListRenderableTransientState(previousRenderable, nextRenderableBase)
+                    : nextRenderableBase;
 
                 if (!needsSessionListViewDataRebuild) {
-                    const previousRenderable = state.sessionListRenderables[session.id];
                     const nextRenderable = mergedRenderables[session.id]!;
-                    if (didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)) {
+                    if (!previousRenderable || didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)) {
                         needsSessionListViewDataRebuild = true;
                     }
                 }
 
                 if (!needsProjectManagerUpdate) {
-                    const previousRenderable = state.sessionListRenderables[session.id];
                     const nextRenderable = mergedRenderables[session.id]!;
-                    if (didSessionListRenderableProjectGroupingFieldsChange(previousRenderable, nextRenderable)) {
+                    if (!previousRenderable || didSessionListRenderableProjectGroupingFieldsChange(previousRenderable, nextRenderable)) {
                         needsProjectManagerUpdate = true;
                     }
                 }
@@ -639,7 +642,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return nextState;
         }),
         replaceSessionListRenderables: (sessions) => set((state) => {
-            const nextRenderables = Object.fromEntries(sessions.map((session) => [session.id, session]));
+            const nextRenderables = Object.fromEntries(sessions.map((session) => [
+                session.id,
+                preserveSessionListRenderableTransientState(state.sessionListRenderables[session.id], session),
+            ]));
             const previousEntries = buildSessionListCacheEntriesFromRenderables(state.sessionListRenderables ?? {});
             const nextState = {
                 ...state,

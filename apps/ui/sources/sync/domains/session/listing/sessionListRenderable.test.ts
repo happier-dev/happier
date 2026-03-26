@@ -45,4 +45,34 @@ describe('buildSessionListRenderableFromSession', () => {
         expect(renderable.hasPendingPermissionRequests).toBe(true);
         expect(renderable.hasPendingUserActionRequests).toBe(true);
     });
+
+    it('does not mark pending requests as attention when the session is inactive', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: { tool: 'Bash', arguments: { command: 'ls' }, createdAt: 1 },
+                    req2: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 2 },
+                },
+                completedRequests: null,
+            },
+            agentStateVersion: 0,
+            pendingPermissionRequestCount: 2,
+            pendingUserActionRequestCount: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any);
+
+        expect(renderable.hasPendingPermissionRequests).toBe(false);
+        expect(renderable.hasPendingUserActionRequests).toBe(false);
+    });
 });

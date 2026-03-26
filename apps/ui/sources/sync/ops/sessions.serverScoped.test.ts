@@ -89,6 +89,52 @@ describe('sessions ops server-scoped routing', () => {
         }));
     });
 
+    it('passes connectedServices through resumeSession when requested', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
+        const { resumeSession } = await sessionsModulePromise;
+        await resumeSession({
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            connectedServices: {
+                v: 1,
+                bindingsByServiceId: {
+                    anthropic: {
+                        source: 'connected',
+                        profileId: 'profile-1',
+                    },
+                },
+            },
+            serverId: 'server-b',
+        } as any);
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({
+                connectedServices: expect.any(Object),
+            }),
+        }));
+    });
+
+    it('omits connectedServices for resumeSession when it is null', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
+        const { resumeSession } = await sessionsModulePromise;
+        await resumeSession({
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            connectedServices: null,
+            serverId: 'server-b',
+        } as any);
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as { payload?: unknown } | undefined;
+        expect(call && typeof call === 'object').toBe(true);
+        expect(call?.payload && typeof call.payload === 'object').toBe(true);
+        expect(call?.payload as Record<string, unknown>).not.toHaveProperty('connectedServices');
+    });
+
     it('passes codexBackendMode through resumeSession when requested', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
         const { resumeSession } = await sessionsModulePromise;

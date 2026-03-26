@@ -22,6 +22,7 @@ import type {
     LlmTaskRunnerConfigV1,
     SessionAttachMetadataIdentityPolicy,
     SessionContinueWithReplayRpcResult,
+    SessionAuthoringValueV1,
     SessionForkPoint,
     SessionForkRpcResult,
     SessionForkStrategy,
@@ -34,6 +35,7 @@ import {
     SessionContinueWithReplayRpcResultSchema,
     SessionForkRpcResultSchema,
     SessionRollbackRpcResultSchema,
+    SessionAuthoringValueV1Schema,
     SPAWN_SESSION_ERROR_CODES,
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -168,6 +170,7 @@ export interface ResumeSessionOptions {
     /** Optional vendor resume id (e.g. Claude/Codex session id). */
     resume?: string;
     environmentVariables?: Record<string, string>;
+    connectedServices?: unknown;
     transcriptStorage?: 'direct' | 'persisted';
     attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy;
     /** Optional explicit server scope for resume spawn routing. */
@@ -219,6 +222,7 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
         backendTarget,
         resume,
         environmentVariables,
+        connectedServices,
         transcriptStorage,
         attachMetadataIdentityPolicy,
         permissionMode,
@@ -245,12 +249,18 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
     }
 
     try {
+        const parsedConnectedServicesRaw: SessionAuthoringValueV1['connectedServices'] | undefined =
+            connectedServices === undefined
+                ? undefined
+                : (SessionAuthoringValueV1Schema.shape.connectedServices.parse(connectedServices) as SessionAuthoringValueV1['connectedServices']);
+        const parsedConnectedServices = parsedConnectedServicesRaw == null ? undefined : parsedConnectedServicesRaw;
         const params: ResumeHappySessionRpcParams = buildResumeHappySessionRpcParams({
             sessionId,
             directory,
             backendTarget,
             ...(resume ? { resume } : {}),
             ...(environmentVariables ? { environmentVariables } : {}),
+            ...(parsedConnectedServices !== undefined ? { connectedServices: parsedConnectedServices } : {}),
             ...(transcriptStorage ? { transcriptStorage } : {}),
             ...(attachMetadataIdentityPolicy ? { attachMetadataIdentityPolicy } : {}),
             ...(permissionMode ? { permissionMode } : {}),

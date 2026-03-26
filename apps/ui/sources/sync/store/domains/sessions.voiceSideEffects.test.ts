@@ -70,6 +70,7 @@ function mockSessionsDomainBoundaries(): void {
 function createHarness(createSessionsDomain: any, createReducer: any) {
     let state: any = {
         sessions: {},
+        sessionListRenderables: {},
         sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},

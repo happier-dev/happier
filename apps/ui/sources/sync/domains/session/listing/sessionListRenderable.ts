@@ -40,6 +40,7 @@ export interface SessionListRenderableSession {
     canApprovePermissions?: boolean;
     hasPendingPermissionRequests?: boolean;
     hasPendingUserActionRequests?: boolean;
+    keepVisibleWhenInactive?: boolean;
 }
 
 type DirectSessionRenderableMetadata = NonNullable<SessionListRenderableMetadata['directSessionV1']>;
@@ -76,6 +77,7 @@ export function derivePendingRequestFlagsFromAgentState(agentState: AgentState |
 }
 
 function derivePendingRequestFlags(params: Readonly<{
+    active?: boolean;
     agentState: AgentState | null | undefined;
     pendingPermissionRequestCount?: number;
     pendingUserActionRequestCount?: number;
@@ -83,6 +85,13 @@ function derivePendingRequestFlags(params: Readonly<{
     hasPendingPermissionRequests: boolean;
     hasPendingUserActionRequests: boolean;
 } {
+    if (params.active !== true) {
+        return {
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false,
+        };
+    }
+
     if (typeof params.pendingPermissionRequestCount === 'number' || typeof params.pendingUserActionRequestCount === 'number') {
         return {
             hasPendingPermissionRequests: (params.pendingPermissionRequestCount ?? 0) > 0,
@@ -121,6 +130,7 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
 
 export function buildSessionListRenderableFromSession(session: Session): SessionListRenderableSession {
     const pending = derivePendingRequestFlags({
+        active: session.active === true,
         agentState: session.agentState,
         pendingPermissionRequestCount: session.pendingPermissionRequestCount,
         pendingUserActionRequestCount: session.pendingUserActionRequestCount,
@@ -151,6 +161,16 @@ export function buildSessionListRenderableFromSession(session: Session): Session
     };
 }
 
+export function preserveSessionListRenderableTransientState(
+    previous: SessionListRenderableSession | undefined,
+    next: SessionListRenderableSession,
+): SessionListRenderableSession {
+    return {
+        ...next,
+        keepVisibleWhenInactive: previous?.keepVisibleWhenInactive === true,
+    };
+}
+
 export function didSessionListRenderableStructuralFieldsChange(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
@@ -159,6 +179,7 @@ export function didSessionListRenderableStructuralFieldsChange(
     if (previous.active !== next.active) return true;
     if (previous.createdAt !== next.createdAt) return true;
     if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return true;
+    if ((previous.keepVisibleWhenInactive === true) !== (next.keepVisibleWhenInactive === true)) return true;
 
     const prevMeta = previous.metadata;
     const nextMeta = next.metadata;

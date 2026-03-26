@@ -97,6 +97,30 @@ describe('buildResumeHappySessionRpcParams', () => {
         });
     });
 
+    test('includes connectedServices when provided', () => {
+        const connectedServices = {
+            v: 1,
+            bindingsByServiceId: {
+                anthropic: {
+                    source: 'connected',
+                    profileId: 'profile-1',
+                },
+            },
+        };
+        expect(buildResumeHappySessionRpcParams({
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            connectedServices,
+        } as any)).toEqual({
+            type: 'resume-session',
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            connectedServices,
+        });
+    });
+
     test('includes attachMetadataIdentityPolicy when provided', () => {
         expect(buildResumeHappySessionRpcParams({
             sessionId: 's1',

@@ -158,7 +158,7 @@ function filterHideInactiveSessions(items: ReadonlyArray<SessionListViewItem>): 
         }
         if (item.type === 'session') {
             const isActive = item.section === 'active' || item.session.active === true;
-            if (!isActive) {
+            if (!isActive && item.session.keepVisibleWhenInactive !== true) {
                 continue;
             }
             if (pendingSectionHeader) {
