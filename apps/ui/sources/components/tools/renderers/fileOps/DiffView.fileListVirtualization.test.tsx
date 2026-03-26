@@ -55,11 +55,16 @@ vi.mock('@/components/ui/code/model/diff/diffViewModel', () => ({
     ]),
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    settingsDefaults: {
-        filesDiffFileListVirtualizationMinFiles: 20,
-    },
-}));
+vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        settingsDefaults: {
+            ...actual.settingsDefaults,
+            filesDiffFileListVirtualizationMinFiles: 20,
+        },
+    };
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,

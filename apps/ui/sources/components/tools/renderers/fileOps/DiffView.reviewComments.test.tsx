@@ -62,11 +62,16 @@ vi.mock('@/components/ui/code/model/diff/diffViewModel', () => ({
     ]),
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    settingsDefaults: {
-        filesDiffFileListVirtualizationMinFiles: 20,
-    },
-}));
+vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        settingsDefaults: {
+            ...actual.settingsDefaults,
+            filesDiffFileListVirtualizationMinFiles: 20,
+        },
+    };
+});
 
 describe('DiffView (review comments)', () => {
     it('passes a renderInlineUnifiedDiff override when review comments are enabled and sessionId is available', async () => {
