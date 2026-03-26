@@ -97,6 +97,12 @@ export type SessionsDomain = {
     getActiveSessions: () => Session[];
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
     replaceSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
+    applySessionListRenderablePatches: (
+        patches: ReadonlyArray<Readonly<{
+            sessionId: string;
+            patch: Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>>;
+        }>>,
+    ) => void;
     applyLoaded: () => void;
     applyReady: () => void;
 
@@ -655,6 +661,66 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             };
             saveWarmSessionCacheForState(next as SessionsDomain & SessionsDomainDependencies, previousEntries);
             return next;
+        }),
+        applySessionListRenderablePatches: (patches) => set((state) => {
+            if (patches.length === 0) {
+                return state;
+            }
+
+            const previousEntries = buildSessionListCacheEntriesFromRenderables(state.sessionListRenderables ?? {});
+            let nextRenderables = state.sessionListRenderables;
+            let needsSessionListViewDataRebuild = state.sessionListViewData === null;
+
+            for (const { sessionId, patch } of patches) {
+                const previousRenderable = nextRenderables[sessionId];
+                if (!previousRenderable) {
+                    continue;
+                }
+
+                const nextRenderable: SessionListRenderableSession = {
+                    ...previousRenderable,
+                    ...(patch as Partial<SessionListRenderableSession>),
+                    id: previousRenderable.id,
+                };
+
+                if (!needsSessionListViewDataRebuild) {
+                    if (didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)) {
+                        needsSessionListViewDataRebuild = true;
+                    }
+                }
+
+                if (nextRenderables === state.sessionListRenderables) {
+                    nextRenderables = { ...state.sessionListRenderables };
+                }
+                nextRenderables[sessionId] = nextRenderable;
+            }
+
+            if (nextRenderables === state.sessionListRenderables) {
+                return state;
+            }
+
+            const nextStateBase = {
+                ...state,
+                sessionListRenderables: nextRenderables,
+            };
+
+            const sessionListViewData = needsSessionListViewDataRebuild
+                ? buildSessionListViewDataForState(nextStateBase as SessionsDomain & SessionsDomainDependencies)
+                : state.sessionListViewData;
+
+            const nextState = {
+                ...nextStateBase,
+                sessionListViewData,
+                sessionListViewDataByServerId: needsSessionListViewDataRebuild && sessionListViewData
+                    ? setActiveServerSessionListCache(
+                        state.sessionListViewDataByServerId,
+                        sessionListViewData,
+                    )
+                    : state.sessionListViewDataByServerId,
+            };
+
+            saveWarmSessionCacheForState(nextState as SessionsDomain & SessionsDomainDependencies, previousEntries);
+            return nextState;
         }),
         applyLoaded: () => set((state) => {
             const result = {

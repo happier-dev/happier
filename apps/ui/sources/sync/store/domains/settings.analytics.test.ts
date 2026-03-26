@@ -62,12 +62,16 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     saveChangesCursor: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    applySettings: (settings: Record<string, unknown>, delta: Record<string, unknown>) => ({
-        ...settings,
-        ...delta,
-    }),
-}));
+vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        applySettings: (settings: Record<string, unknown>, delta: Record<string, unknown>) => ({
+            ...settings,
+            ...delta,
+        }),
+    };
+});
 
 vi.mock('@/track', () => ({
     tracking: mocks.tracking,

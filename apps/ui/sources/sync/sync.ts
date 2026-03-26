@@ -1,9 +1,11 @@
 import Constants from 'expo-constants';
 import { apiSocket } from '@/sync/api/session/apiSocket';
+import { resumeSession } from '@/sync/ops';
 import { type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
+import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { storage } from './domains/state/storage';
 import { ApiMessage } from './api/types/apiTypes';
 import type { ApiEphemeralActivityUpdate } from './api/types/apiTypes';
@@ -25,6 +27,7 @@ import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
 import { MachineActivityAccumulator, type MachineActivityUpdate } from './reducer/machineActivityAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
 import { Platform, AppState } from 'react-native';
+import type { ManagedEndpointSupervisor, ManagedEndpointSupervisorState } from '@happier-dev/connection-supervisor';
 import { resolveSentFrom } from './domains/messages/sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord, RawRecordSchema } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
@@ -226,6 +229,9 @@ class Sync {
         anonID!: string;
         private credentials!: AuthCredentials;
         private pauseController = new PauseController();
+        private activeEndpointSupervisor: ManagedEndpointSupervisor | null = null;
+        private detachActiveEndpointSupervisorListener: (() => void) | null = null;
+        private lastObservedEndpointPhase: ManagedEndpointSupervisorState['phase'] | null = null;
         private syncTuning: SyncTuning = loadSyncTuning();
       private resumeInFlight: Promise<void> | null = null;
       private isForeground = AppState.currentState === 'active';
@@ -275,14 +281,15 @@ class Sync {
     private sessionMaterializedMaxSeqById: Record<string, number> = loadSessionMaterializedMaxSeqById();
     private sessionMaterializedMaxSeqFlushTimer: ReturnType<typeof setTimeout> | null = null;
     private sessionMaterializedMaxSeqDirty = false;
-      private changesCursor: string | null = loadChangesCursor(String(getActiveServerSnapshot().serverId ?? '').trim() || null);
-      private changesCursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
-      private changesCursorDirty = false;
-      private lastSocketDisconnectedAtMs: number | null = null;
-      revenueCatInitialized = false;
-    private settingsSecretsKey: Uint8Array | null = null;
-    private settingsSecretsReadKeys: readonly Uint8Array[] = [];
-    private messageTransport: SyncMessageTransport = createDefaultMessageTransport();
+	      private changesCursor: string | null = loadChangesCursor(String(getActiveServerSnapshot().serverId ?? '').trim() || null);
+	      private changesCursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
+	      private changesCursorDirty = false;
+	      private lastSocketDisconnectedAtMs: number | null = null;
+	      private lastSocketOfflineDurationMs: number | null = null;
+	      revenueCatInitialized = false;
+	    private settingsSecretsKey: Uint8Array | null = null;
+	    private settingsSecretsReadKeys: readonly Uint8Array[] = [];
+	    private messageTransport: SyncMessageTransport = createDefaultMessageTransport();
     private updatesSubscribed = false;
 
     // Generic locking mechanism
@@ -355,6 +362,11 @@ class Sync {
                   setServerReachabilityNetworkAllowed(true);
                   log.log('📱 App became active');
                   this.pauseController.resume();
+                  try {
+                      this.activeEndpointSupervisor?.invalidate();
+                  } catch {
+                      // ignore
+                  }
                   fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: 'Sync.invalidateAllServerReachabilitySupervisors' });
                   try {
                       apiSocket.connect();
@@ -398,10 +410,100 @@ class Sync {
                   }
               }
           });
+
+          // Web: AppState events are not always reliable when tabs are backgrounded. Mirror the
+          // pause/resume behavior using document visibility.
+          if (Platform.OS === 'web') {
+              const doc = (globalThis as unknown as { document?: any }).document;
+              if (doc && typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function') {
+                  const onVisibilityChange = () => {
+                      const state = String(doc.visibilityState ?? '').trim().toLowerCase();
+                      if (state === 'hidden' || state === 'visible') {
+                          const nextIsForeground = state === 'visible';
+                          if (this.isForeground === nextIsForeground) {
+                              return;
+                          }
+                      }
+                      if (state === 'hidden') {
+                          this.isForeground = false;
+                          setServerReachabilityNetworkAllowed(false);
+                          this.pauseController.pause();
+                          try {
+                              apiSocket.disconnect();
+                          } catch {
+                              // ignore
+                          }
+                          fireAndForget(stopServerReachabilitySupervisors(), { tag: 'Sync.stopServerReachabilitySupervisors.visibility' });
+                          return;
+                      }
+                      if (state === 'visible') {
+                          this.isForeground = true;
+                          setServerReachabilityNetworkAllowed(true);
+                          this.pauseController.resume();
+                          try {
+                              this.activeEndpointSupervisor?.invalidate();
+                          } catch {
+                              // ignore
+                          }
+                          fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: 'Sync.invalidateAllServerReachabilitySupervisors.visibility' });
+                          try {
+                              apiSocket.connect();
+                          } catch {
+                              // ignore
+                          }
+                          fireAndForget(this.resumeSync('app-foreground'), { tag: 'Sync.resumeSync.visibility' });
+                      }
+                  };
+                  try {
+                      doc.addEventListener('visibilitychange', onVisibilityChange);
+                  } catch {
+                      // ignore
+                  }
+                  // Seed initial visibility state so a tab that starts hidden is treated as backgrounded immediately.
+                  try {
+                      onVisibilityChange();
+                  } catch {
+                      // ignore
+                  }
+              }
+          }
       }
 
       public getSyncTuning(): SyncTuning {
           return this.syncTuning;
+      }
+
+      public setActiveEndpointSupervisor(supervisor: ManagedEndpointSupervisor | null): void {
+          if (this.activeEndpointSupervisor === supervisor) return;
+
+          try {
+              this.detachActiveEndpointSupervisorListener?.();
+          } catch {
+              // ignore
+          }
+          this.detachActiveEndpointSupervisorListener = null;
+          this.lastObservedEndpointPhase = null;
+          this.activeEndpointSupervisor = supervisor;
+
+          if (!supervisor) return;
+
+          // Seed phase and subscribe to online transitions so we can kick off one consolidated resume pipeline.
+          try {
+              this.lastObservedEndpointPhase = supervisor.getState().phase;
+          } catch {
+              this.lastObservedEndpointPhase = null;
+          }
+
+          this.detachActiveEndpointSupervisorListener = supervisor.subscribe((next) => {
+              const prev = this.lastObservedEndpointPhase;
+              this.lastObservedEndpointPhase = next.phase;
+              if (prev && prev !== 'online' && next.phase === 'online') {
+                  // Use a microtask so callers that publish state synchronously don't re-enter.
+                  queueMicrotask(() => {
+                      fireAndForget(this.resumeSync('endpoint-online'), { tag: 'Sync.resumeSync.endpoint-online' });
+                  });
+              }
+          });
       }
 
     setMessageTransport(transport: SyncMessageTransport): void {
@@ -989,12 +1091,31 @@ class Sync {
             // For "next prompt" apply timing, the permission mode change is intentionally not published
             // immediately when the user toggles the picker. Instead, once the user actually sends a message,
             // we publish the newer local selection as the session-wide permission mode so it propagates
-            // across devices.
-            await publishNextPromptPermissionModeIfNeeded();
+	            // across devices.
+	            await publishNextPromptPermissionModeIfNeeded();
 
-            // Server ACK means the user message is committed (or idempotently confirmed).
-            // Do NOT clear optimistic thinking here: the agent can still be mid-turn (streaming / tool calls).
-            // We clear optimistic thinking only when we see a terminal lifecycle marker (task_complete / turn_aborted),
+		            if (session.active !== true) {
+		                const machineId = typeof session.metadata?.machineId === 'string' ? session.metadata.machineId.trim() : '';
+		                const directory = typeof session.metadata?.path === 'string' ? session.metadata.path.trim() : '';
+		                if (machineId && directory) {
+                            const resolvedBackend = resolveSessionActionDefaultBackend({ session });
+                            if (resolvedBackend) {
+		                        fireAndForget(
+		                            resumeSession({
+		                                sessionId,
+		                                machineId,
+		                                directory,
+                                        backendTarget: resolvedBackend.backendTarget,
+		                            }),
+		                            { tag: 'Sync.sendMessage.wakeAfterSend' },
+		                        );
+                            }
+		                }
+		            }
+
+	            // Server ACK means the user message is committed (or idempotently confirmed).
+	            // Do NOT clear optimistic thinking here: the agent can still be mid-turn (streaming / tool calls).
+	            // We clear optimistic thinking only when we see a terminal lifecycle marker (task_complete / turn_aborted),
             // when the session enters a permission/action-required gate, when the session is marked thinking by live
             // activity updates, or when the optimistic timeout expires.
         } catch (e) {
@@ -1813,7 +1934,7 @@ class Sync {
           fireAndForget(this.resumeSync('manual'), { tag: 'Sync.resumeSync.manual' });
       }
 
-      public resumeSync = (reason: 'app-foreground' | 'socket-reconnect' | 'manual'): Promise<void> => {
+      public resumeSync = (reason: 'app-foreground' | 'socket-reconnect' | 'manual' | 'endpoint-online'): Promise<void> => {
           return runWithInFlightDedupe(
               {
                   get: () => this.resumeInFlight,
@@ -1822,7 +1943,7 @@ class Sync {
                   },
               },
               async () => {
-                  if (reason === 'socket-reconnect' && !this.isForeground) {
+                  if ((reason === 'socket-reconnect' || reason === 'endpoint-online') && !this.isForeground) {
                       return;
                   }
                   if (this.pauseController.isPaused()) {
@@ -2249,18 +2370,10 @@ class Sync {
 
     private fetchFriends = async () => {
         if (!this.credentials) return;
-
-        try {
-            log.log('👥 Fetching friends list...');
-            await fetchAndApplyFriends({
-                credentials: this.credentials,
-                applyFriends: (friends) => storage.getState().applyFriends(friends),
-            });
-            log.log('👥 fetchFriends completed');
-        } catch (error) {
-            console.error('Failed to fetch friends:', error);
-            // Silently handle error - UI will show appropriate state
-        }
+        await fetchAndApplyFriends({
+            credentials: this.credentials,
+            applyFriends: (friends) => storage.getState().applyFriends(friends),
+        });
     }
 
     private fetchFriendRequests = async () => {
@@ -3135,17 +3248,20 @@ class Sync {
         // Broadcast-safe session events are optional hints; ignore by default.
         apiSocket.onMessage('session', () => {});
 
-          apiSocket.onStatusChange((status) => {
-              if (status === 'connected') {
-                  this.lastSocketDisconnectedAtMs = null;
-                  return;
-              }
-              if (status === 'disconnected' || status === 'error') {
-                  if (this.lastSocketDisconnectedAtMs == null) {
-                      this.lastSocketDisconnectedAtMs = Date.now();
-                  }
-              }
-          });
+	          apiSocket.onStatusChange((status) => {
+	              if (status === 'connected') {
+	                  if (this.lastSocketDisconnectedAtMs != null) {
+	                      this.lastSocketOfflineDurationMs = Date.now() - this.lastSocketDisconnectedAtMs;
+	                  }
+	                  this.lastSocketDisconnectedAtMs = null;
+	                  return;
+	              }
+	              if (status === 'disconnected' || status === 'error') {
+	                  if (this.lastSocketDisconnectedAtMs == null) {
+	                      this.lastSocketDisconnectedAtMs = Date.now();
+	                  }
+	              }
+	          });
 
           // Subscribe to connection state changes
           apiSocket.onReconnected(() => {

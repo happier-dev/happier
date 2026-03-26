@@ -1,6 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import {
     kvGet,
     kvBulkGet,
@@ -67,11 +67,13 @@ function getTodoKey(id: string): string {
 }
 
 async function encryptTodoData(data: any): Promise<string> {
-    return await sync.encryption.encryptRaw(data);
+    const { encryption } = getSyncSingleton();
+    return await encryption.encryptRaw(data);
 }
 
 async function decryptTodoData(encrypted: string): Promise<any> {
-    return await sync.encryption.decryptRaw(encrypted);
+    const { encryption } = getSyncSingleton();
+    return await encryption.decryptRaw(encrypted);
 }
 
 //
@@ -81,11 +83,15 @@ async function decryptTodoData(encrypted: string): Promise<any> {
 /**
  * Fetch all todos from the server and decrypt them
  */
-export async function fetchTodos(credentials: AuthCredentials): Promise<TodoState> {
+export async function fetchTodos(
+    credentials: AuthCredentials,
+    opts: Readonly<{ retry?: 'default' | 'none' }> = {},
+): Promise<TodoState> {
     // Fetch all KV items with todo prefix
     const response = await kvList(credentials, {
         prefix: TODO_PREFIX,
-        limit: 1000  // Should be enough for todos
+        limit: 1000,  // Should be enough for todos
+        ...(opts.retry ? { retry: opts.retry } : {}),
     });
 
     const state: TodoState = {

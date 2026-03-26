@@ -669,6 +669,20 @@ export function useSocketStatus() {
   );
 }
 
+export function useEndpointConnectivity() {
+  return getStorage()(
+    useShallow((state) => ({
+      status: state.endpointStatus,
+      reason: state.endpointReason,
+      attempt: state.endpointAttempt,
+      nextRetryAt: state.endpointNextRetryAt,
+      lastConnectedAt: state.endpointLastConnectedAt,
+      lastDisconnectedAt: state.endpointLastDisconnectedAt,
+      lastErrorMessage: state.endpointLastErrorMessage,
+    }))
+  );
+}
+
 export function useSyncError() {
   return getStorage()(useShallow((state) => state.syncError));
 }

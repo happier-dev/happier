@@ -3,14 +3,24 @@ import type { Machine, Session } from '../../domains/state/storageTypes';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import { applyLocalSettings, type LocalSettings } from '../../domains/settings/localSettings';
 import { customerInfoToPurchases, type Purchases } from '../../domains/purchases/purchases';
-import { applySettings, type Settings } from '../../domains/settings/settings';
+import { applySettings, settingsParse, type Settings } from '../../domains/settings/settings';
 import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/persistence';
 import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
 import { emitLocalSettingChangedEvents } from '@/track/settingsAnalytics/emitSettingChangedEvent';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
+import { setPreferredLanguageFromSettings } from '@/text/i18n';
 
 import type { StoreGet, StoreSet } from './_shared';
+
+function safeSetPreferredLanguageFromSettings(preferredLanguage: unknown): void {
+    try {
+        setPreferredLanguageFromSettings(preferredLanguage as any);
+    } catch {
+        // In Vitest/Vite SSR, circular module initialization can surface as TDZ errors on imports.
+        // Preferred-language sync is best-effort and should never crash store initialization.
+    }
+}
 
 export type SettingsDomain = {
     settings: Settings;
@@ -37,7 +47,9 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     set: StoreSet<S>;
     get: StoreGet<S>;
 }): SettingsDomain {
-    const { settings, version } = loadSettings();
+    const { settings: rawSettings, version } = loadSettings();
+    const settings = settingsParse(rawSettings);
+    safeSetPreferredLanguageFromSettings(settings.preferredLanguage);
     const localSettings = loadLocalSettings();
     const purchases = loadPurchases();
 
@@ -67,6 +79,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                         activeGroupingV1: newSettings.sessionListActiveGroupingV1,
                         inactiveGroupingV1: newSettings.sessionListInactiveGroupingV1,
                     });
+                    safeSetPreferredLanguageFromSettings(newSettings.preferredLanguage);
                     return {
                         ...state,
                         settings: newSettings,
@@ -77,6 +90,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                         ),
                     };
                 }
+                safeSetPreferredLanguageFromSettings(newSettings.preferredLanguage);
                 return {
                     ...state,
                     settings: newSettings,
@@ -86,6 +100,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
             set((state) => {
                 if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
                     saveSettings(nextSettings, nextVersion);
+                    safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
 
                     const shouldRebuildSessionListViewData =
                         nextSettings.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject ||
@@ -117,6 +132,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
         replaceSettings: (nextSettings, nextVersion) =>
             set((state) => {
                 saveSettings(nextSettings, nextVersion);
+                safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
 
                 const shouldRebuildSessionListViewData =
                     nextSettings.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject ||

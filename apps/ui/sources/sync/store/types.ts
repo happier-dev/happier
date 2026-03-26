@@ -19,7 +19,15 @@ import type { MachineDisplayRenderable } from '../domains/machines/machineDispla
 import type { CustomerInfo } from '../domains/purchases/types';
 import type { SessionMessages } from './domains/messages';
 import type { SessionPending } from './domains/pending';
-import type { NativeUpdateStatus, RealtimeMode, RealtimeStatus, SocketStatus, SyncError } from './domains/realtime';
+import type {
+    EndpointConnectivitySnapshot,
+    EndpointConnectivityStatus,
+    NativeUpdateStatus,
+    RealtimeMode,
+    RealtimeStatus,
+    SocketStatus,
+    SyncError,
+} from './domains/realtime';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
 import type { SessionActionDraftStatus } from '../domains/sessionActions/sessionActionDraftTypes';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
@@ -59,8 +67,15 @@ export interface SessionsDomainSlice {
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
     actionDraftsBySessionId: Record<string, SessionActionDraft[]>;
+    isDataReady: boolean;
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
     replaceSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
+    applySessionListRenderablePatches: (
+        patches: ReadonlyArray<Readonly<{
+            sessionId: string;
+            patch: Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>>;
+        }>>,
+    ) => void;
     applyScmStatus: (sessionId: string, status: ScmStatus | null) => void;
     getActiveSessions: () => Session[];
     getSessionRepositoryTreeExpandedPaths: (sessionId: string) => string[];
@@ -138,6 +153,13 @@ export interface RealtimeDomainSlice {
     socketLastErrorAt: number | null;
     syncError: SyncError;
     lastSyncAt: number | null;
+    endpointStatus: EndpointConnectivityStatus;
+    endpointReason: string | null;
+    endpointAttempt: number;
+    endpointNextRetryAt: number | null;
+    endpointLastConnectedAt: number | null;
+    endpointLastDisconnectedAt: number | null;
+    endpointLastErrorMessage: string | null;
     isDataReady: boolean;
     nativeUpdateStatus: NativeUpdateStatus;
     setRealtimeStatus: (status: RealtimeStatus) => void;
@@ -149,6 +171,8 @@ export interface RealtimeDomainSlice {
     clearSyncError: () => void;
     setLastSyncAt: (ts: number) => void;
     applyNativeUpdateStatus: (status: NativeUpdateStatus) => void;
+    setEndpointConnectivity: (snapshot: EndpointConnectivitySnapshot) => void;
+    resetEndpointConnectivity: () => void;
 }
 
 export interface TodosDomainSlice {

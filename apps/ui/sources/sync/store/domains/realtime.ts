@@ -15,6 +15,18 @@ export type SyncError = {
 
 export type NativeUpdateStatus = { available: boolean; updateUrl?: string } | null;
 
+export type EndpointConnectivityStatus = 'idle' | 'offline' | 'connecting' | 'online' | 'auth_failed' | 'shutting_down';
+
+export type EndpointConnectivitySnapshot = Readonly<{
+  status: EndpointConnectivityStatus;
+  reason: string | null;
+  attempt: number;
+  nextRetryAt: number | null;
+  lastConnectedAt: number | null;
+  lastDisconnectedAt: number | null;
+  lastErrorMessage: string | null;
+}>;
+
 export type RealtimeDomain = {
   realtimeStatus: RealtimeStatus;
   realtimeMode: RealtimeMode;
@@ -25,6 +37,13 @@ export type RealtimeDomain = {
   socketLastErrorAt: number | null;
   syncError: SyncError;
   lastSyncAt: number | null;
+  endpointStatus: EndpointConnectivityStatus;
+  endpointReason: string | null;
+  endpointAttempt: number;
+  endpointNextRetryAt: number | null;
+  endpointLastConnectedAt: number | null;
+  endpointLastDisconnectedAt: number | null;
+  endpointLastErrorMessage: string | null;
   nativeUpdateStatus: NativeUpdateStatus;
   applyNativeUpdateStatus: (status: NativeUpdateStatus) => void;
   setRealtimeStatus: (status: RealtimeStatus) => void;
@@ -35,6 +54,8 @@ export type RealtimeDomain = {
   setSyncError: (error: SyncError) => void;
   clearSyncError: () => void;
   setLastSyncAt: (ts: number) => void;
+  setEndpointConnectivity: (snapshot: EndpointConnectivitySnapshot) => void;
+  resetEndpointConnectivity: () => void;
 };
 
 export function createRealtimeDomain<S extends RealtimeDomain>({
@@ -57,6 +78,13 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
     socketLastErrorAt: null,
     syncError: null,
     lastSyncAt: null,
+    endpointStatus: 'idle',
+    endpointReason: null,
+    endpointAttempt: 0,
+    endpointNextRetryAt: null,
+    endpointLastConnectedAt: null,
+    endpointLastDisconnectedAt: null,
+    endpointLastErrorMessage: null,
     nativeUpdateStatus: null,
     applyNativeUpdateStatus: (status) =>
       set((state) => ({
@@ -130,6 +158,25 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
     setSyncError: (error) => set((state) => ({ ...state, syncError: error })),
     clearSyncError: () => set((state) => ({ ...state, syncError: null })),
     setLastSyncAt: (ts) => set((state) => ({ ...state, lastSyncAt: ts })),
+    setEndpointConnectivity: (snapshot) => set((state) => ({
+      ...state,
+      endpointStatus: snapshot.status,
+      endpointReason: snapshot.reason,
+      endpointAttempt: snapshot.attempt,
+      endpointNextRetryAt: snapshot.nextRetryAt,
+      endpointLastConnectedAt: snapshot.lastConnectedAt,
+      endpointLastDisconnectedAt: snapshot.lastDisconnectedAt,
+      endpointLastErrorMessage: snapshot.lastErrorMessage,
+    })),
+    resetEndpointConnectivity: () => set((state) => ({
+      ...state,
+      endpointStatus: 'idle',
+      endpointReason: null,
+      endpointAttempt: 0,
+      endpointNextRetryAt: null,
+      endpointLastConnectedAt: null,
+      endpointLastDisconnectedAt: null,
+      endpointLastErrorMessage: null,
+    })),
   };
 }
-
