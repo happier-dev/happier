@@ -4,6 +4,7 @@ import {
 } from '@/sync/ops/machineFileBrowser';
 
 import { sortDirectoryEntries } from './sortDirectoryEntries';
+import { warmInFlight } from './warmInFlight';
 
 export type MachineFileBrowserRoot = Readonly<{
     id: string;
@@ -194,18 +195,7 @@ export async function warmMachineFileBrowserRoots(input: {
     if (cached) return { ok: true, roots: cached };
 
     const key = getRootsCacheKey(input.machineId, input.serverId);
-    const inFlight = rootsWarmInFlight.get(key);
-    if (inFlight) return await inFlight;
-
-    const promise = (async () => {
-        try {
-            return await listMachineFileBrowserRoots(input);
-        } finally {
-            rootsWarmInFlight.delete(key);
-        }
-    })();
-    rootsWarmInFlight.set(key, promise);
-    return await promise;
+    return await warmInFlight(rootsWarmInFlight, key, async () => await listMachineFileBrowserRoots(input));
 }
 
 export async function listMachineFileBrowserDirectoryEntries(input: {
@@ -263,16 +253,5 @@ export async function warmMachineFileBrowserDirectoryCache(input: {
     }
 
     const key = getDirectoryCacheKey(input.machineId, input.directoryPath, input.includeFiles, input.serverId);
-    const inFlight = directoryWarmInFlight.get(key);
-    if (inFlight) return await inFlight;
-
-    const promise = (async () => {
-        try {
-            return await listMachineFileBrowserDirectoryEntries(input);
-        } finally {
-            directoryWarmInFlight.delete(key);
-        }
-    })();
-    directoryWarmInFlight.set(key, promise);
-    return await promise;
+    return await warmInFlight(directoryWarmInFlight, key, async () => await listMachineFileBrowserDirectoryEntries(input));
 }

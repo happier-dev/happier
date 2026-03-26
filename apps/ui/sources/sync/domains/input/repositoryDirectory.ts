@@ -1,6 +1,7 @@
 import { sessionListDirectory } from '@/sync/ops';
 
 import { sortDirectoryEntries } from './sortDirectoryEntries';
+import { warmInFlight } from './warmInFlight';
 
 export type RepositoryDirectoryEntry = {
     name: string;
@@ -73,20 +74,7 @@ export async function warmRepositoryDirectoryCache(input: {
     }
 
     const key = getCacheKey(input.sessionId, input.directoryPath);
-    const inFlight = repositoryDirectoryWarmInFlight.get(key);
-    if (inFlight) {
-        return await inFlight;
-    }
-
-    const promise = (async () => {
-        try {
-            return await listRepositoryDirectoryEntries(input);
-        } finally {
-            repositoryDirectoryWarmInFlight.delete(key);
-        }
-    })();
-    repositoryDirectoryWarmInFlight.set(key, promise);
-    return await promise;
+    return await warmInFlight(repositoryDirectoryWarmInFlight, key, async () => await listRepositoryDirectoryEntries(input));
 }
 
 type SessionListDirectoryLikeResponse = {

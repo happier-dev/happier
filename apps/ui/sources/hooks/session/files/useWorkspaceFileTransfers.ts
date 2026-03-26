@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 
-import { openLocalUploadSourceReader } from '@/sync/domains/files/transfers/localUploadSourceReader';
+import { openLocalUploadSourceReader } from '@/sync/runtime/files/localUploadSourceReader';
 import { resolveKeepBothTargetPath } from '@/sync/domains/files/resolveKeepBothTargetPath';
 import { downloadDaemonSessionFileToDestination, uploadDaemonSessionFileFromReader } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
 import { sessionStatFile } from '@/sync/ops';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
-import { resolveLocalUploadSourceSizeBytes } from '@/sync/domains/files/transfers/localUploadSourceReader';
+import { resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUploadSourceReader';
 
 export type WorkspaceUploadEntry =
     | Readonly<{ kind: 'web'; file: File; relativePath: string }>
