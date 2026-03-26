@@ -92,7 +92,10 @@ export function installFilesContentCommonModuleMocks(
             return await activeOptions.storage(importOriginal);
         }
 
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {},
+        });
     });
 }

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import type { Session, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { Project } from '@/sync/runtime/orchestration/projectManager';
@@ -95,6 +95,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 }));
 
 const startDownloadSpy = vi.fn(async (_input: any) => ({ ok: true as const }));
+const downloadAvailabilityState = { value: true };
 const previewSession: Session = createSessionFixture({
     id: 's1',
     active: true,
@@ -246,7 +247,29 @@ vi.mock('@/scm/diff/defaultMode', () => ({
   resolveDefaultDiffModeForFile: () => 'pending',
 }));
 
+vi.mock('@/components/sessions/files/useSessionFileDownloadAvailability', () => ({
+  useSessionFileDownloadAvailability: () => downloadAvailabilityState.value,
+}));
+
+beforeEach(() => {
+  downloadAvailabilityState.value = true;
+});
+
 describe('SessionFileDetailsView (preview too large)', () => {
+  it('hides the download action when downloads are unavailable', async () => {
+    downloadAvailabilityState.value = false;
+    const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="big.txt" />)).tree;
+
+    await act(async () => {});
+
+    expect(tree.findAllByType('FileHeader' as any).length).toBe(1);
+    expect(tree.findAllByTestId('file-preview-unavailable-banner').length).toBe(1);
+    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(0);
+  });
+
   it('renders a download action instead of a fatal error state', async () => {
     const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
 

@@ -11,14 +11,40 @@ import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTes
 
 const startUploadsSpy = vi.fn(async () => ({ ok: true }));
 
+function flattenRnStyle(style: any): React.CSSProperties | undefined {
+    if (style == null) return undefined;
+    if (Array.isArray(style)) {
+        const merged: Record<string, unknown> = {};
+        for (const entry of style) {
+            const flattened = flattenRnStyle(entry);
+            if (!flattened) continue;
+            Object.assign(merged, flattened);
+        }
+        return merged as React.CSSProperties;
+    }
+    if (typeof style === 'object') {
+        return style as React.CSSProperties;
+    }
+    return undefined;
+}
+
 installSessionFilesViewCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-            View: ({ testID, children, onLayout: _onLayout, ...props }: any) =>
-                React.createElement('div', { 'data-testid': testID, ...props }, children),
-            Pressable: ({ testID, onPress, children, accessibilityLabel, accessibilityRole, hitSlop: _hitSlop, ...props }: any) =>
+            View: ({ testID, children, onLayout: _onLayout, style, ...props }: any) =>
+                React.createElement('div', { 'data-testid': testID, style: flattenRnStyle(style), ...props }, children),
+            Pressable: ({
+                testID,
+                onPress,
+                children,
+                accessibilityLabel,
+                accessibilityRole,
+                hitSlop: _hitSlop,
+                style,
+                ...props
+            }: any) =>
                 React.createElement(
                     'button',
                     {
@@ -27,16 +53,27 @@ installSessionFilesViewCommonModuleMocks({
                         'aria-label': accessibilityLabel,
                         role: accessibilityRole,
                         onClick: onPress,
+                        style: flattenRnStyle(style),
                         ...props,
                     },
                     children,
                 ),
-            TextInput: ({ testID, onChangeText, children, placeholderTextColor: _placeholderTextColor, ...props }: any) =>
+            TextInput: ({
+                testID,
+                onChangeText,
+                children,
+                placeholderTextColor: _placeholderTextColor,
+                autoCorrect: _autoCorrect,
+                clearButtonMode: _clearButtonMode,
+                style,
+                ...props
+            }: any) =>
                 React.createElement(
                     'input',
                     {
                         'data-testid': testID,
                         onChange: (event: any) => onChangeText?.(event.target.value),
+                        style: flattenRnStyle(style),
                         ...props,
                     },
                     children,

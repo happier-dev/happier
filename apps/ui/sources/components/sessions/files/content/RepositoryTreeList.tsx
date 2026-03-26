@@ -18,6 +18,7 @@ import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { useRepositoryTreeRowActions } from '@/components/sessions/files/repositoryTree/useRepositoryTreeRowActions';
 import { WebDropTargetView } from '@/components/sessions/files/repositoryTree/WebDropTargetView';
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
+import { useSessionFileDownloadAvailability } from '@/components/sessions/files/useSessionFileDownloadAvailability';
 
 export type RepositoryTreeWebDropTarget = Readonly<{
     destinationDir: string;
@@ -95,6 +96,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
     const { theme, sessionId, expandedPaths, onExpandedPathsChange, onOpenFile } = props;
     const detailsMode = props.detailsMode === true;
     const writeActionsEnabled = props.writeActionsEnabled !== false;
+    const downloadAvailable = useSessionFileDownloadAvailability(sessionId);
     const { rootLoading, rootError, nodes, toggleDirectory, retryRoot, retryDirectory } = useRepositoryTreeBrowser({
         sessionId,
         enabled: true,
@@ -172,7 +174,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                             path={node.path}
                             kind={node.type}
                             disableWriteActions={!writeActionsEnabled}
-                            downloadActionsEnabled={props.onRequestDownload != null}
+                            downloadActionsEnabled={props.onRequestDownload != null && downloadAvailable}
                             onSelect={(itemId: RepositoryTreeRowActionMenuItemId) => rowActions.onSelectRowMenuItem(actionTarget, itemId)}
                         />
                     );

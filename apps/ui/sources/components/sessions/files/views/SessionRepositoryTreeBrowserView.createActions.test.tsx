@@ -70,6 +70,10 @@ vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
     }),
 }));
 
+vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
+    useSessionFileUploadAvailability: () => machineRpcTargetAvailable,
+}));
+
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
 }));

@@ -43,6 +43,7 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
+import { useSessionFileDownloadAvailability } from '@/components/sessions/files/useSessionFileDownloadAvailability';
 export type SessionFileDeepLinkAnchor = Readonly<{
     source: ReviewCommentSource;
     anchor: ReviewCommentAnchor;
@@ -112,6 +113,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
         sessionPath: session?.metadata?.path ?? null,
         projectPath: project?.key?.path ?? null,
     });
+    const downloadActionsAvailable = useSessionFileDownloadAvailability(sessionId);
 
     const scmSnapshot = useSessionProjectScmSnapshot(sessionId);
     const commitSelectionPaths = useSessionProjectScmCommitSelectionPaths(sessionId);
@@ -415,7 +417,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
         return <FileErrorState theme={theme} filePath={filePath} error={error ?? t('common.error')} onRetry={onRefresh} />;
     }
     const isBinaryFile = fileContent?.isBinary === true;
-    const showDownloadAction = previewTooLarge || isBinaryFile;
+    const showDownloadAction = downloadActionsAvailable && (previewTooLarge || isBinaryFile);
     const imagePreviewUri = (() => {
         const base64 = fileContent?.binaryBase64 ?? null;
         const mime = fileContent?.binaryMime ?? null;

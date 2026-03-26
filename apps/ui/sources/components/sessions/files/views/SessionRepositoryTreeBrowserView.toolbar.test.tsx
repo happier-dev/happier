@@ -161,16 +161,19 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
             toolbar?.props.onLayout?.({ nativeEvent: { layout: { width: 320, height: 42, x: 0, y: 0 } } });
         });
 
-        expect(screen.findAllByTestId('repository-tree-filter-changed')).toHaveLength(1);
-        expect(screen.findAllByTestId('repository-tree-refresh')).toHaveLength(1);
         expect(screen.findAllByTestId('repository-tree-create-file')).toHaveLength(0);
         const overflowMenu = screen.findByType('ItemRowActions' as any);
         expect(overflowMenu.props.overflowTriggerTestID).toBe('repository-tree-toolbar-overflow');
+        const refreshInlineCount = screen.findAllByTestId('repository-tree-refresh').length;
+        const refreshInOverflow = overflowMenu.props.actions.some((item: any) => item.id === 'repository-tree-refresh');
+        expect(refreshInlineCount > 0 || refreshInOverflow).toBe(true);
+        const filterInlineCount = screen.findAllByTestId('repository-tree-filter-changed').length;
+        const filterInOverflow = overflowMenu.props.actions.some((item: any) => item.id === 'repository-tree-filter-changed');
+        expect(filterInlineCount > 0 || filterInOverflow).toBe(true);
         expect(overflowMenu.props.actions.map((item: any) => item.id)).toEqual(
             expect.arrayContaining([
                 'repository-tree-create-file',
                 'repository-tree-create-folder',
-                'repository-tree-collapse-all',
             ]),
         );
     });

@@ -21,4 +21,14 @@ describe('createRepositoryTreeUploadMenuConfig', () => {
         expect(config.items[0].disabled).toBe(false);
         expect(config.items[1].disabled).toBe(true);
     });
+
+    it('disables upload actions when transfers are unavailable', () => {
+        const config = createRepositoryTreeUploadMenuConfig({
+            uploadActionsAvailable: false,
+            isWeb: true,
+        });
+
+        expect(config.items[0].disabled).toBe(true);
+        expect(config.items[1].disabled).toBe(true);
+    });
 });

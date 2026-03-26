@@ -24,6 +24,7 @@ const {
     sessionRenamePathSpy,
     sessionStatFileSpy,
     sessionDeletePathSpy,
+    downloadAvailabilityState,
     modalShowStrategy,
     renameConflictStrategyState,
     modalPromptSpy,
@@ -69,6 +70,7 @@ const {
         sessionDeletePathSpy: vi.fn<(_sessionId: string, _path: string) => Promise<SessionDeletePathLikeResult>>(
             async (_sessionId: string, _path: string) => ({ success: true }),
         ),
+        downloadAvailabilityState: { value: true },
         modalShowStrategy,
         renameConflictStrategyState: renameConflictStrategy,
         modalPromptSpy: vi.fn(async (): Promise<string | null> => null),
@@ -153,6 +155,10 @@ vi.mock('@/sync/ops', () => ({
     sessionDeletePath: (sessionId: string, path: string) => sessionDeletePathSpy(sessionId, path),
 }));
 
+vi.mock('@/components/sessions/files/useSessionFileDownloadAvailability', () => ({
+    useSessionFileDownloadAvailability: () => downloadAvailabilityState.value,
+}));
+
 afterEach(() => {
     standardCleanup();
 });
@@ -192,6 +198,7 @@ describe('RepositoryTreeList (row menu)', () => {
         sessionStatFileSpy.mockResolvedValue({ success: true, exists: false });
         sessionDeletePathSpy.mockResolvedValue({ success: true });
         setClipboardStringSafeSpy.mockResolvedValue(true);
+        downloadAvailabilityState.value = true;
     });
 
     async function renderRepositoryTreeList(params: Readonly<{ downloadActionsAvailable?: boolean }> = {}) {
@@ -296,6 +303,26 @@ describe('RepositoryTreeList (row menu)', () => {
 
         const directoryMenu = findRowActions(screen, 'src');
         expect(directoryMenu.props.actions.map((item: any) => item.id)).toEqual([
+            'repository-tree-menuitem-rename',
+            'repository-tree-menuitem-delete',
+            'repository-tree-menuitem-copy-path',
+        ]);
+    });
+
+    it('omits download actions when the session download route is unavailable (even if a callback exists)', async () => {
+        sessionListDirectorySpy.mockImplementation(async (_sessionId: string, path: string) => {
+            if (path !== '') return { success: true, entries: [] };
+            return {
+                success: true,
+                entries: [{ name: 'README.md', type: 'file' }],
+            };
+        });
+        downloadAvailabilityState.value = false;
+
+        const screen = await renderRepositoryTreeList();
+
+        const fileMenu = findRowActions(screen, 'README.md');
+        expect(fileMenu.props.actions.map((item: any) => item.id)).toEqual([
             'repository-tree-menuitem-rename',
             'repository-tree-menuitem-delete',
             'repository-tree-menuitem-copy-path',
