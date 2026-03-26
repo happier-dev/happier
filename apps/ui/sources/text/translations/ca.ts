@@ -2475,6 +2475,8 @@ export const ca: TranslationStructure = {
         expConnectedServicesSubtitle: 'Activa la configuració de serveis connectats i els vincles de sessió',
         expConnectedServicesQuotas: 'Quotes de serveis connectats',
         expConnectedServicesQuotasSubtitle: 'Mostra insígnies de quota i mesuradors d’ús per als serveis connectats',
+        expChannelBridges: 'Ponts de canals',
+        expChannelBridgesSubtitle: 'Connecta Telegram i altres canals de xat a sessions de Happier (experimental)',
         expMemorySearch: 'Cerca de memòria',
         expMemorySearchSubtitle: 'Activa pantalles i ajustos de cerca de memòria local',
         expSessionsDirect: 'Sessions directes',

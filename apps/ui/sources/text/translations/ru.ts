@@ -2642,6 +2642,8 @@ export const ru: TranslationStructure = {
     expConnectedServicesSubtitle: "Включить настройки подключённых сервисов и привязку к сессиям",
     expConnectedServicesQuotas: "Квоты подключённых сервисов",
     expConnectedServicesQuotasSubtitle: "Показывать бейджи квот и счётчики использования подключённых сервисов",
+    expChannelBridges: "Мосты каналов",
+    expChannelBridgesSubtitle: "Подключайте Telegram и другие чаты к сессиям Happier (экспериментально)",
     expMemorySearch: "Поиск по памяти",
     expMemorySearchSubtitle: "Включить экраны и настройки локального поиска по памяти",
     expSessionsDirect: "Прямые сессии",

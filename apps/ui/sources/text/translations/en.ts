@@ -2570,6 +2570,8 @@ export const en = {
         expConnectedServicesSubtitle: 'Enable connected services settings and session bindings',
         expConnectedServicesQuotas: 'Connected services quotas',
         expConnectedServicesQuotasSubtitle: 'Show quota badges and usage meters for connected services',
+        expChannelBridges: 'Channel bridges',
+        expChannelBridgesSubtitle: 'Connect Telegram and other chat channels to Happier sessions (experimental)',
         expMemorySearch: 'Memory search',
         expMemorySearchSubtitle: 'Enable local memory search screens and settings',
         expSessionsDirect: 'Direct sessions',

@@ -2543,6 +2543,8 @@ export const zhHans: TranslationStructure = {
     expConnectedServicesSubtitle: "启用已连接服务设置与会话绑定",
     expConnectedServicesQuotas: "已连接服务配额",
     expConnectedServicesQuotasSubtitle: "显示已连接服务的配额徽标与用量仪表",
+    expChannelBridges: "频道桥接",
+    expChannelBridgesSubtitle: "将 Telegram 等聊天渠道连接到 Happier 会话（实验性）",
     expMemorySearch: "记忆搜索",
     expMemorySearchSubtitle: "启用本地记忆搜索页面与设置",
     expSessionsDirect: "直连会话",

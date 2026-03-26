@@ -89,6 +89,19 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'analytics-outline', color: '#34C759' },
         },
     },
+    channelBridges: {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expChannelBridges',
+            subtitleKey: 'settingsFeatures.expChannelBridgesSubtitle',
+            icon: { ioniconName: 'swap-horizontal-outline', color: '#FF9500' },
+        },
+    },
+    'channelBridges.telegram': {
+        settingsToggle: undefined,
+    },
     'updates.ota': {
         settingsToggle: undefined,
     },

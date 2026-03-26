@@ -13,6 +13,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
         parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED, true)
         && resolveUiFeatureToggleEnabled(settings, 'connectedServices'),
     'connectedServices.quotas': (settings) => resolveUiFeatureToggleEnabled(settings, 'connectedServices.quotas'),
+    channelBridges: (settings) => resolveUiFeatureToggleEnabled(settings, 'channelBridges'),
     'updates.ota': () => parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_UPDATES_OTA__ENABLED, true),
     'attachments.uploads': (settings) => resolveUiFeatureToggleEnabled(settings, 'attachments.uploads'),
     'social.friends': (settings) => resolveUiFeatureToggleEnabled(settings, 'social.friends'),

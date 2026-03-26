@@ -2664,6 +2664,9 @@ export const es: TranslationStructure = {
       expConnectedServicesQuotas: "Cuotas de servicios conectados",
       expConnectedServicesQuotasSubtitle:
         "Mostrar insignias de cuota y medidores de uso para servicios conectados",
+      expChannelBridges: "Puentes de canal",
+      expChannelBridgesSubtitle:
+        "Conecta Telegram y otros canales de chat a sesiones de Happier (experimental)",
       expMemorySearch: "Búsqueda de memoria",
       expMemorySearchSubtitle:
         "Habilitar pantallas y ajustes de búsqueda de memoria local",

@@ -2943,6 +2943,9 @@ export const ja: TranslationStructure = {
     expConnectedServicesQuotas: "連携サービスのクォータ",
     expConnectedServicesQuotasSubtitle:
       "連携サービスのクォータバッジと使用量メーターを表示",
+    expChannelBridges: "チャンネルブリッジ",
+    expChannelBridgesSubtitle:
+      "Telegram などのチャットチャンネルを Happier セッションに接続（実験的）",
     expMemorySearch: "メモリ検索",
     expMemorySearchSubtitle: "ローカルメモリ検索の画面と設定を有効化",
     expSessionsDirect: "ダイレクトセッション",

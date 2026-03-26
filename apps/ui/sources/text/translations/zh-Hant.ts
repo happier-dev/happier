@@ -2246,6 +2246,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         expConnectedServicesSubtitle: '啟用已連結服務設定與工作階段綁定',
         expConnectedServicesQuotas: '已連結服務配額',
         expConnectedServicesQuotasSubtitle: '顯示已連結服務的配額徽章與用量儀表',
+        expChannelBridges: '頻道橋接',
+        expChannelBridgesSubtitle: '將 Telegram 等聊天頻道連接到 Happier 工作階段（實驗性）',
         expMemorySearch: '記憶搜尋',
         expMemorySearchSubtitle: '啟用本機記憶搜尋頁面與設定',
         expSessionsDirect: '直接工作階段',
