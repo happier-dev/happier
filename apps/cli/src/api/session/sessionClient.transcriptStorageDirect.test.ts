@@ -7,6 +7,7 @@ import {
   createApiSessionSocketStub,
   flushApiSessionClientMessageCommitQueue,
 } from '@/testkit/backends/apiSessionSocketHarness';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
@@ -182,7 +183,7 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     );
   });
 
-  it('delivers a committed localId echo to the agent queue when it was not enqueued locally', async () => {
+  it('delivers a server-echoed user message to the agent queue even when the localId was committed locally (prevents deadlocks)', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
     userSocketStub = createApiSessionSocketStub({ connected: true });
@@ -193,51 +194,50 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
     createdClients.push(client);
 
-    client.sendUserTextMessage('hello', { localId: 'echo-local-1' });
+    const onUserMessage = vi.fn();
+    client.onUserMessage(onUserMessage);
+
+    client.sendUserTextMessage('hello', {
+      localId: 'local-1',
+      meta: { source: 'ui', sentFrom: 'web' },
+    });
     await flushApiSessionClientMessageCommitQueue(client as any);
 
-    expect((client as any).committedLocalIdsAwaitingEcho.has('echo-local-1')).toBe(true);
+    expect((client as any).committedLocalIdsAwaitingEcho.has('local-1')).toBe(true);
 
-    const update = {
-      id: 'u-echo-1',
+    sessionSocketStub.trigger('update', {
+      id: 'u1',
       seq: 1,
-      createdAt: 1700000000000,
+      createdAt: Date.now(),
       body: {
         t: 'new-message',
         sid: 's1',
         message: {
-          id: 'm-echo-1',
-          seq: 2,
-          localId: 'echo-local-1',
+          id: 'm1',
+          seq: 1,
+          localId: 'local-1',
           sidechainId: null,
-          createdAt: 1700000000000,
-          updatedAt: 1700000000000,
           content: {
             t: 'plain',
             v: {
               role: 'user',
               content: { type: 'text', text: 'hello' },
-              meta: { sentFrom: 'cli', source: 'cli' },
+              createdAt: Date.now(),
+              localId: 'local-1',
+              meta: { source: 'ui', sentFrom: 'web' },
             },
           },
         },
       },
-    };
-
-    sessionSocketStub.trigger('update', update);
-
-    const received: unknown[] = [];
-    client.onUserMessage((message) => received.push(message));
-
-    expect(received).toHaveLength(1);
-    expect(received[0]).toMatchObject({
-      role: 'user',
-      localId: 'echo-local-1',
-      content: { type: 'text', text: 'hello' },
     });
+
+    expect(onUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'user',
+      localId: 'local-1',
+    }));
   });
 
-  it('does not double-deliver user messages that were already enqueued locally', async () => {
+  it('does not double-deliver a user message that was already enqueued locally before committing it', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
     userSocketStub = createApiSessionSocketStub({ connected: true });
@@ -248,48 +248,47 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
     createdClients.push(client);
 
-    // Internal seam: this is the path used by daemon RPC handlers and initial prompt seeding.
-    (client as any).enqueueSessionUserMessage({
-      text: 'hello',
-      localId: 'queued-local-1',
-      meta: { source: 'daemon-initial-prompt', sentFrom: 'cli' },
-    });
+    const onUserMessage = vi.fn();
+    client.onUserMessage(onUserMessage);
 
-    const received: unknown[] = [];
-    client.onUserMessage((message) => received.push(message));
-    expect(received).toHaveLength(1);
+    await client.rpcHandlerManager.handleRequest({
+      method: `s1:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`,
+      params: {
+        text: 'hello',
+        localId: 'local-2',
+        meta: { source: 'ui', sentFrom: 'web' },
+      },
+    } as any);
 
-    await flushApiSessionClientMessageCommitQueue(client as any);
+    expect(onUserMessage).toHaveBeenCalledTimes(1);
 
-    const update = {
-      id: 'u-queued-1',
-      seq: 1,
-      createdAt: 1700000000001,
+    sessionSocketStub.trigger('update', {
+      id: 'u2',
+      seq: 2,
+      createdAt: Date.now(),
       body: {
         t: 'new-message',
         sid: 's1',
         message: {
-          id: 'm-queued-1',
-          seq: 3,
-          localId: 'queued-local-1',
+          id: 'm2',
+          seq: 2,
+          localId: 'local-2',
           sidechainId: null,
-          createdAt: 1700000000001,
-          updatedAt: 1700000000001,
           content: {
             t: 'plain',
             v: {
               role: 'user',
               content: { type: 'text', text: 'hello' },
-              meta: { source: 'daemon-initial-prompt', sentFrom: 'cli' },
+              createdAt: Date.now(),
+              localId: 'local-2',
+              meta: { source: 'ui', sentFrom: 'web' },
             },
           },
         },
       },
-    };
+    });
 
-    sessionSocketStub.trigger('update', update);
-
-    expect(received).toHaveLength(1);
+    expect(onUserMessage).toHaveBeenCalledTimes(1);
   });
 
   it('includes machineId in the session-scoped socket bootstrap when session metadata declares it', async () => {

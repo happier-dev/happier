@@ -54,8 +54,14 @@ export function isLoopbackHttpServerUrl(serverUrl: string): boolean {
   try {
     const url = new URL(serverUrl);
     if (url.protocol !== 'http:') return false;
-    const host = url.hostname.toLowerCase();
-    return host === '127.0.0.1' || host === 'localhost' || host === '0.0.0.0' || host === '::1';
+    const host = url.hostname.toLowerCase().replace(/\.$/, '');
+    return (
+      host === '127.0.0.1'
+      || host === 'localhost'
+      || host === '0.0.0.0'
+      || host === '::1'
+      || host.endsWith('.localhost')
+    );
   } catch {
     return false;
   }
@@ -79,4 +85,3 @@ export function isInsecureRemoteHttpServerUrl(serverUrl: string): boolean {
     return false;
   }
 }
-

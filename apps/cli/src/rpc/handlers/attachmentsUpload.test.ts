@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { configuration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
@@ -13,7 +13,9 @@ import {
 } from '@/machines/transfer/transferChunkEncryption';
 
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
+import { SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/sessionRpcTransferPolicy';
 import { registerSessionTransferRpcHandlers } from '@/transfers/rpc/registerSessionTransferRpcHandlers';
+import { restoreProcessEnv, snapshotProcessEnv } from '@/testkit/env/envSnapshot';
 
 type Handler = (data: unknown) => Promise<unknown> | unknown;
 
@@ -49,12 +51,24 @@ function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHa
 }
 
 describe('attachments upload (chunked)', () => {
+  const envBackup = snapshotProcessEnv();
+
+  afterEach(() => {
+    restoreProcessEnv(envBackup);
+    vi.unstubAllEnvs();
+    reloadConfiguration();
+  });
+
   it('fails closed when messageLocalId contains path traversal segments', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-attach-traversal-'));
     const readAllowedDirs: { current: string[] } = { current: [] };
     const writeAllowedDirs: { current: string[] } = { current: [] };
 
     try {
+      await mkdir(join(workingDirectory, '.git'), { recursive: true });
+      await writeFile(join(workingDirectory, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf8');
+      await writeFile(join(workingDirectory, '.gitignore'), '# existing\n', 'utf8');
+
       const mgr = createRpcHandlerManager();
       const pathAllowanceRegistry = createTransferPathAllowanceRegistry({
         onReadDirsChange: (dirs) => {
@@ -83,11 +97,113 @@ describe('attachments upload (chunked)', () => {
         sizeBytes: 11,
         uploadLocation: 'workspace',
         workspaceRelativeDir: '.happier/uploads',
+        vcsIgnoreStrategy: 'gitignore',
+        vcsIgnoreWritesEnabled: true,
+      });
+
+      expect(initRes).toEqual({ success: false, error: 'Invalid messageLocalId' });
+      expect(readAllowedDirs.current).toEqual([]);
+      expect(writeAllowedDirs.current).toEqual([]);
+      await expect(readFile(join(workingDirectory, '.gitignore'), 'utf8')).resolves.toBe('# existing\n');
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('rejects oversize attachment init at the session-routed limit without mutating ignore files or path allowances', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-attach-routed-limit-'));
+    const readAllowedDirs: { current: string[] } = { current: [] };
+    const writeAllowedDirs: { current: string[] } = { current: [] };
+
+    try {
+      await writeFile(join(workingDirectory, '.gitignore'), '# existing\n', 'utf8');
+
+      const mgr = createRpcHandlerManager();
+      const pathAllowanceRegistry = createTransferPathAllowanceRegistry({
+        onReadDirsChange: (dirs) => {
+          readAllowedDirs.current = [...dirs];
+        },
+        onWriteDirsChange: (dirs) => {
+          writeAllowedDirs.current = [...dirs];
+        },
+      });
+      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+        workingDirectory,
+        getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
+        getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
+        sessionRpcTransferMaxBytes: 4,
+        attachmentUpload: {
+          pathAllowanceRegistry,
+        },
+      });
+
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      if (!init) throw new Error('expected attachments upload handlers to be registered');
+
+      const initRes = await init({
+        t: 'session_attachment_upload_v1',
+        messageLocalId: 'message-1',
+        fileName: 'hello.txt',
+        sizeBytes: 5,
+        uploadLocation: 'os_temp',
         vcsIgnoreStrategy: 'none',
         vcsIgnoreWritesEnabled: false,
       });
 
-      expect(initRes).toEqual({ success: false, error: 'Invalid messageLocalId' });
+      expect(initRes).toEqual({ success: false, error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR });
+      expect(readAllowedDirs.current).toEqual([]);
+      expect(writeAllowedDirs.current).toEqual([]);
+      await expect(readFile(join(workingDirectory, '.gitignore'), 'utf8')).resolves.toBe('# existing\n');
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('rejects oversize attachment init at the files upload max without mutating ignore files or path allowances', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-attach-config-limit-'));
+    const readAllowedDirs: { current: string[] } = { current: [] };
+    const writeAllowedDirs: { current: string[] } = { current: [] };
+
+    try {
+      await writeFile(join(workingDirectory, '.gitignore'), '# existing\n', 'utf8');
+      vi.stubEnv('HAPPIER_FILES_UPLOAD_MAX_FILE_BYTES', '4');
+      reloadConfiguration();
+
+      const mgr = createRpcHandlerManager();
+      const pathAllowanceRegistry = createTransferPathAllowanceRegistry({
+        onReadDirsChange: (dirs) => {
+          readAllowedDirs.current = [...dirs];
+        },
+        onWriteDirsChange: (dirs) => {
+          writeAllowedDirs.current = [...dirs];
+        },
+      });
+      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+        workingDirectory,
+        getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
+        getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
+        attachmentUpload: {
+          pathAllowanceRegistry,
+        },
+      });
+
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT);
+      if (!init) throw new Error('expected attachments upload handlers to be registered');
+
+      const initRes = await init({
+        t: 'session_attachment_upload_v1',
+        messageLocalId: 'message-1',
+        fileName: 'hello.txt',
+        sizeBytes: 5,
+        uploadLocation: 'os_temp',
+        vcsIgnoreStrategy: 'none',
+        vcsIgnoreWritesEnabled: false,
+      });
+
+      expect(initRes).toEqual({ success: false, error: 'File exceeds upload size limit' });
+      expect(readAllowedDirs.current).toEqual([]);
+      expect(writeAllowedDirs.current).toEqual([]);
+      await expect(readFile(join(workingDirectory, '.gitignore'), 'utf8')).resolves.toBe('# existing\n');
     } finally {
       await rm(workingDirectory, { recursive: true, force: true }).catch(() => {});
     }

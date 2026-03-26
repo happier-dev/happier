@@ -17,7 +17,7 @@ import { logger } from './logger';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
 import { buildConfigureServerLinks, buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
-import { isInsecureRemoteHttpServerUrl, isLocalishServerUrl } from '@/server/serverUrlClassification';
+import { isInsecureRemoteHttpServerUrl, isLocalishServerUrl, isLoopbackHttpServerUrl } from '@/server/serverUrlClassification';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 
 export type PostTerminalAuthRequestCompatibleResponse =
@@ -35,17 +35,6 @@ function isAuthorizedWithTokenAndResponse(
         'response' in value &&
         typeof (value as any).response === 'string'
     );
-}
-
-function isLoopbackHttpServerUrl(serverUrl: string): boolean {
-    try {
-        const url = new URL(serverUrl);
-        if (url.protocol !== 'http:') return false;
-        const host = url.hostname;
-        return host === '127.0.0.1' || host === 'localhost' || host === '0.0.0.0' || host === '::1';
-    } catch {
-        return false;
-    }
 }
 
 function isLoopbackServerHost(serverUrl: string): boolean {

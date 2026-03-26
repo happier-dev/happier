@@ -236,6 +236,34 @@ describe('happier session create (integration)', () => {
     }
   });
 
+  it('accepts legacy --no-load-existing flag (ignored)', async () => {
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--no-load-existing', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_create');
+      expect(observedSpawnBody).toEqual({
+        directory: process.cwd(),
+        backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
+      });
+    } finally {
+      output.restore();
+    }
+  });
+
   it('rejects multi-backend csv input for the single-target create wrapper', async () => {
     const { handleSessionCommand } = await import('./index');
     const output = captureConsoleJsonOutput();
