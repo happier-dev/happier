@@ -37,6 +37,8 @@ const harness = vi.hoisted(() => {
     resume: connectedServiceQuotasResume,
   }));
 
+  const resolveChannelBridgesDaemonEnabled = vi.fn(async () => true);
+
   const apiMachine = {
     setRPCHandlers: vi.fn(),
     onUpdate: vi.fn(),
@@ -88,17 +90,25 @@ const harness = vi.hoisted(() => {
     connectedServiceQuotasResume,
     connectedServiceQuotasStop,
     createDaemonShutdownController,
+<<<<<<< HEAD
+=======
+    startChannelBridgeFromEnv,
+    resolveChannelBridgesDaemonEnabled,
+>>>>>>> ed44ae300 (feat(cli): gate channel bridge daemon startup)
     emitMachineConnectionState: (state: any) => machineConnectionStateListener?.(state),
     setAutoShutdownAfterAutomationStart: (value: boolean) => {
       autoShutdownAfterAutomationStart = value;
     },
-    startChannelBridgeFromEnv,
     requestShutdown: (source: ShutdownSource) => requestShutdownRef?.(source),
   };
 });
 
 vi.mock('@/channels/startChannelBridgeWorker', () => ({
   startChannelBridgeFromEnv: harness.startChannelBridgeFromEnv,
+}));
+
+vi.mock('./channels/resolveChannelBridgesDaemonEnabled', () => ({
+  resolveChannelBridgesDaemonEnabled: harness.resolveChannelBridgesDaemonEnabled,
 }));
 
 vi.mock('@/api/api', () => ({
@@ -486,15 +496,31 @@ describe('startDaemon automation wiring (integration)', () => {
     }
   });
 
+  it('does not start channel bridge worker when channel bridges are disabled', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    harness.resolveChannelBridgesDaemonEnabled.mockResolvedValueOnce(false);
+
+    try {
+      const { startDaemon } = await import('./startDaemon');
+      await startDaemon();
+
+      expect(harness.startChannelBridgeFromEnv).not.toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
   it('stops a bridge worker that resolves after shutdown has already started', async () => {
     vi.useRealTimers();
 
     const delayedWorkerStop = vi.fn(async () => {});
-    let resolveBridgeStartup: (() => void) | null = null;
+    let resolveBridgeStartup!: () => void;
+    const bridgeStartup = new Promise<void>((resolve) => {
+      resolveBridgeStartup = resolve;
+    });
     harness.startChannelBridgeFromEnv.mockImplementationOnce(async () => {
-      await new Promise<void>((resolve) => {
-        resolveBridgeStartup = resolve;
-      });
+      await bridgeStartup;
       return {
         stop: delayedWorkerStop,
         trigger: vi.fn(),
@@ -509,7 +535,7 @@ describe('startDaemon automation wiring (integration)', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 0));
       harness.requestShutdown('happier-cli');
-      if (resolveBridgeStartup) resolveBridgeStartup();
+      resolveBridgeStartup();
       await run;
 
       expect(harness.startChannelBridgeFromEnv).toHaveBeenCalledTimes(1);

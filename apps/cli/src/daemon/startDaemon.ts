@@ -101,6 +101,7 @@ import { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/Co
 import { createConnectedServiceQuotaFetchers } from './connectedServices/quotas/createConnectedServiceQuotaFetchers';
 import { resolveConnectedServiceQuotasDaemonOptions } from './connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
 import { resolveConnectedServicesQuotasDaemonEnabled } from './connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled';
+import { resolveChannelBridgesDaemonEnabled } from './channels/resolveChannelBridgesDaemonEnabled';
 import { startConnectedServiceQuotasLoop, type ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
 import {
   HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY,
@@ -1527,11 +1528,26 @@ export async function startDaemon(): Promise<void> {
 
       // Do machine bootstrap in the background so shutdown requests are not blocked by /v1/machines latency.
       void (async () => {
-        const startChannelBridgeWorkerBestEffort = async (): Promise<void> => {
-          const bridgeSettings = await readSettings().catch((error) => {
-            logger.warn(
-              '[DAEMON RUN] Failed to read settings for channel bridge startup; using env-only defaults',
-              error instanceof Error ? error.message : String(error),
+	        const startChannelBridgeWorkerBestEffort = async (): Promise<void> => {
+	          const channelBridgesEnabled = await resolveChannelBridgesDaemonEnabled({
+	            env: process.env,
+	            serverUrl: configuration.serverUrl,
+	            timeoutMs: 1500,
+	          }).catch((error) => {
+	            logger.warn(
+	              '[DAEMON RUN] Failed to resolve channel bridge feature gating; skipping channel bridge startup',
+	              serializeAxiosErrorForLog(error),
+	            );
+	            return false;
+	          });
+	          if (!channelBridgesEnabled || shutdownInitiated) {
+	            return;
+	          }
+
+	          const bridgeSettings = await readSettings().catch((error) => {
+	            logger.warn(
+	              '[DAEMON RUN] Failed to read settings for channel bridge startup; using env-only defaults',
+	              error instanceof Error ? error.message : String(error),
             );
             return null;
           });
