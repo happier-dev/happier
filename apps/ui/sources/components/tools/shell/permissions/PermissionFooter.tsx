@@ -12,6 +12,7 @@ import { extractShellCommand } from '@/components/tools/normalization/parse/shel
 import { parseParenIdentifier } from '@/components/tools/normalization/parse/parseParenIdentifier';
 import { formatPermissionRequestSummary } from '@/components/tools/normalization/policy/permissionSummary';
 import { Text } from '@/components/ui/text/Text';
+import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 
 interface PermissionFooterProps {
@@ -45,6 +46,10 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     embedded = false,
 }) => {
     const { theme } = useUnistyles();
+    const e2eAccessibilityLabel = React.useCallback(
+        (testID: string) => resolveAutomationAccessibilityLabel({ testID, accessibilityLabel: undefined }),
+        []
+    );
     const [loadingButton, setLoadingButton] = useState<'allow' | 'deny' | 'abort' | null>(null);
     const [loadingAllEdits, setLoadingAllEdits] = useState(false);
     const [loadingForSession, setLoadingForSession] = useState(false);
@@ -605,6 +610,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     {/* Decision protocol: Yes button */}
                     <TouchableOpacity
                         testID="permission-footer.allow"
+                        accessibilityLabel={e2eAccessibilityLabel('permission-footer.allow')}
                         style={[
                             styles.button,
                             isPending && styles.buttonAllow,
@@ -636,6 +642,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     {canApproveExecPolicy && (
                         <TouchableOpacity
                             testID="permission-footer.allow-execpolicy"
+                            accessibilityLabel={e2eAccessibilityLabel('permission-footer.allow-execpolicy')}
                             style={[
                                 styles.button,
                                 isPending && styles.buttonForSession,
@@ -667,6 +674,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     {/* Decision protocol: Yes, and don't ask for a session button */}
                     <TouchableOpacity
                         testID="permission-footer.allow-for-session"
+                        accessibilityLabel={e2eAccessibilityLabel('permission-footer.allow-for-session')}
                         style={[
                             styles.button,
                             isPending && styles.buttonForSession,
@@ -696,6 +704,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
                     <TouchableOpacity
                         testID="permission-footer.deny"
+                        accessibilityLabel={e2eAccessibilityLabel('permission-footer.deny')}
                         style={[
                             styles.button,
                             isPending && styles.buttonDeny,
@@ -730,6 +739,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     {/* Decision-protocol providers can customize stop handling through registry behavior. */}
                     <TouchableOpacity
                         testID="permission-footer.stop"
+                        accessibilityLabel={e2eAccessibilityLabel('permission-footer.stop')}
                         style={[
                             styles.button,
                             isPending && styles.buttonDeny,
@@ -775,6 +785,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             <View style={styles.buttonContainer}>
                 <TouchableOpacity
                     testID="permission-footer.allow"
+                    accessibilityLabel={e2eAccessibilityLabel('permission-footer.allow')}
                     style={[
                         styles.button,
                         isPending && styles.buttonAllow,
@@ -934,6 +945,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
                 <TouchableOpacity
                     testID="permission-footer.deny"
+                    accessibilityLabel={e2eAccessibilityLabel('permission-footer.deny')}
                     style={[
                         styles.button,
                         isPending && styles.buttonDeny,
@@ -967,6 +979,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
                 <TouchableOpacity
                     testID="permission-footer.stop"
+                    accessibilityLabel={e2eAccessibilityLabel('permission-footer.stop')}
                     style={[
                         styles.button,
                         isPending && styles.buttonDeny,

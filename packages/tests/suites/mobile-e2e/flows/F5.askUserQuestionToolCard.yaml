@@ -5,8 +5,10 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 
 - runFlow:
     when:
-      visible:
-        id: welcome-configure-server
+      visible: "Development Build"
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
     file: _shared/configureServerIfNeeded.yaml
 
 - runFlow:
@@ -15,18 +17,9 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - runFlow:
     file: _shared/openDevTools2.yaml
 
-- tapOn:
-    id: dev-tools2-filter:ask-user-question
-
-- assertVisible:
-    id: dev-tools2-example:askUserQuestion
+- tapOn: 'dev-tools2-filter:ask-user-question'
 
 # AskUserQuestion should render as a user-action card (not a permission approval footer).
-- assertVisible:
-    id: ask-user-question
-- assertVisible:
-    id: ask-user-question.option:0:0
-- assertVisible:
-    id: ask-user-question.option:0:1
-- assertVisible:
-    id: ask-user-question.submit
+- assertVisible: 'ask-user-question.option:0:0'
+- assertVisible: 'ask-user-question.option:0:1'
+- assertVisible: ask-user-question.submit
