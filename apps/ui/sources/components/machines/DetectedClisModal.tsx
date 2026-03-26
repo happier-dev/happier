@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Pressable, ActivityIndicator } from 'react-native';
+import { View, Pressable, ActivityIndicator, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -24,6 +24,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 14,
         width: 360,
         maxWidth: '92%',
+        maxHeight: '85%',
+        flexShrink: 1,
         overflow: 'hidden',
         shadowColor: theme.colors.shadow.color,
         shadowOffset: { width: 0, height: 2 },
@@ -47,6 +49,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
     },
     body: {
+        flexGrow: 1,
+    },
+    bodyContent: {
         paddingVertical: 4,
     },
     footer: {
@@ -71,11 +76,12 @@ export function DetectedClisModal({ onClose, machineId, isOnline, serverId }: Pr
     });
 
     return (
-        <View style={styles.container}>
+        <View style={styles.container} testID="detected-clis:modal">
             <View style={styles.header}>
                 <Text style={styles.title}>{t('machine.detectedClis')}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                     <Pressable
+                        testID="detected-clis:refresh"
                         onPress={() => refresh({ bypassCache: true })}
                         hitSlop={10}
                         style={{ padding: 2 }}
@@ -88,7 +94,8 @@ export function DetectedClisModal({ onClose, machineId, isOnline, serverId }: Pr
                             : <Ionicons name="refresh" size={20} color={isOnline ? theme.colors.textSecondary : theme.colors.divider} />}
                     </Pressable>
                     <Pressable
-                        onPress={onClose as any}
+                        testID="detected-clis:close"
+                        onPress={() => onClose()}
                         hitSlop={10}
                         style={{ padding: 2 }}
                         accessibilityRole="button"
@@ -99,12 +106,12 @@ export function DetectedClisModal({ onClose, machineId, isOnline, serverId }: Pr
                 </View>
             </View>
 
-            <View style={styles.body}>
+            <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
                 <DetectedClisList state={state} layout="stacked" />
-            </View>
+            </ScrollView>
 
             <View style={styles.footer}>
-                <RoundButton title={t('common.ok')} size="normal" onPress={onClose} />
+                <RoundButton testID="detected-clis:ok" title={t('common.ok')} size="normal" onPress={onClose} />
             </View>
         </View>
     );

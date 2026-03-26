@@ -56,6 +56,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
                 hash: '#key=abc123&server=https%3A%2F%2Fcompany.example.test',
                 pathname: '/terminal/connect',
                 search: '',
+                href: 'https://ui.example.test/terminal/connect#key=abc123&server=https%3A%2F%2Fcompany.example.test',
             },
             history: { replaceState: vi.fn() },
         };

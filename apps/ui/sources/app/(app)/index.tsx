@@ -523,7 +523,7 @@ function NotAuthenticated() {
     );
 
     const portraitLayout = (
-        <View style={styles.portraitContainer}>
+        <View testID="welcome-hero" style={styles.portraitContainer}>
             <Image
                 source={theme.dark ? require('@/assets/images/logotype-light.png') : require('@/assets/images/logotype-dark.png')}
                 resizeMode="contain"
@@ -653,7 +653,7 @@ function NotAuthenticated() {
     );
 
     const landscapeLayout = (
-        <View style={[styles.landscapeContainer, { paddingBottom: insets.bottom + 24 }]}>
+        <View testID="welcome-hero" style={[styles.landscapeContainer, { paddingBottom: insets.bottom + 24 }]}>
             <View style={styles.landscapeInner}>
                 <View style={styles.landscapeLogoSection}>
                     <Image

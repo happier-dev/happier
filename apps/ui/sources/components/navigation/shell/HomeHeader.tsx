@@ -12,6 +12,7 @@ import { t } from '@/text';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { Text } from '@/components/ui/text/Text';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
+import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -107,10 +108,15 @@ function HeaderRight() {
     const router = useRouter();
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const e2eAccessibilityLabel = resolveAutomationAccessibilityLabel({
+        testID: 'home-header-start-new-session',
+        accessibilityLabel: undefined,
+    });
 
     return (
         <Pressable
             testID="home-header-start-new-session"
+            accessibilityLabel={e2eAccessibilityLabel}
             onPress={() => router.push('/new')}
             hitSlop={15}
             style={styles.headerButton}
@@ -128,6 +134,7 @@ function HeaderRightNotAuth() {
 
     return (
         <Pressable
+            testID="home-header-open-server-config"
             onPress={() => router.push('/server')}
             hitSlop={15}
             style={styles.headerButton}

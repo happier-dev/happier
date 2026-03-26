@@ -65,6 +65,10 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
 
 vi.mock('@/utils/path/terminalConnectUrl', () => ({
     buildTerminalConnectDeepLink: () => 'happier://terminal?key=abc123',
+    parseTerminalConnectUrl: () => ({
+        publicKeyB64Url: 'abc123',
+        serverUrl: 'https://company.example.test',
+    }),
 }));
 
 vi.mock('@/utils/system/fireAndForget', () => ({
@@ -86,6 +90,7 @@ describe('TerminalConnectScreen safe navigation', () => {
                 hash: '#key=abc123&server=https%3A%2F%2Fcompany.example.test',
                 pathname: '/terminal/connect',
                 search: '',
+                href: 'https://ui.example.test/terminal/connect#key=abc123&server=https%3A%2F%2Fcompany.example.test',
             },
             history: { replaceState: vi.fn() },
         };

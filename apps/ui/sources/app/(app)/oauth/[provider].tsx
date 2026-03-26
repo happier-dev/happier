@@ -244,7 +244,7 @@ export default function OAuthProviderReturn() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
-                }, { includeAuth: false });
+                }, { includeAuth: false, retry: 'none' });
                 const json = await response.json().catch(() => ({}));
 
                 if (response.ok && json?.token) {
