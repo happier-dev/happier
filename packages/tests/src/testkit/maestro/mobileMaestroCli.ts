@@ -1,0 +1,74 @@
+import { runManagedChildCommand, resolveSignalExitCode } from '../../../scripts/managedChildLifecycle.mjs';
+import { startServerLight } from '../process/serverLight';
+
+import { runMobileMaestro } from './mobileMaestroRunner';
+
+function elapsedSeconds(startedAtMs: number): number {
+  return Math.floor((Date.now() - startedAtMs) / 1000);
+}
+
+async function main() {
+  const result = await runMobileMaestro(
+    {
+      argv: process.argv,
+      cwd: process.cwd(),
+      env: process.env,
+    },
+    {
+      startServerLight: async ({ testDir, extraEnv }) => {
+        const started = await startServerLight({ testDir, extraEnv });
+        return {
+          baseUrl: started.baseUrl,
+          port: started.port,
+          dataDir: started.dataDir,
+          stop: started.stop,
+        };
+      },
+      runMaestro: async ({ cwd, env, maestroBin, args }) => {
+        const startedAt = Date.now();
+        // eslint-disable-next-line no-console
+        console.log(`[tests] starting: ${maestroBin} ${args.join(' ')}`);
+
+        const heartbeatMs = Number.parseInt(process.env.HAPPIER_TEST_HEARTBEAT_MS ?? '30000', 10);
+        const safeHeartbeatMs = Number.isFinite(heartbeatMs) && heartbeatMs >= 1000 ? heartbeatMs : 30000;
+        const heartbeat = setInterval(() => {
+          // eslint-disable-next-line no-console
+          console.log(`[tests] still running (${elapsedSeconds(startedAt)}s elapsed): maestro`);
+        }, safeHeartbeatMs);
+
+        const result = await runManagedChildCommand({
+          command: maestroBin,
+          args,
+          spawnOptions: {
+            cwd,
+            env,
+            stdio: 'inherit',
+            detached: process.platform !== 'win32',
+          },
+          cleanupPollMs: 25,
+          signalCleanupGraceMs: 0,
+          exitCleanupGraceMs: 1_000,
+          parentWatchdogPollMs: Number.parseInt(process.env.HAPPIER_TEST_PARENT_WATCHDOG_MS ?? '1000', 10),
+        });
+        clearInterval(heartbeat);
+        if (!result.ok) {
+          // eslint-disable-next-line no-console
+          console.error(`[tests] failed to start maestro: ${result.error.message}`);
+          return { exitCode: 1 };
+        }
+        const exitCode = typeof result.code === 'number' ? result.code : resolveSignalExitCode(result.signal);
+        // eslint-disable-next-line no-console
+        console.log(`[tests] completed in ${elapsedSeconds(startedAt)}s with code ${exitCode}`);
+        return { exitCode };
+      },
+    },
+  );
+
+  process.exit(result.exitCode);
+}
+
+void main().catch((error) => {
+  // eslint-disable-next-line no-console
+  console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+  process.exit(1);
+});

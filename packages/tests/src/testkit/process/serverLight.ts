@@ -28,22 +28,43 @@ function pickPortCandidate(): number {
 }
 
 export async function isPortAvailableForListen(port: number, host = '127.0.0.1'): Promise<boolean> {
+  return await isPortAvailableForListenWithError(port, host).then((result) => result.available);
+}
+
+type PortListenAvailability = Readonly<{
+  available: boolean;
+  error: unknown | null;
+}>;
+
+async function isPortAvailableForListenWithError(port: number, host: string): Promise<PortListenAvailability> {
   return await new Promise((resolve) => {
     const probe = createServer();
 
-    probe.once('error', () => {
+    probe.once('error', (error) => {
       try {
         probe.close();
       } catch {
         // ignore
       }
-      resolve(false);
+      resolve({ available: false, error });
     });
 
     probe.listen(port, host, () => {
-      probe.close(() => resolve(true));
+      probe.close(() => resolve({ available: true, error: null }));
     });
   });
+}
+
+function renderListenAvailabilityErrorSuffix(error: unknown | null): string {
+  if (!error) return '';
+  if (typeof error !== 'object') return '';
+  const row = error as { code?: unknown; message?: unknown };
+  const code = typeof row.code === 'string' ? row.code : '';
+  const message = typeof row.message === 'string' ? row.message : '';
+  if (code && message) return ` (lastError=${code}: ${message})`;
+  if (code) return ` (lastError=${code})`;
+  if (message) return ` (lastError=${message})`;
+  return '';
 }
 
 export function isAddrInUseError(error: unknown): boolean {
@@ -801,12 +822,16 @@ export async function startServerLight(params: {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const port = await portAllocator();
-    const preflightPortAvailable = await isPortAvailableForListen(port);
+    const portAvailability = await isPortAvailableForListenWithError(port, '127.0.0.1');
+    const preflightPortAvailable = portAvailability.available;
     if (!preflightPortAvailable) {
       if (attempt < maxAttempts) {
+        lastError = portAvailability.error;
         continue;
       }
-      throw new Error(`server-light could not allocate an available port after ${maxAttempts} attempts (lastPort=${port})`);
+      throw new Error(
+        `server-light could not allocate an available port after ${maxAttempts} attempts (lastPort=${port})${renderListenAvailabilityErrorSuffix(portAvailability.error)}`,
+      );
     }
 
     const baseUrl = `http://127.0.0.1:${port}`;

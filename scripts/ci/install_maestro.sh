@@ -13,6 +13,7 @@ set -euo pipefail
 
 MAESTRO_VERSION="${MAESTRO_VERSION:-2.3.0}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+MAESTRO_HOME_DIR="${MAESTRO_HOME_DIR:-}"
 MAESTRO_ZIP_URL_OVERRIDE="${MAESTRO_ZIP_URL_OVERRIDE:-}"
 MAESTRO_ZIP_SHA256="${MAESTRO_ZIP_SHA256:-}"
 MAESTRO_SKIP_SHA256="${MAESTRO_SKIP_SHA256:-}"
@@ -75,22 +76,41 @@ fi
 
 unzip -q "${ZIP_PATH}" -d "${TMP_DIR}"
 
-MAESTRO_EXTRACTED_BIN=""
-if [ -f "${TMP_DIR}/bin/maestro" ]; then
-  MAESTRO_EXTRACTED_BIN="${TMP_DIR}/bin/maestro"
-elif [ -f "${TMP_DIR}/maestro/bin/maestro" ]; then
-  MAESTRO_EXTRACTED_BIN="${TMP_DIR}/maestro/bin/maestro"
-else
-  MAESTRO_EXTRACTED_BIN="$(find "${TMP_DIR}" -maxdepth 4 -type f -name maestro -print -quit 2>/dev/null || true)"
+MAESTRO_EXTRACTED_ROOT=""
+if [ -d "${TMP_DIR}/maestro" ]; then
+  MAESTRO_EXTRACTED_ROOT="${TMP_DIR}/maestro"
+elif [ -d "${TMP_DIR}/Maestro" ]; then
+  MAESTRO_EXTRACTED_ROOT="${TMP_DIR}/Maestro"
 fi
 
-if [ -z "${MAESTRO_EXTRACTED_BIN}" ] || [ ! -f "${MAESTRO_EXTRACTED_BIN}" ]; then
-  echo "Expected Maestro binary inside extracted zip (zip layout changed?)" >&2
-  find "${TMP_DIR}" -maxdepth 4 -type f -print >&2 || true
+if [ -z "${MAESTRO_EXTRACTED_ROOT}" ] || [ ! -d "${MAESTRO_EXTRACTED_ROOT}" ]; then
+  echo "Expected Maestro directory inside extracted zip (zip layout changed?)" >&2
+  find "${TMP_DIR}" -maxdepth 3 -type d -print >&2 || true
   exit 1
 fi
 
-install -m 0755 "${MAESTRO_EXTRACTED_BIN}" "${INSTALL_DIR}/maestro"
+if [ ! -x "${MAESTRO_EXTRACTED_ROOT}/bin/maestro" ]; then
+  echo "Expected Maestro launcher at ${MAESTRO_EXTRACTED_ROOT}/bin/maestro (zip layout changed?)" >&2
+  find "${MAESTRO_EXTRACTED_ROOT}" -maxdepth 2 -type f -print >&2 || true
+  exit 1
+fi
+
+if [ -z "${MAESTRO_HOME_DIR}" ]; then
+  BASE_DIR="$(cd "${INSTALL_DIR}/.." && pwd)"
+  MAESTRO_HOME_DIR="${BASE_DIR}/share/maestro/${MAESTRO_VERSION}"
+fi
+
+rm -rf "${MAESTRO_HOME_DIR}"
+mkdir -p "${MAESTRO_HOME_DIR}"
+cp -R "${MAESTRO_EXTRACTED_ROOT}" "${MAESTRO_HOME_DIR}/maestro"
+
+cat > "${INSTALL_DIR}/maestro" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec "${MAESTRO_HOME_DIR}/maestro/bin/maestro" "\$@"
+EOF
+chmod +x "${INSTALL_DIR}/maestro"
 
 echo "[ci] installed Maestro to ${INSTALL_DIR}/maestro" >&2
 "${INSTALL_DIR}/maestro" --version

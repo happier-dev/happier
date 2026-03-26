@@ -1,104 +1,49 @@
-import { resolve } from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
-import { createRunDirs } from '../src/testkit/runDir';
-import { resolveDeviceVisibleBaseUrl } from '../src/testkit/mobile/resolveDeviceHost';
-import {
-  createMaestroSpawnOptions,
-  parseMaestroArgs,
-  runHeartbeatWrappedCommand,
-  resolveSignalExitCode,
-} from './runMaestroWithHeartbeat.shared.mjs';
-
-function maestroCommand() {
-  return (process.env.HAPPIER_E2E_MAESTRO_BIN ?? '').trim() || 'maestro';
+function resolveRepoRoot() {
+  // `packages/tests/scripts/run-maestro-with-heartbeat.mjs` -> repo root.
+  const here = dirname(fileURLToPath(import.meta.url));
+  return resolve(here, '..', '..', '..');
 }
 
-const { flows, appId, platform, serverUrl, passThrough } = parseMaestroArgs(process.argv);
-const resolvedFlows = flows ? flows.trim() : 'suites/mobile-e2e/flows';
-const resolvedAppId =
-  (appId ? String(appId).trim() : '') ||
-  (process.env.HAPPIER_E2E_MOBILE_APP_ID ?? '').trim() ||
-  // Default to the development Android package id (common local setup).
-  // Callers should set this explicitly for iOS or other variants.
-  'dev.happier.app.dev';
+function resolveTsxBin(repoRoot) {
+  const candidates = [
+    resolve(repoRoot, 'node_modules', '.bin', 'tsx'),
+    resolve(repoRoot, 'node_modules', '.bin', 'tsx.cmd'),
+    resolve(repoRoot, 'packages', 'tests', 'node_modules', '.bin', 'tsx'),
+    resolve(repoRoot, 'packages', 'tests', 'node_modules', '.bin', 'tsx.cmd'),
+  ];
 
-const resolvedHostServerUrl =
-  (serverUrl ? String(serverUrl).trim() : '') ||
-  (process.env.HAPPIER_E2E_SERVER_URL ?? '').trim() ||
-  '';
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
 
-const resolvedPlatform =
-  (platform ? String(platform).trim() : '') ||
-  (process.env.HAPPIER_E2E_MOBILE_PLATFORM ?? '').trim() ||
-  '';
+  return null;
+}
 
-const resolvedDeviceServerUrl =
-  resolvedHostServerUrl && (resolvedPlatform === 'android' || resolvedPlatform === 'ios')
-    ? resolveDeviceVisibleBaseUrl({
-        platform: resolvedPlatform,
-        baseUrl: resolvedHostServerUrl,
-      })
-    : resolvedHostServerUrl;
+const repoRoot = resolveRepoRoot();
+const tsxBin = resolveTsxBin(repoRoot);
+if (!tsxBin) {
+  // eslint-disable-next-line no-console
+  console.error('[tests] Missing `tsx` dependency. Run `yarn install` and retry.');
+  process.exit(1);
+}
 
-const run = createRunDirs({
-  runLabel: 'mobile-maestro',
-  logsDir: resolve(process.cwd(), '.project', 'logs', 'e2e', 'mobile-maestro'),
+const cliPath = resolve(repoRoot, 'packages', 'tests', 'src', 'testkit', 'maestro', 'mobileMaestroCli.ts');
+
+const result = spawnSync(tsxBin, [cliPath, ...process.argv.slice(2)], {
+  stdio: 'inherit',
+  env: process.env,
+  cwd: process.cwd(),
 });
 
-const debugOutputDir = resolve(run.runDir, 'maestro-debug');
-const manifestPath = resolve(run.runDir, 'manifest.json');
+if (typeof result.status === 'number') {
+  process.exit(result.status);
+}
 
-writeFileSync(
-  manifestPath,
-  JSON.stringify(
-    {
-      tool: 'maestro',
-      runId: run.runId,
-      startedAt: new Date().toISOString(),
-      flows: resolvedFlows,
-      appId: resolvedAppId,
-      platform: resolvedPlatform || null,
-      serverUrlHost: resolvedHostServerUrl || null,
-      serverUrlDevice: resolvedDeviceServerUrl || null,
-      passThrough,
-      env: {
-        APP_ENV: process.env.APP_ENV ?? null,
-      },
-    },
-    null,
-    2,
-  ) + '\n',
-  'utf8',
-);
-
-const childArgs = [
-  'test',
-  resolvedFlows,
-  '--debug-output',
-  debugOutputDir,
-  // Pass `appId` as a Maestro parameter so flows can use `${HAPPIER_E2E_MOBILE_APP_ID}`.
-  '-e',
-  `HAPPIER_E2E_MOBILE_APP_ID=${resolvedAppId}`,
-  ...(resolvedDeviceServerUrl
-    ? ['-e', `HAPPIER_E2E_SERVER_URL=${resolvedDeviceServerUrl}`]
-    : []),
-  ...(resolvedHostServerUrl
-    ? ['-e', `HAPPIER_E2E_SERVER_URL_HOST=${resolvedHostServerUrl}`]
-    : []),
-  ...(resolvedPlatform
-    ? ['-e', `HAPPIER_E2E_MOBILE_PLATFORM=${resolvedPlatform}`]
-    : []),
-  ...passThrough,
-];
-
-await runHeartbeatWrappedCommand({
-  toolName: 'maestro',
-  config: resolvedFlows,
-  command: maestroCommand(),
-  args: childArgs,
-  spawnOptions: createMaestroSpawnOptions(process.env),
-  resolveExitCode(result) {
-    return typeof result.code === 'number' ? result.code : resolveSignalExitCode(result.signal);
-  },
-});
+// eslint-disable-next-line no-console
+console.error('[tests] `tsx` invocation failed.');
+process.exit(1);

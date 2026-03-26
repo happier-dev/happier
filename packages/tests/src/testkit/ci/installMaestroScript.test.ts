@@ -18,10 +18,28 @@ describe('scripts/ci/install_maestro.sh', () => {
         const repoRoot = resolve(__dirname, '../../../../..');
         const scratch = await mkdtemp(join(tmpdir(), 'happier-install-maestro-'));
         const zipRoot = join(scratch, 'ziproot');
-        const binDir = join(zipRoot, 'bin');
+        const maestroHomeDir = join(zipRoot, 'maestro');
+        const binDir = join(maestroHomeDir, 'bin');
+        const libDir = join(maestroHomeDir, 'lib');
         const maestroBin = join(binDir, 'maestro');
         await mkdir(binDir, { recursive: true });
-        await writeFile(maestroBin, '#!/usr/bin/env sh\necho maestro-stub\n', 'utf8');
+        await mkdir(libDir, { recursive: true });
+        await writeFile(join(libDir, 'marker.txt'), 'ok\n', 'utf8');
+        await writeFile(
+            maestroBin,
+            [
+                '#!/usr/bin/env sh',
+                'set -euo pipefail',
+                'script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+                'if [ ! -f "$script_dir/../lib/marker.txt" ]; then',
+                '  echo "missing-marker" >&2',
+                '  exit 1',
+                'fi',
+                'echo maestro-stub',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
         await chmod(maestroBin, 0o755);
 
         const zipPath = join(scratch, 'maestro.zip');
@@ -54,10 +72,28 @@ describe('scripts/ci/install_maestro.sh', () => {
         const repoRoot = resolve(__dirname, '../../../../..');
         const scratch = await mkdtemp(join(tmpdir(), 'happier-install-maestro-'));
         const zipRoot = join(scratch, 'ziproot');
-        const binDir = join(zipRoot, 'bin');
+        const maestroHomeDir = join(zipRoot, 'maestro');
+        const binDir = join(maestroHomeDir, 'bin');
+        const libDir = join(maestroHomeDir, 'lib');
         const maestroBin = join(binDir, 'maestro');
         await mkdir(binDir, { recursive: true });
-        await writeFile(maestroBin, '#!/usr/bin/env sh\necho maestro-stub\n', 'utf8');
+        await mkdir(libDir, { recursive: true });
+        await writeFile(join(libDir, 'marker.txt'), 'ok\n', 'utf8');
+        await writeFile(
+            maestroBin,
+            [
+                '#!/usr/bin/env sh',
+                'set -euo pipefail',
+                'script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+                'if [ ! -f "$script_dir/../lib/marker.txt" ]; then',
+                '  echo "missing-marker" >&2',
+                '  exit 1',
+                'fi',
+                'echo maestro-stub',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
         await chmod(maestroBin, 0o755);
 
         const zipPath = join(scratch, 'maestro.zip');
