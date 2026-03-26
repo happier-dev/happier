@@ -11,6 +11,7 @@ import { inTx } from "@/storage/inTx";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
 import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
+import { reserveNextPendingQueuePosition } from "@/app/session/pending/reserveNextPendingQueuePosition";
 
 type ParticipantCursor = SessionParticipantCursor;
 
@@ -50,7 +51,7 @@ export async function listPendingMessages(params: {
         if (!includeDiscarded) {
             const rows = await db.sessionPendingMessage.findMany({
                 where: { sessionId, status: "queued" },
-                orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+                orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
                 select,
             });
             return { ok: true, pending: rows.map(mapPendingMessageRow) };
@@ -59,7 +60,7 @@ export async function listPendingMessages(params: {
         const [queued, discarded] = await Promise.all([
             db.sessionPendingMessage.findMany({
                 where: { sessionId, status: "queued" },
-                orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+                orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
                 select,
             }),
             db.sessionPendingMessage.findMany({
@@ -158,12 +159,7 @@ export async function enqueuePendingMessage(params: {
                 };
             }
 
-            const lastQueued = await tx.sessionPendingMessage.findFirst({
-                where: { sessionId, status: "queued" },
-                orderBy: [{ position: "desc" }, { createdAt: "desc" }],
-                select: { position: true },
-            });
-            const position = (lastQueued?.position ?? 0) + 1;
+            const position = await reserveNextPendingQueuePosition(tx, sessionId);
 
             const created = await tx.sessionPendingMessage.create({
                 data: {
@@ -422,12 +418,7 @@ export async function restorePendingMessage(params: {
             if (!existing) return { ok: false, error: "not-found" } as const;
 
             if (existing.status === "discarded") {
-                const lastQueued = await tx.sessionPendingMessage.findFirst({
-                    where: { sessionId, status: "queued" },
-                    orderBy: [{ position: "desc" }, { createdAt: "desc" }],
-                    select: { position: true },
-                });
-                const position = (lastQueued?.position ?? 0) + 1;
+                const position = await reserveNextPendingQueuePosition(tx, sessionId);
 
                 await tx.sessionPendingMessage.update({
                     where: { sessionId_localId: { sessionId, localId } },

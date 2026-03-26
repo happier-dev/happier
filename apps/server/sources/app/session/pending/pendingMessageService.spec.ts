@@ -42,6 +42,7 @@ describe("pendingMessageService", () => {
         currentTx = {
             session: {
                 findUnique: vi.fn(),
+                update: vi.fn(async () => ({ pendingQueueSeq: 1 })),
             },
             sessionPendingMessage: {
                 findUnique: vi.fn(),
@@ -155,5 +156,52 @@ describe("pendingMessageService", () => {
                 data: { content: { t: "plain", v: { type: "user", text: "hi" } } },
             }),
         );
+    });
+
+    it("allocates queued positions from a session counter so racing enqueues keep their order", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+        let nextPendingQueueSeq = 0;
+
+        currentTx.session.findUnique.mockResolvedValue({
+            encryptionMode: "e2ee",
+            pendingCount: 0,
+            pendingVersion: 0,
+            pendingQueueSeq: 0,
+        });
+        currentTx.session.update.mockImplementation(async () => ({ pendingQueueSeq: ++nextPendingQueueSeq }));
+        currentTx.sessionPendingMessage.findUnique.mockResolvedValue(null);
+        currentTx.sessionPendingMessage.findFirst.mockResolvedValue(null);
+        currentTx.sessionPendingMessage.create.mockImplementation(async ({ data }: { data: any }) => ({
+            localId: data.localId,
+            content: data.content,
+            status: data.status,
+            position: data.position,
+            createdAt,
+            updatedAt: createdAt,
+            discardedAt: null,
+            discardedReason: null,
+            authorAccountId: data.authorAccountId,
+        }));
+
+        const [first, second] = await Promise.all([
+            enqueuePendingMessageCompat({
+                actorUserId: "u1",
+                sessionId: "s1",
+                localId: "l1",
+                ciphertext: "cipher-1",
+            }),
+            enqueuePendingMessageCompat({
+                actorUserId: "u1",
+                sessionId: "s1",
+                localId: "l2",
+                ciphertext: "cipher-2",
+            }),
+        ]);
+
+        expect(first.ok).toBe(true);
+        expect(second.ok).toBe(true);
+        expect(currentTx.session.update).toHaveBeenCalledTimes(2);
+        expect(currentTx.sessionPendingMessage.findFirst).toHaveBeenCalledTimes(2);
+        expect(currentTx.sessionPendingMessage.create.mock.calls.map((call: any[]) => call[0].data.position)).toEqual([1, 2]);
     });
 });

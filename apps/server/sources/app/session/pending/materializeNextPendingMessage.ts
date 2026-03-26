@@ -119,6 +119,7 @@ export async function materializeNextPendingMessage(params: {
         // If the counter is inconsistent (e.g. race/data corruption), fall back to checking the queue.
         const hasQueued = await db.sessionPendingMessage.findFirst({
             where: { sessionId, status: "queued" },
+            orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
             select: { localId: true },
         });
         if (!hasQueued) {
@@ -146,7 +147,7 @@ export async function materializeNextPendingMessage(params: {
 
             const nextPending = await tx.sessionPendingMessage.findFirst({
                 where: { sessionId, status: "queued" },
-                orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+                orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
                 select: { localId: true, content: true, status: true },
             });
 

@@ -184,6 +184,60 @@ describe("pendingMessageService (shared sessions)", () => {
         expect((aMsg?.content as any)?.c).toBe("cipher-a-2");
     });
 
+    it("keeps newly queued messages after pre-existing queued rows when the queue counter lags behind", async () => {
+        const owner = await createAccount("owner");
+        const session = await createSession(owner.id);
+
+        const localIdA = `seed-a-${randomUUID()}`;
+        const localIdB = `seed-b-${randomUUID()}`;
+        const localIdC = `new-c-${randomUUID()}`;
+
+        await db.sessionPendingMessage.create({
+            data: {
+                sessionId: session.id,
+                localId: localIdA,
+                content: { t: "encrypted", c: "cipher-seed-a" },
+                status: "queued",
+                position: 5,
+                authorAccountId: owner.id,
+            },
+        });
+        await db.sessionPendingMessage.create({
+            data: {
+                sessionId: session.id,
+                localId: localIdB,
+                content: { t: "encrypted", c: "cipher-seed-b" },
+                status: "queued",
+                position: 6,
+                authorAccountId: owner.id,
+            },
+        });
+        await db.session.update({
+            where: { id: session.id },
+            data: { pendingQueueSeq: 0 },
+        });
+
+        const enqueue = await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId: localIdC,
+            ciphertext: "cipher-new-c",
+        });
+        expect(enqueue.ok).toBe(true);
+        if (!enqueue.ok) throw new Error("expected enqueue to succeed");
+        expect(enqueue.pending.position).toBe(7);
+
+        const listQueued = await listPendingMessages({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            includeDiscarded: false,
+        });
+        expect(listQueued.ok).toBe(true);
+        if (!listQueued.ok) throw new Error("unexpected list failure");
+        expect(listQueued.pending.map((p) => p.localId)).toEqual([localIdA, localIdB, localIdC]);
+        expect(listQueued.pending.map((p) => p.position)).toEqual([5, 6, 7]);
+    });
+
     it("forbids non-owner participants from materializing pending", async () => {
         const owner = await createAccount("owner");
         const collaborator = await createAccount("collab");
