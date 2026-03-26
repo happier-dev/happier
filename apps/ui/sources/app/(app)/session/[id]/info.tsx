@@ -22,7 +22,7 @@ import { Session } from '@/sync/domains/state/storageTypes';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { HappyError } from '@/utils/errors/errors';
-import { stopSessionAndMaybeArchive } from '@/components/sessions/sessionStopArchiveFlow';
+import { clearSessionVisibleWhenInactive, stopSessionAndMaybeArchive } from '@/components/sessions/sessionStopArchiveFlow';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
@@ -239,6 +239,7 @@ function SessionInfoContent({ session }: { session: Session }) {
 
     const [stoppingSession, performStop] = useHappyAction(async () => {
         await stopSessionAndMaybeArchive({
+            sessionId: session.id,
             hideInactiveSessions,
             isPinned: isPinnedSession,
             stopSession: async () => await sessionStop(session.id),
@@ -270,6 +271,7 @@ function SessionInfoContent({ session }: { session: Session }) {
         if (!result.success) {
             throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
         }
+        clearSessionVisibleWhenInactive(session.id);
         router.back();
         router.back();
     });

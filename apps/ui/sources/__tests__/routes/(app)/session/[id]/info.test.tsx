@@ -21,6 +21,7 @@ const sessionStopSpy = vi.fn(async () => ({ success: true }));
 const sessionArchiveSpy = vi.fn(async () => ({ success: true, archivedAt: 1 }));
 const modalAlertSpy = vi.fn();
 const modalConfirmSpy = vi.fn(async () => true);
+const applySessionListRenderablePatchesSpy = vi.fn();
 let hideInactiveSessions = false;
 let pinnedSessionKeysV1: unknown = null;
 let resolvedServerId = 'server-1';
@@ -84,7 +85,11 @@ installSessionRouteCommonModuleMocks({
         createStorageModuleMock({
             importOriginal,
             overrides: {
-                storage: { getState: () => ({}) } as any,
+                storage: {
+                    getState: () => ({
+                        applySessionListRenderablePatches: applySessionListRenderablePatchesSpy,
+                    }),
+                } as any,
                 useSession: (sessionId: string) => useSessionSpy(sessionId),
                 useIsDataReady: () => isDataReady,
                 useLocalSetting: <K extends keyof LocalSettings>(name: K): LocalSettings[K] => {
