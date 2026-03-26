@@ -120,6 +120,7 @@ export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
                     return (
                         <Pressable
                             key={tab.key}
+                            testID={`tabbar-tab-${tab.key}`}
                             style={styles.tab}
                             onPress={() => onTabPress(tab.key)}
                             hitSlop={8}
