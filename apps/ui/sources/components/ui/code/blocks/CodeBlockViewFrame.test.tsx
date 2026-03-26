@@ -74,6 +74,32 @@ describe('CodeBlockViewFrame', () => {
         expect(scrollView.props.testID).toBe('markdown-code-block-scroll');
     });
 
+    it('maps scrollTestID into accessibilityLabel when native E2E labels are enabled', async () => {
+        const previous = process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
+        process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = '1';
+        try {
+            const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
+
+            const tree = (await renderScreen(
+                <CodeBlockViewFrame
+                    code={'x'}
+                    language={null}
+                    wrap={false}
+                    showCopyButton={false}
+                    scrollTestID="markdown-code-block-scroll"
+                >
+                    <React.Fragment>child</React.Fragment>
+                </CodeBlockViewFrame>,
+            )).tree;
+
+            const scrollView = tree.findByType('ScrollView');
+            expect(scrollView.props.accessibilityLabel).toBe('markdown-code-block-scroll');
+        } finally {
+            if (previous === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
+            else process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = previous;
+        }
+    });
+
     it('positions copy button absolutely when there is no header content', async () => {
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 

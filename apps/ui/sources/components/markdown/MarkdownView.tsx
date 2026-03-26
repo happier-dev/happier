@@ -10,6 +10,7 @@ import { MermaidRenderer } from './MermaidRenderer';
 import { t } from '@/text';
 import { MarkdownSpansView } from './MarkdownSpansView';
 import { MarkdownCodeBlock } from './MarkdownCodeBlock';
+import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 // Option type for callback
 export type Option = {
@@ -219,6 +220,10 @@ function RenderTableBlock(props: {
   const columnCount = props.headers.length;
   const rowCount = props.rows.length;
   const isLastRow = (rowIndex: number) => rowIndex === rowCount - 1;
+  const e2eAccessibilityLabel = resolveAutomationAccessibilityLabel({
+      testID: 'markdown-table-scroll',
+      accessibilityLabel: undefined,
+  });
 
   const scrollContents = (
       <View style={style.tableContent}>
@@ -261,6 +266,8 @@ function RenderTableBlock(props: {
           {Platform.OS === 'web' ? (
               <ScrollView
                   testID="markdown-table-scroll"
+                  accessibilityLabel={e2eAccessibilityLabel}
+                  accessible={e2eAccessibilityLabel !== undefined}
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   nestedScrollEnabled={true}
@@ -271,6 +278,8 @@ function RenderTableBlock(props: {
           ) : (
               <GestureHandlerScrollView
                   testID="markdown-table-scroll"
+                  accessibilityLabel={e2eAccessibilityLabel}
+                  accessible={e2eAccessibilityLabel !== undefined}
                   horizontal
                   showsHorizontalScrollIndicator={true}
                   nestedScrollEnabled={true}

@@ -5,8 +5,10 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 
 - runFlow:
     when:
-      visible:
-        id: welcome-configure-server
+      visible: "Development Build"
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
     file: _shared/configureServerIfNeeded.yaml
 
 - runFlow:
@@ -16,19 +18,15 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: _shared/openDevMessagesDemo.yaml
 
 # Table horizontal scroll (sentinel is offscreen to the right).
-- assertVisible:
-    id: markdown-table-scroll
+- assertVisible: markdown-table-scroll
 - swipe:
     direction: LEFT
-    element:
-      id: markdown-table-scroll
+    element: markdown-table-scroll
 - assertVisible: "MOBILE_E2E_TABLE_SENTINEL_RIGHT"
 
 # Code block horizontal scroll (sentinel is offscreen to the right).
-- assertVisible:
-    id: markdown-code-block-scroll
+- assertVisible: markdown-code-block-scroll
 - swipe:
     direction: LEFT
-    element:
-      id: markdown-code-block-scroll
+    element: markdown-code-block-scroll
 - assertVisible: "MOBILE_E2E_CODE_SENTINEL_RIGHT"

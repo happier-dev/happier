@@ -7,6 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 export type CodeBlockViewFrameProps = Readonly<{
     code: string;
@@ -34,6 +35,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
     const [isHovered, setIsHovered] = React.useState(false);
     const [copied, setCopied] = React.useState(false);
     const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const e2eAccessibilityLabel = resolveAutomationAccessibilityLabel({ testID: scrollTestID, accessibilityLabel: undefined });
 
     const onCopy = React.useCallback(async () => {
         try {
@@ -116,6 +118,8 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
             ) : (
                 <ScrollView
                     testID={scrollTestID}
+                    accessibilityLabel={e2eAccessibilityLabel}
+                    accessible={e2eAccessibilityLabel !== undefined}
                     horizontal
                     showsHorizontalScrollIndicator={false}
                     nestedScrollEnabled={true}
