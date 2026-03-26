@@ -22,6 +22,7 @@ import { Session } from '@/sync/domains/state/storageTypes';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { HappyError } from '@/utils/errors/errors';
+import { stopSessionAndMaybeArchive } from '@/components/sessions/sessionStopArchiveFlow';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
@@ -39,6 +40,7 @@ import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { executeSessionForkAction } from '@/sync/domains/sessionFork/executeSessionForkAction';
 import { canHandoffConversation } from '@/sync/domains/sessionHandoff/handoffUiSupport';
 import { runSessionHandoffPickerFlow } from '@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow';
+import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHandoff/resolveSessionHandoffSourceMachineId';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { getActionSpec } from '@happier-dev/protocol';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
@@ -98,6 +100,8 @@ function SessionInfoContent({ session }: { session: Session }) {
     const profiles = Array.isArray(profilesSetting) ? profilesSetting : [];
     const actionsSettingsV1 = useSetting('actionsSettingsV1');
     const sessionReplayEnabled = useSetting('sessionReplayEnabled') === true;
+    const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
+    const pinnedSessionKeysV1 = useSetting('pinnedSessionKeysV1');
     const sharingSupported = useSessionSharingSupport();
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.enabled !== false;
@@ -171,6 +175,10 @@ function SessionInfoContent({ session }: { session: Session }) {
         return readMachineTargetForSession(session.id);
     }, [session.id, session.updatedAt, session.metadata]);
     const reachableMachineId = reachableMachineTarget?.machineId ?? null;
+    const sourceMachineIdForHandoff = React.useMemo(
+        () => resolveSessionHandoffSourceMachineId({ sessionMetadata: session.metadata as any }),
+        [session.metadata],
+    );
 
     const sessionLogPath = React.useMemo(() => {
         const value = typeof (session.metadata as any)?.sessionLogPath === 'string'
@@ -222,12 +230,22 @@ function SessionInfoContent({ session }: { session: Session }) {
     const canStopSession = !session.accessLevel;
     const isArchivedSession = session.archivedAt != null;
     const canArchiveSession = canManageSharing && !session.active && !isArchivedSession;
+    const resolvedServerId = resolveServerIdForSessionIdFromLocalCache(session.id);
+    const isPinnedSession = Boolean(
+        resolvedServerId &&
+        Array.isArray(pinnedSessionKeysV1) &&
+        pinnedSessionKeysV1.includes(`${resolvedServerId}:${session.id}`),
+    );
 
     const [stoppingSession, performStop] = useHappyAction(async () => {
-        const result = await sessionStop(session.id);
-        if (!result.success) {
-            throw new HappyError(result.message || t('sessionInfo.failedToStopSession'), false);
-        }
+        await stopSessionAndMaybeArchive({
+            hideInactiveSessions,
+            isPinned: isPinnedSession,
+            stopSession: async () => await sessionStop(session.id),
+            archiveSession: async () => await sessionArchiveWithServerScope(session.id, { serverId: null }),
+            stopErrorMessage: t('sessionInfo.failedToStopSession'),
+            archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
+        });
         router.back();
         router.back();
     });
@@ -274,12 +292,12 @@ function SessionInfoContent({ session }: { session: Session }) {
         const res = await runSessionHandoffPickerFlow({
             execute: executor.execute as any,
             sessionId: session.id,
-            sourceMachineId: reachableMachineId,
+            sourceMachineId: sourceMachineIdForHandoff,
             serverId,
             placement: 'session_info',
         });
         if (!res?.ok) return;
-    }, [executor.execute, reachableMachineId, session.id, session.metadata]);
+    }, [executor.execute, sourceMachineIdForHandoff, session.id, session.metadata]);
 
     const [handingOffSession, performHandoff] = useHappyAction(handleHandoffAction);
 
@@ -462,7 +480,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                     <Item
                         title={t('sessionInfo.connectionStatus')}
                         detail={sessionStatus.isConnected ? t('status.online') : t('status.offline')}
-                        icon={<Ionicons name="pulse-outline" size={29} color={sessionStatus.isConnected ? "#34C759" : "#8E8E93"} />}
+                        icon={<Ionicons name="pulse-outline" size={29} color={sessionStatus.isConnected ? theme.colors.success : theme.colors.textSecondary} />}
                         showChevron={false}
                     />
                     <Item
@@ -816,8 +834,10 @@ export default React.memo(() => {
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
 
-    // Handle three states: loading, deleted, and exists
-    if (!isDataReady || !sessionHydrated) {
+    // Handle three states: loading, deleted, and exists.
+    // If the session record is already present, fail open and render it even if global hydration
+    // is still in progress; otherwise deep links can get stuck in a permanent spinner state.
+    if (!session && (!isDataReady || !sessionHydrated)) {
         // Still loading data
         return (
             <View testID="session-info-screen" style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>

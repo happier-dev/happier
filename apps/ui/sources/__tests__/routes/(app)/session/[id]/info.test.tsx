@@ -14,7 +14,16 @@ let mockSession: any = null;
 let isDataReady = true;
 let sessionHydrated = true;
 const routerPushSpy = vi.fn();
+const routerBackSpy = vi.fn();
 const readMachineTargetForSessionSpy = vi.fn();
+const resolveServerIdForSessionIdFromLocalCacheSpy = vi.fn();
+const sessionStopSpy = vi.fn(async () => ({ success: true }));
+const sessionArchiveSpy = vi.fn(async () => ({ success: true, archivedAt: 1 }));
+const modalAlertSpy = vi.fn();
+const modalConfirmSpy = vi.fn(async () => true);
+let hideInactiveSessions = false;
+let pinnedSessionKeysV1: unknown = null;
+let resolvedServerId = 'server-1';
 let mockAgentCore: any = {
     resume: {},
     ui: { agentPickerIconName: 'code-slash-outline' },
@@ -37,7 +46,7 @@ const useSessionSpy = vi.fn<(sessionId: string) => any>(() => mockSession);
 const routerMock = createExpoRouterMock({
     router: {
         push: routerPushSpy,
-        back: vi.fn(),
+        back: routerBackSpy,
         replace: vi.fn(),
         setParams: vi.fn(),
     },
@@ -61,6 +70,16 @@ installSessionRouteCommonModuleMocks({
             },
         });
     },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            confirmResult: true,
+            spies: {
+                alert: modalAlertSpy,
+                confirm: modalConfirmSpy,
+            },
+        }).module;
+    },
     storageModule: async (importOriginal) =>
         createStorageModuleMock({
             importOriginal,
@@ -74,7 +93,15 @@ installSessionRouteCommonModuleMocks({
                     }
                     return null as unknown as LocalSettings[K];
                 },
-                useSetting: () => null,
+                useSetting: (key: string) => {
+                    if (key === 'hideInactiveSessions') {
+                        return hideInactiveSessions;
+                    }
+                    if (key === 'pinnedSessionKeysV1') {
+                        return pinnedSessionKeysV1;
+                    }
+                    return null;
+                },
             },
         }),
 });
@@ -103,8 +130,13 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
 }));
 vi.mock('@/components/ui/media/CodeView', () => ({ CodeView: 'CodeView' }));
 vi.mock('@/components/sessions/info/SessionRetentionNotice', () => ({ SessionRetentionNotice: 'SessionRetentionNotice' }));
-vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: () => [false, vi.fn()] }));
-vi.mock('@/sync/ops', () => ({ sessionArchiveWithServerScope: vi.fn(), sessionDelete: vi.fn(), sessionRename: vi.fn(), sessionStop: vi.fn() }));
+vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: (fn: any) => [false, fn] }));
+vi.mock('@/sync/ops', () => ({
+    sessionArchiveWithServerScope: sessionArchiveSpy,
+    sessionDelete: vi.fn(),
+    sessionRename: vi.fn(),
+    sessionStop: sessionStopSpy,
+}));
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
     return {
@@ -119,7 +151,7 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({ useAutomationsSupport: 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => false }));
 vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({ useSessionExecutionRunsSupported: () => false }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({ createDefaultActionExecutor: () => ({}) }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({ resolveServerIdForSessionIdFromLocalCache: vi.fn() }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({ resolveServerIdForSessionIdFromLocalCache: resolveServerIdForSessionIdFromLocalCacheSpy }));
 vi.mock('@/sync/domains/settings/actionsSettings', () => ({ isActionEnabledInState: () => true }));
 vi.mock('@/sync/domains/sessionFork/forkUiSupport', () => ({ canForkConversation: () => true }));
 vi.mock('@/sync/domains/sessionFork/executeSessionForkAction', () => ({ executeSessionForkAction: vi.fn() }));
@@ -140,7 +172,19 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
     };
 });
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
-vi.mock('@/utils/sessions/sessionUtils', () => ({ getSessionName: () => 'name', useSessionStatus: () => ({ color: 'green' }), formatOSPlatform: () => 'macOS', formatPathRelativeToHome: (p: string) => p, getSessionAvatarId: () => 'id' }));
+vi.mock('@/utils/sessions/sessionUtils', () => ({
+    getSessionName: () => 'name',
+    useSessionStatus: () => ({
+        isConnected: true,
+        statusText: 'Connected',
+        statusColor: 'green',
+        statusDotColor: 'green',
+        isPulsing: false,
+    }),
+    formatOSPlatform: () => 'macOS',
+    formatPathRelativeToHome: (p: string) => p,
+    getSessionAvatarId: () => 'id',
+}));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('@/utils/system/versionUtils', () => ({ isVersionSupported: () => true, MINIMUM_CLI_VERSION: '0.0.0' }));
 vi.mock('@/utils/sessions/terminalSessionDetails', () => ({ getAttachCommandForSession: () => null, getTmuxFallbackReason: () => null, getTmuxTargetForSession: () => null }));
@@ -158,6 +202,15 @@ describe('/session/[id]/info', () => {
         routerPushSpy.mockReset();
         readMachineTargetForSessionSpy.mockReset();
         readMachineTargetForSessionSpy.mockReturnValue(null);
+        sessionStopSpy.mockClear();
+        sessionArchiveSpy.mockClear();
+        modalAlertSpy.mockClear();
+        modalConfirmSpy.mockClear();
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockClear();
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue(resolvedServerId);
+        hideInactiveSessions = false;
+        pinnedSessionKeysV1 = null;
+        resolvedServerId = 'server-1';
         mockAgentCore = {
             resume: {},
             ui: { agentPickerIconName: 'code-slash-outline' },
@@ -181,6 +234,23 @@ describe('/session/[id]/info', () => {
         sessionHydrated = false;
         const screen = await renderInfoScreen();
         expect(screen.getTextContent()).toContain('common.loading');
+    });
+
+    it('fails open and renders the session when the record exists even if global hydration is still in progress', async () => {
+        mockSession = {
+            id: 'session-1234567890abcdef',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+        };
+        isDataReady = false;
+        sessionHydrated = false;
+        const screen = await renderInfoScreen();
+        expect(screen.getTextContent()).not.toContain('common.loading');
+        expect(screen.getTextContent()).toContain('name');
     });
 
     it('normalizes the route id before looking up the session', async () => {
@@ -292,5 +362,58 @@ describe('/session/[id]/info', () => {
         screen.pressByTestId('sessionInfo.viewMachine');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/machine/machine-target');
+    });
+
+    it('offers to archive after stopping an unpinned session when inactive sessions are hidden', async () => {
+        hideInactiveSessions = true;
+        pinnedSessionKeysV1 = [];
+        mockSession = {
+            id: 'session-1',
+            active: true,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+        };
+
+        const screen = await renderInfoScreen();
+        screen.pressByTestId('sessionInfo.stopSession');
+
+        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+        const actions = modalAlertSpy.mock.calls[0][2];
+        await actions[1].onPress();
+
+        expect(sessionStopSpy).toHaveBeenCalledWith('session-1');
+        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
+        expect(sessionArchiveSpy).toHaveBeenCalledWith('session-1', { serverId: null });
+        expect(routerBackSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('stops without prompting to archive when the session is pinned', async () => {
+        hideInactiveSessions = true;
+        pinnedSessionKeysV1 = ['server-1:session-1'];
+        resolvedServerId = 'server-1';
+        mockSession = {
+            id: 'session-1',
+            active: true,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+        };
+
+        const screen = await renderInfoScreen();
+        screen.pressByTestId('sessionInfo.stopSession');
+
+        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+        const actions = modalAlertSpy.mock.calls[0][2];
+        await actions[1].onPress();
+
+        expect(sessionStopSpy).toHaveBeenCalledWith('session-1');
+        expect(modalConfirmSpy).not.toHaveBeenCalled();
+        expect(sessionArchiveSpy).not.toHaveBeenCalled();
+        expect(routerBackSpy).toHaveBeenCalledTimes(2);
     });
 });

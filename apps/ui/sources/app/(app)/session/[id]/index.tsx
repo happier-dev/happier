@@ -8,6 +8,7 @@ import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessio
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { getTempData } from '@/utils/sessions/tempDataStore';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 
 export default React.memo(() => {
     const params = useLocalSearchParams<{
@@ -50,7 +51,18 @@ export default React.memo(() => {
         return Array.isArray(data?.attachmentDrafts) ? data.attachmentDrafts : null;
     }, [recoveryDataId]);
     const paneUrlState = React.useMemo(() => parseSessionPaneUrlState(params as any), [params]);
-    const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionRoute.ensureSessionVisible');
+
+    const [activeServerGeneration, setActiveServerGeneration] = React.useState(() => getActiveServerSnapshot().generation);
+    React.useEffect(() => {
+        return subscribeActiveServer((snapshot) => {
+            setActiveServerGeneration(snapshot.generation);
+        });
+    }, []);
+
+    const sessionHydrated = useHydrateSessionForRoute(
+        sessionId,
+        `SessionRoute.ensureSessionVisible gen=${activeServerGeneration}`,
+    );
 
     const shouldDeferMount = Platform.OS !== 'web';
     const [mounted, setMounted] = React.useState(!shouldDeferMount);
