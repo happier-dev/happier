@@ -390,7 +390,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
 
     return (
         <ToolSectionView>
-            <View style={styles.container}>
+            <View testID="ask-user-question" style={styles.container}>
                 {!canApprovePermissions && isRunning ? (
                     <Text style={{ color: theme.colors.textSecondary }}>
                         {disabledMessage}
@@ -410,6 +410,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                 {options.length === 0 || question.freeform ? (
                                     <View>
                                         <TextInput
+                                            testID={`ask-user-question.freeform:${qIndex}`}
                                             style={styles.freeformInput}
                                             value={freeformAnswers.get(qIndex) ?? ''}
                                             onChangeText={(text) => {
@@ -445,6 +446,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                     return (
                                         <TouchableOpacity
                                             key={oIndex}
+                                            testID={`ask-user-question.option:${qIndex}:${oIndex}`}
                                             style={[
                                                 styles.optionButton,
                                                 isSelected && styles.optionButtonSelected,
@@ -488,6 +490,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                 {canInteract && (
                     <View style={styles.actionsContainer}>
                         <TouchableOpacity
+                            testID="ask-user-question.submit"
                             style={[
                                 styles.submitButton,
                                 (!allQuestionsAnswered || isSubmitting) && styles.submitButtonDisabled,

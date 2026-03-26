@@ -58,6 +58,11 @@ describe('PermissionFooter (codexDecision)', () => {
 
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Run: pwd')).toBeUndefined();
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'common.yes')).toBeTruthy();
+
+        // Stable locators for Maestro flows.
+        expect(screen.findByProps({ testID: 'permission-footer.allow' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'permission-footer.deny' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'permission-footer.stop' })).toBeTruthy();
     });
 
     it('approves execpolicy amendment using the latest proposed_execpolicy_amendment payload', async () => {

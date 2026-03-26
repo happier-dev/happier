@@ -23,6 +23,9 @@ import { ChainTranscriptList } from '@/components/sessions/transcript/ChainTrans
 import { sync } from '@/sync/sync';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
 import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
+import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
+import { ToolError } from '@/components/tools/shell/presentation/ToolError';
+import { resolveToolPermissionTerminalErrorMessage } from '../permissions/resolveToolPermissionTerminalErrorMessage';
 
 
 interface ToolFullViewProps {
@@ -41,7 +44,26 @@ interface ToolFullViewProps {
 
 export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChildId, forcePermissionFooterInTranscript = false, interaction }: ToolFullViewProps) {
     const { theme } = useUnistyles();
-    const toolForRendering = React.useMemo<ToolCall>(() => normalizeToolCallForRendering(tool), [tool]);
+    const toolForRendering = React.useMemo<ToolCall>(() => {
+        return resolveInactiveSessionToolCallFailure({
+            tool: normalizeToolCallForRendering(tool),
+            permissionDisabledReason: interaction?.permissionDisabledReason,
+        });
+    }, [interaction?.permissionDisabledReason, tool]);
+
+    const permissionTerminalErrorMessage = React.useMemo(() => {
+        return resolveToolPermissionTerminalErrorMessage({
+            tool: toolForRendering,
+            metadata: metadata ?? null,
+            permissionDisabledReason: interaction?.permissionDisabledReason,
+        });
+    }, [interaction?.permissionDisabledReason, metadata, toolForRendering]);
+
+    const permissionTerminalError = permissionTerminalErrorMessage ? (
+        <TextSelectabilityScope selectable>
+            <ToolError message={permissionTerminalErrorMessage} />
+        </TextSelectabilityScope>
+    ) : null;
 
     const normalizedJumpChildId = typeof jumpChildId === 'string' && jumpChildId.length > 0 ? jumpChildId : null;
 
@@ -183,6 +205,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                             header={transcriptHeader}
                             footer={
                                 <>
+                                    {permissionTerminalError}
                                     {permissionFooter}
                                     {debugSection}
                                 </>
@@ -289,6 +312,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                     </TextSelectabilityScope>
                 )}
 
+                {permissionTerminalError}
                 {permissionFooter}
                 {debugSection}
             </View>

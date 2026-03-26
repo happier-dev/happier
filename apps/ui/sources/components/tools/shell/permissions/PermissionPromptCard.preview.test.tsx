@@ -241,7 +241,7 @@ describe('PermissionPromptCard (preview)', () => {
                 location={null}
                 sessionId="session-1"
                 metadata={null}
-                canApprovePermissions={false}
+                canApprovePermissions={true}
                 disabledReason="inactive"
             />,
         );

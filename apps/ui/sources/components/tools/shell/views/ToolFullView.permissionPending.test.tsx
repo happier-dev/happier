@@ -12,12 +12,17 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const ensureSidechainMessagesLoadedMock = vi.fn();
-const chainTranscriptListSpy = vi.fn();
+const hoisted = vi.hoisted(() => ({
+    ensureSidechainMessagesLoadedMock: vi.fn(),
+    chainTranscriptListSpy: vi.fn(),
+}));
+
+const ensureSidechainMessagesLoadedMock = hoisted.ensureSidechainMessagesLoadedMock;
+const chainTranscriptListSpy = hoisted.chainTranscriptListSpy;
 
 vi.mock('@/sync/sync', () => ({
     sync: {
-        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
+        ensureSidechainMessagesLoaded: hoisted.ensureSidechainMessagesLoadedMock,
     },
 }));
 
@@ -77,7 +82,7 @@ vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
 
 vi.mock('@/components/sessions/transcript/ChainTranscriptList', () => ({
     ChainTranscriptList: (props: any) => {
-        chainTranscriptListSpy(props);
+        hoisted.chainTranscriptListSpy(props);
         return React.createElement('ChainTranscriptList', props, props.footer);
     },
 }));
@@ -205,5 +210,37 @@ describe('ToolFullView (permission pending)', () => {
         expect(chainTranscriptListSpy).toHaveBeenCalledWith(expect.objectContaining({
             forcePermissionPromptsInTranscript: true,
         }));
+    });
+
+    it('renders an error (not an approval prompt) when the session is inactive and a permission was pending', async () => {
+        const { ToolFullView } = await import('./ToolFullView');
+        const { ToolError } = await import('@/components/tools/shell/presentation/ToolError');
+
+        const tool = makeToolCall({
+            name: 'edit',
+            state: 'running',
+            input: {},
+            result: null,
+            completedAt: null,
+            description: 'edit',
+            permission: { id: 'perm1', status: 'pending' },
+        });
+
+        const screen = await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+                interaction: {
+                    canSendMessages: true,
+                    canApprovePermissions: false,
+                    permissionDisabledReason: 'inactive',
+                },
+            }),
+        );
+
+        expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);
+        expect(screen.findAllByType(ToolError as any)).toHaveLength(1);
     });
 });

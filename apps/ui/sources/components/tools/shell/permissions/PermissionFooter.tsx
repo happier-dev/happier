@@ -68,10 +68,11 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const canApproveExecPolicy = permissionFooterBehavior?.supportsExecPolicyAmendment === true && execPolicyCommand.length > 0;
     const shouldHandleStopWithoutSessionAbort = permissionFooterBehavior?.stopHandling === 'denyOnly';
 
+    if (disabledReason === 'inactive') {
+        return null;
+    }
+
     if (!canApprovePermissions && permission.status === 'pending') {
-        if (disabledReason === 'inactive') {
-            return null;
-        }
         const summary = formatPermissionRequestSummary({ toolName, toolInput });
         const disabledMessage =
             disabledReason === 'public'
@@ -603,6 +604,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 <View style={styles.buttonContainer}>
                     {/* Decision protocol: Yes button */}
                     <TouchableOpacity
+                        testID="permission-footer.allow"
                         style={[
                             styles.button,
                             isPending && styles.buttonAllow,
@@ -633,6 +635,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     {/* Decision protocol: Yes, always allow this command button */}
                     {canApproveExecPolicy && (
                         <TouchableOpacity
+                            testID="permission-footer.allow-execpolicy"
                             style={[
                                 styles.button,
                                 isPending && styles.buttonForSession,
@@ -663,6 +666,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
                     {/* Decision protocol: Yes, and don't ask for a session button */}
                     <TouchableOpacity
+                        testID="permission-footer.allow-for-session"
                         style={[
                             styles.button,
                             isPending && styles.buttonForSession,
@@ -691,6 +695,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     </TouchableOpacity>
 
                     <TouchableOpacity
+                        testID="permission-footer.deny"
                         style={[
                             styles.button,
                             isPending && styles.buttonDeny,
@@ -724,6 +729,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
                     {/* Decision-protocol providers can customize stop handling through registry behavior. */}
                     <TouchableOpacity
+                        testID="permission-footer.stop"
                         style={[
                             styles.button,
                             isPending && styles.buttonDeny,
@@ -765,9 +771,10 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     })();
     const showAllowForSessionCommandName = isShellTool && typeof commandForShell === 'string' && commandForShell.length > 0 && Boolean(stripSimpleEnvPrelude(String(commandForShell)).split(/\s+/).filter(Boolean)[0]);
     return (
-        <View style={styles.container}>
+            <View style={styles.container}>
             <View style={styles.buttonContainer}>
                 <TouchableOpacity
+                    testID="permission-footer.allow"
                     style={[
                         styles.button,
                         isPending && styles.buttonAllow,
@@ -926,6 +933,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 )}
 
                 <TouchableOpacity
+                    testID="permission-footer.deny"
                     style={[
                         styles.button,
                         isPending && styles.buttonDeny,
@@ -958,6 +966,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 </TouchableOpacity>
 
                 <TouchableOpacity
+                    testID="permission-footer.stop"
                     style={[
                         styles.button,
                         isPending && styles.buttonDeny,

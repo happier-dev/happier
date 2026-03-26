@@ -163,7 +163,7 @@ describe('ToolView (permission pending)', () => {
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);
     });
 
-    it('does not render pending permission requests when the session is inactive', async () => {
+    it('renders the tool view but does not render PermissionFooter when the session is inactive', async () => {
         const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
@@ -186,7 +186,7 @@ describe('ToolView (permission pending)', () => {
             }),
         );
 
-        expect(screen.findAllByTestId('tool-view-header-primary')).toHaveLength(0);
+        expect(screen.findAllByTestId('tool-view-header-primary')).toHaveLength(1);
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);
     });
 });

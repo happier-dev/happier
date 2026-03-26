@@ -163,7 +163,7 @@ describe('ToolView (permission denied)', () => {
 
         const text = collectHostText(screen.tree).join('\n');
         expect(text).toContain('errors.permissionDenied');
-        expect(text).not.toContain('Read Only mode');
+        expect(text).not.toContain('errors.permissionDeniedReadOnlyMode');
     });
 
     it('attributes denial to Read Only mode for codexLike providers', async () => {
@@ -188,6 +188,6 @@ describe('ToolView (permission denied)', () => {
             }),
         );
 
-        expect(collectHostText(screen.tree).join('\n')).toContain('Read Only mode');
+        expect(collectHostText(screen.tree).join('\n')).toContain('errors.permissionDeniedReadOnlyMode');
     });
 });

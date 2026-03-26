@@ -94,7 +94,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const chrome = props.chrome ?? 'card';
 
-    if (props.canApprovePermissions === false && props.disabledReason === 'inactive') {
+    if (props.disabledReason === 'inactive') {
         return null;
     }
 

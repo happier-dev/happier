@@ -210,7 +210,7 @@ describe('ToolTimelineRow (permission pending)', () => {
         expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(1);
     });
 
-    it('does not render pending permission requests when the session is inactive', async () => {
+    it('renders the tool row but does not render PermissionFooter when the session is inactive', async () => {
         const { ToolTimelineRow } = await import('./ToolTimelineRow');
         const tool: any = {
             id: 'tool-inactive',
@@ -235,6 +235,7 @@ describe('ToolTimelineRow (permission pending)', () => {
             />,
         );
 
-        expect(screen.findAllByTestId('tool-timeline-row')).toHaveLength(0);
+        expect(screen.findAllByTestId('tool-timeline-row').length).toBeGreaterThan(0);
+        expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);
     });
 });

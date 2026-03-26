@@ -30,6 +30,7 @@ import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidecha
 import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { PermissionFooter } from '../permissions/PermissionFooter';
+import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 
 export const ToolTimelineRow = React.memo((props: {
     tool: ToolCall;
@@ -48,15 +49,22 @@ export const ToolTimelineRow = React.memo((props: {
     const { theme } = useUnistyles();
     const router = useRouter();
 
+    const toolForSession = React.useMemo(() => {
+        return resolveInactiveSessionToolCallFailure({
+            tool: props.tool,
+            permissionDisabledReason: props.interaction?.permissionDisabledReason,
+        });
+    }, [props.interaction?.permissionDisabledReason, props.tool]);
+
     const headerModel = React.useMemo(() => {
         return buildToolHeaderModel({
-            tool: props.tool,
+            tool: toolForSession,
             metadata: props.metadata,
             iconSize: 18,
             iconColorPrimary: theme.colors.text,
             iconColorSecondary: theme.colors.textSecondary,
         });
-    }, [props.metadata, props.tool, theme.colors.text, theme.colors.textSecondary]);
+    }, [props.metadata, theme.colors.text, theme.colors.textSecondary, toolForSession]);
     const toolForRendering = headerModel.toolForRendering;
 
     const toolViewDetailLevelDefault = useSetting('toolViewDetailLevelDefault');
@@ -188,13 +196,13 @@ export const ToolTimelineRow = React.memo((props: {
     const icon = React.useMemo(() => {
         if (iconSize === 18) return headerModel.icon;
         return buildToolHeaderModel({
-            tool: props.tool,
+            tool: toolForSession,
             metadata: props.metadata,
             iconSize,
             iconColorPrimary: theme.colors.text,
             iconColorSecondary: theme.colors.textSecondary,
         }).icon;
-    }, [headerModel.icon, iconSize, props.metadata, props.tool, theme.colors.text, theme.colors.textSecondary]);
+    }, [headerModel.icon, iconSize, props.metadata, theme.colors.text, theme.colors.textSecondary, toolForSession]);
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const showTaskRunningIndicator = isSubAgentTranscriptToolName(normalizedToolName);
@@ -231,8 +239,6 @@ export const ToolTimelineRow = React.memo((props: {
         ? 'transcript'
         : resolvePermissionPromptSurface(permissionPromptSurface);
     const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
-    const shouldHidePendingPermissionRequestDueToInactiveSession =
-        props.interaction?.permissionDisabledReason === 'inactive' && isWaitingForPermission;
     const permissionFooter =
         showPermissionPromptsInTranscript &&
         toolForRendering.permission &&
@@ -252,10 +258,6 @@ export const ToolTimelineRow = React.memo((props: {
                 disabledReason={props.interaction?.permissionDisabledReason}
             />
         ) : null;
-
-    if (shouldHidePendingPermissionRequestDueToInactiveSession) {
-        return null;
-    }
 
     return (
         <View style={styles.container}>

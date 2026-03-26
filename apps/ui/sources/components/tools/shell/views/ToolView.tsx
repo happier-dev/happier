@@ -29,6 +29,7 @@ import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLo
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
+import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 
 
 interface ToolViewProps {
@@ -82,15 +83,22 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         setting: normalizedToolViewExpandedDetailLevelDefaultSetting,
     });
 
+    const toolForSession = React.useMemo(() => {
+        return resolveInactiveSessionToolCallFailure({
+            tool,
+            permissionDisabledReason: props.interaction?.permissionDisabledReason,
+        });
+    }, [props.interaction?.permissionDisabledReason, tool]);
+
     const headerModel = React.useMemo(() => {
         return buildToolHeaderModel({
-            tool,
+            tool: toolForSession,
             metadata: props.metadata,
             iconSize: 18,
             iconColorPrimary: theme.colors.text,
             iconColorSecondary: theme.colors.textSecondary,
         });
-    }, [props.metadata, theme.colors.text, theme.colors.textSecondary, tool]);
+    }, [props.metadata, theme.colors.text, theme.colors.textSecondary, toolForSession]);
 
     const toolForRendering = headerModel.toolForRendering;
     const isWaitingForPermission = headerModel.isWaitingForPermission;
@@ -274,12 +282,6 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     const headerDescription = effectiveDetailLevel === 'title' ? null : description;
     const headerStatusText = effectiveDetailLevel === 'title' ? null : status;
     const showSubtitleInline = timelineDensity === 'compact' || effectiveDetailLevel === 'compact';
-    const shouldHidePendingPermissionRequestDueToInactiveSession =
-        props.interaction?.permissionDisabledReason === 'inactive' && isWaitingForPermission;
-
-    if (shouldHidePendingPermissionRequestDueToInactiveSession) {
-        return null;
-    }
 
     return (
         <View style={styles.container}>

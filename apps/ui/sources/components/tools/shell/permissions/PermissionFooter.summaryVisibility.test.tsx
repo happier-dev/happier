@@ -60,7 +60,7 @@ describe('PermissionFooter summary visibility', () => {
             toolName: 'Bash',
             toolInput: { command: 'pwd' },
             metadata: { flavor: 'opencode' },
-            canApprovePermissions: false,
+            canApprovePermissions: true,
             disabledReason: 'inactive',
         }));
 

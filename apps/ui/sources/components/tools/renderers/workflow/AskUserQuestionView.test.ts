@@ -185,6 +185,15 @@ describe('AskUserQuestionView', () => {
         expect(sendMessage).toHaveBeenCalledTimes(0);
     });
 
+    it('exposes stable testIDs for native E2E (Maestro)', async () => {
+        const screen = await renderView(makeTool());
+
+        expect(screen.findByProps({ testID: 'ask-user-question' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'ask-user-question.option:0:0' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'ask-user-question.option:0:1' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'ask-user-question.submit' })).toBeTruthy();
+    });
+
     it('does not allow answering when the permission id is missing', async () => {
         const screen = await renderView(makeTool({ permission: undefined }));
 
