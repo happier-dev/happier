@@ -21,6 +21,7 @@ describe('registerHappierMcpResources', () => {
         },
       },
       {
+        surface: 'session_agent',
         isActionEnabled: (id) => id !== 'review.start',
       },
     );
