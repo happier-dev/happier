@@ -101,6 +101,25 @@ Notes:
 - If you suspect stale Metro transforms, you can opt into clearing the Expo/Metro cache with `HAPPIER_E2E_EXPO_CLEAR=1` (default is off because `--clear` can occasionally crash Metro).
 - Manual QA tip: if concurrent code changes cause the UI to keep reloading, you can disable Expo web Fast Refresh/HMR **per browser tab** by opening the UI with `?happier_hmr=0` (re-enable with `?happier_hmr=1`). This is web-only + dev-only.
 
+### 4c) Native E2E (Maestro) (iOS/Android)
+
+Native end-to-end tests using **Maestro**. These are intended to cover mobile-specific regressions (touch/keyboard/back/gesture/popup rendering).
+
+**Root commands:**
+```bash
+yarn test:e2e:mobile
+yarn test:e2e:mobile:android
+yarn test:e2e:mobile:ios
+```
+
+Notes:
+- These lanes are **not** PR checks by default; they’re intended for manual dispatch / release validation while we stabilize CI emulator runs.
+- You need Java 17+ and an iOS simulator / Android emulator.
+- Set the target server URL (host): `HAPPIER_E2E_SERVER_URL=http://127.0.0.1:<port>`.
+  - Android emulator runs automatically map `127.0.0.1`/`localhost` to `10.0.2.2` for device-visible networking.
+- Artifacts are written under `packages/tests/.project/logs/e2e/mobile-maestro/`.
+- Override Maestro binary (if needed): `HAPPIER_E2E_MAESTRO_BIN=/path/to/maestro`.
+
 ### 5) Providers
 
 Provider contract/baseline suites in `packages/tests` (real provider CLIs).

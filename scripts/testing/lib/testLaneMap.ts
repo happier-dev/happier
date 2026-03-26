@@ -10,6 +10,7 @@ export type LaneId =
   | 'test:e2e:core:fast'
   | 'test:e2e:core:slow'
   | 'test:e2e:ui'
+  | 'test:e2e:mobile'
   | 'test:providers'
   | 'test:stress'
   | 'stack:test:unit'
@@ -52,6 +53,7 @@ export const TEST_LANE_DEFINITIONS: readonly TestLaneDefinition[] = Object.freez
     packageLocalOnly: false,
   },
   { id: 'test:e2e:ui', category: 'e2e', rootScriptName: 'test:e2e:ui', rootCommand: 'yarn test:e2e:ui', packageLocalOnly: false },
+  { id: 'test:e2e:mobile', category: 'e2e', rootScriptName: 'test:e2e:mobile', rootCommand: 'yarn test:e2e:mobile', packageLocalOnly: false },
   { id: 'test:providers', category: 'provider', rootScriptName: 'test:providers', rootCommand: 'yarn test:providers', packageLocalOnly: false },
   { id: 'test:stress', category: 'stress', rootScriptName: 'test:stress', rootCommand: 'yarn test:stress', packageLocalOnly: false },
   { id: 'stack:test:unit', category: 'unit', rootScriptName: null, rootCommand: null, packageLocalOnly: true },

@@ -95,6 +95,14 @@ const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
     triggerMode: 'optional',
   },
   {
+    id: 'test:e2e:mobile',
+    rootScriptName: 'test:e2e:mobile',
+    docsCommands: ['yarn test:e2e:mobile'],
+    workflowCommands: ['yarn -s test:e2e:mobile', 'yarn test:e2e:mobile'],
+    workflowMode: 'any',
+    triggerMode: 'optional',
+  },
+  {
     id: 'test:providers',
     rootScriptName: 'test:providers',
     docsCommands: ['yarn test:providers'],

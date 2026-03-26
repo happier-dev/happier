@@ -13,6 +13,14 @@ on:
         required: false
         default: false
         type: boolean
+      run_mobile_e2e_android:
+        required: false
+        default: false
+        type: boolean
+      run_mobile_e2e_ios:
+        required: false
+        default: false
+        type: boolean
       run_ui:
         required: false
         default: true
@@ -209,6 +217,99 @@ jobs:
           path: |
             packages/tests/.project/logs/e2e/ui-playwright
             .project/logs/e2e/*ui-e2e*
+          if-no-files-found: ignore
+
+  mobile-e2e-android:
+    # Native E2E is intentionally opt-in for now (not a PR check).
+    if: ${{ github.event_name == 'workflow_call' && inputs.run_mobile_e2e_android }}
+    name: Mobile E2E (Maestro) (android) (opt-in)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          # Keep this lane mobile-focused (avoid downloading heavy web-only assets).
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,tests"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        run: yarn install --frozen-lockfile
+
+      - name: Install Maestro
+        run: |
+          bash scripts/ci/install_maestro.sh
+
+      - name: Run Mobile E2E (android)
+        run: yarn -s test:e2e:mobile
+
+      - name: Upload Mobile E2E artifacts (Maestro)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-e2e-maestro-android-artifacts
+          path: |
+            packages/tests/.project/logs/e2e/mobile-maestro
+          if-no-files-found: ignore
+
+  mobile-e2e-ios:
+    # Native E2E is intentionally opt-in for now (not a PR check).
+    if: ${{ github.event_name == 'workflow_call' && inputs.run_mobile_e2e_ios }}
+    name: Mobile E2E (Maestro) (ios) (opt-in)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,tests"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        run: yarn install --frozen-lockfile
+
+      - name: Install Maestro
+        run: |
+          bash scripts/ci/install_maestro.sh
+
+      - name: Run Mobile E2E (ios)
+        run: yarn -s test:e2e:mobile:ios
+
+      - name: Upload Mobile E2E artifacts (Maestro)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-e2e-maestro-ios-artifacts
+          path: |
+            packages/tests/.project/logs/e2e/mobile-maestro
           if-no-files-found: ignore
 
   ui:

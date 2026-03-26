@@ -13,6 +13,7 @@ function createPackageJsonText(): string {
         'test:e2e:core:fast': 'yarn workspace @happier-dev/tests test:core:fast',
         'test:e2e:core:slow': 'yarn workspace @happier-dev/tests test:core:slow',
         'test:e2e:ui': 'yarn workspace @happier-dev/tests test:ui:e2e',
+        'test:e2e:mobile': 'yarn workspace @happier-dev/tests test:mobile:e2e:android',
         'test:providers': 'yarn workspace @happier-dev/tests test:providers',
         'test:stress': 'yarn workspace @happier-dev/tests test:stress',
         'test:db-contract:docker': 'yarn -s test:db-contract:postgres:docker && yarn -s test:db-contract:mysql:docker',
@@ -52,6 +53,7 @@ jobs:
       - run: yarn test:e2e:core:fast
       - run: yarn test:e2e:core:slow
       - run: yarn -s test:e2e:ui
+      - run: yarn -s test:e2e:mobile
       - run: yarn workspace @happier-dev/tests providers:run all smoke
       - run: yarn test:stress
       - run: yarn test:wiring:self && yarn test:wiring && yarn test:policy && yarn test:inventory && yarn test:migration:inventory
@@ -66,6 +68,7 @@ yarn test:integration
 yarn test:e2e:core:fast
 yarn test:e2e:core:slow
 yarn test:e2e:ui
+yarn test:e2e:mobile
 yarn test:providers
 yarn test:stress
 yarn test:db-contract:docker
