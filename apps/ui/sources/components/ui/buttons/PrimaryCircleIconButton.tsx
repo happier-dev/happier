@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleProp, View, ViewStyle } from 'react-
 
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 const stylesheet = StyleSheet.create((theme) => ({
   root: {
@@ -52,7 +53,10 @@ export const PrimaryCircleIconButton = React.memo(
         <Pressable
           testID={props.testID}
           accessibilityRole="button"
-          accessibilityLabel={props.accessibilityLabel}
+          accessibilityLabel={resolveAutomationAccessibilityLabel({
+            testID: props.testID,
+            accessibilityLabel: props.accessibilityLabel,
+          })}
           accessibilityHint={props.accessibilityHint}
           accessibilityState={{ ...(props.accessibilityState ?? {}), disabled: computedDisabled }}
           hitSlop={props.hitSlop}

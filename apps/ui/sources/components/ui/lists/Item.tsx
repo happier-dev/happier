@@ -12,6 +12,7 @@ import { getItemGroupRowCornerRadii } from '@/components/ui/lists/itemGroupRowCo
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
+import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 import {
     ITEM_CHEVRON_SIZE,
     ITEM_ICON_BOX_SIZE,
@@ -259,6 +260,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const webTestIdProps = isWeb && testID
         ? ({ 'data-testid': testID } as const)
         : undefined;
+    const nativeE2eAccessibilityLabel = resolveAutomationAccessibilityLabel({ testID, accessibilityLabel: undefined });
 
     // Handle copy functionality
     const handleCopy = React.useCallback(async () => {
@@ -577,6 +579,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}
                 accessibilityRole={accessibilityRole ?? 'button'}
+                accessibilityLabel={nativeE2eAccessibilityLabel}
                 disabled={disabled || loading}
                 style={({ pressed }) => {
                     const backgroundColor = (() => {

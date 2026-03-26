@@ -177,6 +177,38 @@ describe('Popover (web)', () => {
         expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
     });
 
+    it('can portal to a boundary ref that exposes getNode() (react-native-web refs)', async () => {
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = { current: null } as any;
+        const boundaryDomEl = {
+            addEventListener: () => {},
+            appendChild: () => {},
+            getBoundingClientRect: () => ({ left: 0, top: 0, x: 0, y: 0, width: 800, height: 600 }),
+        };
+        const boundaryRef = {
+            current: {
+                getNode: () => boundaryDomEl,
+            },
+        } as any;
+
+        const screen = await renderScreen(React.createElement(
+            Popover,
+            {
+                open: true,
+                anchorRef,
+                boundaryRef,
+                portal: { web: { target: 'boundary' } },
+                onRequestClose: () => {},
+                children: () => React.createElement('PopoverChild'),
+            },
+        ));
+
+        const portals = screen.findAllByType('Portal' as any);
+        expect(portals).toHaveLength(1);
+        expect(portals[0]?.props?.target).toBe(boundaryDomEl);
+    });
+
     it('can close when clicking the anchor when closeOnAnchorPress is enabled', async () => {
         const { Popover } = await import('./Popover');
 

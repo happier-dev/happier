@@ -188,17 +188,39 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const getBoundaryDomElement = React.useCallback((): HTMLElement | null => {
         const boundaryNode = boundaryRef?.current as any;
         if (!boundaryNode) return null;
+        const isDomPortalTarget = (candidate: any): candidate is HTMLElement => {
+            return Boolean(
+                candidate
+                && typeof candidate.addEventListener === 'function'
+                && typeof candidate.appendChild === 'function',
+            );
+        };
+
         // Direct DOM element (RN-web View ref often is the DOM element)
-        if (typeof boundaryNode.addEventListener === 'function' && typeof boundaryNode.appendChild === 'function') {
-            return boundaryNode as HTMLElement;
+        if (isDomPortalTarget(boundaryNode)) {
+            return boundaryNode;
         }
+
         // RN ScrollView refs often expose getScrollableNode()
         const scrollable = boundaryNode.getScrollableNode?.();
-        if (scrollable && typeof scrollable.addEventListener === 'function' && typeof scrollable.appendChild === 'function') {
-            return scrollable as HTMLElement;
+        if (isDomPortalTarget(scrollable)) {
+            return scrollable;
         }
+
+        // React Native Web host refs can expose getNode() to reach the DOM element.
+        const node = boundaryNode.getNode?.();
+        if (isDomPortalTarget(node)) {
+            return node;
+        }
+
+        // Last resort: use the shared unwrapping logic (handles nested wrappers), then validate.
+        const unwrapped = getDomElementFromNode(boundaryNode);
+        if (isDomPortalTarget(unwrapped)) {
+            return unwrapped;
+        }
+
         return null;
-    }, [boundaryRef]);
+    }, [boundaryRef, getDomElementFromNode]);
 
     const getWebPortalTarget = React.useCallback((): HTMLElement | null => {
         if (Platform.OS !== 'web') return null;

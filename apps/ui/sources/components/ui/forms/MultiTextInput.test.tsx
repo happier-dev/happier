@@ -49,4 +49,34 @@ describe('MultiTextInput', () => {
         const input = tree.findByType('TextareaAutosize' as any);
         expect(input.props['data-testid']).toBe('composer-input');
     });
+
+    it('prevents the default paste behavior when web files are pasted and forwards the files', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onFilesPasted = vi.fn();
+
+        const tree = (await renderScreen(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, {
+            testID: 'composer-input',
+            value: 'Inspect this image',
+            onChangeText: () => {},
+            onFilesPasted,
+        }))).tree;
+
+        const input = tree.findByType('TextareaAutosize' as any);
+        const preventDefault = vi.fn();
+        const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' });
+        const pasteEvent = {
+            preventDefault,
+            clipboardData: {
+                items: [{
+                    kind: 'file',
+                    getAsFile: () => file,
+                }],
+            },
+        };
+
+        input.props.onPaste(pasteEvent);
+
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(onFilesPasted).toHaveBeenCalledWith([file]);
+    });
 });

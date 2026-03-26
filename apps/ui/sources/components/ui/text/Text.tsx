@@ -9,6 +9,7 @@ import {
 
 import { Typography } from '@/constants/Typography';
 import { useLocalSetting } from '@/sync/store/hooks';
+import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 import { scaleTextStyle } from './uiFontScale';
 
@@ -83,6 +84,8 @@ export const TextInput = React.memo(
     ) {
         const uiFontScaleSetting = useLocalSetting('uiFontScale');
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
+        const { accessibilityLabel, testID, ...restProps } = props;
+        const resolvedAccessibilityLabel = resolveAutomationAccessibilityLabel({ testID, accessibilityLabel });
 
         const scaledStyle = React.useMemo(() => scaleTextStyle(style as any, uiFontScale) as TextStyle, [style, uiFontScale]);
         const defaultStyle = useDefaultTypography ? Typography.default() : null;
@@ -98,7 +101,9 @@ export const TextInput = React.memo(
             <RNTextInput
                 ref={ref}
                 style={mergedStyle}
-                {...props}
+                accessibilityLabel={resolvedAccessibilityLabel}
+                testID={testID}
+                {...restProps}
             />
         );
     })
