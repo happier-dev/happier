@@ -22,6 +22,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
     wrap = false,
     showCopyButton = false,
     headerRight,
+    scrollTestID,
 }) => {
     const { theme } = useUnistyles();
     const isDark = theme.dark === true;
@@ -149,6 +150,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
             wrap={wrap}
             showCopyButton={showCopyButton}
             headerRight={headerRight}
+            scrollTestID={scrollTestID}
         >
             {content}
         </CodeBlockViewFrame>

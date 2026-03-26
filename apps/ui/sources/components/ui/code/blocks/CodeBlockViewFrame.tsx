@@ -15,6 +15,7 @@ export type CodeBlockViewFrameProps = Readonly<{
     wrap?: boolean;
     showCopyButton?: boolean;
     headerRight?: React.ReactNode;
+    scrollTestID?: string;
     children: React.ReactNode;
 }>;
 
@@ -25,6 +26,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
     wrap = false,
     showCopyButton = false,
     headerRight,
+    scrollTestID,
     children,
 }) => {
     const { theme } = useUnistyles();
@@ -113,6 +115,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
                 </View>
             ) : (
                 <ScrollView
+                    testID={scrollTestID}
                     horizontal
                     showsHorizontalScrollIndicator={false}
                     nestedScrollEnabled={true}

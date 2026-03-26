@@ -94,4 +94,20 @@ describe('CodeBlockView (native)', () => {
         const textNodes = screen.findAllByType('Text' as any);
         expect(textNodes.some((n) => n.props.children === 'const x = 1;')).toBe(true);
     });
+
+    it('forwards scrollTestID to CodeBlockViewFrame (stable E2E locator)', async () => {
+        const { CodeBlockView } = await import('./CodeBlockView');
+
+        const screen = await renderScreen(
+            React.createElement(CodeBlockView, {
+                code: 'const x = 1;',
+                language: 'typescript',
+                scrollTestID: 'markdown-code-block-scroll',
+            }),
+        );
+
+        const frames = screen.findAllByType('CodeBlockViewFrame' as any);
+        expect(frames).toHaveLength(1);
+        expect(frames[0]!.props.scrollTestID).toBe('markdown-code-block-scroll');
+    });
 });

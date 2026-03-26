@@ -1,5 +1,5 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Platform, View, type TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
@@ -28,6 +28,9 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
 }) => {
   const { theme } = useUnistyles();
   const fallback = theme.colors.text ?? '#111';
+  const webTextWrapStyle: TextStyle | null = Platform.OS === 'web'
+    ? ({ whiteSpace: 'pre', display: 'inline-block' } as unknown as TextStyle)
+    : null;
 
   const tokens = React.useMemo(() => tokenizeSimpleSyntaxText({ text: code, language }), [code, language]);
 
@@ -35,12 +38,15 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
     <View style={{ flexShrink: 0, alignSelf: 'flex-start' }}>
       <Text
         selectable={selectable}
-        style={{
-          fontFamily: Typography.mono().fontFamily,
-          fontSize: 14,
-          lineHeight: 20,
-          flexShrink: 0,
-        }}
+        style={[
+          {
+            fontFamily: Typography.mono().fontFamily,
+            fontSize: 14,
+            lineHeight: 20,
+            flexShrink: 0,
+          },
+          webTextWrapStyle,
+        ]}
       >
         {tokens.map((token, index) => (
           <Text

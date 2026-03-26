@@ -54,6 +54,26 @@ describe('CodeBlockViewFrame', () => {
         expect(scrollView.props.nestedScrollEnabled).toBe(true);
     });
 
+    it('forwards scrollTestID when wrap is false (stable E2E locator)', async () => {
+        const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(
+            <CodeBlockViewFrame
+                code={'x'}
+                language={null}
+                wrap={false}
+                showCopyButton={false}
+                scrollTestID="markdown-code-block-scroll"
+            >
+                <React.Fragment>child</React.Fragment>
+            </CodeBlockViewFrame>,
+        )).tree;
+
+        const scrollView = tree.findByType('ScrollView');
+        expect(scrollView.props.testID).toBe('markdown-code-block-scroll');
+    });
+
     it('positions copy button absolutely when there is no header content', async () => {
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 

@@ -47,5 +47,7 @@ describe('SimpleSyntaxHighlighter', () => {
         const outerText = texts[0];
         const outerStyle = Array.isArray(outerText.props.style) ? Object.assign({}, ...outerText.props.style) : outerText.props.style;
         expect(outerStyle).toEqual(expect.objectContaining({ flexShrink: 0 }));
+        expect(outerStyle).toEqual(expect.objectContaining({ whiteSpace: 'pre' }));
+        expect(outerStyle).toEqual(expect.objectContaining({ display: 'inline-block' }));
     });
 });

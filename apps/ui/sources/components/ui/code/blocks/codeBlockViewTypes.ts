@@ -7,4 +7,5 @@ export type CodeBlockViewProps = Readonly<{
     wrap?: boolean;
     showCopyButton?: boolean;
     headerRight?: React.ReactNode;
+    scrollTestID?: string;
 }>;
