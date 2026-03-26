@@ -4,6 +4,7 @@ import { Pressable, type View } from 'react-native';
 
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
+import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 export function createPermissionActionChip(params: Readonly<{
     anchorRef: React.RefObject<View | null>;
@@ -14,11 +15,14 @@ export function createPermissionActionChip(params: Readonly<{
     textStyle: any;
     onPress: () => void;
 }>): React.ReactNode {
+    const testID = 'agent-input-permission-chip';
+    const accessibilityLabel = resolveAutomationAccessibilityLabel({ testID, accessibilityLabel: undefined });
     return (
         <Pressable
             ref={params.anchorRef}
             key="permission"
-            testID="agent-input-permission-chip"
+            testID={testID}
+            accessibilityLabel={accessibilityLabel}
             onPress={params.onPress}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(state) => params.chipStyle(state.pressed)}

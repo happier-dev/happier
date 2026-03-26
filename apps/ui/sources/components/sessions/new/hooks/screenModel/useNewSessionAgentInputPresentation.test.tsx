@@ -113,7 +113,17 @@ describe('useNewSessionAgentInputPresentation', () => {
     it('adds a link-file chip that appends the selected file path into the draft prompt', async () => {
         const { useNewSessionAgentInputPresentation } = await import('./useNewSessionAgentInputPresentation');
         const routerMock = createExpoRouterMock();
-        const setSessionPrompt = vi.fn();
+        let currentPrompt = 'hello';
+        const setSessionPromptSpy = vi.fn();
+        const setSessionPrompt: React.Dispatch<React.SetStateAction<string>> = (next) => {
+            setSessionPromptSpy(next);
+            if (typeof next === 'function') {
+                // Emulate a "string-only" setter (common wrapper pattern) that ignores functional updates.
+                // The new-session link-file chip must still work in this scenario.
+                return;
+            }
+            currentPrompt = next;
+        };
 
         const router = {
             back: () => routerMock.state.router.back(),
@@ -227,13 +237,13 @@ describe('useNewSessionAgentInputPresentation', () => {
         (contentNode.props as any).onPickPath('/repo/file.ts');
         expect(requestClose).toHaveBeenCalled();
 
-        expect(setSessionPrompt).toHaveBeenCalled();
-        const arg = setSessionPrompt.mock.calls.at(-1)?.[0];
-        expect(typeof arg).toBe('function');
-        expect(arg('hello')).toBe('hello @file.ts ');
+        expect(setSessionPromptSpy).toHaveBeenCalled();
+        const arg = setSessionPromptSpy.mock.calls.at(-1)?.[0];
+        expect(typeof arg).toBe('string');
+        expect(currentPrompt).toBe('hello @file.ts ');
 
         // The link-file chip must render a visible interactive chip in the action bar (not only an action-menu item).
-        setSessionPrompt.mockClear();
+        setSessionPromptSpy.mockClear();
 
         const toggleCollapsedPopover = vi.fn();
         const chipUi = chip!.render({

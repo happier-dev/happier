@@ -115,12 +115,10 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     ]);
 
     const handleAppendLinkedPath = React.useCallback((path: string) => {
-        params.setSessionPrompt((prev) => {
-            const base = String(prev ?? '');
-            const spacer = base.length === 0 || base.endsWith(' ') || base.endsWith('\n') ? '' : ' ';
-            return `${base}${spacer}@${path} `;
-        });
-    }, [params.setSessionPrompt]);
+        const base = String(params.sessionPrompt ?? '');
+        const spacer = base.length === 0 || base.endsWith(' ') || base.endsWith('\n') ? '' : ' ';
+        params.setSessionPrompt(`${base}${spacer}@${path} `);
+    }, [params.sessionPrompt, params.setSessionPrompt]);
 
     const linkFileChip = React.useMemo<AgentInputExtraActionChip>(() => {
         return createNewSessionLinkedFilesActionChip({

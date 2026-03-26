@@ -4,6 +4,7 @@ import { Pressable, type View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 export function createProfileActionChip(params: Readonly<{
     anchorRef: React.RefObject<View | null>;
@@ -15,10 +16,13 @@ export function createProfileActionChip(params: Readonly<{
     textStyle: any;
     onPress: () => void;
 }>): React.ReactNode {
+    const testID = 'agent-input-profile-chip';
+    const accessibilityLabel = resolveAutomationAccessibilityLabel({ testID, accessibilityLabel: undefined });
     return (
         <Pressable
             ref={params.anchorRef}
-            testID="agent-input-profile-chip"
+            testID={testID}
+            accessibilityLabel={accessibilityLabel}
             key="profile"
             onPress={params.onPress}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
