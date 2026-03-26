@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
+import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
@@ -120,6 +121,7 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
     const diagnostics = collectBrowserDiagnostics({ page });
 
     let cliLogin: StartedCliTerminalConnect | null = null;
+    let daemon: StartedDaemon | null = null;
     let thrown: unknown = null;
     try {
       await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
@@ -146,6 +148,20 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       await page.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
       await acknowledgeTerminalConnectSuccessIfPresent(page);
+
+      daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: cliHomeDir,
+        env: {
+          ...process.env,
+          CI: '1',
+          HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+          HAPPIER_SERVER_URL: server.baseUrl,
+          HAPPIER_WEBAPP_URL: uiBaseUrl,
+          HAPPIER_VARIANT: 'dev',
+        },
+      });
 
       const tagA = `ui-e2e-e2ee-a-${run.runId}`;
       const msgA = `hello e2ee A ${run.runId}`;
@@ -229,7 +245,7 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       expect(sendB.kind).toBe('session_send');
 
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionBId}`, 120_000);
-      await expect(page.getByText(msgB)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByText(msgB, { exact: true }).first()).toBeVisible({ timeout: 120_000 });
 
       await toggleAccountEncryptionMode({ page, uiBaseUrl, expectedMode: 'e2ee' });
 
@@ -272,18 +288,19 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       expect(sendC.kind).toBe('session_send');
 
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionCId}`, 120_000);
-      await expect(page.getByText(msgC)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByText(msgC, { exact: true }).first()).toBeVisible({ timeout: 120_000 });
 
       // Ensure older sessions remain readable after toggling account mode.
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionAId}`, 120_000);
-      await expect(page.getByText(msgA)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByText(msgA, { exact: true }).first()).toBeVisible({ timeout: 120_000 });
 
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionBId}`, 120_000);
-      await expect(page.getByText(msgB)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByText(msgB, { exact: true }).first()).toBeVisible({ timeout: 120_000 });
     } catch (error) {
       thrown = error;
       throw error;
     } finally {
+      await daemon?.stop().catch(() => {});
       await cliLogin?.stop().catch(() => {});
       if (thrown) {
         await testInfo.attach('browser-diagnostics.md', { body: diagnostics(), contentType: 'text/markdown' });

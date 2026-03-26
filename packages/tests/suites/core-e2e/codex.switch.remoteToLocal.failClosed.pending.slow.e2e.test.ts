@@ -79,8 +79,13 @@ async function enqueueBlockingPendingMessages(params: Readonly<{
   serverBaseUrl: string;
   sessionId: string;
   token: string;
+  count?: number;
 }>): Promise<void> {
-  for (let i = 0; i < 5; i++) {
+  const count = typeof params.count === 'number' && Number.isFinite(params.count) && params.count > 0
+    ? Math.floor(params.count)
+    : 5;
+
+  for (let i = 0; i < count; i++) {
     const localId = `pending-${randomUUID()}`;
     const msg = {
       role: 'user',
@@ -99,11 +104,6 @@ async function enqueueBlockingPendingMessages(params: Readonly<{
     });
     expect(enqueue.status).toBe(200);
   }
-
-  await waitFor(async () => {
-    const snap: any = await fetchSessionV2(params.serverBaseUrl, params.token, params.sessionId);
-    return typeof snap.pendingCount === 'number' && snap.pendingCount > 0;
-  }, { timeoutMs: 20_000 });
 }
 
 describe('core e2e: Codex remote→local switch fails closed when pending messages exist', () => {
@@ -141,6 +141,9 @@ async function runRemoteToLocalFailClosedPendingScenario(params: Readonly<{
         cliEnvOverrides: {
           HAPPIER_CODEX_TUI_BIN: localCodex.fakeCodexPath,
           HAPPIER_CODEX_SESSIONS_DIR: localCodex.codexSessionsDir,
+          // Ensure the remote app-server turn completes slowly enough that pending/queued work
+          // still exists when we request a mode switch (avoid timing-dependent drains).
+          HAPPIER_E2E_FAKE_CODEX_APP_SERVER_TURN_DELAY_MS: '2500',
         },
       });
 
@@ -153,6 +156,7 @@ async function runRemoteToLocalFailClosedPendingScenario(params: Readonly<{
         serverBaseUrl: harness.serverBaseUrl,
         sessionId: harness.sessionId,
         token: harness.auth.token,
+        count: 1,
       });
 
       const switched = await requestSessionSwitchRpc({

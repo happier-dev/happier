@@ -201,7 +201,7 @@ test.describe('ui e2e: SCM branch publish + switch-with-changes + stash restore'
       // Ensure right pane is on Source control.
       await clickScopedButtonByTestIdOrRole({
         scope: rightPane,
-        testId: 'session-rightpanel-tab-git',
+        testId: 'session-rightpanel-tab:git',
         roleName: 'Source control',
         timeoutMs: 180_000,
       });

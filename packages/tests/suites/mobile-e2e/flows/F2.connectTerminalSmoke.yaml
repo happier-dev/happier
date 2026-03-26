@@ -1,0 +1,22 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: true
+
+- runFlow:
+    when:
+      visible:
+        id: welcome-configure-server
+    file: _shared/configureServerIfNeeded.yaml
+
+- runFlow:
+    file: _shared/loginCreateAccount.yaml
+
+# Deep-link into Settings (more stable than relying on responsive sidebar UI on small screens).
+- openLink: happier://settings
+
+# Smoke: the terminal connect entrypoints should be visible on mobile.
+- assertVisible:
+    id: settings-connect-terminal-scan
+- assertVisible:
+    id: settings-connect-terminal-enter-url

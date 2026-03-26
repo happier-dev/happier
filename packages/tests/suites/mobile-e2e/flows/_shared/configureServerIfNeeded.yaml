@@ -1,0 +1,29 @@
+# Configures the server URL via the Welcome screen "Change server" affordance.
+#
+# Preconditions:
+# - `HAPPIER_E2E_SERVER_URL` is set (passed via Maestro `-e`).
+#
+# This flow is intended to be run conditionally:
+# - only when `welcome-configure-server` is visible (server unavailable/incompatible).
+#
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- tapOn:
+    id: welcome-configure-server
+
+- assertVisible:
+    id: server-settings-add-server-toggle
+- tapOn:
+    id: server-settings-add-server-toggle
+
+- assertVisible:
+    id: server-settings-add-url-input
+- tapOn:
+    id: server-settings-add-url-input
+- inputText: ${HAPPIER_E2E_SERVER_URL}
+
+- tapOn:
+    id: server-settings-add-confirm
+
+# Return to welcome screen.
+- openLink: happier://

@@ -1,0 +1,32 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: true
+
+- runFlow:
+    when:
+      visible:
+        id: welcome-configure-server
+    file: _shared/configureServerIfNeeded.yaml
+
+- runFlow:
+    file: _shared/loginCreateAccount.yaml
+
+- runFlow:
+    file: _shared/gotoNewSessionComposer.yaml
+
+- assertVisible:
+    id: agent-input-session-mode-chip
+- tapOn:
+    id: agent-input-session-mode-chip
+
+- assertVisible:
+    id: agent-input-session-mode-summary
+
+# Toggle to Plan mode if present (no-op if already selected).
+- tapOn:
+    id: agent-input-session-mode-option:plan
+
+# Dismiss overlay.
+- tapOn:
+    point: 10%,10%

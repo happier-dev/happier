@@ -1,0 +1,34 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: true
+
+- runFlow:
+    when:
+      visible:
+        id: welcome-configure-server
+    file: _shared/configureServerIfNeeded.yaml
+
+- runFlow:
+    file: _shared/loginCreateAccount.yaml
+
+- runFlow:
+    file: _shared/openDevMessagesDemo.yaml
+
+# Table horizontal scroll (sentinel is offscreen to the right).
+- assertVisible:
+    id: markdown-table-scroll
+- swipe:
+    direction: LEFT
+    element:
+      id: markdown-table-scroll
+- assertVisible: "MOBILE_E2E_TABLE_SENTINEL_RIGHT"
+
+# Code block horizontal scroll (sentinel is offscreen to the right).
+- assertVisible:
+    id: markdown-code-block-scroll
+- swipe:
+    direction: LEFT
+    element:
+      id: markdown-code-block-scroll
+- assertVisible: "MOBILE_E2E_CODE_SENTINEL_RIGHT"

@@ -847,6 +847,7 @@ export async function ensureCliDistSnapshotEntrypoint(
   const distLockPath = options.lockPath ?? resolve(rootDir, '.project', 'tmp', 'cli-dist-build.lock');
   const snapshotDistDir = resolve(options.snapshotDir, 'dist');
   const snapshotEntrypoint = resolve(snapshotDistDir, 'index.mjs');
+  const snapshotReadyMarkerPath = resolve(options.snapshotDir, '.cli-dist-snapshot.ready.json');
   const maxAttempts = 3;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -857,21 +858,76 @@ export async function ensureCliDistSnapshotEntrypoint(
     try {
       return await withCliDistBuildLock(
         async () => {
-          if (isHealthyCliDist(snapshotDistDir)) {
-            ensureCliDistSnapshotNodeModules({
-              snapshotDir: options.snapshotDir,
-              snapshotDistDir,
-              rootDir,
-            });
+          const snapshotHasReadyMarker = (): boolean => {
+            return (
+              existsSync(snapshotReadyMarkerPath) && existsSync(resolve(options.snapshotDir, 'node_modules'))
+            );
+          };
+
+          const ensureSnapshotScaffolding = (): void => {
             ensureSnapshotProjectFile(options.snapshotDir, rootDir, 'package.json');
             ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'scripts');
             ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'tools');
             ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'bin');
             ensureSnapshotProjectFile(options.snapshotDir, rootDir, 'tsconfig.json');
+          };
+
+          const ensureSnapshotNodeModules = (): void => {
+            const mode = (params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? '').toString().trim().toLowerCase();
+            if (mode === 'symlink') {
+              const snapshotNodeModulesDir = resolve(options.snapshotDir, 'node_modules');
+              if (existsSync(snapshotNodeModulesDir)) return;
+
+              const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
+              const rootNodeModulesDir = resolve(rootDir, 'node_modules');
+              const source = existsSync(cliNodeModulesDir) ? cliNodeModulesDir : rootNodeModulesDir;
+              if (!existsSync(source)) return;
+
+              mkdirSync(dirname(snapshotNodeModulesDir), { recursive: true });
+              try {
+                symlinkSync(source, snapshotNodeModulesDir, process.platform === 'win32' ? 'junction' : 'dir');
+              } catch {
+                // Best-effort only.
+              }
+              return;
+            }
+
+            ensureCliDistSnapshotNodeModules({
+              snapshotDir: options.snapshotDir,
+              snapshotDistDir,
+              rootDir,
+            });
+          };
+
+          const markSnapshotReady = (): void => {
+            if (snapshotHasReadyMarker()) return;
+            try {
+              writeFileSync(
+                snapshotReadyMarkerPath,
+                JSON.stringify({ v: 1, createdAt: new Date().toISOString() }),
+                'utf8',
+              );
+            } catch {
+              // Best-effort only.
+            }
+          };
+
+          if (isHealthyCliDist(snapshotDistDir) && snapshotHasReadyMarker()) {
+            // Fast path: keep daemon startups cheap during slow E2E lanes.
+            ensureSnapshotScaffolding();
             return snapshotEntrypoint;
           }
-          if (existsSync(options.snapshotDir)) {
-            throw new Error(`CLI dist snapshot exists but is incomplete: ${options.snapshotDir}`);
+
+          // If a previous run left a partial snapshot behind, self-heal instead of failing closed.
+          if (existsSync(options.snapshotDir) && !isHealthyCliDist(snapshotDistDir)) {
+            rmSync(options.snapshotDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+          }
+
+          if (isHealthyCliDist(snapshotDistDir)) {
+            ensureSnapshotNodeModules();
+            ensureSnapshotScaffolding();
+            markSnapshotReady();
+            return snapshotEntrypoint;
           }
 
           const distDir = resolveExistingCliDistDir({
@@ -891,19 +947,11 @@ export async function ensureCliDistSnapshotEntrypoint(
 
           mkdirSync(dirname(options.snapshotDir), { recursive: true });
           // Ensure we never mutate an existing snapshot (which could be in-use by a running daemon).
-          rmSync(options.snapshotDir, { recursive: true, force: true });
+          rmSync(options.snapshotDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
           mkdirSync(options.snapshotDir, { recursive: true });
           await cp(distDir, snapshotDistDir, { recursive: true });
-          ensureCliDistSnapshotNodeModules({
-            snapshotDir: options.snapshotDir,
-            snapshotDistDir,
-            rootDir,
-          });
-          ensureSnapshotProjectFile(options.snapshotDir, rootDir, 'package.json');
-          ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'scripts');
-          ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'tools');
-          ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'bin');
-          ensureSnapshotProjectFile(options.snapshotDir, rootDir, 'tsconfig.json');
+          ensureSnapshotNodeModules();
+          ensureSnapshotScaffolding();
 
           if (!(options.skipDistIntegrityCheck ?? false) && !isHealthyCliDist(snapshotDistDir)) {
             const missing = findMissingDistChunkImports(snapshotDistDir);
@@ -914,6 +962,7 @@ export async function ensureCliDistSnapshotEntrypoint(
             );
           }
 
+          markSnapshotReady();
           return snapshotEntrypoint;
         },
         {
@@ -927,7 +976,7 @@ export async function ensureCliDistSnapshotEntrypoint(
       if (error?.code !== 'ENOENT' || attempt === maxAttempts) {
         throw error;
       }
-      rmSync(options.snapshotDir, { recursive: true, force: true });
+      rmSync(options.snapshotDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
   }
 

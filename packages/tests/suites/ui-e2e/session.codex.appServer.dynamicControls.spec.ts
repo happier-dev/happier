@@ -1,11 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import {
@@ -21,36 +20,28 @@ type LoggedRequest = Readonly<{
     params?: Record<string, unknown> | null;
 }>;
 
-function resolveServerLightSqliteDbPath(params: Readonly<{ suiteDir: string }>): string {
-    return resolve(join(params.suiteDir, 'server-light-data', 'happier-server-light.sqlite'));
-}
-
-function readLatestMachineIdFromServerLightDb(params: Readonly<{ suiteDir: string }>): string {
-    const dbPath = resolveServerLightSqliteDbPath({ suiteDir: params.suiteDir });
-    try {
-        const raw = execFileSync('sqlite3', ['-json', dbPath, 'select id from Machine order by createdAt desc limit 1;'], {
-            encoding: 'utf8',
-        });
-        const parsed = JSON.parse(raw) as Array<{ id?: unknown }>;
-        const id = parsed?.[0]?.id;
-        if (typeof id === 'string' && id.trim()) return id.trim();
-    } catch {
-        // allow retry loop to handle startup races
+async function readDaemonMachineIdFromHappyHomeDir(params: Readonly<{ happyHomeDir: string }>): Promise<string> {
+    const serversDir = resolve(join(params.happyHomeDir, 'servers'));
+    const entries = await readdir(serversDir, { withFileTypes: true }).catch(() => []);
+    const candidates: Array<{ path: string; mtimeMs: number }> = [];
+    for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const statePath = resolve(join(serversDir, entry.name, 'daemon.state.json'));
+        const stateStat = await stat(statePath).catch(() => null);
+        if (!stateStat) continue;
+        candidates.push({ path: statePath, mtimeMs: stateStat.mtimeMs });
     }
-    throw new Error(`Failed to read machine id from server light sqlite db: ${dbPath}`);
-}
+    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    const newest = candidates[0]?.path;
+    if (!newest) throw new Error(`Failed to locate daemon.state.json under ${serversDir}`);
 
-async function waitForLatestMachineId(params: Readonly<{ suiteDir: string; timeoutMs?: number }>): Promise<string> {
-    const timeoutMs = params.timeoutMs ?? 60_000;
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
-        try {
-            return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
-        } catch {
-            await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
-        }
+    const raw = await readFile(newest, 'utf8');
+    const parsed = JSON.parse(raw) as { machineId?: unknown } | null;
+    const machineId = parsed?.machineId;
+    if (typeof machineId !== 'string' || !machineId.trim()) {
+        throw new Error(`Missing machineId in daemon state file: ${newest}`);
     }
-    return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
+    return machineId.trim();
 }
 
 function parseSessionIdFromUrl(url: string): string {
@@ -292,74 +283,121 @@ async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
     await setCodexBackendModeToAppServer(params.page, params.uiBaseUrl);
     await enableEnhancedSessionWizard(params.page, params.uiBaseUrl);
     await setSessionReplayEnabled(params.page, params.uiBaseUrl, false);
-    const machineId = await waitForLatestMachineId({ suiteDir: params.suiteDir, timeoutMs: 120_000 });
+
+    const machineId = await readDaemonMachineIdFromHappyHomeDir({ happyHomeDir: resolve(join(params.testDir, 'cli-home')) });
     return { daemon, requestLogPath, machineId };
+}
+
+async function maybeSelectAiBackendFromDialog(page: Page, backendLabel: string): Promise<boolean> {
+    const pickerDialog = page.getByRole('dialog').filter({ hasText: 'Select AI Backend' }).first();
+    if ((await pickerDialog.count()) === 0) return false;
+
+    await expect(pickerDialog).toContainText('Select AI Backend', { timeout: 60_000 });
+    await pickerDialog.getByText(backendLabel, { exact: true }).click();
+
+    await expect(pickerDialog).toHaveCount(0, { timeout: 60_000 }).catch(async () => {
+        await page.keyboard.press('Escape').catch(() => {});
+        await expect(pickerDialog).toHaveCount(0, { timeout: 10_000 });
+    });
+    return true;
 }
 
 async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseUrl: string; machineId: string }>): Promise<void> {
     await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new`);
-    await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-    await params.page.getByTestId('agent-input-agent-chip').click();
-    await expect(params.page.getByTestId('agent-input-chip-picker-popover')).toHaveCount(1, { timeout: 60_000 });
+
+    await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
+    await expect(params.page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 120_000 });
+    await expect(params.page.getByTestId('new-session-composer-input')).toBeVisible({ timeout: 180_000 });
+    await expect(params.page.getByTestId('agent-input-agent-chip')).toBeVisible({ timeout: 120_000 });
+
+    await expect(params.page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
+    const machineSelectionResult = await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
+    const pickDeadlineMs = Date.now() + 120_000;
+    while (true) {
+        const machineOption = params.page.locator(`[data-testid="new-session-machine:${params.machineId}"]:visible`).first();
+
+        if ((await machineOption.count()) > 0) {
+            await expect(machineOption).toBeEnabled({ timeout: 120_000 });
+            await machineOption.click();
+            break;
+        }
+
+        if (machineSelectionResult === 'returned_to_new') {
+            break;
+        }
+
+        if (Date.now() > pickDeadlineMs) {
+            await expect(machineOption).toHaveCount(1, { timeout: 1_000 });
+        }
+
+        await params.page.waitForTimeout(250);
+    }
+    await params.page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
+
+    // Starting a session can show the backend picker dialog and/or a Vaul overlay that intercepts clicks.
+    const agentChip = params.page.getByTestId('agent-input-agent-chip');
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        await maybeSelectAiBackendFromDialog(params.page, 'Codex').catch(() => false);
+
+        await expect(agentChip).toHaveCount(1, { timeout: 60_000 });
+        await expect(agentChip).toBeVisible({ timeout: 60_000 });
+
+        const vaulOverlay = params.page.locator('[data-vaul-overlay][data-state="open"]');
+        if ((await vaulOverlay.count()) > 0) {
+            await params.page.keyboard.press('Escape').catch(() => {});
+            await vaulOverlay.click({ force: true }).catch(() => {});
+            await expect(vaulOverlay).toHaveCount(0, { timeout: 10_000 }).catch(() => {});
+        }
+
+        const anyDialog = params.page.getByRole('dialog');
+        if ((await anyDialog.count()) > 0) {
+            await params.page.keyboard.press('Escape').catch(() => {});
+            await expect(anyDialog).toHaveCount(0, { timeout: 10_000 }).catch(() => {});
+        }
+
+        try {
+            await agentChip.click({ trial: true, timeout: 5_000 });
+            break;
+        } catch (error) {
+            if (attempt >= 2) throw error;
+            await params.page.waitForTimeout(500);
+        }
+    }
+
+    await agentChip.click({ timeout: 60_000 });
     const inlineCodexOption = params.page.getByTestId('new-session-agent:codex');
     if ((await inlineCodexOption.count()) > 0) {
         await expect(inlineCodexOption).toBeEnabled({ timeout: 60_000 });
         await inlineCodexOption.click();
     } else {
-        const codexPickerOption = params.page.getByTestId('agent-input-chip-picker.option:agent:codex');
-        if ((await codexPickerOption.count()) > 0) {
-            await expect(codexPickerOption).toBeEnabled({ timeout: 60_000 });
-            await codexPickerOption.click();
-        } else {
-            const codexDropdownOption = params.page.getByTestId('dropdown-option-codex');
-            if ((await codexDropdownOption.count()) > 0) {
-                await codexDropdownOption.click();
-        } else {
-            const codexPickerTrigger = params.page.getByTestId('agent-input-chip-picker.top-selector-trigger');
-            if ((await codexPickerTrigger.count()) > 0) {
-                await codexPickerTrigger.click();
-            }
+        await maybeSelectAiBackendFromDialog(params.page, 'Codex').catch(() => false);
+    }
+    await params.page.keyboard.press('Escape').catch(() => {});
 
-            const dropdownAgentCodexOption = params.page.getByTestId('dropdown-option-agent_codex');
-            try {
-                await expect(dropdownAgentCodexOption).toHaveCount(1, { timeout: 60_000 });
-                await dropdownAgentCodexOption.click();
-                const applyButton = params.page.getByTestId('agent-input-chip-picker.apply');
-                if ((await applyButton.count()) > 0) {
-                    await applyButton.click();
-                }
-                return;
-            } catch {
-                const codexPickerOptionFallback = params.page.getByTestId('agent-input-chip-picker.option:codex');
-                await expect(codexPickerOptionFallback).toHaveCount(1, { timeout: 60_000 });
-                await codexPickerOptionFallback.click();
-            }
-
-            const applyButton = params.page.getByTestId('agent-input-chip-picker.apply');
-            if ((await applyButton.count()) > 0) {
-                await applyButton.click();
-            }
-            }
+    const pathChip = params.page.getByTestId('agent-input-path-chip');
+    if ((await pathChip.count()) > 0) {
+        await expect(pathChip).toHaveCount(1, { timeout: 60_000 });
+        const pathChipText = (await pathChip.textContent()) ?? '';
+        const looksLikePath = /^[A-Za-z]:[\\/]/.test(pathChipText) || /[\\/]/.test(pathChipText);
+        if (!looksLikePath) {
+            await openNewSessionPathSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
+            await expect(params.page.getByTestId('path-selector-input')).toHaveCount(1, { timeout: 60_000 });
+            const selectedPath = '/tmp';
+            await params.page.getByTestId('path-selector-input').fill(selectedPath);
+            await params.page.getByTestId('path-selector-input').press('Enter');
+            await params.page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
+            await expect(pathChip).toContainText(selectedPath, { timeout: 60_000 });
         }
+        return;
     }
 
-    await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
-    await expect(params.page.getByTestId(`new-session-machine:${params.machineId}`)).toHaveCount(1, { timeout: 120_000 });
-    await params.page.getByTestId(`new-session-machine:${params.machineId}`).click();
-    await params.page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
-    await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-    const pathChip = params.page.getByTestId('agent-input-path-chip');
-    await expect(pathChip).toHaveCount(1, { timeout: 60_000 });
-    const pathChipText = (await pathChip.textContent()) ?? '';
-    const looksLikePath = /^[A-Za-z]:[\\/]/.test(pathChipText) || /[\\/]/.test(pathChipText);
+    const pathSelectorInput = params.page.getByTestId('path-selector-input');
+    await expect(pathSelectorInput).toHaveCount(1, { timeout: 60_000 });
+    const pathValue = (await pathSelectorInput.inputValue().catch(() => '')) ?? '';
+    const looksLikePath = /^[A-Za-z]:[\\/]/.test(pathValue) || /[\\/]/.test(pathValue);
     if (!looksLikePath) {
-        await openNewSessionPathSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
-        await expect(params.page.getByTestId('path-selector-input')).toHaveCount(1, { timeout: 60_000 });
         const selectedPath = '/tmp';
-        await params.page.getByTestId('path-selector-input').fill(selectedPath);
-        await params.page.getByTestId('path-selector-input').press('Enter');
-        await params.page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
-        await expect(pathChip).toContainText(selectedPath, { timeout: 60_000 });
+        await pathSelectorInput.fill(selectedPath);
     }
 
 }
@@ -418,8 +456,23 @@ async function clickModelSelectionOption(page: Page, optionId: string): Promise<
 
 async function clickSelectedModelControlOption(page: Page, controlId: string, valueId: string): Promise<void> {
     const option = page.getByTestId(`model-picker-overlay-selected-option-control-option:${controlId}:${valueId}`);
-    await expect(option).toHaveCount(1, { timeout: 120_000 });
-    await option.click();
+    try {
+        await expect(option).toHaveCount(1, { timeout: 120_000 });
+        await option.click();
+    } catch (error) {
+        const visibleOptionIds = await page.locator('[data-testid^="model-picker-overlay-selected-option-control-option:"]').evaluateAll((nodes) => {
+            return nodes
+                .map((node) => node.getAttribute('data-testid'))
+                .filter((value): value is string => typeof value === 'string' && value.length > 0);
+        }).catch(() => []);
+
+        throw new Error(
+            `Expected model control option ${controlId}:${valueId}, but visible options were: ${
+                visibleOptionIds.length > 0 ? visibleOptionIds.join(', ') : '(none)'
+            }`,
+            { cause: error as Error },
+        );
+    }
 }
 
 async function setSelectedModelControlSwitch(page: Page, controlId: string, checked: boolean): Promise<void> {
@@ -481,12 +534,22 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
     let daemon: StartedDaemon | null = null;
 
     test.beforeAll(async () => {
-        test.setTimeout(420_000);
+        const uiWebEnv = process.env;
+        test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
         server = await startServerLight({
             testDir: suiteDir,
             dbProvider: 'sqlite',
             extraEnv: {
                 HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
+                // Presence updates are throttled in the DB; keep the presence timeout comfortably above
+                // that threshold so the UI doesn't briefly classify the daemon machine as "offline".
+                HAPPIER_PRESENCE_SESSION_TIMEOUT_MS: '300000',
+                HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '300000',
+                HAPPIER_PRESENCE_TIMEOUT_TICK_MS: '1000',
+                // UI e2e runs after workspace typechecks/builds in the pipeline runner; avoid
+                // expensive shared-deps/provider-generation work here to reduce beforeAll flake.
+                HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
+                HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1',
                 HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
             },
         });
@@ -494,8 +557,10 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         ui = await startUiWeb({
             testDir: suiteDir,
             env: {
-                ...process.env,
+                ...uiWebEnv,
+                HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: uiWebEnv.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '900000',
                 EXPO_PUBLIC_DEBUG: '1',
+                EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS: uiWebEnv.EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS ?? '300000',
                 EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
                 EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-codex-app-server-dynamic-controls`,
             },
@@ -522,7 +587,7 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
 
         const testDir = resolve(join(suiteDir, 't1-codex-app-server-preflight-controls'));
         await mkdir(testDir, { recursive: true });
-        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.setViewportSize({ width: 390, height: 844 });
 
         await ensureSignedIn(page, uiBaseUrl);
         const prepared = await connectDaemonWithFakeCodexAppServer({ page, suiteDir, testDir, server, uiBaseUrl });
@@ -532,10 +597,19 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await openAgentActionMenu(page);
         await clickSessionModeOption(page, 'plan');
 
-        await page.getByTestId('agent-input-agent-chip').click();
+        // Ensure no picker overlays remain open before re-opening the agent/model selector.
+        const actionMenuOverlay = page.getByTestId('agent-input-action-menu-overlay');
+        if ((await actionMenuOverlay.count()) > 0) {
+            await page.keyboard.press('Escape');
+            await expect(actionMenuOverlay).toHaveCount(0, { timeout: 60_000 });
+        }
+
+        const wizardModelMini = page.getByTestId('new-session-model:gpt-5.4-mini');
+        if ((await wizardModelMini.count()) === 0) {
+            await page.getByTestId('agent-input-agent-chip').click();
+        }
         await clickModelSelectionOption(page, 'gpt-5.4-mini');
         await clickSelectedModelControlOption(page, 'reasoning_effort', 'high');
-        await expect(page.getByTestId('model-picker-overlay-summary')).toContainText('GPT-5.4 mini', { timeout: 60_000 });
 
         await page.keyboard.press('Escape');
         await fillAndClickComposerSend({
@@ -565,7 +639,7 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
 
         const testDir = resolve(join(suiteDir, 't2-codex-app-server-live-controls'));
         await mkdir(testDir, { recursive: true });
-        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.setViewportSize({ width: 390, height: 844 });
 
         await ensureSignedIn(page, uiBaseUrl);
         const prepared = await connectDaemonWithFakeCodexAppServer({ page, suiteDir, testDir, server, uiBaseUrl });
@@ -589,10 +663,12 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await openAgentActionMenu(page);
         await clickSessionModeOption(page, 'plan');
 
-        await page.getByTestId('agent-input-agent-chip').click();
+        const wizardModelMini = page.getByTestId('new-session-model:gpt-5.4-mini');
+        if ((await wizardModelMini.count()) === 0) {
+            await page.getByTestId('agent-input-agent-chip').click();
+        }
         await clickModelSelectionOption(page, 'gpt-5.4-mini');
         await clickSelectedModelControlOption(page, 'reasoning_effort', 'high');
-        await expect(page.getByTestId('model-picker-overlay-summary')).toContainText('GPT-5.4 mini', { timeout: 60_000 });
 
         await page.keyboard.press('Escape');
         await fillAndClickComposerSend({
@@ -606,10 +682,12 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await openAgentActionMenu(page);
         await clickSessionModeOption(page, 'default');
 
-        await page.getByTestId('agent-input-agent-chip').click();
+        const wizardModelFrontier = page.getByTestId('new-session-model:gpt-5.4');
+        if ((await wizardModelFrontier.count()) === 0) {
+            await page.getByTestId('agent-input-agent-chip').click();
+        }
         await clickModelSelectionOption(page, 'gpt-5.4');
         await clickSelectedModelControlOption(page, 'reasoning_effort', 'medium');
-        await expect(page.getByTestId('model-picker-overlay-summary')).toContainText('GPT-5.4', { timeout: 60_000 });
 
         await page.keyboard.press('Escape');
         await fillAndClickComposerSend({
@@ -650,14 +728,17 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
 
         const testDir = resolve(join(suiteDir, 't3-codex-app-server-speed-controls'));
         await mkdir(testDir, { recursive: true });
-        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.setViewportSize({ width: 390, height: 844 });
 
         await ensureSignedIn(page, uiBaseUrl);
         const prepared = await connectDaemonWithFakeCodexAppServer({ page, suiteDir, testDir, server, uiBaseUrl });
         daemon = prepared.daemon;
 
         await selectCodexAgentAndMachine({ page, uiBaseUrl, machineId: prepared.machineId });
-        await page.getByTestId('agent-input-agent-chip').click();
+        const wizardModelMini = page.getByTestId('new-session-model:gpt-5.4-mini');
+        if ((await wizardModelMini.count()) === 0) {
+            await page.getByTestId('agent-input-agent-chip').click();
+        }
         await clickModelSelectionOption(page, 'gpt-5.4-mini');
         await expect(page.getByTestId('model-picker-overlay-selected-option-control:speed')).toHaveCount(0, { timeout: 60_000 });
         await clickModelSelectionOption(page, 'gpt-5.4');

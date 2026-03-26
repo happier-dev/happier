@@ -22,15 +22,15 @@ import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 
 const run = createRunDirs({ runLabel: 'core' });
 
-function findMetadataUpdateEvent(events: CapturedEvent[], sessionId: string, version: number): CapturedEvent | null {
+function findMetadataUpdateEventByValue(events: CapturedEvent[], sessionId: string, ciphertext: string): CapturedEvent | null {
   for (const event of events) {
     if (event.kind !== 'update') continue;
     const body = event.payload?.body;
     if (body?.t !== 'update-session') continue;
     const sid = typeof body.sid === 'string' ? body.sid : typeof body.id === 'string' ? body.id : null;
     if (sid !== sessionId) continue;
-    const metadata = body.metadata as { version?: unknown } | undefined;
-    if (metadata?.version === version) {
+    const metadata = body.metadata as { value?: unknown } | undefined;
+    if (typeof metadata?.value === 'string' && metadata.value === ciphertext) {
       return event;
     }
   }
@@ -254,23 +254,36 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
         expectedVersion: before.metadataVersion,
       });
 
-      const after = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-      const metadataAfter = decryptLegacyBase64(after.metadata, secret) as Record<string, unknown>;
+      let afterPatched: Awaited<ReturnType<typeof fetchSessionV2>> | null = null;
+      await waitFor(async () => {
+        const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+        if (snap.metadata !== updatedCiphertext) return false;
+        afterPatched = snap;
+        return true;
+      }, { timeoutMs: 20_000 });
+
+      if (!afterPatched) {
+        throw new Error('Failed to observe patched metadata ciphertext in session snapshot');
+      }
+
+      const metadataAfter = decryptLegacyBase64(afterPatched.metadata, secret) as Record<string, unknown>;
       expect(metadataAfter.acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 2000, modeId: 'plan' });
 
-      await waitFor(() => findMetadataUpdateEvent(userSocket.getEvents(), sessionId, after.metadataVersion) !== null, { timeoutMs: 20_000 });
-      await waitFor(() => findMetadataUpdateEvent(sessionSocket.getEvents(), sessionId, after.metadataVersion) !== null, { timeoutMs: 20_000 });
+      // The OpenCode ACP backend can update session metadata concurrently (e.g. modes/currentModeId),
+      // so assert that *our patched ciphertext* is broadcast, not that the latest observed metadata is the patch.
+      await waitFor(() => findMetadataUpdateEventByValue(userSocket.getEvents(), sessionId, updatedCiphertext) !== null, { timeoutMs: 20_000 });
+      await waitFor(() => findMetadataUpdateEventByValue(sessionSocket.getEvents(), sessionId, updatedCiphertext) !== null, { timeoutMs: 20_000 });
 
-      const userEvent = findMetadataUpdateEvent(userSocket.getEvents(), sessionId, after.metadataVersion);
-      const sessionEvent = findMetadataUpdateEvent(sessionSocket.getEvents(), sessionId, after.metadataVersion);
+      const userEvent = findMetadataUpdateEventByValue(userSocket.getEvents(), sessionId, updatedCiphertext);
+      const sessionEvent = findMetadataUpdateEventByValue(sessionSocket.getEvents(), sessionId, updatedCiphertext);
       expect(userEvent).not.toBeNull();
       expect(sessionEvent).not.toBeNull();
 
       const userValue = (userEvent as Extract<CapturedEvent, { kind: 'update' }>).payload.body?.metadata as { value?: unknown };
       const sessionValue = (sessionEvent as Extract<CapturedEvent, { kind: 'update' }>).payload.body?.metadata as { value?: unknown };
 
-      expect(userValue.value).toBe(after.metadata);
-      expect(sessionValue.value).toBe(after.metadata);
+      expect(userValue.value).toBe(updatedCiphertext);
+      expect(sessionValue.value).toBe(updatedCiphertext);
       expect(decryptLegacyBase64(String(userValue.value), secret)).toEqual(nextMetadata);
       expect(decryptLegacyBase64(String(sessionValue.value), secret)).toEqual(nextMetadata);
     } finally {

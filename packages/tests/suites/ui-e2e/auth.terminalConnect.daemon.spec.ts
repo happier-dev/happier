@@ -82,6 +82,10 @@ test.describe('ui e2e: auth + terminal connect', () => {
     return page.locator('[data-testid^="transcript-message-"]');
   }
 
+  function getVisibleSessionComposer(page: Page) {
+    return page.locator('[data-testid="session-composer-input"]:visible');
+  }
+
   function resolveServerLightSqliteDbPath(params: { suiteDir: string }): string {
     return resolve(join(params.suiteDir, 'server-light-data', 'happier-server-light.sqlite'));
   }
@@ -322,7 +326,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await page.getByTestId('new-session-composer-input').fill(prompt);
       await page.getByTestId('new-session-composer-input').press('Enter');
 
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
+      await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
       await expect.poll(async () => transcriptMessageLocator(page).count(), { timeout: 180_000 }).toBeGreaterThan(1);
 
       const currentUrl = page.url();
@@ -440,11 +444,13 @@ test.describe('ui e2e: auth + terminal connect', () => {
         .toBe(true);
 
       await page.goto(`${uiBaseUrl}/session/${createdSessionId}`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
+      await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 120_000 });
 
       const followup = `UI_E2E_MESSAGE_RECONNECT_${run.runId}`;
-      await page.getByTestId('session-composer-input').fill(followup);
-      await page.getByTestId('session-composer-input').press('Enter');
+      const composer = getVisibleSessionComposer(page);
+      await expect(composer).toHaveCount(1, { timeout: 120_000 });
+      await composer.fill(followup);
+      await composer.press('Enter');
       await expect.poll(async () => transcriptMessages.count(), { timeout: 180_000 }).toBeGreaterThan(messageCountBefore);
     } catch (error) {
       thrown = error;
@@ -488,14 +494,42 @@ test.describe('ui e2e: auth + terminal connect', () => {
     let thrown: unknown = null;
     try {
       await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
+
       await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('session-getting-started-start-new-session')).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId('session-getting-started-start-new-session').click();
 
-      const sessionItem = page.getByTestId(`session-list-item-${createdSessionId}`);
-      await expect(sessionItem).toHaveCount(1, { timeout: 120_000 });
-      await sessionItem.click();
+      await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 120_000 });
+      const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
+      await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId('agent-input-machine-chip').click();
+      await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId(`new-session-machine:${machineId}`).click();
 
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
-      await expect(page).toHaveURL(`${uiBaseUrl}/session/${createdSessionId}`, { timeout: 60_000 });
+      const prompt = `UI_E2E_SELECT_FROM_LIST_${run.runId}`;
+      await page.getByTestId('new-session-composer-input').fill(prompt);
+      await page.getByTestId('new-session-composer-input').press('Enter');
+
+      await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
+
+      const currentUrl = page.url();
+      const { pathname } = new URL(currentUrl);
+      const parts = pathname.split('/').filter(Boolean);
+      const sessionIndex = parts.indexOf('session');
+      const freshSessionId = sessionIndex >= 0 ? (parts[sessionIndex + 1] ?? null) : null;
+      if (!freshSessionId) {
+        throw new Error(`Failed to infer session id from url: ${currentUrl}`);
+      }
+
+      await expect(page.getByTestId('session-header-back')).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId('session-header-back').click();
+
+      const sessionItemSelector = `[data-testid="session-list-item-${freshSessionId}"]:visible`;
+      await expect(page.locator(sessionItemSelector)).toHaveCount(1, { timeout: 120_000 });
+      await page.locator(sessionItemSelector).click();
+
+      await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page).toHaveURL(`${uiBaseUrl}/session/${freshSessionId}`, { timeout: 60_000 });
     } catch (error) {
       thrown = error;
       throw error;

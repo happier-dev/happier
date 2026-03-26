@@ -283,7 +283,7 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
       const rightPane = rightPaneLocator(page);
       await clickScopedButtonByTestIdOrRole({
         scope: rightPane,
-        testId: 'session-rightpanel-tab-files',
+        testId: 'session-rightpanel-tab:files',
         roleName: 'Files',
         timeoutMs: 180_000,
       });

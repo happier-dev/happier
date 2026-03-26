@@ -192,7 +192,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
       const rightPane = rightPaneLocator(page);
       await clickScopedButtonByTestIdOrRole({
         scope: rightPane,
-        testId: 'session-rightpanel-tab-git',
+        testId: 'session-rightpanel-tab:git',
         roleName: 'Source control',
         timeoutMs: 180_000,
       });

@@ -358,12 +358,12 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
 
     // Some RN-web render paths don't forward `testID` onto the segmented tab buttons; fall back to role/name.
     const rightPane = rightPaneLocator(page);
-    await clickScopedButtonByTestIdOrRole({
-      scope: rightPane,
-      testId: 'session-rightpanel-tab-git',
-      roleName: 'Source control',
-      timeoutMs: 60_000,
-    });
+	    await clickScopedButtonByTestIdOrRole({
+	      scope: rightPane,
+	      testId: 'session-rightpanel-tab:git',
+	      roleName: 'Source control',
+	      timeoutMs: 60_000,
+	    });
     const openReviewByTestId = rightPane.getByTestId('session-rightpanel-git-open-review');
     if (await openReviewByTestId.count()) {
       await openReviewByTestId.click();

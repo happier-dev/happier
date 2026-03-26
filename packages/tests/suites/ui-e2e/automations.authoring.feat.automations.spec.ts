@@ -15,6 +15,10 @@ import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../..
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
+function getVisibleSessionComposer(page: Page) {
+    return page.locator('[data-testid="session-composer-input"]:visible');
+}
+
 function resolveServerLightSqliteDbPath(params: Readonly<{ suiteDir: string }>): string {
     return resolve(join(params.suiteDir, 'server-light-data', 'happier-server-light.sqlite'));
 }
@@ -215,14 +219,24 @@ test.describe('ui e2e: automations authoring', () => {
 
         const existingSessionAutomationName = `Existing automation ${run.runId}`;
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionId}/automations/new?happier_hmr=0`, 180_000);
-        await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 60_000 });
+        await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 60_000 });
         await page.locator('input[autocapitalize="words"]:visible').first().fill(existingSessionAutomationName);
-        await page.getByTestId('session-composer-input').fill(`existing-session automation prompt ${run.runId}`);
+        await getVisibleSessionComposer(page).fill(`existing-session automation prompt ${run.runId}`);
 
         await page.getByTestId('agent-input-agent-chip').click();
         await expect(page.getByTestId('model-picker-overlay-option:claude-sonnet-4-6')).toHaveCount(1, { timeout: 120_000 });
         await page.getByTestId('model-picker-overlay-option:claude-sonnet-4-6').click();
-        await page.getByTestId('agent-input-chip-picker.apply').click();
+        const applyButton = page.getByTestId('agent-input-chip-picker.apply');
+        if ((await applyButton.count()) > 0) {
+            await applyButton.click();
+        } else {
+            await page.keyboard.press('Escape').catch(() => {});
+            const chipPickerPopover = page.getByTestId('agent-input-chip-picker-popover');
+            if ((await chipPickerPopover.count()) > 0) {
+                await page.getByTestId('agent-input-agent-chip').click();
+            }
+        }
+        await expect(page.getByTestId('agent-input-chip-picker-popover')).toHaveCount(0, { timeout: 60_000 });
 
         await page.getByTestId('agent-input-permission-chip').click();
         await expect(page.getByTestId('agent-input-content-popover')).toHaveCount(1, { timeout: 60_000 });
@@ -241,6 +255,6 @@ test.describe('ui e2e: automations authoring', () => {
 
         await expect(page.getByTestId('agent-input-permission-chip')).toContainText('YOLO', { timeout: 60_000 });
         await page.getByTestId('agent-input-agent-chip').click();
-        await expect(page.getByText('Effective: claude-sonnet-4-6')).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId('model-picker-overlay-option-selected-indicator:claude-sonnet-4-6')).toHaveCount(1, { timeout: 60_000 });
     });
 });

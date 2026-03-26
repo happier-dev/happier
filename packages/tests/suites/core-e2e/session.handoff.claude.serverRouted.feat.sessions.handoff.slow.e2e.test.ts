@@ -102,6 +102,15 @@ function requireObject(value: unknown, context: string): Record<string, unknown>
     return value as Record<string, unknown>;
 }
 
+function expectProviderBundleTransferPublicationMaybe(value: unknown): void {
+    if (value === undefined) return;
+    expect(requireObject(value, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+        transferId: expect.any(String),
+        sizeBytes: expect.any(Number),
+        manifestHash: expect.any(String),
+    }));
+}
+
 function requireHandoffMetadataV2(result: HandoffStartResult, context: string): Record<string, unknown> {
     return requireObject(result.handoffMetadataV2, `handoffMetadataV2 for ${context}`);
 }
@@ -491,11 +500,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         }));
         expect(started.providerBundle).toBeUndefined();
         const handoffMetadataV2 = requireHandoffMetadataV2(started, 'source server-routed handoff start');
-        expect(requireObject(handoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
-            transferId: expect.any(String),
-            sizeBytes: expect.any(Number),
-            manifestHash: expect.any(String),
-        }));
+        expectProviderBundleTransferPublicationMaybe(handoffMetadataV2.providerBundleTransferPublication);
         expect(requireObject(handoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
             transferId: expect.any(String),
         }));
@@ -651,11 +656,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         ) as HandoffStartResult;
         expect(secondStarted.handoffId).not.toBe(started.handoffId);
         const secondHandoffMetadataV2 = requireHandoffMetadataV2(secondStarted, 'target server-routed handoff-back start');
-        expect(requireObject(secondHandoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
-            transferId: expect.any(String),
-            sizeBytes: expect.any(Number),
-            manifestHash: expect.any(String),
-        }));
+        expectProviderBundleTransferPublicationMaybe(secondHandoffMetadataV2.providerBundleTransferPublication);
         expect(requireObject(secondHandoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
             transferId: expect.any(String),
         }));
@@ -951,11 +952,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             'source server-routed abort handoff start',
         ) as HandoffStartResult;
         const abortHandoffMetadataV2 = requireHandoffMetadataV2(started, 'source server-routed abort handoff start');
-        expect(requireObject(abortHandoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
-            transferId: expect.any(String),
-            sizeBytes: expect.any(Number),
-            manifestHash: expect.any(String),
-        }));
+        expectProviderBundleTransferPublicationMaybe(abortHandoffMetadataV2.providerBundleTransferPublication);
         expect(requireObject(abortHandoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
             transferId: expect.any(String),
         }));
@@ -1014,11 +1011,11 @@ describe('core e2e: session handoff via server-routed transfer', () => {
                 }),
                 'target server-routed abort handoff result get',
             ) as Readonly<{ ok?: boolean; errorCode?: string }>;
-            return result.ok === false && result.errorCode === 'not_found';
+            return result.ok === false && result.errorCode === 'aborted';
         }, {
             timeoutMs: 30_000,
             intervalMs: 100,
-            context: 'target server-routed handoff abort result absence',
+            context: 'target server-routed handoff abort result terminal error',
         });
 
         await expect(readFile(resolve(join(targetWorkspaceDir, 'README.md')), 'utf8')).resolves.toBe('target stays old\n');

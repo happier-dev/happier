@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
+import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
@@ -123,6 +124,7 @@ test.describe('ui e2e: plaintext mode + public share', () => {
     const diagnostics = collectBrowserDiagnostics({ page });
 
     let cliLogin: StartedCliTerminalConnect | null = null;
+    let daemon: StartedDaemon | null = null;
     let thrown: unknown = null;
     try {
       await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
@@ -149,6 +151,20 @@ test.describe('ui e2e: plaintext mode + public share', () => {
       await page.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
       await acknowledgeTerminalConnectSuccessIfPresent(page);
+
+      daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: cliHomeDir,
+        env: {
+          ...process.env,
+          CI: '1',
+          HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+          HAPPIER_SERVER_URL: server.baseUrl,
+          HAPPIER_WEBAPP_URL: uiBaseUrl,
+          HAPPIER_VARIANT: 'dev',
+        },
+      });
 
       await page.goto(`${uiBaseUrl}/settings/account`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('settings-account-encryption-mode-switch')).toHaveCount(1, { timeout: 120_000 });
@@ -228,6 +244,7 @@ test.describe('ui e2e: plaintext mode + public share', () => {
       thrown = error;
       throw error;
     } finally {
+      await daemon?.stop().catch(() => {});
       await cliLogin?.stop().catch(() => {});
       if (thrown) {
         await testInfo.attach('browser-diagnostics.md', { body: diagnostics(), contentType: 'text/markdown' });

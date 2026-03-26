@@ -29,6 +29,17 @@ export function daemonStatePath(happyHomeDir: string): string {
   return join(happyHomeDir, 'daemon.state.json');
 }
 
+function resolveDaemonCliSnapshotDir(params: { testDir: string }): string {
+  const raw = (process.env.HAPPIER_E2E_DAEMON_CLI_SNAPSHOT_MODE ?? '').toString().trim().toLowerCase();
+  if (raw === 'testdir' || raw === 'per-test' || raw === 'per_test' || raw === 'pertest') {
+    return resolve(params.testDir, 'cli-dist');
+  }
+
+  // Default to a shared snapshot to avoid paying the node_modules snapshot cost per test (which can
+  // otherwise consume most of the core slow E2E timeout budget).
+  return resolve(repoRootDir(), '.project', 'tmp', 'cli-dist-snapshot');
+}
+
 async function resolveActiveServerIdFromSettings(happyHomeDir: string): Promise<string | null> {
   try {
     const raw = await readFile(join(happyHomeDir, 'settings.json'), 'utf8');
@@ -436,9 +447,18 @@ export async function startTestDaemon(params: {
   }
 
   const cliLaunchSpec = await resolveCliTestLaunchSpec(
-    { testDir: params.testDir, env: params.env },
     {
-      snapshotDir: resolve(params.testDir, 'cli-dist'),
+      testDir: params.testDir,
+      env: {
+        ...params.env,
+        // Daemon-based E2E runs can start many times; copying node_modules into a snapshot is slow
+        // enough to consume most of the slow-lane timeout budget. Prefer a symlinked snapshot unless
+        // a caller explicitly opts into the heavier copy mode.
+        HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? 'symlink',
+      },
+    },
+    {
+      snapshotDir: resolveDaemonCliSnapshotDir({ testDir: params.testDir }),
       skipDistIntegrityCheck: true,
       skipSourceFreshnessCheck: true,
     },
