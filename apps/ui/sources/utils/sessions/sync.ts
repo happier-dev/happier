@@ -6,6 +6,7 @@ export class InvalidateSync {
     private _invalidatedDouble = false;
     private _stopped = false;
     private _command: () => Promise<void>;
+    private _hasStartedCommandThisCycle = false;
     private _pendings: (() => void)[] = [];
     private _onError?: (e: any) => void;
     private _onSuccess?: () => void;
@@ -66,7 +67,11 @@ export class InvalidateSync {
             this._invalidatedDouble = false;
             this._doSync();
         } else {
-            if (!this._invalidatedDouble) {
+            // When paused (e.g. endpoint supervision offline or app backgrounded), multiple
+            // invalidations before the first command attempt should coalesce into a single run
+            // once resumed. Only schedule a second post-run cycle if a command attempt already
+            // started for the current cycle.
+            if (!this._invalidatedDouble && this._hasStartedCommandThisCycle) {
                 this._invalidatedDouble = true;
             }
         }
@@ -152,6 +157,7 @@ export class InvalidateSync {
             }
 
             try {
+                this._hasStartedCommandThisCycle = true;
                 await this._command();
                 return;
             } catch (e) {
@@ -183,6 +189,7 @@ export class InvalidateSync {
     };
 
     private _doSync = async () => {
+        this._hasStartedCommandThisCycle = false;
         try {
             await this._runWithBackoff();
             this._onSuccess?.();

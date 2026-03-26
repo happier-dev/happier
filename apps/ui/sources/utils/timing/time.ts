@@ -34,10 +34,14 @@ export function createBackoff(
                 // Default: do not retry explicitly non-retryable errors.
                 // Duck-typed to avoid coupling this util to higher-level error classes.
                 if (e && typeof e === 'object') {
-                    if ((e as any).retryable === false) {
+                    const obj = e as Record<string, unknown>;
+                    if (obj.name === 'HappyError' && obj.code === 'endpoint_offline') {
                         return false;
                     }
-                    if (typeof (e as any).canTryAgain === 'boolean' && (e as any).canTryAgain === false) {
+                    if (obj.retryable === false) {
+                        return false;
+                    }
+                    if (typeof obj.canTryAgain === 'boolean' && obj.canTryAgain === false) {
                         return false;
                     }
                 }
@@ -67,5 +71,5 @@ export function createBackoff(
     };
 }
 
-export let backoff = createBackoff({ onError: (e) => { console.warn(e); } });
-export let backoffForever = createBackoff({ onError: (e) => { console.warn(e); }, maxFailureCount: Number.POSITIVE_INFINITY });
+export let backoff = createBackoff();
+export let backoffForever = createBackoff({ maxFailureCount: Number.POSITIVE_INFINITY });

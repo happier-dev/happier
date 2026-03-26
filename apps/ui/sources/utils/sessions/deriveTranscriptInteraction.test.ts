@@ -97,4 +97,20 @@ describe('deriveTranscriptInteractionFromSession', () => {
             disableToolNavigation: undefined,
         });
     });
+
+    it('treats missing session.active as inactive for permission approvals (avoids presence drift)', () => {
+        expect(
+            deriveTranscriptInteractionFromSession({
+                accessLevel: undefined,
+                canApprovePermissions: true,
+                active: undefined,
+                presence: 'online',
+            }),
+        ).toEqual({
+            canSendMessages: true,
+            canApprovePermissions: false,
+            permissionDisabledReason: 'inactive',
+            disableToolNavigation: undefined,
+        });
+    });
 });

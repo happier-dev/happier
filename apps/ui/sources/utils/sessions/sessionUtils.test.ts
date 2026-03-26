@@ -237,6 +237,23 @@ describe('listPendingPermissionRequests', () => {
         expect(listPendingPermissionRequests(session)).toEqual([]);
     });
 
+    it('returns an empty list when session.active is missing/unknown (conservative)', async () => {
+        const { listPendingPermissionRequests } = await import('./sessionUtils');
+        const session = createBaseSession({
+            active: undefined as any,
+            presence: 'online',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: { tool: 'Bash', arguments: { command: 'ls' }, createdAt: 5 },
+                },
+                completedRequests: null,
+            },
+        });
+
+        expect(listPendingPermissionRequests(session)).toEqual([]);
+    });
+
     it('filters out requests that are user-action prompts (kind=user_action) and custom-tool fallbacks', async () => {
         const { listPendingPermissionRequests } = await import('./sessionUtils');
         const session = createBaseSession({

@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe('runAfterInteractionsWithFallback', () => {
-    it('runs immediately on web', async () => {
+    it('defers on web (next tick) and is cancelable', async () => {
         vi.doMock('react-native', async () => {
             const stub = await import('@/dev/reactNativeStub');
             return {
@@ -19,11 +19,23 @@ describe('runAfterInteractionsWithFallback', () => {
             };
         });
 
+        vi.useFakeTimers();
+
         const fn = vi.fn();
         const { runAfterInteractionsWithFallback } = await import('./runAfterInteractionsWithFallback');
         const cancel = runAfterInteractionsWithFallback(fn);
+
+        expect(fn).toHaveBeenCalledTimes(0);
+
+        cancel();
+        vi.runAllTimers();
+        expect(fn).toHaveBeenCalledTimes(0);
+
+        const cancel2 = runAfterInteractionsWithFallback(fn);
+        expect(fn).toHaveBeenCalledTimes(0);
+        vi.runAllTimers();
         expect(fn).toHaveBeenCalledTimes(1);
-        expect(() => cancel()).not.toThrow();
+        expect(() => cancel2()).not.toThrow();
     });
 
     it('defers on native and is cancelable', async () => {

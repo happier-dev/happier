@@ -14,18 +14,15 @@ export function deriveTranscriptInteractionFromSession(
         disableToolNavigation?: boolean;
     }>,
 ): TranscriptInteraction {
-    const isSessionActive =
-        typeof session.active === 'boolean'
-            ? session.active
-            : typeof session.presence !== 'undefined'
-                ? session.presence === 'online'
-                : undefined;
+    // Treat `session.active` as the source of truth. When `active` is missing/unknown, be conservative
+    // and treat the session as inactive for interaction surfaces like permission approvals.
+    const isSessionActive = session.active === true;
 
     return deriveTranscriptInteraction({
         kind: 'session',
         accessLevel: session.accessLevel,
         canApprovePermissions: session.canApprovePermissions,
-        ...(typeof isSessionActive !== 'undefined' ? { isSessionActive } : {}),
+        isSessionActive,
         disableToolNavigation: session.disableToolNavigation,
     });
 }

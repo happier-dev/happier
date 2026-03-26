@@ -1,18 +1,20 @@
 export class PauseController {
-    #paused = false;
+    #pausedReasons = new Set<string>();
     #waiters: Array<() => void> = [];
 
     isPaused(): boolean {
-        return this.#paused;
+        return this.#pausedReasons.size > 0;
     }
 
-    pause(): void {
-        this.#paused = true;
+    pause(reason: string = 'default'): void {
+        const key = String(reason ?? '').trim() || 'default';
+        this.#pausedReasons.add(key);
     }
 
-    resume(): void {
-        if (!this.#paused) return;
-        this.#paused = false;
+    resume(reason: string = 'default'): void {
+        const key = String(reason ?? '').trim() || 'default';
+        this.#pausedReasons.delete(key);
+        if (this.#pausedReasons.size > 0) return;
         const waiters = this.#waiters;
         this.#waiters = [];
         for (const resolve of waiters) {
@@ -21,7 +23,7 @@ export class PauseController {
     }
 
     async waitUntilResumed(): Promise<void> {
-        if (!this.#paused) return;
+        if (this.#pausedReasons.size === 0) return;
         await new Promise<void>((resolve) => {
             this.#waiters.push(resolve);
         });
