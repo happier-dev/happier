@@ -1,107 +1,60 @@
-import { describe, expect, it } from 'vitest';
-import http from 'node:http';
-import { once } from 'node:events';
+import { afterEach, describe, expect, it } from 'vitest';
 import { fetchOpenAiCompatSpeechAudio } from './fetchOpenAiCompatSpeechAudio';
-
-function startServer(
-  handler: (req: http.IncomingMessage, body: Buffer) => void | Promise<void>
-): Promise<{ baseUrl: string; close: () => Promise<void> }> {
-  const server = http.createServer(async (req, res) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-    await once(req, 'end');
-    const body = Buffer.concat(chunks);
-
-    try {
-      await handler(req, body);
-      res.writeHead(200, { 'Content-Type': 'audio/wav' });
-      res.end(Buffer.from('ok'));
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: (err as any)?.message ?? 'server_error' }));
-    }
-  });
-
-  return new Promise((resolve, reject) => {
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      if (!addr || typeof addr === 'string') return reject(new Error('failed_to_bind'));
-      resolve({
-        baseUrl: `http://127.0.0.1:${addr.port}`,
-        close: async () => {
-          server.close();
-          await once(server, 'close');
-        },
-      });
-    });
-  });
-}
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 describe('fetchOpenAiCompatSpeechAudio', () => {
+  afterEach(() => {
+    resetRuntimeFetch();
+  });
+
   it('posts to /v1/audio/speech with OpenAI-compatible fields and optional bearer auth', async () => {
-    const srv = await startServer((req, body) => {
-      expect(req.method).toBe('POST');
-      expect(req.url).toBe('/v1/audio/speech');
+    setRuntimeFetch(async (input, init) => {
+      expect(String(input)).toBe('http://example.invalid/v1/audio/speech');
+      expect(init?.method).toBe('POST');
+      const headers = init?.headers as Record<string, string> | undefined;
+      expect(headers?.Authorization).toBe('Bearer secret');
+      expect(String(headers?.['Content-Type'] ?? '')).toContain('application/json');
 
-      expect(req.headers['content-type']).toContain('application/json');
-      expect(req.headers.authorization).toBe('Bearer secret');
-
-      const json = JSON.parse(body.toString('utf8'));
+      const json = JSON.parse(String(init?.body ?? ''));
       expect(json).toEqual({
         model: 'tts-1',
         input: 'hello',
         voice: 'alloy',
         response_format: 'wav',
       });
+
+      return new Response(Buffer.from('ok'), { status: 200, headers: { 'Content-Type': 'audio/wav' } });
     });
 
-    try {
-      const audio = await fetchOpenAiCompatSpeechAudio({
-        baseUrl: srv.baseUrl, // intentionally no /v1 suffix
-        apiKey: 'secret',
+    const audio = await fetchOpenAiCompatSpeechAudio({
+      baseUrl: 'http://example.invalid', // intentionally no /v1 suffix
+      apiKey: 'secret',
+      model: 'tts-1',
+      voice: 'alloy',
+      format: 'wav',
+      input: 'hello',
+    });
+
+    expect(audio.byteLength).toBeGreaterThan(0);
+  });
+
+  it('throws a stable error code when the endpoint fails', async () => {
+    setRuntimeFetch(async () => new Response(JSON.stringify({ error: 'nope' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
+
+    await expect(
+      fetchOpenAiCompatSpeechAudio({
+        baseUrl: 'http://example.invalid',
+        apiKey: null,
         model: 'tts-1',
         voice: 'alloy',
         format: 'wav',
         input: 'hello',
-      });
-
-      expect(audio.byteLength).toBeGreaterThan(0);
-    } finally {
-      await srv.close();
-    }
-  });
-
-  it('throws a stable error code when the endpoint fails', async () => {
-    const server = http.createServer((_req, res) => {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'nope' }));
-    });
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    const addr = server.address();
-    if (!addr || typeof addr === 'string') throw new Error('failed_to_bind');
-    const baseUrl = `http://127.0.0.1:${addr.port}`;
-
-    try {
-      await expect(
-        fetchOpenAiCompatSpeechAudio({
-          baseUrl,
-          apiKey: null,
-          model: 'tts-1',
-          voice: 'alloy',
-          format: 'wav',
-          input: 'hello',
-        })
-      ).rejects.toThrow('tts_failed');
-    } finally {
-      server.close();
-      await once(server, 'close');
-    }
+      }),
+    ).rejects.toThrow('tts_failed');
   });
 
   it('aborts and throws timeout error when request exceeds timeoutMs', async () => {
-    const originalFetch = globalThis.fetch;
-    const fetchMock = ((_: RequestInfo | URL, init?: RequestInit) => {
+    setRuntimeFetch((_: RequestInfo | URL, init?: RequestInit) => {
       return new Promise<Response>((_resolve, reject) => {
         const signal = init?.signal;
         if (!signal) return;
@@ -111,23 +64,18 @@ describe('fetchOpenAiCompatSpeechAudio', () => {
           { once: true },
         );
       });
-    }) as typeof fetch;
-    globalThis.fetch = fetchMock;
+    });
 
-    try {
-      await expect(
-        fetchOpenAiCompatSpeechAudio({
-          baseUrl: 'http://127.0.0.1:12345',
-          apiKey: null,
-          model: 'tts-1',
-          voice: 'alloy',
-          format: 'wav',
-          input: 'hello',
-          timeoutMs: 5,
-        }),
-      ).rejects.toThrow('tts_timeout');
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await expect(
+      fetchOpenAiCompatSpeechAudio({
+        baseUrl: 'http://example.invalid',
+        apiKey: null,
+        model: 'tts-1',
+        voice: 'alloy',
+        format: 'wav',
+        input: 'hello',
+        timeoutMs: 5,
+      }),
+    ).rejects.toThrow('tts_timeout');
   });
 });
