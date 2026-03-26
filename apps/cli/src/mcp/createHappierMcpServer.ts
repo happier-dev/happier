@@ -24,6 +24,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1 } from '@happier-dev/protocol';
 
 export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: McpServer; toolNames: string[] } {
+  const toolSurface = 'session_agent' as const;
+
   const changeTitleHandler = async (title: string) => {
     logger.debug('[happierMCP] Changing title to:', title);
     try {
@@ -119,23 +121,24 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
     sessionRecentMessagesGet: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.messages.recent.get' }),
     resetGlobalVoiceAgent: async () => {},
 
-    isActionEnabled: (id, ctx) => isActionEnabledByEnv(id, { surface: ctx.surface ?? 'mcp', placement: ctx.placement ?? null }),
+    isActionEnabled: (id, ctx) => isActionEnabledByEnv(id, { surface: ctx.surface ?? toolSurface, placement: ctx.placement ?? null }),
   };
 
   const executor = createActionExecutor(deps);
 
-  const enabledTools = listBuiltInHappierTools();
+  const enabledTools = listBuiltInHappierTools({ surface: toolSurface });
 
   registerHappierMcpResources(mcp as any, {
-    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'mcp' }),
+    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: toolSurface }),
   });
 
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
     isActionEnabled: (id) => {
       const spec = getActionSpec(id as any);
-      return isActionSpecSurfacedOn(spec, 'mcp') && isActionEnabledByEnv(id as any, { surface: 'mcp' });
+      return isActionSpecSurfacedOn(spec, toolSurface) && isActionEnabledByEnv(id as any, { surface: toolSurface });
     },
+    surface: toolSurface,
   });
 
   for (const tool of enabledTools) {
@@ -144,7 +147,7 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
         toolName: tool.name,
         args,
         sessionId: client.sessionId,
-        surface: 'mcp',
+        surface: toolSurface,
         deps: {
           changeTitle: async (_sessionId, title) => {
             const response = await changeTitleHandler(title);
