@@ -9,7 +9,7 @@
  */
 import axios from 'axios';
 
-import { resolveServerHttpBaseUrl } from '@/sessionControl/serverHttpBaseUrl';
+import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 import { isLoopbackHost } from '@/channels/telegram/telegramWebhookRelay';
 
 import type { ScopedTelegramBridgeUpdate } from './channelBridgeAccountConfig';

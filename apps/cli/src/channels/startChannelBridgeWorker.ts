@@ -22,16 +22,16 @@ import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLo
 import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
 import type { Credentials } from '@/persistence';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
+import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import {
   encryptSessionPayload,
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
   tryDecryptSessionMetadata,
   type SessionEncryptionContext,
-} from '@/sessionControl/sessionEncryptionContext';
-import { sendSessionMessageViaSocketCommitted } from '@/sessionControl/sessionSocketSendMessage';
-import { fetchSessionById, fetchSessionsPage, type RawSessionListRow } from '@/sessionControl/sessionsHttp';
+} from '@/session/transport/encryption/sessionEncryptionContext';
+import { sendSessionMessageViaSocketCommitted } from '@/session/transport/socket/sessionSocketSendMessage';
+import { fetchSessionById, fetchSessionsPage, type RawSessionListRow } from '@/session/transport/http/sessionsHttp';
 import { logger } from '@/ui/logger';
 
 import {

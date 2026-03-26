@@ -292,7 +292,11 @@ export function createChannelBridgeInboundDeduper(now: () => number = () => Date
 function normalizeAgentFetchResult(
   fetched: readonly ChannelBridgeAgentMessageRow[] | ChannelBridgeAgentFetchResult,
 ): Readonly<{ messages: readonly ChannelBridgeAgentMessageRow[]; highestSeenSeq: number | null }> {
-  if (Array.isArray(fetched)) {
+  const isMessageRowArray = (
+    value: readonly ChannelBridgeAgentMessageRow[] | ChannelBridgeAgentFetchResult,
+  ): value is readonly ChannelBridgeAgentMessageRow[] => Array.isArray(value);
+
+  if (isMessageRowArray(fetched)) {
     return {
       messages: fetched,
       highestSeenSeq: null,

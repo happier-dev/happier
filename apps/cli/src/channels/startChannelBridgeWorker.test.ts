@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startChannelBridgeFromEnv } from './startChannelBridgeWorker';
+import type { ChannelBridgeDeps } from './core/channelBridgeWorker';
+
+type SendCommittedFn = typeof import('@/session/transport/socket/sessionSocketSendMessage').sendSessionMessageViaSocketCommitted;
 
 const credentials = {
   token: 'token-1',
@@ -16,9 +19,9 @@ afterEach(() => {
   vi.resetModules();
 
   for (const modulePath of [
-    '@/sessionControl/sessionsHttp',
+    '@/session/transport/http/sessionsHttp',
     '@/api/session/fetchEncryptedTranscriptWindow',
-    '@/sessionControl/sessionSocketSendMessage',
+    '@/session/transport/socket/sessionSocketSendMessage',
     '@/session/replay/decryptTranscriptRows',
     '@/ui/logger',
     './core/channelBridgeWorker',
@@ -87,12 +90,10 @@ describe('startChannelBridgeFromEnv', () => {
         hasNext: false,
       });
 
-    let capturedDeps: {
-      listSessions: () => Promise<Array<{ sessionId: string; label: string | null }>>;
-    } | null = null;
+    let capturedDeps: ChannelBridgeDeps | null = null;
 
-    vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/sessionControl/sessionsHttp')>();
+    vi.doMock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>();
       return {
         ...actual,
         fetchSessionsPage,
@@ -115,8 +116,8 @@ describe('startChannelBridgeFromEnv', () => {
         updateLastForwardedSeq: async () => true,
         removeBinding: async () => false,
       })),
-      startChannelBridgeWorker: vi.fn((params: { deps: typeof capturedDeps }) => {
-        capturedDeps = params.deps as typeof capturedDeps;
+      startChannelBridgeWorker: vi.fn((params: { deps: ChannelBridgeDeps }) => {
+        capturedDeps = params.deps;
         return {
           trigger: vi.fn(),
           stop: vi.fn(async () => undefined),
@@ -169,22 +170,12 @@ describe('startChannelBridgeFromEnv', () => {
       dataEncryptionKey: null,
     }));
     const fetchAfterSeq = vi.fn(async () => []);
-    const sendCommitted = vi.fn(async () => undefined);
+    const sendCommitted = vi.fn<SendCommittedFn>(async (_params) => undefined);
 
-    let capturedDeps: {
-      sendUserMessageToSession: (params: {
-        sessionId: string;
-        text: string;
-        sentFrom: string;
-        providerId: string;
-        conversationId: string;
-        threadId: string | null;
-      }) => Promise<void>;
-      fetchAgentMessagesAfterSeq: (params: { sessionId: string; afterSeq: number }) => Promise<unknown>;
-    } | null = null;
+    let capturedDeps: ChannelBridgeDeps | null = null;
 
-    vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/sessionControl/sessionsHttp')>();
+    vi.doMock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>();
       return {
         ...actual,
         fetchSessionById,
@@ -199,7 +190,7 @@ describe('startChannelBridgeFromEnv', () => {
       };
     });
 
-    vi.doMock('@/sessionControl/sessionSocketSendMessage', () => ({
+    vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
       sendSessionMessageViaSocketCommitted: sendCommitted,
     }));
 
@@ -323,8 +314,8 @@ describe('startChannelBridgeFromEnv', () => {
       fetchAgentMessagesAfterSeq: (params: { sessionId: string; afterSeq: number }) => Promise<unknown>;
     } | null = null;
 
-    vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/sessionControl/sessionsHttp')>();
+    vi.doMock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>();
       return {
         ...actual,
         fetchSessionById,
@@ -418,7 +409,7 @@ describe('startChannelBridgeFromEnv', () => {
       metadata: null,
       dataEncryptionKey: null,
     }));
-    const sendCommitted = vi.fn(async () => undefined);
+    const sendCommitted = vi.fn<SendCommittedFn>(async (_params) => undefined);
 
     let capturedDeps: {
       sendUserMessageToSession: (params: {
@@ -432,15 +423,15 @@ describe('startChannelBridgeFromEnv', () => {
       }) => Promise<void>;
     } | null = null;
 
-    vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/sessionControl/sessionsHttp')>();
+    vi.doMock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>();
       return {
         ...actual,
         fetchSessionById,
       };
     });
 
-    vi.doMock('@/sessionControl/sessionSocketSendMessage', () => ({
+    vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
       sendSessionMessageViaSocketCommitted: sendCommitted,
     }));
 
@@ -590,8 +581,8 @@ describe('startChannelBridgeFromEnv', () => {
       },
     }));
 
-    vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/sessionControl/sessionsHttp')>();
+    vi.doMock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>();
       return {
         ...actual,
         fetchSessionById,
@@ -678,28 +669,19 @@ describe('startChannelBridgeFromEnv', () => {
       metadata: null,
       dataEncryptionKey: null,
     }));
-    const sendCommitted = vi.fn(async () => undefined);
+    const sendCommitted = vi.fn<SendCommittedFn>(async (_params) => undefined);
 
-    let capturedDeps: {
-      sendUserMessageToSession: (params: {
-        sessionId: string;
-        text: string;
-        sentFrom: string;
-        providerId: string;
-        conversationId: string;
-        threadId: string | null;
-      }) => Promise<void>;
-    } | null = null;
+    let capturedDeps: ChannelBridgeDeps | null = null;
 
-    vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/sessionControl/sessionsHttp')>();
+    vi.doMock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>();
       return {
         ...actual,
         fetchSessionById,
       };
     });
 
-    vi.doMock('@/sessionControl/sessionSocketSendMessage', () => ({
+    vi.doMock('@/session/transport/socket/sessionSocketSendMessage', () => ({
       sendSessionMessageViaSocketCommitted: sendCommitted,
     }));
 
@@ -719,8 +701,8 @@ describe('startChannelBridgeFromEnv', () => {
         updateLastForwardedSeq: async () => true,
         removeBinding: async () => false,
       })),
-      startChannelBridgeWorker: vi.fn((params: { deps: typeof capturedDeps }) => {
-        capturedDeps = params.deps as typeof capturedDeps;
+      startChannelBridgeWorker: vi.fn((params: { deps: ChannelBridgeDeps }) => {
+        capturedDeps = params.deps;
         return {
           trigger: vi.fn(),
           stop: vi.fn(async () => undefined),
