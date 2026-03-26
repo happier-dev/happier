@@ -4,8 +4,6 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     clearState: true
 
 - runFlow:
-    when:
-      visible: "Development Build"
     file: _shared/connectDevClientIfNeeded.yaml
 
 - runFlow:

@@ -556,8 +556,8 @@ describe('built-in Happier tools', () => {
     const executeActionByToolName = vi.fn(async () => ok({ ok: true }));
 
     const result = await dispatchBuiltInHappierTool({
-      toolName: 'session_message_send',
-      args: { sessionId: 'sess-1', message: 'hello' },
+      toolName: 'session_list',
+      args: { limit: 10 },
       sessionId: 'sess-1',
       surface: 'session_agent',
       deps: {
@@ -569,8 +569,8 @@ describe('built-in Happier tools', () => {
 
     expect(result).toEqual(ok({ ok: true }));
     expect(executeActionByToolName).toHaveBeenCalledWith(
-      'session_message_send',
-      { sessionId: 'sess-1', message: 'hello' },
+      'session_list',
+      { limit: 10 },
       'sess-1',
     );
   });

@@ -20,10 +20,11 @@ Prereqs:
 From repo root:
 
 ```bash
-HAPPIER_E2E_SERVER_URL=http://127.0.0.1:<port> yarn -s test:e2e:mobile:android
-# or (if already exported):
 yarn -s test:e2e:mobile:android
 ```
+
+By default the runner starts an ephemeral **server-light** instance (and stops it at the end of the run). To use an existing server instead, set:
+- `HAPPIER_E2E_SERVER_URL` (or pass `--serverUrl` through `packages/tests/scripts/run-maestro-with-heartbeat.mjs`)
 
 Optional overrides:
 - `HAPPIER_E2E_DEV_CLIENT_METRO_URL` (defaults to `http://127.0.0.1:8081`, translated for Android emulator to `http://10.0.2.2:8081`)
