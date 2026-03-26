@@ -58,6 +58,7 @@ describe('createTelegramChannelAdapter', () => {
     const adapter = createTelegramChannelAdapter({
       botToken: 'test-token',
       api,
+      allowedChatIds: new Set(['-100555']),
     });
 
     const inbound = await adapter.pullInboundMessages();
@@ -68,6 +69,86 @@ describe('createTelegramChannelAdapter', () => {
         threadId: '9001',
         senderId: '42',
         text: 'hello from topic',
+        messageId: '5001',
+      },
+    ]);
+  });
+
+  it('ignores non-private chats by default unless allowlisted or allowAllSharedChats is enabled', async () => {
+    const api = {
+      getMe: vi.fn(async () => ({ id: 777, username: 'happier_bot' })),
+      getUpdates: vi.fn(async () => ([
+        {
+          update_id: 101,
+          message: {
+            message_id: 5001,
+            text: 'hello from dm',
+            chat: { id: 1234, type: 'private' },
+            from: { id: 42, is_bot: false, first_name: 'Ada' },
+          },
+        },
+        {
+          update_id: 102,
+          message: {
+            message_id: 5002,
+            text: 'hello from group',
+            chat: { id: -100555, type: 'supergroup' },
+            from: { id: 43, is_bot: false, first_name: 'Grace' },
+          },
+        },
+      ])),
+      sendMessage: vi.fn(async () => undefined),
+    };
+
+    const adapter = createTelegramChannelAdapter({
+      botToken: 'test-token',
+      api,
+    });
+
+    const inbound = await adapter.pullInboundMessages();
+    expect(inbound).toEqual([
+      {
+        providerId: 'telegram',
+        conversationId: '1234',
+        threadId: null,
+        senderId: '42',
+        text: 'hello from dm',
+        messageId: '5001',
+      },
+    ]);
+  });
+
+  it('allows non-private chats when allowAllSharedChats is enabled', async () => {
+    const api = {
+      getMe: vi.fn(async () => ({ id: 777, username: 'happier_bot' })),
+      getUpdates: vi.fn(async () => ([
+        {
+          update_id: 101,
+          message: {
+            message_id: 5001,
+            text: 'hello from group',
+            chat: { id: -100555, type: 'supergroup' },
+            from: { id: 42, is_bot: false, first_name: 'Ada' },
+          },
+        },
+      ])),
+      sendMessage: vi.fn(async () => undefined),
+    };
+
+    const adapter = createTelegramChannelAdapter({
+      botToken: 'test-token',
+      api,
+      allowAllSharedChats: true,
+    });
+
+    const inbound = await adapter.pullInboundMessages();
+    expect(inbound).toEqual([
+      {
+        providerId: 'telegram',
+        conversationId: '-100555',
+        threadId: null,
+        senderId: '42',
+        text: 'hello from group',
         messageId: '5001',
       },
     ]);

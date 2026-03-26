@@ -23,13 +23,14 @@ describe('resolveChannelBridgesDaemonEnabled', () => {
     const enabled = await resolveChannelBridgesDaemonEnabled({
       env: { HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED: '1', HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED: '1' },
       serverUrl: 'https://api.example.test',
+      settings: { experiments: true, featureToggles: { channelBridges: true } },
       timeoutMs: 100,
     });
 
     expect(enabled).toBe(false);
   });
 
-  it('returns true when server reports telegram bridge enabled and build policy does not deny it', async () => {
+  it('returns false when user has not enabled the experimental toggle', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({
@@ -48,6 +49,33 @@ describe('resolveChannelBridgesDaemonEnabled', () => {
     const enabled = await resolveChannelBridgesDaemonEnabled({
       env: { HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED: '1', HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED: '1' },
       serverUrl: 'https://api.example.test',
+      settings: {},
+      timeoutMs: 100,
+    });
+
+    expect(enabled).toBe(false);
+  });
+
+  it('returns true when server reports telegram bridge enabled and user has opted in', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () =>
+          FeaturesResponseSchema.parse({
+            features: {
+              channelBridges: { enabled: true, telegram: { enabled: true } },
+            },
+            capabilities: {},
+          }),
+      })) as unknown as typeof fetch,
+    );
+
+    const enabled = await resolveChannelBridgesDaemonEnabled({
+      env: { HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED: '1', HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED: '1' },
+      serverUrl: 'https://api.example.test',
+      settings: { experiments: true, featureToggles: { channelBridges: true } },
       timeoutMs: 100,
     });
 
@@ -75,6 +103,7 @@ describe('resolveChannelBridgesDaemonEnabled', () => {
         HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED: '1',
       },
       serverUrl: 'https://api.example.test',
+      settings: { experiments: true, featureToggles: { channelBridges: true } },
       timeoutMs: 100,
     });
 
@@ -102,6 +131,7 @@ describe('resolveChannelBridgesDaemonEnabled', () => {
         HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED: '0',
       },
       serverUrl: 'https://api.example.test',
+      settings: { experiments: true, featureToggles: { channelBridges: true } },
       timeoutMs: 100,
     });
 
@@ -109,4 +139,3 @@ describe('resolveChannelBridgesDaemonEnabled', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
-

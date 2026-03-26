@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startChannelBridgeFromEnv } from './startChannelBridgeWorker';
-import type { ChannelBridgeDeps } from './core/channelBridgeWorker';
+import type { ChannelBridgeDeps } from '@/channels/core/channelBridgeWorker';
 
 type SendCommittedFn = typeof import('@/session/transport/socket/sessionSocketSendMessage').sendSessionMessageViaSocketCommitted;
 
@@ -24,10 +24,10 @@ afterEach(() => {
     '@/session/transport/socket/sessionSocketSendMessage',
     '@/session/replay/decryptTranscriptRows',
     '@/ui/logger',
-    './core/channelBridgeWorker',
-    './telegram/telegramAdapter',
-    './telegram/telegramWebhookRelay',
-    './channelBridgeServerKv',
+    '@/channels/core/channelBridgeWorker',
+    '@/channels/providers/telegram/telegramAdapter',
+    '@/channels/providers/telegram/telegramWebhookRelay',
+    '@/channels/state/localBindingStore',
   ]) {
     vi.doUnmock(modulePath);
   }
@@ -100,7 +100,7 @@ describe('startChannelBridgeFromEnv', () => {
       };
     });
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
       createInMemoryChannelBindingStore: vi.fn(() => ({
         listBindings: async () => [],
         getBinding: async () => null,
@@ -110,6 +110,9 @@ describe('startChannelBridgeFromEnv', () => {
           threadId: null,
           sessionId: 'sess-1',
           lastForwardedSeq: 0,
+          ownerSenderId: 'user-1',
+          inboundMode: 'ownerOnly',
+          allowMissingSenderId: false,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         }),
@@ -125,7 +128,7 @@ describe('startChannelBridgeFromEnv', () => {
       }),
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter: vi.fn(() => ({
         providerId: 'telegram',
         pullInboundMessages: async () => [],
@@ -194,7 +197,7 @@ describe('startChannelBridgeFromEnv', () => {
       sendSessionMessageViaSocketCommitted: sendCommitted,
     }));
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
       createInMemoryChannelBindingStore: vi.fn(() => ({
         listBindings: async () => [],
         getBinding: async () => null,
@@ -204,6 +207,9 @@ describe('startChannelBridgeFromEnv', () => {
           threadId: null,
           sessionId: 'sess-1',
           lastForwardedSeq: 0,
+          ownerSenderId: 'user-1',
+          inboundMode: 'ownerOnly',
+          allowMissingSenderId: false,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         }),
@@ -219,7 +225,7 @@ describe('startChannelBridgeFromEnv', () => {
       }),
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter: vi.fn(() => ({
         providerId: 'telegram',
         pullInboundMessages: async () => [],
@@ -334,7 +340,7 @@ describe('startChannelBridgeFromEnv', () => {
       decryptTranscriptRows: decryptRows,
     }));
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
       createInMemoryChannelBindingStore: vi.fn(() => ({
         listBindings: async () => [],
         getBinding: async () => null,
@@ -344,6 +350,9 @@ describe('startChannelBridgeFromEnv', () => {
           threadId: null,
           sessionId: 'sess-1',
           lastForwardedSeq: 0,
+          ownerSenderId: 'user-1',
+          inboundMode: 'ownerOnly',
+          allowMissingSenderId: false,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         }),
@@ -359,7 +368,7 @@ describe('startChannelBridgeFromEnv', () => {
       }),
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter: vi.fn(() => ({
         providerId: 'telegram',
         pullInboundMessages: async () => [],
@@ -435,7 +444,7 @@ describe('startChannelBridgeFromEnv', () => {
       sendSessionMessageViaSocketCommitted: sendCommitted,
     }));
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
       createInMemoryChannelBindingStore: vi.fn(() => ({
         listBindings: async () => [],
         getBinding: async () => null,
@@ -445,6 +454,9 @@ describe('startChannelBridgeFromEnv', () => {
           threadId: null,
           sessionId: 'sess-1',
           lastForwardedSeq: 0,
+          ownerSenderId: 'user-1',
+          inboundMode: 'ownerOnly',
+          allowMissingSenderId: false,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         }),
@@ -460,7 +472,7 @@ describe('startChannelBridgeFromEnv', () => {
       }),
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter: vi.fn(() => ({
         providerId: 'telegram',
         pullInboundMessages: async () => [],
@@ -597,7 +609,7 @@ describe('startChannelBridgeFromEnv', () => {
       };
     });
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
       createInMemoryChannelBindingStore: vi.fn(() => ({
         listBindings: async () => [],
         getBinding: async () => null,
@@ -607,6 +619,9 @@ describe('startChannelBridgeFromEnv', () => {
           threadId: null,
           sessionId: 'sess-1',
           lastForwardedSeq: 0,
+          ownerSenderId: 'user-1',
+          inboundMode: 'ownerOnly',
+          allowMissingSenderId: false,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         }),
@@ -622,7 +637,7 @@ describe('startChannelBridgeFromEnv', () => {
       }),
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter: vi.fn(() => ({
         providerId: 'telegram',
         pullInboundMessages: async () => [],
@@ -685,7 +700,7 @@ describe('startChannelBridgeFromEnv', () => {
       sendSessionMessageViaSocketCommitted: sendCommitted,
     }));
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
       createInMemoryChannelBindingStore: vi.fn(() => ({
         listBindings: async () => [],
         getBinding: async () => null,
@@ -695,6 +710,9 @@ describe('startChannelBridgeFromEnv', () => {
           threadId: null,
           sessionId: 'sess-1',
           lastForwardedSeq: 0,
+          ownerSenderId: 'user-1',
+          inboundMode: 'ownerOnly',
+          allowMissingSenderId: false,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         }),
@@ -710,7 +728,7 @@ describe('startChannelBridgeFromEnv', () => {
       }),
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter: vi.fn(() => ({
         providerId: 'telegram',
         pullInboundMessages: async () => [],
@@ -801,7 +819,7 @@ describe('startChannelBridgeFromEnv', () => {
       },
     }));
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
       createInMemoryChannelBindingStore: vi.fn(() => ({
         listBindings: async () => [],
         getBinding: async () => null,
@@ -811,6 +829,9 @@ describe('startChannelBridgeFromEnv', () => {
           threadId: null,
           sessionId: 'sess-1',
           lastForwardedSeq: 0,
+          ownerSenderId: 'user-1',
+          inboundMode: 'ownerOnly',
+          allowMissingSenderId: false,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         }),
@@ -823,12 +844,12 @@ describe('startChannelBridgeFromEnv', () => {
       })),
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter,
     }));
 
-    vi.doMock('./telegram/telegramWebhookRelay', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('./telegram/telegramWebhookRelay')>();
+    vi.doMock('@/channels/providers/telegram/telegramWebhookRelay', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/channels/providers/telegram/telegramWebhookRelay')>();
       return {
         ...actual,
         startTelegramWebhookRelay: startRelay,
@@ -855,12 +876,15 @@ describe('startChannelBridgeFromEnv', () => {
     await handle?.stop();
   });
 
-  it('stops webhook relay when store initialization fails before worker startup', async () => {
-    vi.resetModules();
+	  it('stops webhook relay when binding store initialization fails before worker startup', async () => {
+	    vi.resetModules();
 
-    const relayStop = vi.fn(async () => undefined);
-    const startWorker = vi.fn();
-    const kvInitError = new Error('kv init failed');
+	    const relayStop = vi.fn(async () => undefined);
+	    const startWorker = vi.fn(() => ({
+	      trigger: vi.fn(),
+	      stop: vi.fn(async () => undefined),
+	    }));
+	    const storeInitError = new Error('binding store init failed');
 
     vi.doMock('@/ui/logger', () => ({
       logger: {
@@ -870,7 +894,7 @@ describe('startChannelBridgeFromEnv', () => {
       },
     }));
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
       createInMemoryChannelBindingStore: vi.fn(() => ({
         listBindings: async () => [],
         getBinding: async () => null,
@@ -880,6 +904,9 @@ describe('startChannelBridgeFromEnv', () => {
           threadId: null,
           sessionId: 'sess-1',
           lastForwardedSeq: 0,
+          ownerSenderId: 'user-1',
+          inboundMode: 'ownerOnly',
+          allowMissingSenderId: false,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         }),
@@ -889,7 +916,7 @@ describe('startChannelBridgeFromEnv', () => {
       startChannelBridgeWorker: startWorker,
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter: vi.fn(() => ({
         providerId: 'telegram',
         pullInboundMessages: async () => [],
@@ -899,65 +926,77 @@ describe('startChannelBridgeFromEnv', () => {
       })),
     }));
 
-    vi.doMock('./telegram/telegramWebhookRelay', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('./telegram/telegramWebhookRelay')>();
-      return {
-        ...actual,
-        startTelegramWebhookRelay: vi.fn(async () => ({
-          port: 8787,
-          stop: relayStop,
-        })),
-      };
-    });
+	    vi.doMock('@/channels/providers/telegram/telegramWebhookRelay', async (importOriginal) => {
+	      const actual = await importOriginal<typeof import('@/channels/providers/telegram/telegramWebhookRelay')>();
+	      return {
+	        ...actual,
+	        startTelegramWebhookRelay: vi.fn(async () => ({
+	          port: 8787,
+	          stop: relayStop,
+	        })),
+	      };
+	    });
 
-    vi.doMock('./channelBridgeServerKv', () => ({
-      createAxiosChannelBridgeKvClient: vi.fn(() => {
-        throw kvInitError;
-      }),
-    }));
+	    vi.doMock('@/channels/state/localBindingStore', () => ({
+	      createLocalChannelBindingStore: vi.fn(() => {
+	        throw storeInitError;
+	      }),
+	    }));
 
-    const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
+	    const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
 
-    await expect(startChannelBridgeFromEnv({
-      credentials,
-      serverId: 'server-a',
-      accountId: 'acct-a',
-      env: {
-        HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
-        HAPPIER_TELEGRAM_WEBHOOK_ENABLED: 'true',
-        HAPPIER_TELEGRAM_WEBHOOK_SECRET: 'secret-token',
-      } as NodeJS.ProcessEnv,
-    })).rejects.toThrow('kv init failed');
+	    await expect(startChannelBridgeFromEnv({
+	      credentials,
+	      serverId: 'server-a',
+	      accountId: 'acct-a',
+	      env: {
+	        HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
+	        HAPPIER_TELEGRAM_WEBHOOK_ENABLED: 'true',
+	        HAPPIER_TELEGRAM_WEBHOOK_SECRET: 'secret-token',
+	      } as NodeJS.ProcessEnv,
+	    })).rejects.toThrow('binding store init failed');
 
-    expect(relayStop).toHaveBeenCalledTimes(1);
-    expect(startWorker).not.toHaveBeenCalled();
-  });
+	    expect(relayStop).toHaveBeenCalledTimes(0);
+	    expect(startWorker).not.toHaveBeenCalled();
+	  });
 
-  it('fails fast when only one of serverId/accountId is provided', async () => {
+  it('starts with in-memory bindings when only serverId is provided', async () => {
     vi.resetModules();
 
-    const startWorker = vi.fn();
+    const startWorker = vi.fn(() => ({
+      trigger: vi.fn(),
+      stop: vi.fn(async () => undefined),
+    }));
+    const createLocalChannelBindingStore = vi.fn();
+    const createInMemoryChannelBindingStore = vi.fn(() => ({
+      listBindings: async () => [],
+      getBinding: async () => null,
+      upsertBinding: async () => ({
+        providerId: 'telegram',
+        conversationId: 'conv-1',
+        threadId: null,
+        sessionId: 'sess-1',
+        lastForwardedSeq: 0,
+        ownerSenderId: 'user-1',
+        inboundMode: 'ownerOnly',
+        allowMissingSenderId: false,
+        createdAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+      }),
+      updateLastForwardedSeq: async () => true,
+      removeBinding: async () => false,
+    }));
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
-      createInMemoryChannelBindingStore: vi.fn(() => ({
-        listBindings: async () => [],
-        getBinding: async () => null,
-        upsertBinding: async () => ({
-          providerId: 'telegram',
-          conversationId: 'conv-1',
-          threadId: null,
-          sessionId: 'sess-1',
-          lastForwardedSeq: 0,
-          createdAtMs: Date.now(),
-          updatedAtMs: Date.now(),
-        }),
-        updateLastForwardedSeq: async () => true,
-        removeBinding: async () => false,
-      })),
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
+      createInMemoryChannelBindingStore,
       startChannelBridgeWorker: startWorker,
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/state/localBindingStore', () => ({
+      createLocalChannelBindingStore,
+    }));
+
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter: vi.fn(() => ({
         providerId: 'telegram',
         pullInboundMessages: async () => [],
@@ -969,22 +1008,79 @@ describe('startChannelBridgeFromEnv', () => {
 
     const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
 
-    await expect(startChannelBridgeFromEnv({
+    const worker = await startChannelBridgeFromEnv({
       credentials,
       serverId: 'server-only',
       env: {
         HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
       } as NodeJS.ProcessEnv,
-    })).rejects.toThrow('require both serverId and accountId');
+    });
 
-    await expect(startChannelBridgeFromEnv({
+    expect(worker).not.toBeNull();
+    expect(createInMemoryChannelBindingStore).toHaveBeenCalledTimes(1);
+    expect(createLocalChannelBindingStore).not.toHaveBeenCalled();
+    expect(startWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses local bindings when accountId is provided (server scope comes from activeServerDir)', async () => {
+    vi.resetModules();
+
+    const startWorker = vi.fn(() => ({
+      trigger: vi.fn(),
+      stop: vi.fn(async () => undefined),
+    }));
+    const createInMemoryChannelBindingStore = vi.fn();
+    const createLocalChannelBindingStore = vi.fn(() => ({
+      listBindings: async () => [],
+      getBinding: async () => null,
+      upsertBinding: async () => ({
+        providerId: 'telegram',
+        conversationId: 'conv-1',
+        threadId: null,
+        sessionId: 'sess-1',
+        lastForwardedSeq: 0,
+        ownerSenderId: 'user-1',
+        inboundMode: 'ownerOnly',
+        allowMissingSenderId: false,
+        createdAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+      }),
+      updateLastForwardedSeq: async () => true,
+      removeBinding: async () => false,
+    }));
+
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
+      createInMemoryChannelBindingStore,
+      startChannelBridgeWorker: startWorker,
+    }));
+
+    vi.doMock('@/channels/state/localBindingStore', () => ({
+      createLocalChannelBindingStore,
+    }));
+
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
+      createTelegramChannelAdapter: vi.fn(() => ({
+        providerId: 'telegram',
+        pullInboundMessages: async () => [],
+        sendMessage: async () => undefined,
+        enqueueWebhookUpdate: vi.fn(),
+        stop: async () => undefined,
+      })),
+    }));
+
+    const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
+
+    const worker = await startChannelBridgeFromEnv({
       credentials,
-      accountId: 'account-only',
+      accountId: 'acct_123',
       env: {
         HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
       } as NodeJS.ProcessEnv,
-    })).rejects.toThrow('require both serverId and accountId');
+    });
 
-    expect(startWorker).not.toHaveBeenCalled();
+    expect(worker).not.toBeNull();
+    expect(createLocalChannelBindingStore).toHaveBeenCalledTimes(1);
+    expect(createInMemoryChannelBindingStore).not.toHaveBeenCalled();
+    expect(startWorker).toHaveBeenCalledTimes(1);
   });
 });

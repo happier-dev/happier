@@ -1,8 +1,10 @@
 import { resolveCliFeatureDecisionForServer } from '@/features/featureDecisionService';
+import { resolveExperimentalSettingsFeatureToggleEnabled } from '@/features/settingsFeatureToggles';
 
 export async function resolveChannelBridgesDaemonEnabled(params: {
   env: NodeJS.ProcessEnv;
   serverUrl: string;
+  settings?: unknown;
   timeoutMs?: number;
 }): Promise<boolean> {
   const resolved = await resolveCliFeatureDecisionForServer({
@@ -12,6 +14,13 @@ export async function resolveChannelBridgesDaemonEnabled(params: {
     timeoutMs: params.timeoutMs,
   });
 
-  return resolved.decision.state === 'enabled';
-}
+  if (resolved.decision.state !== 'enabled') {
+    return false;
+  }
 
+  return resolveExperimentalSettingsFeatureToggleEnabled({
+    settings: params.settings,
+    featureId: 'channelBridges',
+    defaultEnabled: false,
+  });
+}

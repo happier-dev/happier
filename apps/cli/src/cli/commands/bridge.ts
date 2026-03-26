@@ -5,24 +5,18 @@ import { configuration } from '@/configuration';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient';
 import {
-  hasSharedTelegramBridgeUpdate,
   readScopedTelegramBridgeConfig,
   removeScopedTelegramBridgeConfig,
   splitScopedTelegramBridgeUpdate,
   upsertScopedTelegramBridgeConfig,
 } from '@/channels/channelBridgeAccountConfig';
 import { resolveChannelBridgeRuntimeConfig } from '@/channels/channelBridgeConfig';
-import {
-  clearChannelBridgeTelegramConfigInKv,
-  createAxiosChannelBridgeKvClient,
-  readChannelBridgeTelegramConfigFromKv,
-  replaceChannelBridgeTelegramConfigRawInKv,
-  upsertChannelBridgeTelegramConfigInKv,
-} from '@/channels/channelBridgeServerKv';
-import { overlayServerKvTelegramConfigInSettings } from '@/channels/channelBridgeServerConfigOverlay';
-import { isLoopbackHost } from '@/channels/telegram/telegramWebhookRelay';
+import { isLoopbackHostname } from '@/server/serverUrlClassification';
+import { createLocalChannelBindingStore } from '@/channels/state/localBindingStore';
+import { ensureExperimentalSettingsFeatureToggleEnabled } from '@/features/settingsFeatureToggles';
 import { readCredentials, readSettings, updateSettings } from '@/persistence';
 import { argvValue } from '@/cli/commands/server/commandUtilities';
+import { join } from 'node:path';
 
 function parseBooleanInput(raw: string, flagName: string): boolean {
   const value = raw.trim().toLowerCase();
@@ -77,40 +71,20 @@ async function resolveActiveAuthContext(): Promise<Readonly<{ accountId: string;
   };
 }
 
-type TelegramKvRawSnapshot = Readonly<{
-  version: number;
-  rawValueBase64: string | null;
-}>;
-
-async function rollbackServerKvAfterLocalSettingsFailure(params: Readonly<{
-  kv: ReturnType<typeof createAxiosChannelBridgeKvClient>;
-  serverId: string;
-  accountId: string;
-  previousSnapshot: TelegramKvRawSnapshot;
-  rollbackGuardVersion: number;
-}>): Promise<void> {
-  await replaceChannelBridgeTelegramConfigRawInKv({
-    kv: params.kv,
-    serverId: params.serverId,
-    accountId: params.accountId,
-    valueBase64: params.previousSnapshot.rawValueBase64,
-    expectedCurrentVersion: params.rollbackGuardVersion,
-  });
-}
-
 function showBridgeHelp(): void {
   console.log(`
 ${chalk.bold('happier bridge')} - Channel bridge configuration (account-scoped)
 
 ${chalk.bold('Usage:')}
   happier bridge list
-  happier bridge telegram set [--bot-token <token>] [--allowed-chat-ids <csv>|--allow-all] [--require-topics <true|false>] [--tick-ms <n>] [--webhook-enabled <true|false>] [--webhook-secret <secret>] [--webhook-host <host>] [--webhook-port <n> (default: 8787)]
+  happier bridge telegram set [--bot-token <token>] [--allowed-chat-ids <csv>] [--allow-all-shared-chats <true|false>|--allow-all] [--require-topics <true|false>] [--tick-ms <n>] [--webhook-enabled <true|false>] [--webhook-secret <secret>] [--webhook-host <host>] [--webhook-port <n> (default: 8787)]
   happier bridge telegram clear
 
 ${chalk.bold('Notes:')}
   - Scope is the active server + authenticated account.
-  - Secrets are local-only (settings/env), not synced to server KV.
-  - Non-secret bridge config is synced to server KV + scoped settings.json.
+  - Bridge config is local-only (settings/env) in v1.
+  - Conversation bindings are created from the channel itself via slash commands:
+      /sessions, /attach <session-id-or-prefix>, /detach, /help
   - Restart daemon to apply: happier daemon stop && happier daemon start
 `);
 }
@@ -124,37 +98,15 @@ async function cmdList(): Promise<void> {
   const accountId = auth.accountId;
   const settings = await readSettings();
 
-  let serverKvRecord: Awaited<ReturnType<typeof readChannelBridgeTelegramConfigFromKv>>['record'] | null = null;
-  let serverKvError: string | null = null;
-  try {
-    const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
-    const fetched = await readChannelBridgeTelegramConfigFromKv({
-      kv,
-      serverId,
-      accountId,
-      allowUnsupportedSchema: true,
-    });
-    serverKvRecord = fetched.record;
-  } catch (error) {
-    serverKvError = error instanceof Error ? error.message : String(error);
-  }
-
   const scopedTelegram = readScopedTelegramBridgeConfig({
     settings,
     serverId,
     accountId,
   });
 
-  const runtimeSettings = overlayServerKvTelegramConfigInSettings({
-    settings,
-    serverId,
-    accountId,
-    record: serverKvRecord,
-  });
-
   const effective = resolveChannelBridgeRuntimeConfig({
     env: process.env,
-    settings: runtimeSettings,
+    settings,
     serverId,
     accountId,
   });
@@ -172,45 +124,59 @@ async function cmdList(): Promise<void> {
   } else {
     const scopedToken = typeof scopedTelegram.botToken === 'string' ? scopedTelegram.botToken : '';
     const scopedAllowed = Array.isArray(scopedTelegram.allowedChatIds) ? scopedTelegram.allowedChatIds : [];
+    const scopedAllowAllSharedChats = scopedTelegram.allowAllSharedChats === true;
     const scopedRequireTopics = scopedTelegram.requireTopics === true;
     console.log('  configured: yes');
     console.log(`  botToken: ${maskSecret(scopedToken)}`);
-    console.log(`  allowedChatIds: ${scopedAllowed.length > 0 ? scopedAllowed.join(', ') : '(allow all)'}`);
+    if (scopedAllowAllSharedChats) {
+      console.log('  allowedChatIds: (allow all shared chats - DANGEROUS)');
+    } else {
+      console.log(`  allowedChatIds: ${scopedAllowed.length > 0 ? scopedAllowed.join(', ') : '(dm-only)'}`);
+    }
     console.log(`  requireTopics: ${scopedRequireTopics ? 'true' : 'false'}`);
   }
 
-  console.log(chalk.bold('\nTelegram (server KV)'));
-  if (serverKvError) {
-    console.log(`  unavailable: ${serverKvError}`);
-  } else if (!serverKvRecord) {
-    console.log('  configured: no');
-  } else {
-    const remoteAllowed = Array.isArray(serverKvRecord.telegram.allowedChatIds) ? serverKvRecord.telegram.allowedChatIds : [];
-    const remoteRequireTopics = serverKvRecord.telegram.requireTopics === true;
-    const remoteWebhookEnabled = serverKvRecord.telegram.webhook?.enabled === true;
-    const remoteWebhookHost =
-      typeof serverKvRecord.telegram.webhook?.host === 'string' ? serverKvRecord.telegram.webhook.host : '(default)';
-    const remoteWebhookPort =
-      typeof serverKvRecord.telegram.webhook?.port === 'number' ? String(serverKvRecord.telegram.webhook.port) : '(default)';
-
-    console.log('  configured: yes');
-    console.log('  botToken: (not stored in server KV)');
-    console.log(`  allowedChatIds: ${remoteAllowed.length > 0 ? remoteAllowed.join(', ') : '(allow all)'}`);
-    console.log(`  requireTopics: ${remoteRequireTopics ? 'true' : 'false'}`);
-    console.log(`  webhook.enabled: ${remoteWebhookEnabled ? 'true' : 'false'}`);
-    console.log(`  webhook.host: ${remoteWebhookHost}`);
-    console.log(`  webhook.port: ${remoteWebhookPort}`);
-  }
-
-  console.log(chalk.bold('\nTelegram (effective runtime: env > server KV > settings.json)'));
+  console.log(chalk.bold('\nTelegram (effective runtime: env > settings.json)'));
   console.log(`  botToken: ${maskSecret(effective.telegram.botToken)}`);
-  console.log(
-    `  allowedChatIds: ${effective.telegram.allowedChatIds.length > 0 ? effective.telegram.allowedChatIds.join(', ') : '(allow all)'}`,
-  );
+  if (effective.telegram.allowAllSharedChats) {
+    console.log('  allowedChatIds: (allow all shared chats - DANGEROUS)');
+  } else {
+    console.log(
+      `  allowedChatIds: ${effective.telegram.allowedChatIds.length > 0 ? effective.telegram.allowedChatIds.join(', ') : '(dm-only)'}`,
+    );
+  }
   console.log(`  requireTopics: ${effective.telegram.requireTopics ? 'true' : 'false'}`);
   console.log(`  webhook.enabled: ${effective.telegram.webhookEnabled ? 'true' : 'false'}`);
   console.log(`  webhook.host: ${effective.telegram.webhookHost}`);
   console.log(`  webhook.port: ${effective.telegram.webhookPort}`);
+
+  try {
+    const store = createLocalChannelBindingStore({ accountId });
+    const bindings = await store.listBindings();
+    const bindingsFile = join(configuration.activeServerDir, 'channel-bridges', 'v1', 'account', accountId, 'bindings.json');
+    console.log(chalk.bold('\nBindings (local state)'));
+    console.log(`  file: ${bindingsFile}`);
+    if (bindings.length === 0) {
+      console.log('  (none) - attach from a DM or a shared chat topic using /attach <session-id-or-prefix>');
+    } else {
+      console.log(`  count: ${bindings.length}`);
+      for (const binding of bindings.slice(0, 20)) {
+        const thread = binding.threadId ? `/${binding.threadId}` : '';
+        const owner = binding.ownerSenderId ? `owner=${binding.ownerSenderId}` : 'owner=<missing>';
+        const inbound = binding.inboundMode === 'anyone' ? 'anyone' : 'ownerOnly';
+        const allowMissing = binding.allowMissingSenderId ? ', allowMissingSenderId=true' : '';
+        console.log(
+          `  - ${binding.providerId}:${binding.conversationId}${thread} → ${binding.sessionId} (${inbound}${allowMissing}; ${owner})`,
+        );
+      }
+      if (bindings.length > 20) {
+        console.log(`  … and ${bindings.length - 20} more`);
+      }
+    }
+  } catch (error) {
+    console.log(chalk.yellow('\nBindings (local state)'));
+    console.log(chalk.yellow(`  Failed to read bindings: ${error instanceof Error ? error.message : String(error)}`));
+  }
 }
 
 async function cmdTelegramSet(args: string[]): Promise<void> {
@@ -225,6 +191,7 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
   const hasBotTokenFlag = args.some((arg) => arg === '--bot-token' || arg.startsWith('--bot-token='));
   const botToken = rawBotToken.trim();
   const allowedChatIdsRaw = argvValue(args, '--allowed-chat-ids').trim();
+  const allowAllSharedChatsRaw = argvValue(args, '--allow-all-shared-chats').trim();
   const allowAll = args.includes('--allow-all');
   const requireTopicsRaw = argvValue(args, '--require-topics').trim();
   const tickMsRaw = argvValue(args, '--tick-ms').trim();
@@ -236,11 +203,15 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
   if (allowAll && allowedChatIdsRaw) {
     throw new Error('Cannot combine --allow-all with --allowed-chat-ids');
   }
+  if (allowAllSharedChatsRaw && allowedChatIdsRaw && parseBooleanInput(allowAllSharedChatsRaw, '--allow-all-shared-chats')) {
+    throw new Error('Cannot combine --allow-all-shared-chats=true with --allowed-chat-ids');
+  }
 
   const update: {
     tickMs?: number;
     botToken?: string;
     allowedChatIds?: string[];
+    allowAllSharedChats?: boolean;
     requireTopics?: boolean;
     webhookEnabled?: boolean;
     webhookSecret?: string;
@@ -255,13 +226,16 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
     update.botToken = botToken;
   }
   if (allowAll) {
-    update.allowedChatIds = [];
+    update.allowAllSharedChats = true;
   } else if (allowedChatIdsRaw) {
     const parsedAllowedChatIds = parseCsvList(allowedChatIdsRaw);
     if (parsedAllowedChatIds.length === 0) {
-      throw new Error('Invalid --allowed-chat-ids value: provide at least one chat id or use --allow-all');
+      throw new Error('Invalid --allowed-chat-ids value: provide at least one chat id');
     }
     update.allowedChatIds = parsedAllowedChatIds;
+  }
+  if (allowAllSharedChatsRaw) {
+    update.allowAllSharedChats = parseBooleanInput(allowAllSharedChatsRaw, '--allow-all-shared-chats');
   }
   if (requireTopicsRaw) {
     update.requireTopics = parseBooleanInput(requireTopicsRaw, '--require-topics');
@@ -277,7 +251,7 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
     update.webhookSecret = webhookSecret;
   }
   if (webhookHost) {
-    if (!isLoopbackHost(webhookHost)) {
+    if (!isLoopbackHostname(webhookHost)) {
       throw new Error('Invalid --webhook-host value: must be a loopback address (127.0.0.1, ::1, or localhost)');
     }
     update.webhookHost = webhookHost;
@@ -288,76 +262,28 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
 
   if (Object.keys(update).length === 0) {
     throw new Error(
-      'No updates provided. Use flags like --bot-token, --allowed-chat-ids, --allow-all, --require-topics, --tick-ms, --webhook-enabled, --webhook-secret, --webhook-host, --webhook-port',
+      'No updates provided. Use flags like --bot-token, --allowed-chat-ids, --allow-all, --allow-all-shared-chats, --require-topics, --tick-ms, --webhook-enabled, --webhook-secret, --webhook-host, --webhook-port',
     );
   }
 
   const split = splitScopedTelegramBridgeUpdate({ update });
-  const shouldWriteSharedKv = hasSharedTelegramBridgeUpdate({ update: split.sharedUpdate });
-
-  let kv: ReturnType<typeof createAxiosChannelBridgeKvClient> | null = null;
-  let previousServerKvSnapshot: TelegramKvRawSnapshot | null = null;
-  let rollbackGuardVersion: number | null = null;
-
-  if (shouldWriteSharedKv) {
-    kv = createAxiosChannelBridgeKvClient({ token: auth.token });
-    const previous = await readChannelBridgeTelegramConfigFromKv({
-      kv,
-      serverId,
-      accountId,
-      allowUnsupportedSchema: true,
-    });
-    previousServerKvSnapshot = {
-      version: previous.version,
-      rawValueBase64: previous.rawValueBase64,
-    };
-
-    rollbackGuardVersion = await upsertChannelBridgeTelegramConfigInKv({
-      kv,
-      serverId,
-      accountId,
-      update: split.sharedUpdate,
-    });
-  }
-
-  try {
-    await updateSettings(async (current) =>
-      upsertScopedTelegramBridgeConfig({
+  await updateSettings(async (current) =>
+    ensureExperimentalSettingsFeatureToggleEnabled({
+      settings: upsertScopedTelegramBridgeConfig({
         settings: current,
         serverId,
         accountId,
         update: split.localUpdate,
       }),
-    );
-  } catch (error) {
-    if (shouldWriteSharedKv && kv && typeof rollbackGuardVersion === 'number') {
-      try {
-        await rollbackServerKvAfterLocalSettingsFailure({
-          kv,
-          serverId,
-          accountId,
-          previousSnapshot: previousServerKvSnapshot ?? { version: -1, rawValueBase64: null },
-          rollbackGuardVersion,
-        });
-      } catch (rollbackError) {
-        const primaryMessage = error instanceof Error ? error.message : String(error);
-        const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-        throw new Error(
-          `Local settings update failed and server KV rollback failed (${primaryMessage}; rollback: ${rollbackMessage})`,
-        );
-      }
-    }
-    throw error;
-  }
+      featureId: 'channelBridges',
+    }),
+  );
 
   console.log(chalk.green('✓ Saved Telegram bridge config for active account scope'));
   console.log(`  Server:  ${serverId}`);
   console.log(`  Account: ${accountId}`);
-  console.log(
-    shouldWriteSharedKv
-      ? '  Persisted: non-secret fields -> server KV, full config -> scoped settings.json'
-      : '  Persisted: secrets-only update -> scoped settings.json (server KV unchanged)',
-  );
+  console.log('  Persisted: scoped settings.json');
+  console.log('  Enabled: experimental feature toggle channelBridges');
   console.log('  Restart daemon to apply changes:');
   console.log(chalk.cyan('  happier daemon stop && happier daemon start'));
 }
@@ -369,58 +295,18 @@ async function cmdTelegramClear(): Promise<void> {
   }
   const auth = await resolveActiveAuthContext();
   const accountId = auth.accountId;
-
-  const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
-  const previous = await readChannelBridgeTelegramConfigFromKv({
-    kv,
-    serverId,
-    accountId,
-    allowUnsupportedSchema: true,
-  });
-  const previousSnapshot: TelegramKvRawSnapshot = {
-    version: previous.version,
-    rawValueBase64: previous.rawValueBase64,
-  };
-
-  const rollbackGuardVersion = await clearChannelBridgeTelegramConfigInKv({
-    kv,
-    serverId,
-    accountId,
-  });
-
-  try {
-    await updateSettings(async (current) =>
-      removeScopedTelegramBridgeConfig({
-        settings: current,
-        serverId,
-        accountId,
-      }),
-    );
-  } catch (error) {
-    if (typeof rollbackGuardVersion === 'number') {
-      try {
-        await rollbackServerKvAfterLocalSettingsFailure({
-          kv,
-          serverId,
-          accountId,
-          previousSnapshot,
-          rollbackGuardVersion,
-        });
-      } catch (rollbackError) {
-        const primaryMessage = error instanceof Error ? error.message : String(error);
-        const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-        throw new Error(
-          `Scoped settings clear failed and server KV rollback failed (${primaryMessage}; rollback: ${rollbackMessage})`,
-        );
-      }
-    }
-    throw error;
-  }
+  await updateSettings(async (current) =>
+    removeScopedTelegramBridgeConfig({
+      settings: current,
+      serverId,
+      accountId,
+    }),
+  );
 
   console.log(chalk.green('✓ Cleared Telegram bridge config for active account scope'));
   console.log(`  Server:  ${serverId}`);
   console.log(`  Account: ${accountId}`);
-  console.log('  Cleared: server KV + scoped settings.json');
+  console.log('  Cleared: scoped settings.json');
   console.log('  Restart daemon to apply changes:');
   console.log(chalk.cyan('  happier daemon stop && happier daemon start'));
 }

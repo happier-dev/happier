@@ -16,7 +16,6 @@ import {
 } from '@/rpc/handlers/registerSessionHandlers';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
-import { configuration } from '@/configuration';
 import { startCaffeinate, stopCaffeinate } from '@/integrations/caffeinate';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
@@ -90,8 +89,7 @@ import { startAutomationWorker, type AutomationWorkerHandle } from './automation
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
 import { createDaemonConnectivityCoordinator } from './connection/createDaemonConnectivityCoordinator';
 import { startChannelBridgeFromEnv, type ChannelBridgeRuntimeHandle } from '@/channels/startChannelBridgeWorker';
-import { createAxiosChannelBridgeKvClient, readChannelBridgeTelegramConfigFromKv } from '@/channels/channelBridgeServerKv';
-import { overlayServerKvTelegramConfigInSettings } from '@/channels/channelBridgeServerConfigOverlay';
+import { configuration } from '@/configuration';
 import { resolveConnectedServiceAuthForSpawn } from './connectedServices/resolveConnectedServiceAuthForSpawn';
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
@@ -1528,29 +1526,30 @@ export async function startDaemon(): Promise<void> {
 
       // Do machine bootstrap in the background so shutdown requests are not blocked by /v1/machines latency.
       void (async () => {
-	        const startChannelBridgeWorkerBestEffort = async (): Promise<void> => {
-	          const channelBridgesEnabled = await resolveChannelBridgesDaemonEnabled({
-	            env: process.env,
-	            serverUrl: configuration.serverUrl,
-	            timeoutMs: 1500,
-	          }).catch((error) => {
-	            logger.warn(
-	              '[DAEMON RUN] Failed to resolve channel bridge feature gating; skipping channel bridge startup',
-	              serializeAxiosErrorForLog(error),
-	            );
-	            return false;
-	          });
-	          if (!channelBridgesEnabled || shutdownInitiated) {
-	            return;
-	          }
-
-	          const bridgeSettings = await readSettings().catch((error) => {
-	            logger.warn(
-	              '[DAEMON RUN] Failed to read settings for channel bridge startup; using env-only defaults',
-	              error instanceof Error ? error.message : String(error),
+        const startChannelBridgeWorkerBestEffort = async (): Promise<void> => {
+          const bridgeSettings = await readSettings().catch((error) => {
+            logger.warn(
+              '[DAEMON RUN] Failed to read settings for channel bridge startup; channel bridges require user experimental opt-in and will remain disabled',
+              error instanceof Error ? error.message : String(error),
             );
             return null;
           });
+
+          const channelBridgesEnabled = await resolveChannelBridgesDaemonEnabled({
+            env: process.env,
+            serverUrl: configuration.serverUrl,
+            settings: bridgeSettings,
+            timeoutMs: 1500,
+          }).catch((error) => {
+            logger.warn(
+              '[DAEMON RUN] Failed to resolve channel bridge feature gating; skipping channel bridge startup',
+              serializeAxiosErrorForLog(error),
+            );
+            return false;
+          });
+          if (!channelBridgesEnabled || shutdownInitiated) {
+            return;
+          }
 
           const tokenPayload = decodeJwtPayload(credentials.token);
           const channelBridgeAccountId =
@@ -1558,30 +1557,7 @@ export async function startDaemon(): Promise<void> {
               ? tokenPayload.sub.trim()
               : null;
           const channelBridgeServerId = (configuration.activeServerId ?? '').trim() || null;
-
-          let channelBridgeRuntimeSettings: unknown = bridgeSettings;
-          if (channelBridgeServerId && channelBridgeAccountId) {
-            try {
-              const kv = createAxiosChannelBridgeKvClient({ token: credentials.token });
-              const fetched = await readChannelBridgeTelegramConfigFromKv({
-                kv,
-                serverId: channelBridgeServerId,
-                accountId: channelBridgeAccountId,
-                allowUnsupportedSchema: true,
-              });
-              channelBridgeRuntimeSettings = overlayServerKvTelegramConfigInSettings({
-                settings: bridgeSettings,
-                serverId: channelBridgeServerId,
-                accountId: channelBridgeAccountId,
-                record: fetched.record,
-              });
-            } catch (error) {
-              logger.warn(
-                '[DAEMON RUN] Failed to read channel bridge config from server KV; using local/env configuration',
-                serializeAxiosErrorForLog(error),
-              );
-            }
-          }
+          const channelBridgeRuntimeSettings: unknown = bridgeSettings;
 
           if (shutdownInitiated) {
             return;

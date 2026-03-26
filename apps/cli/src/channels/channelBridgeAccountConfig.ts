@@ -47,6 +47,7 @@ export type ScopedTelegramBridgeUpdate = Readonly<{
   tickMs?: number;
   botToken?: string;
   allowedChatIds?: string[];
+  allowAllSharedChats?: boolean;
   requireTopics?: boolean;
   webhookEnabled?: boolean;
   webhookSecret?: string;
@@ -57,6 +58,7 @@ export type ScopedTelegramBridgeUpdate = Readonly<{
 export type SharedTelegramBridgeUpdate = Readonly<{
   tickMs?: number;
   allowedChatIds?: string[];
+  allowAllSharedChats?: boolean;
   requireTopics?: boolean;
   webhookEnabled?: boolean;
   webhookHost?: string;
@@ -75,6 +77,7 @@ export function splitScopedTelegramBridgeUpdate(params: Readonly<{
     tickMs?: number;
     botToken?: string;
     allowedChatIds?: string[];
+    allowAllSharedChats?: boolean;
     requireTopics?: boolean;
     webhookEnabled?: boolean;
     webhookSecret?: string;
@@ -84,6 +87,7 @@ export function splitScopedTelegramBridgeUpdate(params: Readonly<{
   const sharedUpdate: {
     tickMs?: number;
     allowedChatIds?: string[];
+    allowAllSharedChats?: boolean;
     requireTopics?: boolean;
     webhookEnabled?: boolean;
     webhookHost?: string;
@@ -101,6 +105,10 @@ export function splitScopedTelegramBridgeUpdate(params: Readonly<{
   if (Array.isArray(source.allowedChatIds)) {
     localUpdate.allowedChatIds = [...source.allowedChatIds];
     sharedUpdate.allowedChatIds = [...source.allowedChatIds];
+  }
+  if (typeof source.allowAllSharedChats === 'boolean') {
+    localUpdate.allowAllSharedChats = source.allowAllSharedChats;
+    sharedUpdate.allowAllSharedChats = source.allowAllSharedChats;
   }
   if (typeof source.requireTopics === 'boolean') {
     localUpdate.requireTopics = source.requireTopics;
@@ -183,6 +191,10 @@ export function readScopedTelegramBridgeConfig(params: Readonly<{
     normalized.requireTopics = telegram.requireTopics;
   }
 
+  if (typeof telegram.allowAllSharedChats === 'boolean') {
+    normalized.allowAllSharedChats = telegram.allowAllSharedChats;
+  }
+
   const normalizedWebhook: RecordLike = {};
   if (typeof webhook?.enabled === 'boolean') {
     normalizedWebhook.enabled = webhook.enabled;
@@ -247,6 +259,10 @@ export function upsertScopedTelegramBridgeConfig(params: Readonly<{
   if (Array.isArray(params.update.allowedChatIds)) {
     const telegram = ensureTelegramScope();
     telegram.allowedChatIds = parseStringArray(params.update.allowedChatIds);
+  }
+  if (typeof params.update.allowAllSharedChats === 'boolean') {
+    const telegram = ensureTelegramScope();
+    telegram.allowAllSharedChats = params.update.allowAllSharedChats;
   }
   if (typeof params.update.requireTopics === 'boolean') {
     const telegram = ensureTelegramScope();

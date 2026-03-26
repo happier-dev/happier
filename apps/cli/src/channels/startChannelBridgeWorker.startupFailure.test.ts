@@ -14,7 +14,7 @@ describe('startChannelBridgeFromEnv startup failures', () => {
 
     const relayStop = vi.fn(async () => undefined);
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
       createInMemoryChannelBindingStore: vi.fn(() => ({
         listBindings: async () => [],
         getBinding: async () => null,
@@ -35,7 +35,7 @@ describe('startChannelBridgeFromEnv startup failures', () => {
       }),
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter: vi.fn(() => ({
         providerId: 'telegram',
         pullInboundMessages: async () => [],
@@ -44,12 +44,16 @@ describe('startChannelBridgeFromEnv startup failures', () => {
       })),
     }));
 
-    vi.doMock('./telegram/telegramWebhookRelay', () => ({
-      startTelegramWebhookRelay: vi.fn(async () => ({
-        port: 8787,
-        stop: relayStop,
-      })),
-    }));
+    vi.doMock('@/channels/providers/telegram/telegramWebhookRelay', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/channels/providers/telegram/telegramWebhookRelay')>();
+      return {
+        ...actual,
+        startTelegramWebhookRelay: vi.fn(async () => ({
+          port: 8787,
+          stop: relayStop,
+        })),
+      };
+    });
 
     const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
 
@@ -82,7 +86,7 @@ describe('startChannelBridgeFromEnv startup failures', () => {
       },
     }));
 
-    vi.doMock('./core/channelBridgeWorker', () => ({
+    vi.doMock('@/channels/core/channelBridgeWorker', () => ({
       createInMemoryChannelBindingStore: vi.fn(() => ({
         listBindings: async () => [],
         getBinding: async () => null,
@@ -104,7 +108,7 @@ describe('startChannelBridgeFromEnv startup failures', () => {
       })),
     }));
 
-    vi.doMock('./telegram/telegramAdapter', () => ({
+    vi.doMock('@/channels/providers/telegram/telegramAdapter', () => ({
       createTelegramChannelAdapter: vi.fn(() => ({
         providerId: 'telegram',
         pullInboundMessages: async () => [],
@@ -113,13 +117,16 @@ describe('startChannelBridgeFromEnv startup failures', () => {
       })),
     }));
 
-    vi.doMock('./telegram/telegramWebhookRelay', () => ({
-      startTelegramWebhookRelay: vi.fn(async () => ({
-        port: 8787,
-        path: '/telegram/webhook/secret-1',
-        stop: relayStop,
-      })),
-    }));
+    vi.doMock('@/channels/providers/telegram/telegramWebhookRelay', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/channels/providers/telegram/telegramWebhookRelay')>();
+      return {
+        ...actual,
+        startTelegramWebhookRelay: vi.fn(async () => ({
+          port: 8787,
+          stop: relayStop,
+        })),
+      };
+    });
 
     const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
 
@@ -137,7 +144,7 @@ describe('startChannelBridgeFromEnv startup failures', () => {
     expect(workerStop).toHaveBeenCalledTimes(1);
     expect(relayStop).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
-      '[channelBridge] Error stopping webhook relay during shutdown',
+      '[channelBridge] Error stopping Telegram webhook relay during shutdown',
       expect.any(Error),
     );
   });

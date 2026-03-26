@@ -1,8 +1,8 @@
 import { timingSafeEqual } from 'node:crypto';
-import { isIP } from 'node:net';
 
 import fastify from 'fastify';
 
+import { isLoopbackHostname } from '@/server/serverUrlClassification';
 import { logger } from '@/ui/logger';
 
 function secureCompareToken(providedToken: string, expectedToken: string): boolean {
@@ -23,21 +23,6 @@ export type TelegramWebhookRelayHandle = Readonly<{
   path: string;
   stop: () => Promise<void>;
 }>;
-
-export function isLoopbackHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase();
-  if (normalized === 'localhost') return true;
-
-  const ipVersion = isIP(normalized);
-  if (ipVersion === 4) {
-    return normalized.startsWith('127.');
-  }
-  if (ipVersion === 6) {
-    return normalized === '::1';
-  }
-
-  return false;
-}
 
 export async function startTelegramWebhookRelay(params: Readonly<{
   port: number;
@@ -60,7 +45,7 @@ export async function startTelegramWebhookRelay(params: Readonly<{
   }
 
   const host = String(params.host ?? '127.0.0.1').trim() || '127.0.0.1';
-  if (!isLoopbackHost(host)) {
+  if (!isLoopbackHostname(host)) {
     throw new Error('Webhook host must be loopback-only');
   }
   if (params.port !== undefined && params.port !== null && !Number.isFinite(params.port)) {

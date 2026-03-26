@@ -4,6 +4,7 @@ import {
   isInsecureRemoteHttpServerUrl,
   isLocalishHostname,
   isLocalishServerUrl,
+  isLoopbackHostname,
   isLoopbackHttpServerUrl,
 } from '@/server/serverUrlClassification';
 
@@ -33,6 +34,17 @@ describe('serverUrlClassification', () => {
     expect(isLoopbackHttpServerUrl('http://happier-qa.localhost:3005')).toBe(true);
     expect(isLoopbackHttpServerUrl('http://happier-qa.localhost.:3005')).toBe(true);
     expect(isLoopbackHttpServerUrl('https://localhost:3005')).toBe(false);
+  });
+
+  it('detects loopback hostnames', () => {
+    expect(isLoopbackHostname('localhost')).toBe(true);
+    expect(isLoopbackHostname('127.0.0.1')).toBe(true);
+    expect(isLoopbackHostname('127.0.0.5')).toBe(true);
+    expect(isLoopbackHostname('::1')).toBe(true);
+    expect(isLoopbackHostname('192.168.1.20')).toBe(false);
+    expect(isLoopbackHostname('0.0.0.0')).toBe(false);
+    expect(isLoopbackHostname('example.com')).toBe(false);
+    expect(isLoopbackHostname('')).toBe(false);
   });
 
   it('classifies server URLs by host, not by http scheme alone', () => {

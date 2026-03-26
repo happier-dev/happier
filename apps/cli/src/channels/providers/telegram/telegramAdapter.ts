@@ -1,5 +1,6 @@
 import axios from 'axios';
 
+import { ChannelBridgePermanentDeliveryError } from '@/channels/core/channelBridgeWorker';
 import type { ChannelBridgeAdapter, ChannelBridgeInboundMessage } from '@/channels/core/channelBridgeWorker';
 import { logger } from '@/ui/logger';
 
@@ -100,11 +101,26 @@ function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
         validateStatus: () => true,
       });
       if (response.status !== 200 || !response.data || response.data.ok !== true) {
-        throw new TelegramApiError({
+        const apiError = new TelegramApiError({
           method: 'sendMessage',
           statusCode: response.status,
           data: response.data,
         });
+
+        if (apiError.statusCode === 403) {
+          throw new ChannelBridgePermanentDeliveryError({
+            code: 'forbidden',
+            message: apiError.message,
+          });
+        }
+        if (apiError.statusCode === 400 && apiError.description !== null && /chat not found/i.test(apiError.description)) {
+          throw new ChannelBridgePermanentDeliveryError({
+            code: 'conversation_not_found',
+            message: apiError.message,
+          });
+        }
+
+        throw apiError;
       }
     },
   };
@@ -119,6 +135,7 @@ function parseInboundFromUpdate(params: Readonly<{
   update: unknown;
   selfBotId: number | null;
   allowedChatIds: ReadonlySet<string> | null;
+  allowAllSharedChats: boolean;
   requireTopics: boolean;
 }>): ChannelBridgeInboundMessage | null {
   const update = asRecord(params.update);
@@ -140,8 +157,12 @@ function parseInboundFromUpdate(params: Readonly<{
         : '';
   if (!conversationId) return null;
 
-  if (params.allowedChatIds && !params.allowedChatIds.has(conversationId)) {
-    return null;
+  const chatType = typeof chat.type === 'string' ? chat.type : '';
+  const isPrivateChat = chatType === 'private';
+  if (!isPrivateChat && !params.allowAllSharedChats) {
+    if (!params.allowedChatIds || !params.allowedChatIds.has(conversationId)) {
+      return null;
+    }
   }
 
   const threadId =
@@ -150,7 +171,6 @@ function parseInboundFromUpdate(params: Readonly<{
       : null;
 
   if (params.requireTopics) {
-    const chatType = typeof chat.type === 'string' ? chat.type : '';
     if (chatType === 'supergroup' && threadId === null) {
       return null;
     }
@@ -213,6 +233,7 @@ export function createTelegramChannelAdapter(params: Readonly<{
   webhookMode?: boolean;
   updateLimit?: number;
   allowedChatIds?: ReadonlySet<string> | null;
+  allowAllSharedChats?: boolean;
   requireTopics?: boolean;
 }>): ChannelBridgeAdapter & Readonly<{ enqueueWebhookUpdate: (update: unknown) => void }> {
   const api = params.api ?? createDefaultTelegramApiClient(params.botToken);
@@ -222,6 +243,7 @@ export function createTelegramChannelAdapter(params: Readonly<{
       ? Math.max(1, Math.min(100, Math.trunc(params.updateLimit)))
       : 100;
   const allowedChatIds = params.allowedChatIds ?? null;
+  const allowAllSharedChats = params.allowAllSharedChats === true;
   const requireTopics = params.requireTopics === true;
   const MAX_WEBHOOK_QUEUE_SIZE = 2_000;
 
@@ -296,6 +318,7 @@ export function createTelegramChannelAdapter(params: Readonly<{
         update,
         selfBotId,
         allowedChatIds,
+        allowAllSharedChats,
         requireTopics,
       });
       if (parsed) out.push(parsed);
@@ -338,6 +361,7 @@ export function createTelegramChannelAdapter(params: Readonly<{
             update: row.update,
             selfBotId,
             allowedChatIds,
+            allowAllSharedChats,
             requireTopics,
           });
           if (!message) {

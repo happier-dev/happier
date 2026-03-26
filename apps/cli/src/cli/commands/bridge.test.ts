@@ -4,19 +4,13 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { configuration, reloadConfiguration } from '@/configuration';
+import { reloadConfiguration } from '@/configuration';
 
 const readCredentialsMock = vi.fn();
 const readSettingsMock = vi.fn();
 const updateSettingsMock = vi.fn();
 const decodeJwtPayloadMock = vi.fn();
 const checkDaemonMock = vi.fn();
-
-const createKvClientMock = vi.fn();
-const readKvConfigMock = vi.fn();
-const upsertKvConfigMock = vi.fn();
-const clearKvConfigMock = vi.fn();
-const replaceKvRawConfigMock = vi.fn();
 
 vi.mock('@/persistence', () => ({
   readCredentials: readCredentialsMock,
@@ -32,23 +26,19 @@ vi.mock('@/daemon/controlClient', () => ({
   checkIfDaemonRunningAndCleanupStaleState: checkDaemonMock,
 }));
 
-vi.mock('@/channels/channelBridgeServerKv', () => ({
-  createAxiosChannelBridgeKvClient: createKvClientMock,
-  upsertChannelBridgeTelegramConfigInKv: upsertKvConfigMock,
-  clearChannelBridgeTelegramConfigInKv: clearKvConfigMock,
-  replaceChannelBridgeTelegramConfigRawInKv: replaceKvRawConfigMock,
-  readChannelBridgeTelegramConfigFromKv: readKvConfigMock,
-}));
-
-describe('happier bridge command', () => {
+describe('happier bridge command (local-only v1)', () => {
   let homeDir: string;
   const prevHomeDir = process.env.HAPPIER_HOME_DIR;
   const prevServerUrl = process.env.HAPPIER_SERVER_URL;
   const prevWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+  let logSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let lastUpdatedSettings: unknown = null;
 
   beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
+    logSpy?.mockRestore();
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
     readCredentialsMock.mockResolvedValue({ token: 'token.jwt' });
     decodeJwtPayloadMock.mockReturnValue({ sub: 'acct_123' });
@@ -56,14 +46,8 @@ describe('happier bridge command', () => {
     checkDaemonMock.mockResolvedValue(false);
 
     updateSettingsMock.mockImplementation(async (updater: (current: unknown) => Promise<unknown> | unknown) => {
-      await updater({});
+      lastUpdatedSettings = await updater({});
     });
-
-    createKvClientMock.mockReturnValue({ get: vi.fn(), mutate: vi.fn() });
-    readKvConfigMock.mockResolvedValue({ record: null, version: -1, rawValueBase64: null });
-    upsertKvConfigMock.mockResolvedValue(12);
-    clearKvConfigMock.mockResolvedValue(7);
-    replaceKvRawConfigMock.mockResolvedValue(undefined);
 
     homeDir = await mkdtemp(join(tmpdir(), 'happier-bridge-cmd-'));
     process.env.HAPPIER_HOME_DIR = homeDir;
@@ -73,6 +57,8 @@ describe('happier bridge command', () => {
   });
 
   afterEach(async () => {
+    logSpy?.mockRestore();
+    logSpy = null;
     process.exitCode = undefined;
     if (prevHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
     else process.env.HAPPIER_HOME_DIR = prevHomeDir;
@@ -84,7 +70,7 @@ describe('happier bridge command', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
-  it('writes telegram non-secret set updates to server KV and local settings', async () => {
+  it('writes telegram set updates to local settings', async () => {
     const { handleBridgeCliCommand } = await import('./bridge');
 
     await handleBridgeCliCommand({
@@ -93,59 +79,17 @@ describe('happier bridge command', () => {
       terminalRuntime: null,
     });
 
-    expect(createKvClientMock).toHaveBeenCalledWith({ token: 'token.jwt' });
-    expect(upsertKvConfigMock).toHaveBeenCalledWith({
-      kv: expect.any(Object),
-      serverId: configuration.activeServerId,
-      accountId: 'acct_123',
-      update: {
-        allowedChatIds: [],
-        requireTopics: true,
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
+    expect(lastUpdatedSettings).toMatchObject({
+      experiments: true,
+      featureToggles: {
+        channelBridges: true,
       },
     });
-    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
-    expect(upsertKvConfigMock.mock.invocationCallOrder[0]).toBeLessThan(updateSettingsMock.mock.invocationCallOrder[0]);
     expect(process.exitCode).toBeUndefined();
   });
 
-  it('does not update local settings when shared KV write fails', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    upsertKvConfigMock.mockRejectedValueOnce(new Error('KV unavailable'));
-
-    try {
-      const { handleBridgeCliCommand } = await import('./bridge');
-
-      await handleBridgeCliCommand({
-        args: ['bridge', 'telegram', 'set', '--bot-token', 'bot-token-1', '--require-topics', 'true'],
-        rawArgv: [],
-        terminalRuntime: null,
-      });
-
-      expect(upsertKvConfigMock).toHaveBeenCalledTimes(1);
-      expect(updateSettingsMock).not.toHaveBeenCalled();
-      expect(process.exitCode).toBe(1);
-      expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('KV unavailable'));
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
-  it('does not write secrets-only updates to server KV', async () => {
-    const { handleBridgeCliCommand } = await import('./bridge');
-
-    await handleBridgeCliCommand({
-      args: ['bridge', 'telegram', 'set', '--bot-token', 'bot-token-1'],
-      rawArgv: [],
-      terminalRuntime: null,
-    });
-
-    expect(createKvClientMock).not.toHaveBeenCalled();
-    expect(upsertKvConfigMock).not.toHaveBeenCalled();
-    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
-    expect(process.exitCode).toBeUndefined();
-  });
-
-  it('clears telegram config in server KV and local settings', async () => {
+  it('clears telegram config in local settings', async () => {
     const { handleBridgeCliCommand } = await import('./bridge');
 
     await handleBridgeCliCommand({
@@ -154,37 +98,8 @@ describe('happier bridge command', () => {
       terminalRuntime: null,
     });
 
-    expect(createKvClientMock).toHaveBeenCalledWith({ token: 'token.jwt' });
-    expect(clearKvConfigMock).toHaveBeenCalledWith({
-      kv: expect.any(Object),
-      serverId: configuration.activeServerId,
-      accountId: 'acct_123',
-    });
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
-    expect(clearKvConfigMock.mock.invocationCallOrder[0]).toBeLessThan(updateSettingsMock.mock.invocationCallOrder[0]);
     expect(process.exitCode).toBeUndefined();
-  });
-
-  it('does not update local settings when shared KV clear fails', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    clearKvConfigMock.mockRejectedValueOnce(new Error('KV clear unavailable'));
-
-    try {
-      const { handleBridgeCliCommand } = await import('./bridge');
-
-      await handleBridgeCliCommand({
-        args: ['bridge', 'telegram', 'clear'],
-        rawArgv: [],
-        terminalRuntime: null,
-      });
-
-      expect(clearKvConfigMock).toHaveBeenCalledTimes(1);
-      expect(updateSettingsMock).not.toHaveBeenCalled();
-      expect(process.exitCode).toBe(1);
-      expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('KV clear unavailable'));
-    } finally {
-      errorSpy.mockRestore();
-    }
   });
 
   it('rejects webhook secrets that do not match Telegram-safe token charset', async () => {
@@ -199,8 +114,6 @@ describe('happier bridge command', () => {
       });
 
       expect(updateSettingsMock).not.toHaveBeenCalled();
-      expect(createKvClientMock).not.toHaveBeenCalled();
-      expect(upsertKvConfigMock).not.toHaveBeenCalled();
       expect(process.exitCode).toBe(1);
       expect(errorSpy).toHaveBeenCalledWith(
         expect.anything(),
@@ -213,192 +126,21 @@ describe('happier bridge command', () => {
 
   it('rejects explicitly passed empty --bot-token values', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
     try {
       const { handleBridgeCliCommand } = await import('./bridge');
 
       await handleBridgeCliCommand({
-        args: ['bridge', 'telegram', 'set', '--bot-token'],
+        args: ['bridge', 'telegram', 'set', '--bot-token', '   '],
         rawArgv: [],
         terminalRuntime: null,
       });
 
       expect(updateSettingsMock).not.toHaveBeenCalled();
-      expect(createKvClientMock).not.toHaveBeenCalled();
       expect(process.exitCode).toBe(1);
       expect(errorSpy).toHaveBeenCalledWith(
         expect.anything(),
-        expect.stringContaining('Invalid --bot-token value: cannot be empty'),
+        expect.stringContaining('Invalid --bot-token value'),
       );
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
-  it('rejects malformed --allowed-chat-ids that parse to an empty list', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-    try {
-      const { handleBridgeCliCommand } = await import('./bridge');
-
-      await handleBridgeCliCommand({
-        args: ['bridge', 'telegram', 'set', '--allowed-chat-ids', ',,,'],
-        rawArgv: [],
-        terminalRuntime: null,
-      });
-
-      expect(updateSettingsMock).not.toHaveBeenCalled();
-      expect(createKvClientMock).not.toHaveBeenCalled();
-      expect(process.exitCode).toBe(1);
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.stringContaining('Invalid --allowed-chat-ids value'),
-      );
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
-  it('rejects non-loopback --webhook-host values', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-    try {
-      const { handleBridgeCliCommand } = await import('./bridge');
-
-      await handleBridgeCliCommand({
-        args: ['bridge', 'telegram', 'set', '--webhook-host', '0.0.0.0'],
-        rawArgv: [],
-        terminalRuntime: null,
-      });
-
-      expect(updateSettingsMock).not.toHaveBeenCalled();
-      expect(createKvClientMock).not.toHaveBeenCalled();
-      expect(process.exitCode).toBe(1);
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.stringContaining('Invalid --webhook-host value'),
-      );
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
-  it('rolls back shared KV update when local scoped settings write fails', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    updateSettingsMock.mockRejectedValueOnce(new Error('settings unavailable'));
-
-    try {
-      const { handleBridgeCliCommand } = await import('./bridge');
-
-      await handleBridgeCliCommand({
-        args: ['bridge', 'telegram', 'set', '--bot-token', 'bot-token-1', '--require-topics', 'true'],
-        rawArgv: [],
-        terminalRuntime: null,
-      });
-
-      expect(upsertKvConfigMock).toHaveBeenCalledTimes(1);
-      expect(replaceKvRawConfigMock).toHaveBeenCalledWith({
-        kv: expect.any(Object),
-        serverId: configuration.activeServerId,
-        accountId: 'acct_123',
-        valueBase64: null,
-        expectedCurrentVersion: 12,
-      });
-      expect(process.exitCode).toBe(1);
-      expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings unavailable'));
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
-  it('restores raw pre-existing KV payload when local scoped settings write fails', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const rawMalformedPayload = Buffer.from('not-json', 'utf8').toString('base64');
-    updateSettingsMock.mockRejectedValueOnce(new Error('settings unavailable'));
-    readKvConfigMock.mockResolvedValueOnce({
-      record: null,
-      version: 7,
-      rawValueBase64: rawMalformedPayload,
-    });
-
-    try {
-      const { handleBridgeCliCommand } = await import('./bridge');
-
-      await handleBridgeCliCommand({
-        args: ['bridge', 'telegram', 'set', '--bot-token', 'bot-token-1', '--require-topics', 'true'],
-        rawArgv: [],
-        terminalRuntime: null,
-      });
-
-      expect(upsertKvConfigMock).toHaveBeenCalledTimes(1);
-      expect(replaceKvRawConfigMock).toHaveBeenCalledWith({
-        kv: expect.any(Object),
-        serverId: configuration.activeServerId,
-        accountId: 'acct_123',
-        valueBase64: rawMalformedPayload,
-        expectedCurrentVersion: 12,
-      });
-      expect(process.exitCode).toBe(1);
-      expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings unavailable'));
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
-  it('restores previous shared KV config when local clear fails', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    updateSettingsMock.mockRejectedValueOnce(new Error('settings clear unavailable'));
-    const previousRawValueBase64 = Buffer.from(JSON.stringify({
-      schemaVersion: 1,
-      updatedAtMs: 123,
-      telegram: {
-        allowedChatIds: ['-100111'],
-        requireTopics: true,
-        webhook: {
-          enabled: true,
-          host: '127.0.0.1',
-          port: 8787,
-        },
-      },
-    }), 'utf8').toString('base64');
-
-    readKvConfigMock.mockResolvedValueOnce({
-      record: {
-        schemaVersion: 1,
-        updatedAtMs: 123,
-        telegram: {
-          allowedChatIds: ['-100111'],
-          requireTopics: true,
-          webhook: {
-            enabled: true,
-            host: '127.0.0.1',
-            port: 8787,
-          },
-        },
-      },
-      version: 4,
-      rawValueBase64: previousRawValueBase64,
-    });
-
-    try {
-      const { handleBridgeCliCommand } = await import('./bridge');
-
-      await handleBridgeCliCommand({
-        args: ['bridge', 'telegram', 'clear'],
-        rawArgv: [],
-        terminalRuntime: null,
-      });
-
-      expect(clearKvConfigMock).toHaveBeenCalledTimes(1);
-      expect(replaceKvRawConfigMock).toHaveBeenCalledWith({
-        kv: expect.any(Object),
-        serverId: configuration.activeServerId,
-        accountId: 'acct_123',
-        valueBase64: previousRawValueBase64,
-        expectedCurrentVersion: 7,
-      });
-      expect(process.exitCode).toBe(1);
-      expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings clear unavailable'));
     } finally {
       errorSpy.mockRestore();
     }

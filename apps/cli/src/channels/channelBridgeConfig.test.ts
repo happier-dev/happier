@@ -29,6 +29,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.tickMs).toBe(3_100);
     expect(config.telegram.botToken).toBe('settings-bot-token');
     expect(config.telegram.allowedChatIds).toEqual(['-100111', '-100222']);
+    expect(config.telegram.allowAllSharedChats).toBe(false);
     expect(config.telegram.requireTopics).toBe(true);
     expect(config.telegram.webhookEnabled).toBe(true);
     expect(config.telegram.webhookSecret).toBe('settings-secret');
@@ -63,6 +64,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.telegram.botToken).toBe('secret-bot-token');
     expect(config.telegram.webhookSecret).toBe('secret-webhook-token');
     expect(config.telegram.allowedChatIds).toEqual(['-100111']);
+    expect(config.telegram.allowAllSharedChats).toBe(false);
     expect(config.telegram.requireTopics).toBe(true);
   });
 
@@ -101,6 +103,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.tickMs).toBe(700);
     expect(config.telegram.botToken).toBe('env-token');
     expect(config.telegram.allowedChatIds).toEqual(['-100333', '-100444']);
+    expect(config.telegram.allowAllSharedChats).toBe(false);
     expect(config.telegram.requireTopics).toBe(false);
     expect(config.telegram.webhookEnabled).toBe(true);
     expect(config.telegram.webhookSecret).toBe('env-secret');
@@ -127,6 +130,17 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     });
 
     expect(config.telegram.webhookPort).toBe(8_877);
+  });
+
+  it('reads allowAllSharedChats from env', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {
+        HAPPIER_TELEGRAM_ALLOW_ALL_SHARED_CHATS: '1',
+      },
+      settings: {},
+    });
+
+    expect(config.telegram.allowAllSharedChats).toBe(true);
   });
 
   it('falls back to settings allowedChatIds when env CSV is effectively empty', () => {

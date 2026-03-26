@@ -1,4 +1,4 @@
-import { isLoopbackHost } from '@/channels/telegram/telegramWebhookRelay';
+import { isLoopbackHostname } from '@/server/serverUrlClassification';
 
 type RecordLike = Record<string, unknown>;
 
@@ -91,6 +91,7 @@ function firstParsed<T>(values: readonly unknown[], parse: (value: unknown) => T
 type TelegramChannelBridgeRuntimeConfig = Readonly<{
   botToken: string;
   allowedChatIds: string[];
+  allowAllSharedChats: boolean;
   requireTopics: boolean;
   webhookEnabled: boolean;
   webhookSecret: string;
@@ -189,6 +190,18 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
       ? parsedEnvAllowedChatIds
       : settingsAllowedChatIds;
 
+  const settingsAllowAllSharedChats =
+    firstParsed(
+      [telegramAccount?.allowAllSharedChats, telegramServer?.allowAllSharedChats, telegramGlobal?.allowAllSharedChats],
+      parseBoolean,
+    )
+    ?? false;
+  const envAllowAllSharedChats =
+    typeof env.HAPPIER_TELEGRAM_ALLOW_ALL_SHARED_CHATS === 'string'
+      ? parseBoolean(env.HAPPIER_TELEGRAM_ALLOW_ALL_SHARED_CHATS)
+      : null;
+  const allowAllSharedChats = envAllowAllSharedChats ?? settingsAllowAllSharedChats;
+
   const settingsRequireTopics =
     firstParsed(
       [telegramAccount?.requireTopics, telegramServer?.requireTopics, telegramGlobal?.requireTopics],
@@ -236,13 +249,13 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
       readTrimmedString,
     )
     || '127.0.0.1';
-  const settingsWebhookHost = isLoopbackHost(settingsWebhookHostRaw) ? settingsWebhookHostRaw : '127.0.0.1';
+  const settingsWebhookHost = isLoopbackHostname(settingsWebhookHostRaw) ? settingsWebhookHostRaw : '127.0.0.1';
   const envWebhookHostRaw =
     typeof env.HAPPIER_TELEGRAM_WEBHOOK_HOST === 'string'
       ? env.HAPPIER_TELEGRAM_WEBHOOK_HOST.trim()
       : null;
   const envWebhookHost =
-    envWebhookHostRaw && isLoopbackHost(envWebhookHostRaw)
+    envWebhookHostRaw && isLoopbackHostname(envWebhookHostRaw)
       ? envWebhookHostRaw
       : null;
   const webhookHost = envWebhookHost ?? settingsWebhookHost;
@@ -264,6 +277,7 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
     telegram: {
       botToken,
       allowedChatIds,
+      allowAllSharedChats,
       requireTopics,
       webhookEnabled,
       webhookSecret,

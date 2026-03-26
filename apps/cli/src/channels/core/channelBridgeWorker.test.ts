@@ -5,12 +5,12 @@ import {
   executeChannelBridgeTick,
   startChannelBridgeWorker,
   createChannelBridgeInboundDeduper,
+  ChannelBridgePermanentDeliveryError,
   type ChannelBridgeAdapter,
   type ChannelBindingStore,
   type ChannelBridgeDeps,
   type ChannelBridgeInboundMessage,
 } from '@/channels/core/channelBridgeWorker';
-import { TelegramApiError } from '@/channels/telegram/telegramAdapter';
 
 interface SentConversationMessage {
   conversationId: string;
@@ -121,7 +121,8 @@ function createAdapterHarness(providerId: string = 'telegram'): {
       },
     },
     pushInbound: (event) => {
-      queue.push(event);
+      const next = typeof event.senderId === 'undefined' ? { ...event, senderId: 'user-1' } : event;
+      queue.push(next);
     },
     sent,
     failPullOnce: (error) => {
@@ -155,6 +156,12 @@ async function waitFor(condition: () => boolean, timeoutMs: number = 2_000): Pro
   }
 }
 
+const DEFAULT_BINDING_POLICY = {
+  ownerSenderId: 'user-1',
+  inboundMode: 'ownerOnly' as const,
+  allowMissingSenderId: false,
+};
+
 describe('createInMemoryChannelBindingStore', () => {
   it('normalizes non-finite cursor values and ignores invalid cursor updates', async () => {
     const store = createInMemoryChannelBindingStore();
@@ -166,6 +173,7 @@ describe('createInMemoryChannelBindingStore', () => {
 
     await store.upsertBinding({
       ...ref,
+      ...DEFAULT_BINDING_POLICY,
       sessionId: 'sess-cursor',
       lastForwardedSeq: Number.NaN,
     });
@@ -190,6 +198,7 @@ describe('createInMemoryChannelBindingStore', () => {
     const store = createInMemoryChannelBindingStore();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: ' telegram ',
       conversationId: ' room-1 ',
       threadId: '   ',
@@ -233,6 +242,7 @@ describe('executeChannelBridgeTick', () => {
     const store = createInMemoryChannelBindingStore();
 
     const upserted = await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-100sanity',
       threadId: null,
@@ -263,6 +273,7 @@ describe('executeChannelBridgeTick', () => {
   it('returns defensive copies from in-memory binding store reads', async () => {
     const store = createInMemoryChannelBindingStore(() => 1_000);
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'room-copy',
       threadId: null,
@@ -357,11 +368,176 @@ describe('executeChannelBridgeTick', () => {
     ]);
   });
 
+  it('denies /attach when sender identity is missing (safe-by-default)', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+
+    const { deps } = createDepsHarness({
+      resolveSessionIdOrPrefix: async () => ({ ok: true as const, sessionId: 'sess-abc123' }),
+      resolveLatestSessionSeq: async () => 0,
+    });
+
+    harness.pushInbound({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      text: '/attach abc123',
+      messageId: 'm-attach-missing-sender',
+      senderId: null,
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(await store.listBindings()).toEqual([]);
+    expect(harness.sent.some((row) => row.text.toLowerCase().includes('sender'))).toBe(true);
+  });
+
+  it('denies forwarding from non-owner senders by default', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+
+    const { deps, sentToSession } = createDepsHarness({
+      resolveSessionIdOrPrefix: async () => ({ ok: true as const, sessionId: 'sess-abc123' }),
+      resolveLatestSessionSeq: async () => 0,
+    });
+
+    harness.pushInbound({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      senderId: 'user-1',
+      text: '/attach abc123',
+      messageId: 'm-attach-owner',
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    harness.pushInbound({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      senderId: 'user-2',
+      text: 'hello from non-owner',
+      messageId: 'm-non-owner',
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(sentToSession).toEqual([]);
+    expect(harness.sent.some((row) => row.text.toLowerCase().includes('authorized'))).toBe(true);
+  });
+
+  it('allows forwarding from anyone when attached with --anyone', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+
+    const { deps, sentToSession } = createDepsHarness({
+      resolveSessionIdOrPrefix: async () => ({ ok: true as const, sessionId: 'sess-abc123' }),
+      resolveLatestSessionSeq: async () => 0,
+    });
+
+    harness.pushInbound({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      senderId: 'user-1',
+      text: '/attach abc123 --anyone',
+      messageId: 'm-attach-anyone',
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    harness.pushInbound({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      senderId: 'user-2',
+      text: 'hello from anyone',
+      messageId: 'm-anyone',
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(sentToSession).toHaveLength(1);
+    expect(sentToSession[0]?.text).toBe('hello from anyone');
+  });
+
+  it('allows unsafe forwarding without senderId when attached with --allow-missing-sender-id', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+
+    const { deps, sentToSession } = createDepsHarness({
+      resolveSessionIdOrPrefix: async () => ({ ok: true as const, sessionId: 'sess-abc123' }),
+      resolveLatestSessionSeq: async () => 0,
+    });
+
+    harness.pushInbound({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      senderId: null,
+      text: '/attach abc123 --allow-missing-sender-id',
+      messageId: 'm-attach-unsafe',
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    harness.pushInbound({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      senderId: null,
+      text: 'unsafe no sender',
+      messageId: 'm-unsafe-forward',
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(sentToSession).toHaveLength(1);
+    expect(sentToSession[0]?.text).toBe('unsafe no sender');
+  });
+
   it('includes previous session id when /attach replaces an existing binding', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '88',
@@ -441,6 +617,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '99',
@@ -519,6 +696,7 @@ describe('executeChannelBridgeTick', () => {
     const { deps } = createDepsHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '99',
@@ -632,6 +810,7 @@ describe('executeChannelBridgeTick', () => {
     const { deps, sentToSession } = createDepsHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '99',
@@ -950,6 +1129,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-1005',
       threadId: null,
@@ -990,6 +1170,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-1005b',
       threadId: null,
@@ -1026,6 +1207,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-1006',
       threadId: null,
@@ -1392,6 +1574,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness('telegram');
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'chat-42',
       threadId: null,
@@ -1432,6 +1615,7 @@ describe('executeChannelBridgeTick', () => {
     const healthy = createAdapterHarness('discord');
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'discord',
       conversationId: 'discord-room',
       threadId: null,
@@ -1477,6 +1661,7 @@ describe('executeChannelBridgeTick', () => {
     const second = createAdapterHarness('telegram');
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'room-1',
       threadId: null,
@@ -1518,6 +1703,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'failing-room',
       threadId: null,
@@ -1555,6 +1741,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'failing-room-reply-fail',
       threadId: null,
@@ -1603,6 +1790,7 @@ describe('executeChannelBridgeTick', () => {
     const store = createInMemoryChannelBindingStore();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-2002',
       threadId: null,
@@ -1647,6 +1835,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-2003',
       threadId: null,
@@ -1676,6 +1865,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'direct-dedupe-room',
       threadId: null,
@@ -1723,6 +1913,7 @@ describe('executeChannelBridgeTick', () => {
 
     await baseStore.upsertBinding({
       ...ref,
+      ...DEFAULT_BINDING_POLICY,
       sessionId: 'sess-retry-on-failure',
       lastForwardedSeq: 0,
     });
@@ -1786,6 +1977,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'empty-id-room',
       threadId: null,
@@ -1828,6 +2020,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-3001',
       threadId: null,
@@ -1966,7 +2159,7 @@ describe('executeChannelBridgeTick', () => {
     expect(binding?.lastForwardedSeq).toBe(9);
   });
 
-  it('treats typed Telegram permanent delivery failures as non-retryable and advances cursor', async () => {
+  it('treats typed permanent delivery failures as non-retryable and advances cursor', async () => {
     const store = createInMemoryChannelBindingStore();
     const { deps, warnings } = createDepsHarness({
       fetchAgentMessagesAfterSeq: async () => [{ seq: 1, text: 'delivery fails permanently' }],
@@ -1984,10 +2177,9 @@ describe('executeChannelBridgeTick', () => {
       providerId: 'telegram',
       pullInboundMessages: async () => [],
       sendMessage: async () => {
-        throw new TelegramApiError({
-          method: 'sendMessage',
-          statusCode: 403,
-          data: { description: 'Forbidden: bot was blocked by the user' },
+        throw new ChannelBridgePermanentDeliveryError({
+          code: 'forbidden',
+          message: 'Forbidden: bot was blocked by the user',
         });
       },
     };
@@ -2002,21 +2194,21 @@ describe('executeChannelBridgeTick', () => {
     const [binding] = await store.listBindings();
     expect(binding?.lastForwardedSeq).toBe(1);
     expect(
-      warnings.some((row) => row.message.includes('Detected permanent Telegram delivery failure')),
+      warnings.some((row) => row.message.includes('Detected permanent delivery failure')),
     ).toBe(true);
     expect(
       warnings.some((row) => row.message.includes('Failed to forward agent output to channel')),
     ).toBe(false);
   });
 
-  it('treats typed Telegram permanent failures as non-retryable even for non-default provider ids', async () => {
+  it('treats typed permanent failures as non-retryable even for non-default provider ids', async () => {
     const store = createInMemoryChannelBindingStore();
     const { deps, warnings } = createDepsHarness({
       fetchAgentMessagesAfterSeq: async () => [{ seq: 1, text: 'delivery fails permanently' }],
     });
 
     await store.upsertBinding({
-      providerId: 'telegram-v2',
+      providerId: 'telegram-alt',
       conversationId: '-3004b-alt',
       threadId: null,
       sessionId: 'sess-typed-permanent-alt',
@@ -2024,13 +2216,12 @@ describe('executeChannelBridgeTick', () => {
     });
 
     const adapter: ChannelBridgeAdapter = {
-      providerId: 'telegram-v2',
+      providerId: 'telegram-alt',
       pullInboundMessages: async () => [],
       sendMessage: async () => {
-        throw new TelegramApiError({
-          method: 'sendMessage',
-          statusCode: 403,
-          data: { description: 'Forbidden: bot was blocked by the user' },
+        throw new ChannelBridgePermanentDeliveryError({
+          code: 'forbidden',
+          message: 'Forbidden: bot was blocked by the user',
         });
       },
     };
@@ -2045,11 +2236,11 @@ describe('executeChannelBridgeTick', () => {
     const [binding] = await store.listBindings();
     expect(binding?.lastForwardedSeq).toBe(1);
     expect(
-      warnings.some((row) => row.message.includes('Detected permanent Telegram delivery failure')),
+      warnings.some((row) => row.message.includes('Detected permanent delivery failure')),
     ).toBe(true);
   });
 
-  it('treats typed Telegram 400 chat-not-found failures as non-retryable', async () => {
+  it('treats typed chat-not-found failures as non-retryable', async () => {
     const store = createInMemoryChannelBindingStore();
     const { deps, warnings } = createDepsHarness({
       fetchAgentMessagesAfterSeq: async () => [{ seq: 1, text: 'delivery fails permanently' }],
@@ -2067,10 +2258,9 @@ describe('executeChannelBridgeTick', () => {
       providerId: 'telegram',
       pullInboundMessages: async () => [],
       sendMessage: async () => {
-        throw new TelegramApiError({
-          method: 'sendMessage',
-          statusCode: 400,
-          data: { description: 'Bad Request: chat not found' },
+        throw new ChannelBridgePermanentDeliveryError({
+          code: 'conversation_not_found',
+          message: 'Bad Request: chat not found',
         });
       },
     };
@@ -2085,7 +2275,7 @@ describe('executeChannelBridgeTick', () => {
     const [binding] = await store.listBindings();
     expect(binding?.lastForwardedSeq).toBe(1);
     expect(
-      warnings.some((row) => row.message.includes('Detected permanent Telegram delivery failure')),
+      warnings.some((row) => row.message.includes('Detected permanent delivery failure')),
     ).toBe(true);
   });
 
@@ -2121,7 +2311,7 @@ describe('executeChannelBridgeTick', () => {
     const [binding] = await store.listBindings();
     expect(binding?.lastForwardedSeq).toBe(0);
     expect(
-      warnings.some((row) => row.message.includes('Detected permanent Telegram delivery failure')),
+      warnings.some((row) => row.message.includes('Detected permanent delivery failure')),
     ).toBe(false);
     expect(
       warnings.some((row) => row.message.includes('Failed to forward agent output to channel')),
@@ -2283,6 +2473,7 @@ describe('executeChannelBridgeTick', () => {
 
     await store.upsertBinding({
       ...bindingRef,
+      ...DEFAULT_BINDING_POLICY,
       sessionId: 'sess-orphaned-2',
       lastForwardedSeq: 0,
     });
@@ -2325,6 +2516,7 @@ describe('executeChannelBridgeTick', () => {
   it('acknowledges handled inbound messages when adapter exposes ack hook', async () => {
     const store = createInMemoryChannelBindingStore();
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'room-ack',
       threadId: null,
@@ -2448,6 +2640,7 @@ describe('startChannelBridgeWorker', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'dedupe-room',
       threadId: null,
@@ -2498,6 +2691,7 @@ describe('startChannelBridgeWorker', () => {
     let startedTick = false;
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'stop-room',
       threadId: null,

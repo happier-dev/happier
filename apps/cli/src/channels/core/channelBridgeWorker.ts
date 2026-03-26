@@ -14,7 +14,6 @@
  * - `updateLastForwardedSeq` must persist the maximum forwarded sequence.
  */
 import { startSingleFlightIntervalLoop, type SingleFlightIntervalLoopHandle } from '@/daemon/lifecycle/singleFlightIntervalLoop';
-import { TelegramApiError } from '@/channels/telegram/telegramAdapter';
 
 /**
  * Logical channel conversation reference.
@@ -71,9 +70,14 @@ export type ChannelBridgeAdapter = Readonly<{
 /**
  * Persisted conversation -> session mapping and agent cursor state.
  */
+export type ChannelBridgeInboundMode = 'ownerOnly' | 'anyone';
+
 export type ChannelSessionBinding = ChannelBridgeConversationRef & Readonly<{
   sessionId: string;
   lastForwardedSeq: number;
+  ownerSenderId: string | null;
+  inboundMode: ChannelBridgeInboundMode;
+  allowMissingSenderId: boolean;
   createdAtMs: number;
   updatedAtMs: number;
 }>;
@@ -139,6 +143,9 @@ export type ChannelBindingStore = Readonly<{
     threadId: string | null;
     sessionId: string;
     lastForwardedSeq: number;
+    ownerSenderId: string | null;
+    inboundMode: ChannelBridgeInboundMode;
+    allowMissingSenderId: boolean;
   }>) => Promise<ChannelSessionBinding>;
   updateLastForwardedSeq: (
     ref: ChannelBridgeConversationRef,
@@ -168,6 +175,26 @@ function toNonNegativeInt(value: unknown): number | null {
   const parsed = Math.trunc(value);
   if (parsed < 0) return null;
   return parsed;
+}
+
+function normalizeSenderId(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export class ChannelBridgePermanentDeliveryError extends Error {
+  readonly code: 'forbidden' | 'conversation_not_found' | 'unknown';
+
+  constructor(params: Readonly<{ code: ChannelBridgePermanentDeliveryError['code']; message: string }>) {
+    super(params.message);
+    this.name = 'ChannelBridgePermanentDeliveryError';
+    this.code = params.code;
+  }
+}
+
+function isChannelBridgePermanentDeliveryFailure(error: unknown): error is ChannelBridgePermanentDeliveryError {
+  return error instanceof ChannelBridgePermanentDeliveryError;
 }
 
 const DEFAULT_EXTERNAL_IO_TIMEOUT_MS = 30_000;
@@ -212,14 +239,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
       clearTimeout(timeoutHandle);
     }
   }
-}
-
-function isTelegramPermanentDeliveryFailure(error: unknown): boolean {
-  if (!(error instanceof TelegramApiError)) return false;
-  if (error.method !== 'sendMessage') return false;
-  if (error.statusCode === 403) return true;
-  if (error.statusCode === 400 && error.description !== null && /chat not found/i.test(error.description)) return true;
-  return false;
 }
 
 type ChannelBridgeInboundDeduper = Readonly<{
@@ -342,10 +361,16 @@ export function createInMemoryChannelBindingStore(now: () => number = () => Date
       const key = bindingKey(normalizedRef);
       const existing = byKey.get(key);
       const normalizedLastForwardedSeq = toNonNegativeInt(binding.lastForwardedSeq) ?? 0;
+      const ownerSenderId = normalizeSenderId(binding.ownerSenderId);
+      const inboundMode: ChannelBridgeInboundMode = binding.inboundMode === 'anyone' ? 'anyone' : 'ownerOnly';
+      const allowMissingSenderId = binding.allowMissingSenderId === true;
       const next: ChannelSessionBinding = {
         ...normalizedRef,
         sessionId: binding.sessionId.trim(),
         lastForwardedSeq: normalizedLastForwardedSeq,
+        ownerSenderId,
+        inboundMode,
+        allowMissingSenderId,
         createdAtMs: existing?.createdAtMs ?? now(),
         updatedAtMs: now(),
       };
@@ -383,6 +408,101 @@ function parseSlashCommand(text: string): Readonly<{ name: string; args: string[
   const name = normalized.split('@')[0]!.trim();
   if (!name) return null;
   return { name, args };
+}
+
+function parseAttachFlags(args: readonly string[]): Readonly<{
+  allowAnyone: boolean;
+  allowMissingSenderId: boolean;
+  unknownFlags: string[];
+}> {
+  const allowAnyone = args.some((arg) => arg.trim().toLowerCase() === '--anyone');
+  const allowMissingSenderId = args.some((arg) => arg.trim().toLowerCase() === '--allow-missing-sender-id');
+  const unknownFlags = args
+    .map((arg) => arg.trim())
+    .filter((arg) => arg.startsWith('--'))
+    .filter((arg) => arg.toLowerCase() !== '--anyone' && arg.toLowerCase() !== '--allow-missing-sender-id');
+  return {
+    allowAnyone,
+    allowMissingSenderId,
+    unknownFlags,
+  };
+}
+
+function authorizeBindingControl(params: Readonly<{
+  binding: ChannelSessionBinding | null;
+  senderId: string | null;
+}>): Readonly<{ allowed: boolean; message: string | null }> {
+  const { binding, senderId } = params;
+
+  if (!binding) {
+    if (!senderId) {
+      return {
+        allowed: false,
+        message: 'This command requires a stable sender identity. Try using it in a DM.',
+      };
+    }
+    return { allowed: true, message: null };
+  }
+
+  if (!senderId) {
+    if (binding.allowMissingSenderId) {
+      return { allowed: true, message: null };
+    }
+    return {
+      allowed: false,
+      message: 'This binding does not allow commands without a sender identity.',
+    };
+  }
+
+  if (!binding.ownerSenderId) {
+    return { allowed: true, message: null };
+  }
+
+  if (binding.ownerSenderId !== senderId) {
+    return {
+      allowed: false,
+      message: 'You are not authorized to control this binding.',
+    };
+  }
+
+  return { allowed: true, message: null };
+}
+
+function authorizeInboundForwarding(params: Readonly<{
+  binding: ChannelSessionBinding;
+  senderId: string | null;
+}>): Readonly<{ allowed: boolean; message: string | null }> {
+  const { binding, senderId } = params;
+
+  if (!senderId) {
+    if (binding.allowMissingSenderId) {
+      return { allowed: true, message: null };
+    }
+    return {
+      allowed: false,
+      message: 'Sender identity is missing; forwarding is disabled for safety.',
+    };
+  }
+
+  if (binding.inboundMode === 'anyone') {
+    return { allowed: true, message: null };
+  }
+
+  if (!binding.ownerSenderId) {
+    return {
+      allowed: false,
+      message: 'This binding has no owner identity; reattach to establish one.',
+    };
+  }
+
+  if (binding.ownerSenderId !== senderId) {
+    return {
+      allowed: false,
+      message: 'You are not authorized to send messages to this session from here.',
+    };
+  }
+
+  return { allowed: true, message: null };
 }
 
 function formatSessionsMessage(rows: Array<Readonly<{ sessionId: string; label: string | null }>>): string {
@@ -425,8 +545,7 @@ async function authorizeCommand(params: Readonly<{
     return { allowed: true, message: null };
   }
 
-  const senderRaw = params.event.senderId;
-  const senderId = typeof senderRaw === 'string' && senderRaw.trim().length > 0 ? senderRaw.trim() : null;
+  const senderId = normalizeSenderId(params.event.senderId);
   const actor: ChannelBridgeActorContext = {
     providerId: params.event.providerId,
     conversationId: params.event.conversationId,
@@ -504,7 +623,7 @@ async function handleCommand(params: Readonly<{
       [
         'Happier bridge commands:',
         '/sessions - list recent sessions',
-        '/attach <session-id-or-prefix> - bind this DM/topic',
+        '/attach <session-id-or-prefix> [--anyone] [--allow-missing-sender-id] - attach this conversation',
         '/detach - unbind this DM/topic',
         '/session - show current binding',
         '/help - show command help',
@@ -554,9 +673,26 @@ async function handleCommand(params: Readonly<{
   }
 
   if (command.name === 'attach') {
-    const idOrPrefix = String(command.args[0] ?? '').trim();
+    const rawArgs = command.args.map((arg) => String(arg));
+    const idOrPrefix = String(rawArgs[0] ?? '').trim();
     if (!idOrPrefix) {
-      await replyForCommand('Usage: /attach <session-id-or-prefix>');
+      await replyForCommand('Usage: /attach <session-id-or-prefix> [--anyone] [--allow-missing-sender-id]');
+      return;
+    }
+
+    const flags = parseAttachFlags(rawArgs.slice(1));
+    if (flags.unknownFlags.length > 0) {
+      await replyForCommand(
+        `Unknown flags: ${flags.unknownFlags.join(', ')}\nUsage: /attach <session-id-or-prefix> [--anyone] [--allow-missing-sender-id]`,
+      );
+      return;
+    }
+
+    const senderId = normalizeSenderId(event.senderId);
+    if (!senderId && !flags.allowMissingSenderId) {
+      await replyForCommand(
+        'Cannot attach: sender identity is missing. Try attaching from a DM, or pass --allow-missing-sender-id (unsafe).',
+      );
       return;
     }
 
@@ -635,14 +771,38 @@ async function handleCommand(params: Readonly<{
     }
     const previousSessionId = previousBinding?.sessionId ?? null;
 
+    if (previousBinding) {
+      const controlAuthz = authorizeBindingControl({
+        binding: previousBinding,
+        senderId,
+      });
+      if (!controlAuthz.allowed) {
+        await replyForCommand(controlAuthz.message ?? 'You are not authorized to attach here.');
+        return;
+      }
+    }
+
+    const ownerSenderId = senderId;
+    const allowMissingSenderId = flags.allowMissingSenderId === true;
+    const requestedInboundMode: ChannelBridgeInboundMode = flags.allowAnyone ? 'anyone' : 'ownerOnly';
+    const inboundMode: ChannelBridgeInboundMode =
+      ownerSenderId
+        ? requestedInboundMode
+        : allowMissingSenderId
+          ? 'anyone'
+          : 'ownerOnly';
+
     try {
       await withTimeout(
         store.upsertBinding({
-        providerId: ref.providerId,
-        conversationId: ref.conversationId,
-        threadId: ref.threadId,
-        sessionId: resolved.sessionId,
-        lastForwardedSeq: latestSeq,
+          providerId: ref.providerId,
+          conversationId: ref.conversationId,
+          threadId: ref.threadId,
+          sessionId: resolved.sessionId,
+          lastForwardedSeq: latestSeq,
+          ownerSenderId,
+          inboundMode,
+          allowMissingSenderId,
         }),
         EXTERNAL_IO_TIMEOUT_MS,
         `store.upsertBinding(${ref.providerId}:${ref.conversationId}:${ref.threadId ?? 'null'})`,
@@ -662,6 +822,29 @@ async function handleCommand(params: Readonly<{
   }
 
   if (command.name === 'detach') {
+    let existing: ChannelSessionBinding | null;
+    try {
+      existing = await withTimeout(
+        store.getBinding(ref),
+        EXTERNAL_IO_TIMEOUT_MS,
+        `store.getBinding(${ref.providerId}:${ref.conversationId}:${ref.threadId ?? 'null'})`,
+      );
+    } catch (error) {
+      deps.onWarning?.('Failed to read binding before /detach command', error);
+      await replyForCommand('Failed to read current binding. Please try again later.');
+      return;
+    }
+
+    const senderId = normalizeSenderId(event.senderId);
+    const controlAuthz = authorizeBindingControl({
+      binding: existing,
+      senderId,
+    });
+    if (!controlAuthz.allowed) {
+      await replyForCommand(controlAuthz.message ?? 'You are not authorized to detach here.');
+      return;
+    }
+
     let removed = false;
     try {
       removed = await withTimeout(
@@ -842,6 +1025,30 @@ export async function executeChannelBridgeTick(params: Readonly<{
           } catch (replyError) {
             params.deps.onWarning?.(
               `Failed to send no-binding reply for provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'}`,
+              replyError,
+            );
+          }
+          deduper.markSeen(event);
+          ackableInbound.push(event);
+          processedSuccessfully = true;
+          continue;
+        }
+
+        const senderId = normalizeSenderId(event.senderId);
+        const forwardAuthz = authorizeInboundForwarding({
+          binding,
+          senderId,
+        });
+        if (!forwardAuthz.allowed) {
+          try {
+            await replyToConversation(
+              adapter,
+              ref,
+              forwardAuthz.message ?? 'You are not authorized to send messages here.',
+            );
+          } catch (replyError) {
+            params.deps.onWarning?.(
+              `Failed to send forwarding-unauthorized reply for provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'}`,
               replyError,
             );
           }
@@ -1035,9 +1242,9 @@ export async function executeChannelBridgeTick(params: Readonly<{
             `sendMessage(${adapter.providerId})`,
           );
         } catch (error) {
-          if (isTelegramPermanentDeliveryFailure(error)) {
+          if (isChannelBridgePermanentDeliveryFailure(error)) {
             params.deps.onWarning?.(
-              `Detected permanent Telegram delivery failure; advancing outbound cursor without retry for session=${binding.sessionId} provider=${binding.providerId} conversation=${binding.conversationId} seq=${nextSeq}`,
+              `Detected permanent delivery failure; advancing outbound cursor without retry for session=${binding.sessionId} provider=${binding.providerId} conversation=${binding.conversationId} seq=${nextSeq}`,
               error,
             );
           } else {

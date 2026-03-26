@@ -24,5 +24,17 @@ describe('serializeAxiosErrorForLog', () => {
     expect(serialized).not.toHaveProperty('headers');
     expect(serialized).not.toHaveProperty('data');
   });
-});
 
+  it('redacts Telegram bot tokens embedded in URL paths', () => {
+    const err = new AxiosError('boom', 'ECONNABORTED', {
+      method: 'get',
+      url: 'https://api.telegram.org/bot123456789:AAABBBccc___-123/getUpdates?offset=123',
+      headers: { Authorization: 'Bearer SECRET', 'Content-Type': 'application/json' },
+    } as any);
+
+    const serialized = serializeAxiosErrorForLog(err);
+    expect(serialized).toEqual(expect.objectContaining({
+      url: 'https://api.telegram.org/bot<redacted>/getUpdates',
+    }));
+  });
+});

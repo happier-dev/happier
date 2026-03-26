@@ -4,7 +4,7 @@
  * Responsibilities:
  * - resolve effective bridge runtime config from env/settings/account scope
  * - construct provider adapters (Telegram today) and optional webhook relay
- * - choose binding store implementation (in-memory or server-backed KV)
+ * - choose binding store implementation (in-memory or local file-backed state)
  * - build default bridge deps that map channel events <-> session transcript I/O
  * - start and return the core channel bridge worker lifecycle handle
  *
@@ -42,12 +42,10 @@ import {
   type ChannelBridgeAgentMessageRow,
   type ChannelBridgeDeps,
   type ChannelBridgeWorkerHandle,
-} from './core/channelBridgeWorker';
-import { resolveChannelBridgeRuntimeConfig } from './channelBridgeConfig';
-import { createServerBackedChannelBindingStore } from './channelBindingStore.server';
-import { createAxiosChannelBridgeKvClient } from './channelBridgeServerKv';
-import { createTelegramChannelAdapter } from './telegram/telegramAdapter';
-import { startTelegramWebhookRelay, type TelegramWebhookRelayHandle } from './telegram/telegramWebhookRelay';
+} from '@/channels/core/channelBridgeWorker';
+import { resolveChannelBridgeRuntimeConfig } from '@/channels/channelBridgeConfig';
+import { startChannelBridgeRuntime } from '@/channels/runtime/startChannelBridgeRuntime';
+import { createLocalChannelBindingStore } from '@/channels/state/localBindingStore';
 
 export type ChannelBridgeRuntimeHandle = ChannelBridgeWorkerHandle;
 
@@ -212,155 +210,156 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
 
   return {
     deps: {
-    listSessions: async () => {
-      const displayLimit = 20;
-      const pageSize = displayLimit;
-      const maxPages = 1;
-      const sessions: RawSessionListRow[] = [];
-      let cursor: string | undefined;
+      listSessions: async () => {
+        const displayLimit = 20;
+        const pageSize = displayLimit;
+        const maxPages = 1;
+        const sessions: RawSessionListRow[] = [];
+        let cursor: string | undefined;
 
-      for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-        const page = await fetchSessionsPage({
-          token: credentials.token,
-          activeOnly: false,
-          limit: pageSize,
-          cursor,
+        for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+          const page = await fetchSessionsPage({
+            token: credentials.token,
+            activeOnly: false,
+            limit: pageSize,
+            cursor,
+          });
+          sessions.push(...page.sessions);
+          if (sessions.length >= displayLimit) {
+            cursor = undefined;
+            break;
+          }
+          if (!page.hasNext || !page.nextCursor) {
+            cursor = undefined;
+            break;
+          }
+          cursor = page.nextCursor;
+        }
+
+        return sessions.slice(0, displayLimit).map((row) => {
+          const meta = tryDecryptSessionMetadata({ credentials, rawSession: row });
+          const tagRaw = meta?.tag;
+          const tag = typeof tagRaw === 'string' ? tagRaw.trim() : '';
+          return {
+            sessionId: row.id,
+            label: tag.length > 0 ? tag : null,
+          };
         });
-        sessions.push(...page.sessions);
-        if (sessions.length >= displayLimit) {
-          cursor = undefined;
-          break;
+      },
+      resolveSessionIdOrPrefix: async (idOrPrefix: string) => {
+        return await resolveSessionIdOrPrefix({
+          credentials,
+          idOrPrefix,
+        });
+      },
+      sendUserMessageToSession: async (params) => {
+        const runtime = await resolveSessionRuntime(params.sessionId);
+        if (!runtime) {
+          throw new Error(`Session not found: ${params.sessionId}`);
         }
-        if (!page.hasNext || !page.nextCursor) {
-          cursor = undefined;
-          break;
-        }
-        cursor = page.nextCursor;
-      }
 
-      return sessions.slice(0, displayLimit).map((row) => {
-        const meta = tryDecryptSessionMetadata({ credentials, rawSession: row });
-        const tagRaw = meta?.tag;
-        const tag = typeof tagRaw === 'string' ? tagRaw.trim() : '';
-        return {
-          sessionId: row.id,
-          label: tag.length > 0 ? tag : null,
+        const ctx = runtime.ctx;
+        const mode = runtime.mode;
+        const record = {
+          role: 'user',
+          content: { type: 'text', text: params.text },
+          meta: {
+            sentFrom: params.sentFrom,
+            source: params.sentFrom,
+            channel: {
+              providerId: params.providerId,
+              conversationId: params.conversationId,
+              threadId: params.threadId,
+            },
+          },
         };
-      });
-    },
-    resolveSessionIdOrPrefix: async (idOrPrefix: string) => {
-      return await resolveSessionIdOrPrefix({
-        credentials,
-        idOrPrefix,
-      });
-    },
-    sendUserMessageToSession: async (params) => {
-      const runtime = await resolveSessionRuntime(params.sessionId);
-      if (!runtime) {
-        throw new Error(`Session not found: ${params.sessionId}`);
-      }
 
-      const ctx = runtime.ctx;
-      const mode = runtime.mode;
-      const record = {
-        role: 'user',
-        content: { type: 'text', text: params.text },
-        meta: {
-          sentFrom: params.sentFrom,
-          source: params.sentFrom,
-          channel: {
+        const content =
+          mode === 'plain'
+            ? ({ t: 'plain', v: record } as const)
+            : ({ t: 'encrypted', c: encryptSessionPayload({ ctx, payload: record }) } as const);
+
+        await sendSessionMessageViaSocketCommitted({
+          token: credentials.token,
+          sessionId: params.sessionId,
+          content,
+          localId: createStableBridgeLocalId({
             providerId: params.providerId,
             conversationId: params.conversationId,
             threadId: params.threadId,
-          },
-        },
-      };
+            sessionId: params.sessionId,
+            text: params.text,
+            messageId: params.messageId,
+          }),
+          sentFrom: params.sentFrom,
+        });
+      },
+      resolveLatestSessionSeq: async (sessionId: string) => {
+        const rows = await fetchEncryptedTranscriptPageLatest({
+          token: credentials.token,
+          sessionId,
+          limit: 1,
+        });
+        if (rows.length === 0) return 0;
+        return Math.max(0, Math.trunc(rows[0]!.seq));
+      },
+      fetchAgentMessagesAfterSeq: async ({ sessionId, afterSeq }) => {
+        const runtime = await resolveSessionRuntime(sessionId);
+        if (!runtime) {
+          return {
+            messages: [],
+            highestSeenSeq: null,
+          };
+        }
 
-      const content =
-        mode === 'plain'
-          ? ({ t: 'plain', v: record } as const)
-          : ({ t: 'encrypted', c: encryptSessionPayload({ ctx, payload: record }) } as const);
+        const encrypted = await fetchEncryptedTranscriptPageAfterSeq({
+          token: credentials.token,
+          sessionId,
+          afterSeq,
+          limit: 50,
+        });
 
-      await sendSessionMessageViaSocketCommitted({
-        token: credentials.token,
-        sessionId: params.sessionId,
-        content,
-        localId: createStableBridgeLocalId({
-          providerId: params.providerId,
-          conversationId: params.conversationId,
-          threadId: params.threadId,
-          sessionId: params.sessionId,
-          text: params.text,
-          messageId: params.messageId,
-        }),
-        sentFrom: params.sentFrom,
-      });
-    },
-    resolveLatestSessionSeq: async (sessionId: string) => {
-      const rows = await fetchEncryptedTranscriptPageLatest({
-        token: credentials.token,
-        sessionId,
-        limit: 1,
-      });
-      if (rows.length === 0) return 0;
-      return Math.max(0, Math.trunc(rows[0]!.seq));
-    },
-    fetchAgentMessagesAfterSeq: async ({ sessionId, afterSeq }) => {
-      const runtime = await resolveSessionRuntime(sessionId);
-      if (!runtime) {
+        const highestSeenSeq = encrypted.reduce<number | null>((currentMax, row) => {
+          const parsedSeq = toNonNegativeInt(row.seq);
+          if (parsedSeq === null) return currentMax;
+          if (currentMax === null) return parsedSeq;
+          return parsedSeq > currentMax ? parsedSeq : currentMax;
+        }, null);
+
+        const transcriptRows =
+          runtime.mode === 'plain'
+            ? parsePlainTranscriptRows(encrypted)
+            : decryptTranscriptRows({
+                ctx: runtime.ctx,
+                rows: encrypted,
+              });
+
+        const messages: ChannelBridgeAgentMessageRow[] = [];
+        for (const row of transcriptRows) {
+          if (row.role !== 'agent') {
+            continue;
+          }
+
+          const text = extractAssistantText(row.content);
+          if (!text) {
+            onWarning(
+              `Skipped agent transcript row with unsupported content for session=${sessionId} seq=${row.seq}`,
+            );
+            continue;
+          }
+
+          messages.push({
+            seq: row.seq,
+            text,
+          });
+        }
+
         return {
-          messages: [],
-          highestSeenSeq: null,
+          messages,
+          highestSeenSeq,
         };
-      }
-
-      const encrypted = await fetchEncryptedTranscriptPageAfterSeq({
-        token: credentials.token,
-        sessionId,
-        afterSeq,
-        limit: 50,
-      });
-
-      const highestSeenSeq = encrypted.reduce<number | null>((currentMax, row) => {
-        const parsedSeq = toNonNegativeInt(row.seq);
-        if (parsedSeq === null) return currentMax;
-        if (currentMax === null) return parsedSeq;
-        return parsedSeq > currentMax ? parsedSeq : currentMax;
-      }, null);
-
-      const transcriptRows = runtime.mode === 'plain'
-        ? parsePlainTranscriptRows(encrypted)
-        : decryptTranscriptRows({
-          ctx: runtime.ctx,
-          rows: encrypted,
-        });
-
-      const messages: ChannelBridgeAgentMessageRow[] = [];
-      for (const row of transcriptRows) {
-        if (row.role !== 'agent') {
-          continue;
-        }
-
-        const text = extractAssistantText(row.content);
-        if (!text) {
-          onWarning(
-            `Skipped agent transcript row with unsupported content for session=${sessionId} seq=${row.seq}`,
-          );
-          continue;
-        }
-
-        messages.push({
-          seq: row.seq,
-          text,
-        });
-      }
-
-      return {
-        messages,
-        highestSeenSeq,
-      };
-    },
-    onWarning,
+      },
+      onWarning,
     },
     dispose: () => {
       sessionRuntimeCache.clear();
@@ -386,72 +385,6 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
     accountId: params.accountId,
   });
 
-  let relayHandle: TelegramWebhookRelayHandle | null = null;
-  const adapters: ChannelBridgeAdapter[] = params.adapters ? [...params.adapters] : [];
-  if (adapters.length === 0) {
-    const botToken = runtimeConfig.telegram.botToken;
-    if (!botToken) {
-      return null;
-    }
-
-    const allowedChatIdsRaw = runtimeConfig.telegram.allowedChatIds;
-    const allowedChatIds = allowedChatIdsRaw.length > 0 ? new Set(allowedChatIdsRaw) : null;
-    const webhookEnabled = runtimeConfig.telegram.webhookEnabled;
-    const webhookSecret = runtimeConfig.telegram.webhookSecret;
-    const requireTopics = runtimeConfig.telegram.requireTopics;
-
-    if (webhookEnabled && webhookSecret.length === 0) {
-      logger.warn('[channelBridge] Telegram webhook.enabled=true but webhook.secret is missing; falling back to polling mode');
-    }
-
-    const webhookModeRequested = webhookEnabled && webhookSecret.length > 0;
-    let telegramAdapter = createTelegramChannelAdapter({
-      botToken,
-      allowedChatIds,
-      requireTopics,
-      webhookMode: webhookModeRequested,
-    });
-
-    const telegramAdapterIndex = adapters.push(telegramAdapter) - 1;
-
-    if (webhookModeRequested) {
-      const port = runtimeConfig.telegram.webhookPort;
-      const host = runtimeConfig.telegram.webhookHost;
-      try {
-        relayHandle = await startTelegramWebhookRelay({
-          port,
-          host,
-          // We intentionally use one shared secret today because bridge config currently
-          // exposes a single webhook secret field. The relay API keeps both knobs
-          // separate so we can split path/header secrets in a future config version.
-          secretPathToken: webhookSecret,
-          secretHeaderToken: webhookSecret,
-          onUpdate: telegramAdapter.enqueueWebhookUpdate,
-        });
-        logger.debug(
-          `[channelBridge] Telegram webhook relay listening on http://${host}:${relayHandle.port} (path redacted)`,
-        );
-      } catch (error) {
-        logger.warn(
-          '[channelBridge] Failed to start Telegram webhook relay; bridge will continue without webhook relay',
-          serializeAxiosErrorForLog(error),
-        );
-        telegramAdapter = createTelegramChannelAdapter({
-          botToken,
-          allowedChatIds,
-          requireTopics,
-          webhookMode: false,
-        });
-        adapters[telegramAdapterIndex] = telegramAdapter;
-        logger.warn('[channelBridge] Falling back to Telegram polling mode because webhook relay failed to start');
-      }
-    }
-  }
-
-  if (adapters.length === 0) {
-    return null;
-  }
-
   let defaultDepsHandle: DefaultChannelBridgeDepsHandle | null = null;
   try {
     const deps = (() => {
@@ -462,30 +395,33 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
 
     let store = params.store ?? null;
     if (!store) {
-      const serverId = typeof params.serverId === 'string' ? params.serverId.trim() : '';
       const accountId = typeof params.accountId === 'string' ? params.accountId.trim() : '';
-      if ((serverId.length > 0) !== (accountId.length > 0)) {
-        throw new Error('Channel bridge server-backed bindings require both serverId and accountId');
-      }
-      if (serverId && accountId) {
-        const kv = createAxiosChannelBridgeKvClient({ token: params.credentials.token });
-        store = createServerBackedChannelBindingStore({
-          kv,
-          serverId,
-          accountId,
-        });
+      if (accountId) {
+        store = createLocalChannelBindingStore({ accountId });
       }
     }
     if (!store) {
       store = createInMemoryChannelBindingStore();
     }
 
-    const worker = startChannelBridgeWorker({
-      store,
-      adapters,
-      deps,
-      tickMs: runtimeConfig.tickMs,
-    });
+    const injectedAdapters = params.adapters ? [...params.adapters] : [];
+    const worker = injectedAdapters.length > 0
+      ? startChannelBridgeWorker({
+          store,
+          adapters: injectedAdapters,
+          deps,
+          tickMs: runtimeConfig.tickMs,
+        })
+      : await startChannelBridgeRuntime({
+          store,
+          deps,
+          runtimeConfig,
+        });
+
+    if (!worker) {
+      defaultDepsHandle?.dispose();
+      return null;
+    }
 
     return {
       trigger: worker.trigger,
@@ -493,20 +429,11 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
         try {
           await worker.stop();
         } finally {
-          try {
-            if (relayHandle) {
-              await relayHandle.stop().catch((error: unknown) => {
-                logger.warn('[channelBridge] Error stopping webhook relay during shutdown', error);
-              });
-            }
-          } finally {
-            defaultDepsHandle?.dispose();
-          }
+          defaultDepsHandle?.dispose();
         }
       },
     };
   } catch (error) {
-    await relayHandle?.stop().catch(() => undefined);
     defaultDepsHandle?.dispose();
     throw error;
   }
