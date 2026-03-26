@@ -269,6 +269,105 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
     };
 }
 
+function pickPreferredEquivalentProfile(
+    profiles: readonly ServerProfile[],
+    opts: Readonly<{ sameOriginServerUrl: string | null; preferredServerId: string | null }>,
+): ServerProfile {
+    if (profiles.length === 1) return profiles[0]!;
+
+    const sameOrigin = opts.sameOriginServerUrl ? normalizeUrl(opts.sameOriginServerUrl) : '';
+    if (sameOrigin) {
+        const sameOriginMatch = profiles.find((p) => normalizeUrl(p.serverUrl) === sameOrigin);
+        if (sameOriginMatch) return sameOriginMatch;
+    }
+
+    const preferredId = normalizeServerId(opts.preferredServerId);
+    if (preferredId) {
+        const preferredMatch = profiles.find((p) => normalizeServerId(p.id) === preferredId);
+        if (preferredMatch) return preferredMatch;
+    }
+
+    const sourceRank: Record<ServerProfileSource, number> = {
+        'stack-env': 0,
+        preconfigured: 1,
+        url: 2,
+        notification: 3,
+        manual: 4,
+    };
+
+    return [...profiles].sort((a, b) => {
+        const aRank = a.source ? (sourceRank[a.source] ?? 10) : 10;
+        const bRank = b.source ? (sourceRank[b.source] ?? 10) : 10;
+        if (aRank !== bRank) return aRank - bRank;
+
+        const aUsed = Number(a.lastUsedAt ?? 0) || 0;
+        const bUsed = Number(b.lastUsedAt ?? 0) || 0;
+        if (aUsed !== bUsed) return bUsed - aUsed;
+
+        const aUpdated = Number(a.updatedAt ?? 0) || 0;
+        const bUpdated = Number(b.updatedAt ?? 0) || 0;
+        if (aUpdated !== bUpdated) return bUpdated - aUpdated;
+
+        const aCreated = Number(a.createdAt ?? 0) || 0;
+        const bCreated = Number(b.createdAt ?? 0) || 0;
+        return aCreated - bCreated;
+    })[0]!;
+}
+
+function dedupeEquivalentProfiles(params: Readonly<{
+    servers: Record<string, ServerProfile>;
+    sameOriginServerUrl: string | null;
+    preferredServerId: string | null;
+}>): Readonly<{
+    servers: Record<string, ServerProfile>;
+    idRewrite: Map<string, string>;
+    changed: boolean;
+}> {
+    const groupsByKey = new Map<string, ServerProfile[]>();
+    for (const profile of Object.values(params.servers)) {
+        const key = comparableUrlKey(profile.serverUrl) || `id:${profile.id}`;
+        const group = groupsByKey.get(key);
+        if (group) group.push(profile);
+        else groupsByKey.set(key, [profile]);
+    }
+
+    let changed = false;
+    const idRewrite = new Map<string, string>();
+    const next: Record<string, ServerProfile> = {};
+
+    for (const group of groupsByKey.values()) {
+        if (group.length === 1) {
+            const only = group[0]!;
+            next[only.id] = only;
+            continue;
+        }
+
+        changed = true;
+        const preferred = pickPreferredEquivalentProfile(group, {
+            sameOriginServerUrl: params.sameOriginServerUrl,
+            preferredServerId: params.preferredServerId,
+        });
+        const merged: ServerProfile = group.reduce<ServerProfile>((acc, current) => {
+            if (current.id === acc.id) return acc;
+            return {
+                ...acc,
+                createdAt: Math.min(acc.createdAt, current.createdAt),
+                updatedAt: Math.max(acc.updatedAt, current.updatedAt),
+                lastUsedAt: Math.max(acc.lastUsedAt, current.lastUsedAt),
+            };
+        }, preferred);
+
+        next[merged.id] = merged;
+
+        for (const current of group) {
+            if (current.id === merged.id) continue;
+            idRewrite.set(current.id, merged.id);
+        }
+    }
+
+    return { servers: next, idRewrite, changed };
+}
+
 function readPersistedState(): Required<PersistedServerState> {
     const raw = storage.getString(STATE_KEY);
     if (!raw) {
@@ -290,14 +389,31 @@ function readPersistedState(): Required<PersistedServerState> {
             servers[profile.id] = profile;
         }
         const desiredActive = normalizeServerId(parsed.activeServerId);
-        const activeServerId = resolvePrimaryActiveServerId(servers, desiredActive);
         const activeServerIdIsExplicit = parsed.activeServerIdIsExplicit === true;
 
-        return {
+        const deduped = dedupeEquivalentProfiles({
+            servers,
+            sameOriginServerUrl: getWebSameOriginServerUrl(),
+            preferredServerId: desiredActive,
+        });
+
+        const rewrittenDesiredActive =
+            desiredActive && deduped.idRewrite.has(desiredActive)
+                ? deduped.idRewrite.get(desiredActive)!
+                : desiredActive;
+        const activeServerId = resolvePrimaryActiveServerId(deduped.servers, rewrittenDesiredActive);
+
+        const state: Required<PersistedServerState> = {
             activeServerIdIsExplicit,
             activeServerId,
-            servers,
+            servers: deduped.servers,
         };
+
+        if (deduped.changed) {
+            writePersistedState(state);
+        }
+
+        return state;
     } catch {
         const seeded = applyRuntimeSeedPolicy({});
         return {

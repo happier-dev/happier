@@ -27,6 +27,12 @@ describe('serverUrlCanonical', () => {
         const a = createServerUrlComparableKey('http://127.0.0.1:3012/path');
         const b = createServerUrlComparableKey('http://localhost:3012/path/');
         expect(a).toBe(b);
+
+        const c = createServerUrlComparableKey('http://qa-stack.localhost:3012/path');
+        expect(c).toBe(b);
+
+        const d = createServerUrlComparableKey('http://qa-stack.localhost.:3012/path');
+        expect(d).toBe(b);
     });
 
     it('normalizes explicit default ports for comparable identity keys', () => {

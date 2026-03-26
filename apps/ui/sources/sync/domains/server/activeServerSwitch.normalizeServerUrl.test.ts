@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeServerUrl } from './activeServerSwitch';
+import { isSameServerUrl, normalizeServerUrl } from './activeServerSwitch';
 
 describe('normalizeServerUrl', () => {
     it('normalizes http/https urls and strips trailing slashes', () => {
@@ -20,3 +20,10 @@ describe('normalizeServerUrl', () => {
     });
 });
 
+describe('isSameServerUrl', () => {
+    it('treats equivalent loopback hosts as the same server', () => {
+        expect(isSameServerUrl('http://127.0.0.1:3012', 'http://localhost:3012')).toBe(true);
+        expect(isSameServerUrl('http://qa-stack.localhost:3012', 'http://localhost:3012')).toBe(true);
+        expect(isSameServerUrl('http://qa-stack.localhost:3012', 'http://127.0.0.1:3012')).toBe(true);
+    });
+});

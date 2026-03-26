@@ -1,6 +1,14 @@
 function normalizeLoopbackHost(rawHost: string): string {
-    const host = String(rawHost ?? '').trim().toLowerCase();
-    if (host === '127.0.0.1' || host === '::1' || host === '[::1]') return 'localhost';
+    const host = String(rawHost ?? '').trim().toLowerCase().replace(/\.$/, '');
+    if (
+        host === 'localhost'
+        || host === '127.0.0.1'
+        || host === '::1'
+        || host === '[::1]'
+        || host.endsWith('.localhost')
+    ) {
+        return 'localhost';
+    }
     return host;
 }
 

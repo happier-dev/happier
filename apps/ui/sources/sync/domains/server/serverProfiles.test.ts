@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MMKV } from 'react-native-mmkv';
+
+import { scopedStorageId } from '@/utils/system/storageScope';
 
 function randomScope(): string {
     return `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -115,6 +118,87 @@ describe('serverProfiles', () => {
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://selfhost.example.test')).toBe(true);
         expect(profiles.getActiveServerUrl()).toBe('https://selfhost.example.test');
         expect(profiles.getActiveServerId()).toBeTruthy();
+    });
+
+    it('dedupes loopback-equivalent servers and prefers same-origin on web', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('http://qa-stack.localhost:24577');
+
+        const storage = new MMKV({ id: scopedStorageId('server-profiles', scope) });
+        storage.set(
+            'server-state-v1',
+            JSON.stringify({
+                activeServerIdIsExplicit: true,
+                activeServerId: 'localhost-24577',
+                servers: {
+                    'qa-stack.localhost-24577': {
+                        id: 'qa-stack.localhost-24577',
+                        name: 'Stack',
+                        serverUrl: 'http://qa-stack.localhost:24577/',
+                        createdAt: 100,
+                        updatedAt: 200,
+                        lastUsedAt: 200,
+                        source: 'url',
+                    },
+                    'localhost-24577': {
+                        id: 'localhost-24577',
+                        name: 'Local',
+                        serverUrl: 'http://localhost:24577/',
+                        createdAt: 150,
+                        updatedAt: 250,
+                        lastUsedAt: 250,
+                        source: 'url',
+                    },
+                },
+            }),
+        );
+
+        const profiles = await importFresh();
+        const all = profiles.listServerProfiles();
+
+        expect(all.length).toBe(1);
+        expect(profiles.getActiveServerUrl()).toBe('http://qa-stack.localhost:24577');
+        expect(profiles.getActiveServerId()).toBe('qa-stack.localhost-24577');
+    });
+
+    it('dedupes equivalent servers without rewriting the explicit active server id when no same-origin override exists', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const storage = new MMKV({ id: scopedStorageId('server-profiles', scope) });
+        storage.set(
+            'server-state-v1',
+            JSON.stringify({
+                activeServerIdIsExplicit: true,
+                activeServerId: 'manual-id',
+                servers: {
+                    'manual-id': {
+                        id: 'manual-id',
+                        name: 'Manual Active',
+                        serverUrl: 'https://api.example.test',
+                        createdAt: 100,
+                        updatedAt: 200,
+                        lastUsedAt: 999,
+                        source: 'manual',
+                    },
+                    'stack-id': {
+                        id: 'stack-id',
+                        name: 'Stack Seeded',
+                        serverUrl: 'https://api.example.test',
+                        createdAt: 150,
+                        updatedAt: 250,
+                        lastUsedAt: 0,
+                        source: 'stack-env',
+                    },
+                },
+            }),
+        );
+
+        const profiles = await importFresh();
+        expect(profiles.listServerProfiles()).toHaveLength(1);
+        expect(profiles.getActiveServerUrl()).toBe('https://api.example.test');
+        expect(profiles.getActiveServerId()).toBe('manual-id');
     });
 
     it('seeds api.happier.dev on app.happier.dev web origin when no preconfigured env exists', async () => {
