@@ -2,9 +2,23 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { ExecutionRunIntentSchema } from '../executionRuns.js';
-import { ActionSpecSchema, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs } from './actionSpecs.js';
+import { ActionSpecSchema, ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs } from './actionSpecs.js';
 
 describe('Action Spec Registry', () => {
+  it('supports session_agent as an action surface', () => {
+    const parsed = ActionSurfaceSchema.parse({
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      mcp: false,
+      cli: false,
+      session_agent: true,
+    });
+
+    expect(parsed.session_agent).toBe(true);
+  });
+
   it('exposes stable action specs', () => {
     const all = listActionSpecs();
     expect(all.length).toBeGreaterThan(0);
@@ -18,6 +32,12 @@ describe('Action Spec Registry', () => {
     const spec = getActionSpec('execution.run.list');
     expect(spec.id).toBe('execution.run.list');
     expect(spec.surfaces.voice_tool).toBe(true);
+  });
+
+  it('treats session_agent as the internal in-session MCP surface (not external mcp)', () => {
+    const spec = getActionSpec('action.spec.search');
+    expect(spec.surfaces.session_agent).toBe(true);
+    expect(spec.surfaces.mcp).toBe(false);
   });
 
   it('accepts explicit execution.run.list filter fields in the action schema', () => {
@@ -174,6 +194,7 @@ describe('Action Spec Registry', () => {
           ui_slash_command: true,
           voice_tool: true,
           voice_action_block: true,
+          session_agent: false,
           mcp: true,
           cli: true,
         },
@@ -202,6 +223,7 @@ describe('Action Spec Registry', () => {
         ui_slash_command: true,
         voice_tool: true,
         voice_action_block: true,
+        session_agent: false,
         mcp: true,
         cli: true,
       },

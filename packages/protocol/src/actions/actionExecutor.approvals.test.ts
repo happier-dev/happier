@@ -128,7 +128,7 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
-  it('rejects approval requests for actions that are not eligible for approvals', async () => {
+  it('allows creating approval requests for safe actions (eligibility is policy-driven, not safety-driven)', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
 
     const executor = createExecutor({ approvalsCreate });
@@ -140,11 +140,13 @@ describe('createActionExecutor (approvals)', () => {
       createdBy: { surface: 'system' },
     });
 
-    expect(res.ok).toBe(false);
-    if (!res.ok) {
-      expect(res.errorCode).toBe('action_not_approvable');
-    }
-    expect(approvalsCreate).not.toHaveBeenCalled();
+    expect(res.ok).toBe(true);
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        actionId: 'review.start',
+        summary: 'Run review',
+      }),
+    }));
   });
 
   it('executes the underlying action when an approval is approved', async () => {

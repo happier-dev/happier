@@ -29,6 +29,7 @@ const ActionSettingsOverrideSchema = z.preprocess(
       enabledPlacements: z.array(ActionUiPlacementSchema).default([]),
       disabledSurfaces: z.array(ActionSurfaceKeySchema).default([]),
       disabledPlacements: z.array(ActionUiPlacementSchema).default([]),
+      approvalRequiredSurfaces: z.array(ActionSurfaceKeySchema).default([]),
     })
     .strict(),
 );

@@ -14,8 +14,10 @@ describe('ActionsSettingsV1Schema', () => {
         'subagents.plan.start': {
           disabledSurfaces: ['mcp'],
           disabledPlacements: ['command_palette'],
+          approvalRequiredSurfaces: ['cli'],
         },
         'subagents.delegate.start': {
+          disabledSurfaces: ['session_agent'],
           enabledPlacements: ['agent_input_chips'],
         },
         'unknown.action': {
@@ -35,6 +37,9 @@ describe('ActionsSettingsV1Schema', () => {
 
     // Opt-in placement: disabled by default unless explicitly enabled.
     expect(isActionEnabledByActionsSettings('subagents.delegate.start' as any, parsed, { placement: 'agent_input_chips' } as any)).toBe(true);
+
+    // Per-surface disablement should support the session agent surface.
+    expect(isActionEnabledByActionsSettings('subagents.delegate.start' as any, parsed, { surface: 'session_agent' } as any)).toBe(false);
 
     // Ensure action ids remain the canonical ActionId schema.
     expect(() => ActionIdSchema.parse('review.start')).not.toThrow();
@@ -57,11 +62,13 @@ describe('ActionsSettingsV1Schema', () => {
       enabledPlacements: [],
       disabledSurfaces: [],
       disabledPlacements: ['command_palette'],
+      approvalRequiredSurfaces: [],
     });
     expect(parsed.actions['subagents.delegate.start' as keyof typeof parsed.actions]).toEqual({
       enabledPlacements: ['agent_input_chips'],
       disabledSurfaces: [],
       disabledPlacements: [],
+      approvalRequiredSurfaces: [],
     });
   });
 
@@ -79,6 +86,7 @@ describe('ActionsSettingsV1Schema', () => {
       enabledPlacements: [],
       disabledSurfaces: ['cli'],
       disabledPlacements: [],
+      approvalRequiredSurfaces: [],
     });
     expect(isActionEnabledByActionsSettings('review.start' as any, parsed, { surface: 'cli' } as any)).toBe(false);
   });

@@ -7,6 +7,7 @@ export {
   isActionEnabledByActionsSettings,
   type ActionsSettingsV1,
 } from './actionSettings.js';
+export { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 export {
   ACTION_SPECS,
   ActionSafetySchema,

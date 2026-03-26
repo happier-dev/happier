@@ -1133,12 +1133,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
 
-        const targetSpec = getActionSpec(targetActionId);
-        const isEligibleForApprovalQueue =
-          targetSpec.safety === 'danger' || (targetSpec as any).requiresApprovalQueue === true;
-        if (!isEligibleForApprovalQueue) {
-          return { ok: false, errorCode: 'action_not_approvable', error: 'action_not_approvable' };
-        }
+        // Approvals eligibility is policy-driven (settings/surface), not safety-driven.
+        // Safety metadata remains useful for UI copy and defaults, but it is not a hard gate here.
+        getActionSpec(targetActionId);
 
         const request: ApprovalRequestV1 = {
           v: 1,
