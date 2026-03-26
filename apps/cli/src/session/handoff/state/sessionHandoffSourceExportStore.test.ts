@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { readSessionHandoffWorkspaceReplicationManifestFromFile } from '../workspace/sessionHandoffWorkspaceReplicationManifestTransfer';
+import { readWorkspaceReplicationManifestFromFile } from '../workspaceReplicationAdapter/workspaceReplicationManifestFile';
 import { createSessionHandoffSourceExportStore } from './sessionHandoffSourceExportStore';
 
 describe('sessionHandoffSourceExportStore', () => {
@@ -85,7 +85,7 @@ describe('sessionHandoffSourceExportStore', () => {
         },
       });
       expect(manifest.filePath).toContain(join('session-handoff', handoffId));
-      const parsed = await readSessionHandoffWorkspaceReplicationManifestFromFile({
+      const parsed = await readWorkspaceReplicationManifestFromFile({
         transferId: manifest.transferId,
         filePath: manifest.filePath,
         sizeBytes: manifest.sizeBytes,

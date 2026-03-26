@@ -83,6 +83,41 @@ describe('receiveWorkspaceReplicationBlobPack', () => {
     }
   });
 
+  it('fails closed when the packId exceeds the bounded maximum length', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-receive-pack-'));
+    const packFilePath = join(activeServerDir, 'pack.bin');
+    const payload = Buffer.from('hello\n', 'utf8');
+    const digest = createSha256Digest(payload);
+
+    try {
+      await writeBlobPackFile({
+        filePath: packFilePath,
+        blobs: [
+          {
+            digest,
+            content: payload,
+          },
+        ],
+      });
+
+      const {
+        receiveWorkspaceReplicationBlobPack,
+      } = await import('./receiveWorkspaceReplicationBlobPack');
+
+      await expect(receiveWorkspaceReplicationBlobPack({
+        activeServerDir,
+        jobId: 'job_transport_receive_pack',
+        packId: 'p'.repeat(129),
+        packFilePath,
+        maxSingleBlobBytes: 1024,
+      })).rejects.toMatchObject({
+        code: 'invalid_pack_id',
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('streams a valid blob pack into CAS with truthful commit counters', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-receive-pack-'));
     const packFilePath = join(activeServerDir, 'pack.bin');

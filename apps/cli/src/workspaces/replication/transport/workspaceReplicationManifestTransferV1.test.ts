@@ -8,11 +8,12 @@ import { disposeTransferPayloadSource } from '@/machines/transfer/transferPayloa
 
 import {
   WORKSPACE_REPLICATION_MANIFEST_STREAM_MAGIC,
-  createSessionHandoffWorkspaceReplicationManifestPayloadSource,
-  readSessionHandoffWorkspaceReplicationManifestFromFile,
-} from './sessionHandoffWorkspaceReplicationManifestTransfer';
+  createWorkspaceReplicationManifestPayloadSource,
+  readWorkspaceReplicationManifestDigestIndexFromFile,
+  readWorkspaceReplicationManifestFromFile,
+} from './workspaceReplicationManifestTransferV1';
 
-describe('sessionHandoffWorkspaceReplicationManifestTransfer', () => {
+describe('workspaceReplicationManifestTransferV1', () => {
   const envSnapshot = { ...process.env };
 
   afterEach(() => {
@@ -22,7 +23,7 @@ describe('sessionHandoffWorkspaceReplicationManifestTransfer', () => {
   it('writes the manifest in the streaming manifest file format and can read it back', async () => {
     const digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const fingerprint = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-    const source = await createSessionHandoffWorkspaceReplicationManifestPayloadSource({
+    const source = await createWorkspaceReplicationManifestPayloadSource({
       manifest: {
         entries: [
           {
@@ -49,7 +50,7 @@ describe('sessionHandoffWorkspaceReplicationManifestTransfer', () => {
       const firstLine = (await readFile(source.filePath, 'utf8')).split('\n')[0]!.trim();
       expect(firstLine).toBe(WORKSPACE_REPLICATION_MANIFEST_STREAM_MAGIC);
 
-      const manifest = await readSessionHandoffWorkspaceReplicationManifestFromFile({
+      const manifest = await readWorkspaceReplicationManifestFromFile({
         transferId: 'transfer_1',
         filePath: source.filePath,
       });
@@ -64,14 +65,62 @@ describe('sessionHandoffWorkspaceReplicationManifestTransfer', () => {
     }
   });
 
+  it('can read a digest index from the streaming manifest file without requiring a full manifest object', async () => {
+    const digest1 = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const digest2 = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const source = await createWorkspaceReplicationManifestPayloadSource({
+      manifest: {
+        entries: [
+          {
+            relativePath: 'README.md',
+            kind: 'file',
+            digest: digest1,
+            sizeBytes: 6,
+            executable: false,
+          },
+          {
+            relativePath: 'src/main.ts',
+            kind: 'file',
+            digest: digest2,
+            sizeBytes: 10,
+            executable: true,
+          },
+          {
+            relativePath: 'src',
+            kind: 'directory',
+          },
+        ],
+      },
+    });
+
+    try {
+      expect(source.kind).toBe('file');
+      if (source.kind !== 'file') {
+        throw new Error('Expected file payload source');
+      }
+
+      const index = await readWorkspaceReplicationManifestDigestIndexFromFile({
+        transferId: 'transfer_digest_index_1',
+        filePath: source.filePath,
+        sizeBytes: source.sizeBytes,
+      });
+
+      expect(index.get(digest1)).toEqual({ relativePath: 'README.md', sizeBytes: 6 });
+      expect(index.get(digest2)).toEqual({ relativePath: 'src/main.ts', sizeBytes: 10 });
+      expect(index.size).toBe(2);
+    } finally {
+      await disposeTransferPayloadSource(source);
+    }
+  });
+
   it('rejects non-streaming manifest files', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'happier-session-handoff-manifest-legacy-'));
+    const directory = await mkdtemp(join(tmpdir(), 'happier-workspace-replication-manifest-legacy-'));
     const filePath = join(directory, 'workspace-manifest.json');
 
     try {
       await writeFile(filePath, `{\"entries\": []}`, 'utf8');
 
-      await expect(readSessionHandoffWorkspaceReplicationManifestFromFile({
+      await expect(readWorkspaceReplicationManifestFromFile({
         transferId: 'transfer_legacy',
         filePath,
       })).rejects.toThrow(/Invalid workspace replication manifest/u);
@@ -81,7 +130,7 @@ describe('sessionHandoffWorkspaceReplicationManifestTransfer', () => {
   });
 
   it('fails closed when sizeBytes is provided but does not match the actual manifest file', async () => {
-    const source = await createSessionHandoffWorkspaceReplicationManifestPayloadSource({
+    const source = await createWorkspaceReplicationManifestPayloadSource({
       manifest: {
         entries: [
           {
@@ -102,7 +151,7 @@ describe('sessionHandoffWorkspaceReplicationManifestTransfer', () => {
       }
 
       const actualSizeBytes = source.sizeBytes ?? (await stat(source.filePath)).size;
-      await expect(readSessionHandoffWorkspaceReplicationManifestFromFile({
+      await expect(readWorkspaceReplicationManifestFromFile({
         transferId: 'transfer_1',
         filePath: source.filePath,
         sizeBytes: actualSizeBytes + 1,

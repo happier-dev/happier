@@ -10,10 +10,8 @@ import { SessionHandoffProviderBundleSchema } from '../sessionHandoffProviderBun
 import { buildSessionHandoffProviderBundleTransferId } from '../sessionHandoffProviderBundleTransferPublication';
 import {
   buildSessionHandoffWorkspaceManifestTransferId,
-} from '../workspace/sessionHandoffWorkspaceReplicationServerRouted';
-import {
-  writeSessionHandoffWorkspaceReplicationManifestToFile,
-} from '../workspace/sessionHandoffWorkspaceReplicationManifestTransfer';
+} from '../workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted';
+import { writeWorkspaceReplicationManifestToFile } from '../workspaceReplicationAdapter/workspaceReplicationManifestFile';
 import { resolveTransferPayloadManifestHash } from '@/machines/transfer/transferPayloadSource';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
@@ -240,16 +238,13 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
 
     async writeWorkspaceReplicationManifestFile(params: Readonly<{
       handoffId: string;
-      manifest: Parameters<typeof writeSessionHandoffWorkspaceReplicationManifestToFile>[0]['manifest'];
+      manifest: Parameters<typeof writeWorkspaceReplicationManifestToFile>[0]['manifest'];
     }>): Promise<z.infer<typeof WorkspaceManifestFileSchema>> {
       const handoffId = assertSafeHandoffId(params.handoffId);
       const directory = resolveHandoffDirectory(activeServerDir, handoffId);
       await mkdir(directory, { recursive: true });
       const filePath = resolveWorkspaceManifestFilePath(activeServerDir, handoffId);
-      const { sizeBytes } = await writeSessionHandoffWorkspaceReplicationManifestToFile({
-        manifest: params.manifest,
-        filePath,
-      });
+      const { sizeBytes } = await writeWorkspaceReplicationManifestToFile({ manifest: params.manifest, filePath });
       const manifestHash = await resolveTransferPayloadManifestHash({
         kind: 'file',
         filePath,

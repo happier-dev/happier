@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 
 import { deterministicStringify } from '@/utils/deterministicJson';
 
+const MAX_WORKSPACE_REPLICATION_PACK_ID_LENGTH = 128;
+
 export class WorkspaceReplicationBlobPackInputError extends Error {
   readonly code: 'invalid_pack_id';
 
@@ -16,6 +18,9 @@ export function assertSafeWorkspaceReplicationPackId(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
     throw new WorkspaceReplicationBlobPackInputError('Workspace replication pack id is required');
+  }
+  if (trimmed.length > MAX_WORKSPACE_REPLICATION_PACK_ID_LENGTH) {
+    throw new WorkspaceReplicationBlobPackInputError('Workspace replication pack id is invalid');
   }
   if (trimmed === '.' || trimmed === '..') {
     throw new WorkspaceReplicationBlobPackInputError('Workspace replication pack id is invalid');

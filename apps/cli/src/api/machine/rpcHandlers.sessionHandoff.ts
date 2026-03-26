@@ -32,6 +32,7 @@ import {
   requestServerRoutedTransferToFile,
   type MachineTransferChannel,
   ServerRoutedInvalidOpenRequestError,
+  ServerRoutedAbortTransferError,
 } from '../../machines/transfer/serverRoutedTransport';
 import type { DirectPeerOnDemandTransferScope } from '../../machines/transfer/directPeerTransport';
 import { rewriteDirectPeerEndpointCandidatesForTransferId } from '../../machines/transfer/rewriteDirectPeerEndpointCandidatesForTransferId';
@@ -70,18 +71,19 @@ import {
   resolveSessionHandoffWorkspaceReplicationSourceOffer,
   type SessionHandoffWorkspaceReplicationMetadata,
 } from '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter';
-import { readSessionHandoffWorkspaceReplicationManifestFromFile } from '../../session/handoff/workspace/sessionHandoffWorkspaceReplicationManifestTransfer';
 import {
   createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope,
   parseSessionHandoffWorkspaceDirectPeerBlobPackTransferId,
-} from '../../session/handoff/workspace/sessionHandoffWorkspaceReplicationDirectPeer';
-import { assertSafeWorkspaceReplicationPackId } from '../../workspaces/replication/transport/workspaceReplicationPackId';
+} from '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationDirectPeer';
+import { assertSafeHandoffWorkspaceReplicationPackId } from '../../session/handoff/workspaceReplicationAdapter/assertSafeHandoffWorkspaceReplicationPackId';
 import {
   parseSessionHandoffWorkspaceManifestTransferId,
   buildSessionHandoffWorkspaceManifestTransferId,
-  parseSessionHandoffWorkspaceBlobPackOpenBody,
-} from '../../session/handoff/workspace/sessionHandoffWorkspaceReplicationServerRouted';
-import { createSessionHandoffWorkspaceReplicationManifestPayloadSource } from '../../session/handoff/workspace/sessionHandoffWorkspaceReplicationManifestTransfer';
+} from '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted';
+import { readWorkspaceReplicationManifestFromFile } from '../../session/handoff/workspaceReplicationAdapter/workspaceReplicationManifestFile';
+import { parseWorkspaceReplicationBlobPackRequestV1 } from '../../workspaces/replication/transport/workspaceReplicationBlobPackRequestV1';
+import { buildWorkspaceReplicationManifestDigestIndex } from '../../workspaces/replication/transport/workspaceReplicationManifestIndex';
+import { assertWorkspaceReplicationBlobPackRequestWithinLimits } from '../../workspaces/replication/transport/assertWorkspaceReplicationBlobPackRequestWithinLimits';
 import {
   createSessionHandoffPrepareTargetJobStore,
   type SessionHandoffPrepareTargetJobRecord,
@@ -599,7 +601,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
             destinationPath: payloadFilePath,
             ...(timeoutMs ? { timeoutMs } : {}),
           });
-          return await readSessionHandoffWorkspaceReplicationManifestFromFile({
+          return await readWorkspaceReplicationManifestFromFile({
             transferId: transferPublication.transferId,
             filePath: received.destinationPath,
             sizeBytes: received.sizeBytes,
@@ -642,7 +644,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
                   destinationPath: serverRoutedPath,
                   ...(timeoutMs ? { timeoutMs } : {}),
                 });
-                return await readSessionHandoffWorkspaceReplicationManifestFromFile({
+                return await readWorkspaceReplicationManifestFromFile({
                   transferId: transferPublication.transferId,
                   filePath: received.destinationPath,
                   sizeBytes: received.sizeBytes,
@@ -662,7 +664,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
                 endpointCandidates: filteredEndpointCandidates,
                 destinationPath: payloadFilePath,
               });
-              return await readSessionHandoffWorkspaceReplicationManifestFromFile({
+              return await readWorkspaceReplicationManifestFromFile({
                 transferId: transferPublication.transferId,
                 filePath: received.destinationPath,
               });
@@ -682,7 +684,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
                     destinationPath: serverRoutedPath,
                     ...(timeoutMs ? { timeoutMs } : {}),
                   });
-                  return await readSessionHandoffWorkspaceReplicationManifestFromFile({
+                  return await readWorkspaceReplicationManifestFromFile({
                     transferId: transferPublication.transferId,
                     filePath: received.destinationPath,
                     sizeBytes: received.sizeBytes,
@@ -838,31 +840,49 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     return recovered ?? job;
   };
 
-  const waitForPersistedSourceExport = async (
-    handoffId: string,
-    predicate: (record: NonNullable<Awaited<ReturnType<typeof sourceExportStore.load>>>) => boolean,
-  ): Promise<Awaited<ReturnType<typeof sourceExportStore.load>> | null> => {
-    const configuredTimeoutMs =
-      typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
-        ? configuration.filesTransferSessionTtlMs
-        : 30_000;
-    // Waiting for a source-export record is not the same as "session TTL". Keep this bounded so
-    // a misconfigured TTL can't block handoff/transfer paths for minutes/hours.
-    const timeoutMs = Math.min(30_000, configuredTimeoutMs);
+	  const waitForPersistedSourceExport = async (
+	    handoffId: string,
+	    predicate: (record: NonNullable<Awaited<ReturnType<typeof sourceExportStore.load>>>) => boolean,
+	  ): Promise<Awaited<ReturnType<typeof sourceExportStore.load>> | null> => {
+	    const resolveTerminalAbortReason = (message?: string): string => {
+	      const trimmed = typeof message === 'string' ? message.trim() : '';
+	      const ineligibleMatch = /^Session is not eligible for handoff: ([a-z0-9_]+)$/u.exec(trimmed);
+	      if (ineligibleMatch) {
+	        return `handoff_ineligible:${ineligibleMatch[1]}`;
+	      }
+	      return 'handoff_source_export_failed';
+	    };
+
+	    const configuredTimeoutMs =
+	      typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
+	        ? configuration.filesTransferSessionTtlMs
+	        : 30_000;
+    // Waiting for a source-export record is not the same as "session TTL", but it *must* be long
+    // enough to cover deferred export on large repos.
+    //
+    // Important: server-routed transfers have a hard per-transfer inactivity timeout, so this wait
+    // budget must stay comfortably below that ceiling or the recipient will time out before the
+    // first chunk is sent.
+    const timeoutMs = Math.min(75_000, configuredTimeoutMs);
     const deadlineAtMs = Date.now() + timeoutMs;
-    let delayMs = 25;
-    while (Date.now() < deadlineAtMs) {
-      const record = await sourceExportStore.load(handoffId);
-      if (record && predicate(record)) {
-        return record;
-      }
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, delayMs);
-      });
-      delayMs = Math.min(500, Math.floor(delayMs * 1.5));
-    }
-    return null;
-  };
+	    let delayMs = 25;
+	    while (Date.now() < deadlineAtMs) {
+	      const record = await sourceExportStore.load(handoffId);
+	      if (record && predicate(record)) {
+	        return record;
+	      }
+
+	      const prepareJob = await prepareJobStore.findByHandoffId(handoffId).catch(() => null);
+	      if (prepareJob && isTerminalHandoffStatus(prepareJob.status)) {
+	        throw new ServerRoutedAbortTransferError(resolveTerminalAbortReason(prepareJob.lastErrorMessage));
+	      }
+	      await new Promise<void>((resolve) => {
+	        setTimeout(resolve, delayMs);
+	      });
+	      delayMs = Math.min(500, Math.floor(delayMs * 1.5));
+	    }
+	    return null;
+	  };
 
   const disposeEphemeralServerRoutedPayloadSourcesForHandoff = async (handoffId: string): Promise<void> => {
     for (const [transferId, payloadSource] of [...ephemeralServerRoutedPayloadSources.entries()]) {
@@ -1117,42 +1137,65 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	        return cachedPayloadSource;
 	      }
 
-	        const workspaceBlobPackTransfer = parseSessionHandoffWorkspaceBlobPackTransferId(transferId);
-	        if (workspaceBlobPackTransfer) {
-	          const openBody = parseSessionHandoffWorkspaceBlobPackOpenBody(request.openPayload);
-	          if (!openBody || openBody.packId !== workspaceBlobPackTransfer.packId) {
-	            throw new ServerRoutedInvalidOpenRequestError('Invalid workspace blob-pack open payload');
-	          }
-              const persistedSourceExport = await waitForPersistedSourceExport(
-                workspaceBlobPackTransfer.handoffId,
-                (record) => Boolean(record.workspaceManifest),
-              );
-              if (!persistedSourceExport?.workspaceManifest) {
-                return null;
-              }
+		        const workspaceBlobPackTransfer = parseSessionHandoffWorkspaceBlobPackTransferId(transferId);
+		        if (workspaceBlobPackTransfer) {
+		          const openBody = parseWorkspaceReplicationBlobPackRequestV1(request.openPayload, {
+	              maxBlobs: configuration.workspaceReplicationBlobPackMaxBlobs,
+	            });
+		          if (!openBody || openBody.packId !== workspaceBlobPackTransfer.packId) {
+		            throw new ServerRoutedInvalidOpenRequestError('Invalid workspace blob-pack open payload');
+		          }
+	              const persistedSourceExport = await waitForPersistedSourceExport(
+	                workspaceBlobPackTransfer.handoffId,
+	                (record) => Boolean(record.workspaceManifest),
+	              );
+	              if (!persistedSourceExport?.workspaceManifest) {
+	                return null;
+	              }
 
-              const manifest: WorkspaceManifest = await readSessionHandoffWorkspaceReplicationManifestFromFile({
-                transferId: persistedSourceExport.workspaceManifest.transferId,
-                filePath: persistedSourceExport.workspaceManifest.filePath,
-                sizeBytes: persistedSourceExport.workspaceManifest.sizeBytes,
-              });
+	              let manifest: WorkspaceManifest;
+	              try {
+	                manifest = await readWorkspaceReplicationManifestFromFile({
+	                  transferId: persistedSourceExport.workspaceManifest.transferId,
+	                  filePath: persistedSourceExport.workspaceManifest.filePath,
+	                  sizeBytes: persistedSourceExport.workspaceManifest.sizeBytes,
+	                });
+	              } catch {
+	                throw new ServerRoutedAbortTransferError('workspace_replication_source_error');
+	              }
+	              const digestIndex = buildWorkspaceReplicationManifestDigestIndex(manifest);
+	              try {
+	                assertWorkspaceReplicationBlobPackRequestWithinLimits({
+	                  digestIndex,
+                  digests: openBody.digests,
+                  blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
+                  blobPackMaxSingleBlobBytes: configuration.workspaceReplicationBlobPackMaxSingleBlobBytes,
+                });
+              } catch {
+                throw new ServerRoutedInvalidOpenRequestError('Invalid workspace blob-pack open payload');
+	              }
 
-              const sourceRootPath = persistedSourceExport.workspaceSourceRootPath;
-              if (!sourceRootPath) {
-                throw new ServerRoutedInvalidOpenRequestError('Workspace blob-pack source root path is missing');
-              }
+	              const sourceRootPath = persistedSourceExport.workspaceSourceRootPath;
+	              if (!sourceRootPath) {
+	                throw new ServerRoutedAbortTransferError('workspace_replication_source_error');
+	              }
 
-              const payloadSource = await workspaceReplicationAdapter.createBlobPackPayloadSourceFromManifest({
-                activeServerDir: configuration.activeServerDir,
-                packId: workspaceBlobPackTransfer.packId,
-                digests: openBody.digests,
-                sourceRootPath,
-                manifest,
-              });
-	          // Do not cache: the responder owns disposal for blob-pack payload sources, and cache reuse
-	          // can cause retries to attempt reusing a disposed file handle/path.
-	          return payloadSource;
-	        }
+	              let payloadSource: TransferPayloadSource;
+	              try {
+	                payloadSource = await workspaceReplicationAdapter.createBlobPackPayloadSourceFromManifest({
+	                  activeServerDir: configuration.activeServerDir,
+	                  packId: workspaceBlobPackTransfer.packId,
+	                  digests: openBody.digests,
+	                  sourceRootPath,
+	                  manifest,
+	                });
+	              } catch {
+	                throw new ServerRoutedAbortTransferError('workspace_replication_source_error');
+	              }
+		          // Do not cache: the responder owns disposal for blob-pack payload sources, and cache reuse
+		          // can cause retries to attempt reusing a disposed file handle/path.
+		          return payloadSource;
+		        }
 
         const workspaceManifestTransfer = parseSessionHandoffWorkspaceManifestTransferId(transferId);
         if (workspaceManifestTransfer) {
@@ -1339,7 +1382,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	                  return false;
 	                }
 	                try {
-	                  assertSafeWorkspaceReplicationPackId(parsed.packId);
+	                  assertSafeHandoffWorkspaceReplicationPackId(parsed.packId);
 	                } catch {
 	                  return false;
 	                }
@@ -1355,7 +1398,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
                         throw new Error('Direct peer transfer not ready');
                       }
 
-                      const manifest = await readSessionHandoffWorkspaceReplicationManifestFromFile({
+                      const manifest = await readWorkspaceReplicationManifestFromFile({
                         transferId: persisted.workspaceManifest.transferId,
                         filePath: persisted.workspaceManifest.filePath,
                         sizeBytes: persisted.workspaceManifest.sizeBytes,
@@ -1634,7 +1677,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             localSourceExport?.workspaceManifest && localSourceExport.workspaceSourceRootPath
               ? {
                   sourceRootPath: localSourceExport.workspaceSourceRootPath,
-                  manifest: await readSessionHandoffWorkspaceReplicationManifestFromFile({
+                  manifest: await readWorkspaceReplicationManifestFromFile({
                     transferId: localSourceExport.workspaceManifest.transferId,
                     filePath: localSourceExport.workspaceManifest.filePath,
                     sizeBytes: localSourceExport.workspaceManifest.sizeBytes,
@@ -2057,7 +2100,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 
           // Canonicalize ordering + fingerprint so the saved baseline matches what the engine will
           // compute when building offers from manifests later.
-          const manifest = await readSessionHandoffWorkspaceReplicationManifestFromFile({
+          const manifest = await readWorkspaceReplicationManifestFromFile({
             transferId: persistedSourceExport.workspaceManifest.transferId,
             filePath: persistedSourceExport.workspaceManifest.filePath,
             sizeBytes: persistedSourceExport.workspaceManifest.sizeBytes,

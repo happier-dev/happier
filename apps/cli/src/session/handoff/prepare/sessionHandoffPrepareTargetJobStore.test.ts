@@ -162,4 +162,70 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
       await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
+
+  it('does not mark a prepare-target job awaiting_recovery while a live lease still exists on daemon startup', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-live-lease-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const nowMs = Date.now();
+      const jobId = 'job_live_lease_1';
+      const handoffId = 'handoff_live_lease_1';
+
+      await store.write({
+        jobId,
+        handoffId,
+        createdAtMs: nowMs - 10_000,
+        updatedAtMs: nowMs - 5_000,
+        status: {
+          handoffId,
+          jobId,
+          status: 'pending',
+          phase: 'staging_target',
+          recoveryActions: [],
+          progress: {
+            updatedAtMs: nowMs - 5_000,
+            checkpoint: 'stage_target',
+            planned: {},
+            transferred: {},
+            current: {
+              phaseDetail: 'importing_workspace',
+            },
+            resumable: false,
+          },
+        },
+      });
+
+      const leaseDirectory = join(activeServerDir, 'session-handoff', 'prepare-target-jobs-staging', jobId, 'lease');
+      await mkdir(leaseDirectory, { recursive: true });
+      const liveLeaseRecord = {
+        ownerId: `cli-daemon:${process.pid}:current`,
+        acquiredAtMs: nowMs - 5_000,
+        renewedAtMs: nowMs - 50,
+        expiresAtMs: nowMs + 60_000,
+      };
+      await writeFile(join(leaseDirectory, 'lease.json'), JSON.stringify(liveLeaseRecord), 'utf8');
+      await writeFile(join(leaseDirectory, 'runner.json'), JSON.stringify(liveLeaseRecord), 'utf8');
+
+      await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        activeServerDir,
+        nowMs,
+      });
+
+      await expect(store.read(jobId)).resolves.toMatchObject({
+        jobId,
+        handoffId,
+        status: {
+          status: 'pending',
+          phase: 'staging_target',
+        },
+      });
+      await expect(store.read(jobId)).resolves.not.toMatchObject({
+        status: {
+          status: 'awaiting_recovery',
+        },
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
 });

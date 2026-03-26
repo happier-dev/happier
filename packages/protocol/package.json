@@ -53,6 +53,10 @@
     "./updates": {
       "types": "./dist/updates.d.ts",
       "default": "./dist/updates.js"
+    },
+    "./workspaces": {
+      "types": "./dist/workspaces/index.d.ts",
+      "default": "./dist/workspaces/index.js"
     }
   },
   "files": [

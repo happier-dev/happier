@@ -9,7 +9,7 @@ import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope, Works
 
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 
-import type { SessionHandoffWorkspaceReplicationMetadata } from '../workspace/sessionHandoffWorkspaceReplicationMetadata';
+import type { SessionHandoffWorkspaceReplicationMetadata } from './sessionHandoffWorkspaceReplicationMetadata';
 
 import { prepareSessionHandoffWorkspaceTarget } from './sessionHandoffWorkspaceReplicationAdapter';
 

@@ -4,24 +4,27 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
-import {
-  WorkspaceManifestEntrySchema,
-  WorkspaceManifestFingerprintSchema,
-  type WorkspaceManifest,
-} from '@happier-dev/protocol';
 import { z } from 'zod';
 
+import type { ReplicationManifest } from '../replicationManifestSchema';
+import {
+  ReplicationManifestEntrySchema,
+  ReplicationManifestFingerprintSchema,
+} from '../replicationManifestSchema';
 import {
   createFileTransferPayloadSource,
   resolveTransferPayloadManifestHash,
   type TransferPayloadSource,
 } from '@/machines/transfer/transferPayloadSource';
+import type { WorkspaceReplicationManifestDigestIndexEntry } from './workspaceReplicationManifestIndex';
 
 export const WORKSPACE_REPLICATION_MANIFEST_STREAM_MAGIC = 'HAPPIER_WORKSPACE_REPLICATION_MANIFEST_V1';
 
-const WorkspaceReplicationManifestHeaderSchema = z.object({
-  manifestFingerprint: WorkspaceManifestFingerprintSchema.optional(),
-}).strict();
+const WorkspaceReplicationManifestHeaderSchema = z
+  .object({
+    manifestFingerprint: ReplicationManifestFingerprintSchema.optional(),
+  })
+  .strict();
 
 async function readFilePrefixUtf8(filePath: string, maxBytes: number): Promise<string> {
   const handle = await open(filePath, 'r');
@@ -39,27 +42,39 @@ async function isStreamingWorkspaceReplicationManifestFile(filePath: string): Pr
   return prefix.startsWith(WORKSPACE_REPLICATION_MANIFEST_STREAM_MAGIC);
 }
 
-export async function readSessionHandoffWorkspaceReplicationManifestFromFile(input: Readonly<{
+async function validateWorkspaceReplicationManifestFileSize(input: Readonly<{
   transferId: string;
   filePath: string;
   sizeBytes?: number | null;
-}>): Promise<WorkspaceManifest> {
-  if (typeof input.sizeBytes === 'number') {
-    let actualSizeBytes: number;
-    try {
-      const stats = await stat(input.filePath);
-      if (!stats.isFile()) {
-        throw new Error('not a file');
-      }
-      actualSizeBytes = stats.size;
-    } catch {
-      throw new Error('Invalid workspace replication manifest');
-    }
-
-    if (actualSizeBytes !== input.sizeBytes) {
-      throw new Error('Invalid workspace replication manifest');
-    }
+}>): Promise<void> {
+  if (typeof input.sizeBytes !== 'number') {
+    return;
   }
+
+  let actualSizeBytes: number;
+  try {
+    const stats = await stat(input.filePath);
+    if (!stats.isFile()) {
+      throw new Error('not a file');
+    }
+    actualSizeBytes = stats.size;
+  } catch {
+    throw new Error('Invalid workspace replication manifest');
+  }
+
+  if (actualSizeBytes !== input.sizeBytes) {
+    throw new Error('Invalid workspace replication manifest');
+  }
+}
+
+async function visitStreamingWorkspaceReplicationManifestFile(input: Readonly<{
+  transferId: string;
+  filePath: string;
+  sizeBytes?: number | null;
+  onHeader: (header: z.infer<typeof WorkspaceReplicationManifestHeaderSchema>) => void;
+  onEntry: (entry: z.infer<typeof ReplicationManifestEntrySchema>) => void;
+}>): Promise<void> {
+  await validateWorkspaceReplicationManifestFileSize(input);
 
   const streaming = await isStreamingWorkspaceReplicationManifestFile(input.filePath);
   if (!streaming) {
@@ -95,7 +110,7 @@ export async function readSessionHandoffWorkspaceReplicationManifestFromFile(inp
       throw new Error('Invalid workspace replication manifest');
     }
 
-    const entries: z.infer<typeof WorkspaceManifestEntrySchema>[] = [];
+    input.onHeader(parsedHeader.data);
 
     while (true) {
       const nextLine = await iterator.next();
@@ -108,25 +123,71 @@ export async function readSessionHandoffWorkspaceReplicationManifestFromFile(inp
       } catch {
         throw new Error('Invalid workspace replication manifest');
       }
-      const parsedEntry = WorkspaceManifestEntrySchema.safeParse(entryJson);
+      const parsedEntry = ReplicationManifestEntrySchema.safeParse(entryJson);
       if (!parsedEntry.success) {
         throw new Error('Invalid workspace replication manifest');
       }
-      entries.push(parsedEntry.data);
+      input.onEntry(parsedEntry.data);
     }
-
-    return {
-      entries,
-      ...(parsedHeader.data.manifestFingerprint ? { fingerprint: parsedHeader.data.manifestFingerprint } : {}),
-    };
   } finally {
     rl.close();
     stream.destroy();
   }
 }
 
-export async function writeSessionHandoffWorkspaceReplicationManifestToFile(input: Readonly<{
-  manifest: WorkspaceManifest;
+export async function readWorkspaceReplicationManifestFromFile(input: Readonly<{
+  transferId: string;
+  filePath: string;
+  sizeBytes?: number | null;
+}>): Promise<ReplicationManifest> {
+  const entries: z.infer<typeof ReplicationManifestEntrySchema>[] = [];
+  let fingerprint: string | undefined;
+
+  await visitStreamingWorkspaceReplicationManifestFile({
+    ...input,
+    onHeader: (header) => {
+      fingerprint = header.manifestFingerprint;
+    },
+    onEntry: (entry) => {
+      entries.push(entry);
+    },
+  });
+
+  return {
+    entries,
+    ...(fingerprint ? { fingerprint } : {}),
+  };
+}
+
+export async function readWorkspaceReplicationManifestDigestIndexFromFile(input: Readonly<{
+  transferId: string;
+  filePath: string;
+  sizeBytes?: number | null;
+}>): Promise<ReadonlyMap<string, WorkspaceReplicationManifestDigestIndexEntry>> {
+  const index = new Map<string, WorkspaceReplicationManifestDigestIndexEntry>();
+
+  await visitStreamingWorkspaceReplicationManifestFile({
+    ...input,
+    onHeader: () => {},
+    onEntry: (entry) => {
+      if (entry.kind !== 'file') {
+        return;
+      }
+      if (index.has(entry.digest)) {
+        return;
+      }
+      index.set(entry.digest, {
+        relativePath: entry.relativePath,
+        sizeBytes: entry.sizeBytes,
+      });
+    },
+  });
+
+  return index;
+}
+
+export async function writeWorkspaceReplicationManifestToFile(input: Readonly<{
+  manifest: ReplicationManifest;
   filePath: string;
 }>): Promise<Readonly<{ filePath: string; sizeBytes: number }>> {
   const stream = createWriteStream(input.filePath, { encoding: 'utf8' });
@@ -156,14 +217,14 @@ export async function writeSessionHandoffWorkspaceReplicationManifestToFile(inpu
   };
 }
 
-export async function createSessionHandoffWorkspaceReplicationManifestPayloadSource(input: Readonly<{
-  manifest: WorkspaceManifest;
+export async function createWorkspaceReplicationManifestPayloadSource(input: Readonly<{
+  manifest: ReplicationManifest;
 }>): Promise<TransferPayloadSource> {
-  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'happier-session-handoff-workspace-manifest-'));
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'happier-workspace-replication-manifest-'));
   const filePath = join(temporaryDirectory, 'workspace-manifest.txt');
 
   try {
-    const { sizeBytes } = await writeSessionHandoffWorkspaceReplicationManifestToFile({
+    const { sizeBytes } = await writeWorkspaceReplicationManifestToFile({
       manifest: input.manifest,
       filePath,
     });

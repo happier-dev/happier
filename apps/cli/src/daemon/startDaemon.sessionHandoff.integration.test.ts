@@ -105,6 +105,8 @@ vi.mock('@/configuration', () => ({
         currentCliVersion: '0.0.0-test',
         serverUrl: 'https://api.happier.dev',
         activeServerDir: '/tmp/server',
+        daemonSpawnExistingSessionWaitForExitMs: 5_000,
+        daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
     },
 }));
 

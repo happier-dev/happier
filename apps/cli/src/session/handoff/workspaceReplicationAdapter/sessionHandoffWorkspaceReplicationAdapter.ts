@@ -29,16 +29,16 @@ import {
   buildSessionHandoffWorkspaceReplicationSourceOffer,
   createSessionHandoffWorkspaceReplicationMetadata,
   type SessionHandoffWorkspaceReplicationMetadata,
-} from '../workspace/sessionHandoffWorkspaceReplicationMetadata';
+} from './sessionHandoffWorkspaceReplicationMetadata';
 import {
   buildSessionHandoffWorkspaceDirectPeerBlobPackTransferId,
-} from '../workspace/sessionHandoffWorkspaceReplicationDirectPeer';
+} from './sessionHandoffWorkspaceReplicationDirectPeer';
 import {
   createSessionHandoffWorkspaceReplicationBlobPackPayloadSource,
   buildSessionHandoffWorkspaceBlobPackTransferId,
   buildSessionHandoffWorkspaceManifestTransferId,
   parseSessionHandoffWorkspaceBlobPackTransferId,
-} from '../workspace/sessionHandoffWorkspaceReplicationServerRouted';
+} from './sessionHandoffWorkspaceReplicationServerRouted';
 import type { SessionHandoffProviderBundleTransferPublication } from '../sessionHandoffProviderBundleTransferPublication';
 
 type DirectPeerTransferPublisher = Readonly<{
@@ -302,14 +302,27 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
         mode: 'one_way_safe' as const,
       };
 
+      const baselineStore = createWorkspaceReplicationBaselineStore({
+        activeServerDir: input.activeServerDir,
+      });
+      const requestedStrategy = workspaceTransfer.strategy;
+      const effectiveStrategy =
+        requestedStrategy === 'sync_changes'
+          ? (await baselineStore.load(scope) ? 'sync_changes' : 'transfer_snapshot')
+          : requestedStrategy;
+      const effectiveConflictPolicy =
+        requestedStrategy === 'sync_changes' && effectiveStrategy === 'transfer_snapshot'
+          ? 'create_sibling_copy'
+          : workspaceTransfer.conflictPolicy;
+
       const { jobId } = await engine.startJobFromOffer({
         scope,
         sourceOffer: resolvedSourceOffer,
         correlationId,
         apply: {
           targetPath: input.targetPath,
-          strategy: workspaceTransfer.strategy,
-          conflictPolicy: workspaceTransfer.conflictPolicy,
+          strategy: effectiveStrategy,
+          conflictPolicy: effectiveConflictPolicy,
         },
         requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
           if (input.actualTransportStrategy === 'server_routed_stream' && input.machineTransferChannel) {

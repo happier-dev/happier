@@ -47,6 +47,20 @@ export const SessionHandoffProgressCheckpointSchema = z.enum([
 ]);
 export type SessionHandoffProgressCheckpoint = z.infer<typeof SessionHandoffProgressCheckpointSchema>;
 
+export const SESSION_HANDOFF_PROGRESS_FULL_TIMELINE = [
+  'plan',
+  'transfer_blobs',
+  'stage_target',
+  'apply',
+  'import_session',
+  'finalize',
+] as const satisfies readonly SessionHandoffProgressCheckpoint[];
+
+export const SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN = [
+  'scan_source',
+  ...SESSION_HANDOFF_PROGRESS_FULL_TIMELINE,
+] as const satisfies readonly SessionHandoffProgressCheckpoint[];
+
 export const SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE = [
   'stage_target',
   'import_session',
@@ -56,12 +70,15 @@ export const SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE = [
 export function resolveSessionHandoffProgressTimeline(
   checkpoint: SessionHandoffProgressCheckpoint | null | undefined,
 ): readonly SessionHandoffProgressCheckpoint[] {
-  return checkpoint === 'scan_source'
-    || checkpoint === 'plan'
-    || checkpoint === 'transfer_blobs'
-    || checkpoint === 'apply'
-      ? SessionHandoffProgressCheckpointSchema.options
-      : SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE;
+  if (!checkpoint) {
+    return SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE;
+  }
+  if (checkpoint === 'scan_source') {
+    return SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN;
+  }
+  return checkpoint === 'plan' || checkpoint === 'transfer_blobs' || checkpoint === 'apply' || checkpoint === 'finalize'
+    ? SESSION_HANDOFF_PROGRESS_FULL_TIMELINE
+    : SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE;
 }
 
 export const SessionHandoffProgressWarningCodeSchema = z.enum([

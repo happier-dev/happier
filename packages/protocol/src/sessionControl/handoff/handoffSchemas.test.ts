@@ -17,6 +17,23 @@ describe('session handoff schemas', () => {
     expect(typeof mod.SessionHandoffStatusSchema).toBe('object');
     expect(typeof mod.SessionHandoffProgressCheckpointSchema).toBe('object');
     expect(typeof mod.SessionHandoffProgressWarningCodeSchema).toBe('object');
+    expect(mod.SESSION_HANDOFF_PROGRESS_FULL_TIMELINE).toEqual([
+      'plan',
+      'transfer_blobs',
+      'stage_target',
+      'apply',
+      'import_session',
+      'finalize',
+    ]);
+    expect(mod.SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN).toEqual([
+      'scan_source',
+      'plan',
+      'transfer_blobs',
+      'stage_target',
+      'apply',
+      'import_session',
+      'finalize',
+    ]);
     expect(typeof mod.resolveSessionHandoffProgressTimeline).toBe('function');
     expect(typeof mod.SessionHandoffMetadataV2Schema).toBe('object');
     expect(typeof mod.TransferEndpointCandidateSchema).toBe('object');
@@ -104,8 +121,24 @@ describe('session handoff schemas', () => {
       'import_session',
       'finalize',
     ]);
+    expect(mod.resolveSessionHandoffProgressTimeline('plan')).toEqual([
+      'plan',
+      'transfer_blobs',
+      'stage_target',
+      'apply',
+      'import_session',
+      'finalize',
+    ]);
     expect(mod.resolveSessionHandoffProgressTimeline('import_session')).toEqual([
       'stage_target',
+      'import_session',
+      'finalize',
+    ]);
+    expect(mod.resolveSessionHandoffProgressTimeline('finalize')).toEqual([
+      'plan',
+      'transfer_blobs',
+      'stage_target',
+      'apply',
       'import_session',
       'finalize',
     ]);
@@ -226,6 +259,34 @@ describe('session handoff schemas', () => {
         recipientPublicKeyBase64: 'aGVsbG8=',
       }).success,
     ).toBe(true);
+
+    expect(
+      mod.SessionHandoffStartRequestSchema.safeParse({
+        sessionId: 'sess_1',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        sessionStorageMode: 'persisted',
+        preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'create_sibling_copy',
+        },
+      }).success,
+    ).toBe(false);
+
+    const tooLongMachineId = 'a'.repeat(300);
+    expect(
+      mod.MachineTransferReceiveEnvelopeSchema.safeParse({
+        sourceMachineId: tooLongMachineId,
+        targetMachineId: 'machine_target',
+        envelope: {
+          transferId: 'transfer_1',
+          kind: 'ack',
+          nextSequence: 0,
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects oversized handoff status fields (bounded progress payload)', async () => {

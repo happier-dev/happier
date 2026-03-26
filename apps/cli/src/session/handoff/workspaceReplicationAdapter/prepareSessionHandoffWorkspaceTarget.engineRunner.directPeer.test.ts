@@ -19,7 +19,7 @@ import { deterministicStringify } from '@/utils/deterministicJson';
 import { configuration } from '@/configuration';
 import { buildWorkspaceReplicationBlobPacks } from '@/workspaces/replication/transport/buildWorkspaceReplicationBlobPacks';
 
-import type { SessionHandoffWorkspaceReplicationMetadata } from '../workspace/sessionHandoffWorkspaceReplicationMetadata';
+import type { SessionHandoffWorkspaceReplicationMetadata } from './sessionHandoffWorkspaceReplicationMetadata';
 
 import { prepareSessionHandoffWorkspaceTarget } from './sessionHandoffWorkspaceReplicationAdapter';
 
@@ -526,57 +526,6 @@ async function writeWorkspaceReplicationBlobPackFile(input: Readonly<{
     }
   });
 
-  it('fails closed when sync_changes preflight requires a baseline that does not exist yet', async () => {
-    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-engine-direct-peer-'));
-    const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-handoff-engine-direct-peer-target-'));
-
-    try {
-      const metadata: SessionHandoffWorkspaceReplicationMetadata = {
-        sourceRootPath: '/source',
-        manifest: { entries: [] },
-      };
-
-      const workspaceTransfer: SessionHandoffWorkspaceTransfer = {
-        enabled: true,
-        strategy: 'sync_changes',
-        conflictPolicy: 'replace_existing',
-        includeIgnoredMode: 'exclude',
-        ignoredIncludeGlobs: [],
-      };
-
-      const transfers: WorkspaceReplicationTransfers = {
-        requestDirectPeerSourceOffer: async () => {
-          throw new Error('Unexpected direct-peer source-offer request');
-        },
-        requestServerRoutedSourceOffer: async () => {
-          throw new Error('Unexpected server-routed source-offer request');
-        },
-        publishDirectPeerBlobPack: () => [],
-        requestDirectPeerBlobPackToFile: async () => {
-          throw new Error('Unexpected direct-peer blob-pack request');
-        },
-        requestServerRoutedBlobPackToFile: async () => {
-          throw new Error('Unexpected server-routed blob-pack request');
-        },
-      };
-
-      await expect(prepareSessionHandoffWorkspaceTarget({
-        activeServerDir,
-        actualTransportStrategy: 'direct_peer',
-        handoffId: 'handoff_direct_peer_sync_changes_preflight',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        targetPath: targetWorkspaceRoot,
-        workspaceTransfer,
-        metadata,
-        transfers,
-        blobPackTargetBytes: 1024,
-        blobPackMaxBlobs: 10,
-        blobPackMaxSingleBlobBytes: 1024 * 1024,
-      })).rejects.toThrow(/baseline missing/i);
-    } finally {
-      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
-      await rm(targetWorkspaceRoot, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
+  // Baseline-missing fallback to transfer_snapshot is enforced by
+  // prepareSessionHandoffWorkspaceTarget.oneWaySafe.test.ts (canonical behavior).
 });

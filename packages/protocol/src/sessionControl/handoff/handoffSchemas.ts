@@ -38,7 +38,16 @@ export const SessionHandoffWorkspaceTransferSchema = z
     includeIgnoredMode: z.enum(['exclude', 'include_selected']).default('exclude'),
     ignoredIncludeGlobs: z.array(z.string().min(1).max(512)).max(MAX_INCLUDE_GLOBS).readonly().default(() => []),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.strategy === 'sync_changes' && value.conflictPolicy === 'create_sibling_copy') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['conflictPolicy'],
+        message: 'conflictPolicy=create_sibling_copy is not supported for workspaceTransfer.strategy=sync_changes',
+      });
+    }
+  });
 export type SessionHandoffWorkspaceTransfer = z.infer<typeof SessionHandoffWorkspaceTransferSchema>;
 
 const SessionHandoffProviderBundleTransferPublicationSchema = z

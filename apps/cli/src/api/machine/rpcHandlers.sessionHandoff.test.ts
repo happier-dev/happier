@@ -21,7 +21,6 @@ import { createWorkspaceReplicationJobStore } from '../../workspaces/replication
 import { createWorkspaceReplicationPackIdForDigests } from '../../workspaces/replication/transport/workspaceReplicationPackId';
 import { createSessionHandoffPrepareTargetJobStore } from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { buildSessionHandoffProviderBundleTransferId } from '../../session/handoff/sessionHandoffProviderBundleTransferPublication';
-import { readSessionHandoffWorkspaceReplicationManifestFromFile } from '../../session/handoff/workspace/sessionHandoffWorkspaceReplicationManifestTransfer';
 import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
 
 type ExportSessionBundle = NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['exportSessionBundle']>;
@@ -1233,28 +1232,28 @@ function createLoopbackMachineTransferChannels() {
 	        },
 	      });
 
-	      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-	      expect(start).toBeDefined();
+		      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+		      expect(start).toBeDefined();
 
-	      let started: any = null;
-	      start!({
-	        sessionId: 'sess_direct_peer_only_deferred_scan',
-	        sourceMachineId: 'machine_source',
-	        targetMachineId: 'machine_target',
-	        sessionStorageMode: 'persisted',
-	        preferredTransportStrategies: ['direct_peer'],
-	        negotiatedTransportStrategy: 'direct_peer',
-	        workspaceTransfer: {
-	          enabled: true,
-	          strategy: 'sync_changes',
-	          conflictPolicy: 'create_sibling_copy',
-	          includeIgnoredMode: 'exclude',
-	          ignoredIncludeGlobs: [],
-	        },
-	      }).then((value) => {
-	        started = value;
-	        return value;
-	      });
+		      let started: any = null;
+		      start!({
+		        sessionId: 'sess_direct_peer_only_deferred_scan',
+		        sourceMachineId: 'machine_source',
+		        targetMachineId: 'machine_target',
+		        sessionStorageMode: 'persisted',
+		        preferredTransportStrategies: ['direct_peer'],
+		        negotiatedTransportStrategy: 'direct_peer',
+		        workspaceTransfer: {
+		          enabled: true,
+		          strategy: 'sync_changes',
+		          conflictPolicy: 'replace_existing',
+		          includeIgnoredMode: 'exclude',
+		          ignoredIncludeGlobs: [],
+		        },
+		      }).then((value) => {
+		        started = value;
+		        return value;
+		      });
 
 	      let waitError: unknown;
 	      try {
@@ -2480,24 +2479,24 @@ function createLoopbackMachineTransferChannels() {
 	        }),
 	      });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      expect(start).toBeDefined();
+	      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+	      expect(start).toBeDefined();
 
-      const started = await start!({
-        sessionId: 'sess_adapter_seam',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        sessionStorageMode: 'persisted',
-        preferredTransportStrategies: ['server_routed_stream'],
-        negotiatedTransportStrategy: 'server_routed_stream',
-        workspaceTransfer: {
-          enabled: true as const,
-          strategy: 'sync_changes' as const,
-          conflictPolicy: 'create_sibling_copy' as const,
-          includeIgnoredMode: 'include_selected' as const,
-          ignoredIncludeGlobs: ['dist/**'],
-        },
-      });
+	      const started = await start!({
+	        sessionId: 'sess_adapter_seam',
+	        sourceMachineId: 'machine_source',
+	        targetMachineId: 'machine_target',
+	        sessionStorageMode: 'persisted',
+	        preferredTransportStrategies: ['server_routed_stream'],
+	        negotiatedTransportStrategy: 'server_routed_stream',
+	        workspaceTransfer: {
+	          enabled: true as const,
+	          strategy: 'sync_changes' as const,
+	          conflictPolicy: 'replace_existing' as const,
+	          includeIgnoredMode: 'include_selected' as const,
+	          ignoredIncludeGlobs: ['dist/**'],
+	        },
+	      });
 
       expect(started).toHaveProperty('handoffId');
       expect(createSessionHandoffWorkspaceReplicationAdapter).toHaveBeenCalledTimes(1);
@@ -2638,21 +2637,21 @@ function createLoopbackMachineTransferChannels() {
       const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
       const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
       const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
-      expect(start).toBeDefined();
-      expect(prepare).toBeDefined();
-      expect(resultGet).toBeDefined();
+	      expect(start).toBeDefined();
+	      expect(prepare).toBeDefined();
+	      expect(resultGet).toBeDefined();
 
-      const workspaceTransfer = {
-        enabled: true as const,
-        strategy: 'sync_changes' as const,
-        conflictPolicy: 'create_sibling_copy' as const,
-        includeIgnoredMode: 'include_selected' as const,
-        ignoredIncludeGlobs: ['dist/**'],
-      };
-      const started = await start!({
-        sessionId: 'sess_adapter_prepare_seam',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
+	      const workspaceTransfer = {
+	        enabled: true as const,
+	        strategy: 'sync_changes' as const,
+	        conflictPolicy: 'replace_existing' as const,
+	        includeIgnoredMode: 'include_selected' as const,
+	        ignoredIncludeGlobs: ['dist/**'],
+	      };
+	      const started = await start!({
+	        sessionId: 'sess_adapter_prepare_seam',
+	        sourceMachineId: 'machine_source',
+	        targetMachineId: 'machine_target',
         sessionStorageMode: 'persisted',
         preferredTransportStrategies: ['server_routed_stream'],
         negotiatedTransportStrategy: 'server_routed_stream',
@@ -3184,29 +3183,29 @@ function createLoopbackMachineTransferChannels() {
         exportSessionBundle,
       });
 
-      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-      expect(start).toBeDefined();
+	      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+	      expect(start).toBeDefined();
 
-      await expect(
-        start!({
-          sessionId: 'sess_1',
-          sourceMachineId: 'machine_source',
-          targetMachineId: 'machine_target',
-          sessionStorageMode: 'persisted',
-          preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
-          workspaceTransfer: {
-            enabled: true,
-            strategy: 'sync_changes',
-            conflictPolicy: 'create_sibling_copy',
-            includeIgnoredMode: 'exclude',
-            ignoredIncludeGlobs: [],
-          },
-        }),
-      ).resolves.toMatchObject({
-        handoffId: expect.stringMatching(/^handoff_/),
-        targetPath: workspacePath,
-        status: expect.objectContaining({
-          status: 'pending',
+	      await expect(
+	        start!({
+	          sessionId: 'sess_1',
+	          sourceMachineId: 'machine_source',
+	          targetMachineId: 'machine_target',
+	          sessionStorageMode: 'persisted',
+	          preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+	          workspaceTransfer: {
+	            enabled: true,
+	            strategy: 'sync_changes',
+	            conflictPolicy: 'replace_existing',
+	            includeIgnoredMode: 'exclude',
+	            ignoredIncludeGlobs: [],
+	          },
+	        }),
+	      ).resolves.toMatchObject({
+	        handoffId: expect.stringMatching(/^handoff_/),
+	        targetPath: workspacePath,
+	        status: expect.objectContaining({
+	          status: 'pending',
           phase: 'preparing',
         }),
       });
@@ -3248,25 +3247,25 @@ function createLoopbackMachineTransferChannels() {
       exportSessionBundle,
     });
 
-    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-    expect(start).toBeDefined();
+	    const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+	    expect(start).toBeDefined();
 
-    await expect(
-      start!({
-        sessionId: 'sess_1',
-        sourceMachineId: 'machine_source',
-        targetMachineId: 'machine_target',
-        sessionStorageMode: 'persisted',
-        preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
-        workspaceTransfer: {
-          enabled: true,
-          strategy: 'sync_changes',
-          conflictPolicy: 'create_sibling_copy',
-          includeIgnoredMode: 'exclude',
-          ignoredIncludeGlobs: ['dist/**'],
-        },
-      }),
-    ).resolves.toEqual({
+	    await expect(
+	      start!({
+	        sessionId: 'sess_1',
+	        sourceMachineId: 'machine_source',
+	        targetMachineId: 'machine_target',
+	        sessionStorageMode: 'persisted',
+	        preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+	        workspaceTransfer: {
+	          enabled: true,
+	          strategy: 'sync_changes',
+	          conflictPolicy: 'replace_existing',
+	          includeIgnoredMode: 'exclude',
+	          ignoredIncludeGlobs: ['dist/**'],
+	        },
+	      }),
+	    ).resolves.toEqual({
       ok: false,
       errorCode: 'unsupported_workspace_transfer_strategy',
       error: 'Workspace transfer ignoredIncludeGlobs require includeIgnoredMode=include_selected',
@@ -3285,13 +3284,13 @@ function createLoopbackMachineTransferChannels() {
 	    const workspaceBlobPayload = Buffer.from('direct-peer-pack\n', 'utf8');
 	    const workspaceBlobDigest = `sha256:${createHash('sha256').update(workspaceBlobPayload).digest('hex')}`;
     const workspaceManifestFingerprint = `sha256:${'1'.repeat(64)}`;
-    const workspaceTransfer = {
-      enabled: true as const,
-      strategy: 'sync_changes' as const,
-      conflictPolicy: 'create_sibling_copy' as const,
-      includeIgnoredMode: 'include_selected' as const,
-      ignoredIncludeGlobs: ['dist/**'],
-    };
+	    const workspaceTransfer = {
+	      enabled: true as const,
+	      strategy: 'sync_changes' as const,
+	      conflictPolicy: 'replace_existing' as const,
+	      includeIgnoredMode: 'include_selected' as const,
+	      ignoredIncludeGlobs: ['dist/**'],
+	    };
 
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const rpcHandlerManager = {
@@ -3442,13 +3441,13 @@ function createLoopbackMachineTransferChannels() {
     const workspaceBlobPayload = Buffer.from('server-routed-pack\n', 'utf8');
     await writeFile(join(sourcePath, 'README.md'), workspaceBlobPayload);
     await writeFile(join(targetPath, 'README.md'), baselinePayload);
-    const workspaceTransfer = {
-      enabled: true as const,
-      strategy: 'sync_changes' as const,
-      conflictPolicy: 'create_sibling_copy' as const,
-      includeIgnoredMode: 'include_selected' as const,
-      ignoredIncludeGlobs: ['dist/**'],
-    };
+	    const workspaceTransfer = {
+	      enabled: true as const,
+	      strategy: 'sync_changes' as const,
+	      conflictPolicy: 'replace_existing' as const,
+	      includeIgnoredMode: 'include_selected' as const,
+	      ignoredIncludeGlobs: ['dist/**'],
+	    };
     const sourceRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const targetRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
@@ -3825,13 +3824,13 @@ function createLoopbackMachineTransferChannels() {
     const targetActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-deferred-target-'));
     const workspaceBlobPayload = Buffer.from('server-routed-pack\n', 'utf8');
     await writeFile(join(sourcePath, 'README.md'), workspaceBlobPayload);
-    const workspaceTransfer = {
-      enabled: true as const,
-      strategy: 'sync_changes' as const,
-      conflictPolicy: 'create_sibling_copy' as const,
-      includeIgnoredMode: 'include_selected' as const,
-      ignoredIncludeGlobs: ['dist/**'],
-    };
+	    const workspaceTransfer = {
+	      enabled: true as const,
+	      strategy: 'sync_changes' as const,
+	      conflictPolicy: 'replace_existing' as const,
+	      includeIgnoredMode: 'include_selected' as const,
+	      ignoredIncludeGlobs: ['dist/**'],
+	    };
     const sourceRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const targetRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const exportDeferred = createDeferred<Readonly<{
@@ -4062,13 +4061,13 @@ function createLoopbackMachineTransferChannels() {
     const workspaceBlobPayload = Buffer.from('direct-peer-deferred-pack\n', 'utf8');
     await writeFile(join(sourcePath, 'README.md'), workspaceBlobPayload);
 
-    const workspaceTransfer = {
-      enabled: true as const,
-      strategy: 'sync_changes' as const,
-      conflictPolicy: 'create_sibling_copy' as const,
-      includeIgnoredMode: 'include_selected' as const,
-      ignoredIncludeGlobs: ['dist/**'],
-    };
+	    const workspaceTransfer = {
+	      enabled: true as const,
+	      strategy: 'sync_changes' as const,
+	      conflictPolicy: 'replace_existing' as const,
+	      includeIgnoredMode: 'include_selected' as const,
+	      ignoredIncludeGlobs: ['dist/**'],
+	    };
 
     const sourceRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const targetRegistered = new Map<string, (params: unknown) => Promise<any>>();
@@ -4883,13 +4882,13 @@ function createLoopbackMachineTransferChannels() {
     const handoffId = 'handoff_invalid_server_routed_workspace_manifest_format';
     const providerBundleTransferId = `session-handoff:${handoffId}:provider-bundle-file`;
     const manifestTransferId = `session-handoff:${handoffId}:workspace-manifest`;
-    const workspaceTransfer = {
-      enabled: true as const,
-      strategy: 'sync_changes' as const,
-      conflictPolicy: 'create_sibling_copy' as const,
-      includeIgnoredMode: 'include_selected' as const,
-      ignoredIncludeGlobs: ['dist/**'],
-    };
+	    const workspaceTransfer = {
+	      enabled: true as const,
+	      strategy: 'sync_changes' as const,
+	      conflictPolicy: 'replace_existing' as const,
+	      includeIgnoredMode: 'include_selected' as const,
+	      ignoredIncludeGlobs: ['dist/**'],
+	    };
     const preparePromise = prepare!({
       handoffId,
       sourceMachineId: 'machine_source',
@@ -5403,7 +5402,7 @@ function createLoopbackMachineTransferChannels() {
 	    expect(requestPayloadFile).toHaveBeenCalledTimes(1);
 	  });
 
-	  it('fails closed when the persisted source-export record is corrupted (no silent transfer_not_found)', async () => {
+		  it('fails closed when the persisted source-export record is corrupted (no silent transfer_not_found)', async () => {
 	    const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-corrupt-source-export-'));
 	    const handoffId = 'handoff_corrupt_source_export';
 	    const recordDir = join(sourceActiveServerDir, 'session-handoff', handoffId);
@@ -5449,4 +5448,368 @@ function createLoopbackMachineTransferChannels() {
 	      await rm(sourceActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 	    }
 	  }, 30_000);
+
+	  it('surfaces deferred source-export terminal failures as a structured machine transfer abort (no misleading transfer_not_found)', async () => {
+	    const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-terminal-source-export-'));
+	    const handoffId = 'handoff_terminal_source_export';
+
+	    const channels = createLoopbackMachineTransferChannels();
+	    vi.resetModules();
+	    vi.doMock('@/configuration', () => ({
+	      configuration: {
+	        activeServerDir: sourceActiveServerDir,
+	        activeServerId: 'test_terminal_source_export',
+	        filesTransferSessionTtlMs: 50,
+	      },
+	    }));
+
+	    try {
+	      const { createSessionHandoffSourceExportStore } = await import('../../session/handoff/state/sessionHandoffSourceExportStore');
+	      const { createSessionHandoffPrepareTargetJobStore } = await import('../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore');
+	      const { registerMachineSessionHandoffRpcHandlers: registerSourceHandlers } = await import('./rpcHandlers.sessionHandoff');
+	      const { buildSessionHandoffWorkspaceManifestTransferId } = await import(
+	        '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
+	      );
+
+	      registerSourceHandlers({
+	        rpcHandlerManager: {
+	          registerHandler: () => {},
+	        } as any,
+	        machineTransferChannel: channels.source,
+	      });
+
+	      const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir: sourceActiveServerDir });
+	      await sourceExportStore.save({
+	        handoffId,
+	        sessionId: 'session_test',
+	        sourceMachineId: 'machine_source',
+	        targetMachineId: 'machine_target',
+	        exportedAtMs: Date.now(),
+	        workspaceSourceRootPath: '/repo',
+	      });
+
+	      const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir: sourceActiveServerDir });
+	      const jobId = `start_${handoffId}`;
+	      await prepareJobStore.write({
+	        jobId,
+	        handoffId,
+	        createdAtMs: Date.now(),
+	        updatedAtMs: Date.now(),
+	        abortedAtMs: Date.now(),
+	        failedAtMs: Date.now(),
+	        lastErrorMessage: 'Session is not eligible for handoff: vendor_handoff_id_missing',
+	        status: {
+	          handoffId,
+	          status: 'aborted',
+	          phase: 'preparing',
+	          jobId,
+	          recoveryActions: ['restart_on_source', 'keep_stopped'],
+	        },
+	      });
+
+	      const transferId = buildSessionHandoffWorkspaceManifestTransferId({ handoffId });
+	      const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-terminal-source-export-dest-'));
+	      const destinationPath = join(temporaryDirectory, 'workspace-manifest.json');
+	      try {
+	        await expect(requestServerRoutedTransferToFile({
+	          transferId,
+	          sourceMachineId: 'machine_source',
+	          machineTransferChannel: channels.target,
+	          destinationPath,
+	          timeoutMs: 2_000,
+	        })).rejects.toThrow('Machine transfer aborted: handoff_ineligible:vendor_handoff_id_missing');
+	      } finally {
+	        await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+	      }
+	    } finally {
+	      vi.doUnmock('@/configuration');
+	      vi.resetModules();
+	      await rm(sourceActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+	    }
+		  }, 30_000);
+
+      it('aborts server-routed workspace blob-pack transfers with workspace_replication_source_error when the persisted manifest cannot be loaded', async () => {
+        const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-wsrepl-manifest-corrupt-source-export-'));
+        const handoffId = 'handoff_wsrepl_manifest_corrupt';
+
+        const channels = createLoopbackMachineTransferChannels();
+        vi.resetModules();
+        vi.doMock('@/configuration', () => ({
+          configuration: {
+            activeServerDir: sourceActiveServerDir,
+            activeServerId: 'test_wsrepl_manifest_corrupt',
+            filesTransferSessionTtlMs: 10 * 60_000,
+            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+            workspaceReplicationBlobPackMaxBlobs: 64,
+            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+          },
+        }));
+
+        try {
+          const {
+            registerMachineSessionHandoffRpcHandlers: registerSourceHandlers,
+          } = await import('./rpcHandlers.sessionHandoff');
+          const { requestServerRoutedTransferToFile } = await import('../../machines/transfer/serverRoutedTransport');
+          const { createSessionHandoffSourceExportStore } = await import('../../session/handoff/state/sessionHandoffSourceExportStore');
+          const { createWorkspaceReplicationPackIdForDigests } = await import('@/workspaces/replication/transport/workspaceReplicationPackId');
+          const { buildSessionHandoffWorkspaceBlobPackTransferId } = await import(
+            '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
+          );
+
+          registerSourceHandlers({
+            rpcHandlerManager: {
+              registerHandler: () => {},
+            } as any,
+            machineTransferChannel: channels.source,
+          });
+
+          const digest = `sha256:${'1'.repeat(64)}`;
+          const digests = [digest];
+          const packId = createWorkspaceReplicationPackIdForDigests(digests);
+          const transferId = buildSessionHandoffWorkspaceBlobPackTransferId({ handoffId, packId });
+
+          const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir: sourceActiveServerDir });
+          const persistedWorkspaceManifest = await sourceExportStore.writeWorkspaceReplicationManifestFile({
+            handoffId,
+            manifest: {
+              entries: [
+                {
+                  relativePath: 'README.md',
+                  kind: 'file' as const,
+                  digest,
+                  sizeBytes: 1,
+                  executable: false,
+                },
+              ],
+              fingerprint: 'test-fingerprint',
+            },
+          });
+          // Corrupt the manifest file after persisting metadata to force read/parse failures in the responder.
+          await writeFile(persistedWorkspaceManifest.filePath, 'not a workspace manifest', 'utf8');
+
+          await sourceExportStore.save({
+            handoffId,
+            sessionId: 'session_test',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            exportedAtMs: Date.now(),
+            workspaceSourceRootPath: '/repo',
+            workspaceManifest: persistedWorkspaceManifest,
+          });
+
+          const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-wsrepl-manifest-corrupt-dest-'));
+          const destinationPath = join(temporaryDirectory, 'workspace-pack.bin');
+          try {
+            await expect(requestServerRoutedTransferToFile({
+              transferId,
+              sourceMachineId: 'machine_source',
+              machineTransferChannel: channels.target,
+              destinationPath,
+              openBody: {
+                t: 'workspace_replication_blob_pack_v1',
+                packId,
+                digests,
+              },
+              timeoutMs: 5_000,
+            })).rejects.toThrow('Machine transfer aborted: workspace_replication_source_error');
+          } finally {
+            await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+          }
+        } finally {
+          vi.doUnmock('@/configuration');
+          vi.resetModules();
+          await rm(sourceActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        }
+      }, 30_000);
+
+      it('aborts server-routed workspace blob-pack transfers with workspace_replication_source_error when the source workspace root cannot supply required blobs', async () => {
+        const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-wsrepl-missing-blob-source-export-'));
+        const sourceRootPath = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-wsrepl-missing-blob-workspace-'));
+        const handoffId = 'handoff_wsrepl_missing_blob';
+
+        const channels = createLoopbackMachineTransferChannels();
+        vi.resetModules();
+        vi.doMock('@/configuration', () => ({
+          configuration: {
+            activeServerDir: sourceActiveServerDir,
+            activeServerId: 'test_wsrepl_missing_blob',
+            filesTransferSessionTtlMs: 10 * 60_000,
+            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+            workspaceReplicationBlobPackMaxBlobs: 64,
+            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+          },
+        }));
+
+        try {
+          const {
+            registerMachineSessionHandoffRpcHandlers: registerSourceHandlers,
+          } = await import('./rpcHandlers.sessionHandoff');
+          const { requestServerRoutedTransferToFile } = await import('../../machines/transfer/serverRoutedTransport');
+          const { createSessionHandoffSourceExportStore } = await import('../../session/handoff/state/sessionHandoffSourceExportStore');
+          const { createWorkspaceReplicationPackIdForDigests } = await import('@/workspaces/replication/transport/workspaceReplicationPackId');
+          const { buildSessionHandoffWorkspaceBlobPackTransferId } = await import(
+            '../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationServerRouted',
+          );
+
+          registerSourceHandlers({
+            rpcHandlerManager: {
+              registerHandler: () => {},
+            } as any,
+            machineTransferChannel: channels.source,
+          });
+
+          const digest = `sha256:${'2'.repeat(64)}`;
+          const digests = [digest];
+          const packId = createWorkspaceReplicationPackIdForDigests(digests);
+          const transferId = buildSessionHandoffWorkspaceBlobPackTransferId({ handoffId, packId });
+
+          const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir: sourceActiveServerDir });
+          const persistedWorkspaceManifest = await sourceExportStore.writeWorkspaceReplicationManifestFile({
+            handoffId,
+            manifest: {
+              entries: [
+                {
+                  relativePath: 'README.md',
+                  kind: 'file' as const,
+                  digest,
+                  sizeBytes: 1,
+                  executable: false,
+                },
+              ],
+              fingerprint: 'test-fingerprint-missing-blob',
+            },
+          });
+
+          await sourceExportStore.save({
+            handoffId,
+            sessionId: 'session_test',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            exportedAtMs: Date.now(),
+            workspaceSourceRootPath: sourceRootPath,
+            workspaceManifest: persistedWorkspaceManifest,
+          });
+
+          const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-wsrepl-missing-blob-dest-'));
+          const destinationPath = join(temporaryDirectory, 'workspace-pack.bin');
+          try {
+            await expect(requestServerRoutedTransferToFile({
+              transferId,
+              sourceMachineId: 'machine_source',
+              machineTransferChannel: channels.target,
+              destinationPath,
+              openBody: {
+                t: 'workspace_replication_blob_pack_v1',
+                packId,
+                digests,
+              },
+              timeoutMs: 5_000,
+            })).rejects.toThrow('Machine transfer aborted: workspace_replication_source_error');
+          } finally {
+            await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+          }
+        } finally {
+          vi.doUnmock('@/configuration');
+          vi.resetModules();
+          await rm(sourceRootPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+          await rm(sourceActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        }
+      }, 30_000);
+
+	  it('waits for a deferred source-export record before serving the server-routed provider-bundle transfer (avoids transfer_not_found)', async () => {
+	    const sourceActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-wait-source-export-'));
+	    const handoffId = 'handoff_wait_source_export';
+
+      const channels = createLoopbackMachineTransferChannels();
+      vi.resetModules();
+      vi.doMock('@/configuration', () => ({
+        configuration: {
+          activeServerDir: sourceActiveServerDir,
+          activeServerId: 'test_wait_source_export',
+          // Keep this above the wait budget so the source-export poll loop is bounded by its own cap.
+          filesTransferSessionTtlMs: 10 * 60_000,
+        },
+      }));
+
+      try {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+        const { createSessionHandoffSourceExportStore } = await import('../../session/handoff/state/sessionHandoffSourceExportStore');
+        const { registerMachineSessionHandoffRpcHandlers: registerSourceHandlers } = await import('./rpcHandlers.sessionHandoff');
+
+        registerSourceHandlers({
+          rpcHandlerManager: {
+            registerHandler: () => {},
+          } as any,
+          machineTransferChannel: channels.source,
+        });
+
+        const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir: sourceActiveServerDir });
+        const scheduledWriteDelayMs = 45_000;
+        const writeDeferred = createDeferred<void>();
+        setTimeout(() => {
+          void (async () => {
+            const persistedProviderBundle = await sourceExportStore.writeProviderBundleFile({
+              handoffId,
+              providerBundle: {
+                providerId: 'claude',
+                remoteSessionId: 'remote_session_1',
+                transcriptBase64: Buffer.from('hello', 'utf8').toString('base64'),
+              },
+            });
+            await sourceExportStore.save({
+              handoffId,
+              sessionId: 'session_1',
+              sourceMachineId: 'machine_source',
+              targetMachineId: 'machine_target',
+              exportedAtMs: Date.now(),
+              workspaceSourceRootPath: '/repo',
+              providerBundle: persistedProviderBundle,
+            });
+          })().then(writeDeferred.resolve, writeDeferred.reject);
+        }, scheduledWriteDelayMs);
+
+        const transferId = buildSessionHandoffProviderBundleTransferId(handoffId);
+        const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-wait-source-export-dest-'));
+        const destinationPath = join(temporaryDirectory, 'provider-bundle.json');
+
+        try {
+          const transferPromise = requestServerRoutedTransferToFile({
+            transferId,
+            sourceMachineId: 'machine_source',
+            machineTransferChannel: channels.target,
+            destinationPath,
+            timeoutMs: 90_000,
+          });
+          // Prevent unhandled rejections if the transfer fails before we reach the `await` below.
+          transferPromise.catch(() => undefined);
+
+          for (let advancedMs = 0; advancedMs < scheduledWriteDelayMs + 1_000; advancedMs += 1_000) {
+            // Yield so async envelope handlers can schedule their next polling timers.
+            await Promise.resolve();
+            await vi.advanceTimersByTimeAsync(1_000);
+          }
+          await writeDeferred.promise;
+          for (let advancedMs = 0; advancedMs < 10_000; advancedMs += 1_000) {
+            await Promise.resolve();
+            await vi.advanceTimersByTimeAsync(1_000);
+          }
+
+          const received = await transferPromise;
+          expect(received.destinationPath).toEqual(destinationPath);
+          expect(received.sizeBytes).toBeGreaterThan(0);
+          const rawProviderBundle = await readFile(received.destinationPath, 'utf8');
+          const parsedProviderBundle = JSON.parse(rawProviderBundle) as { providerId?: unknown };
+          expect(parsedProviderBundle.providerId).toEqual('claude');
+        } finally {
+          await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        }
+      } finally {
+        vi.doUnmock('@/configuration');
+        vi.useRealTimers();
+        vi.resetModules();
+        await rm(sourceActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      }
+    }, 30_000);
 	});

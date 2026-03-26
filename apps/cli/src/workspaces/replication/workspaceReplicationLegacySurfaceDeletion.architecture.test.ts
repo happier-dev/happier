@@ -14,6 +14,7 @@ describe('workspace replication (legacy surface deletion)', () => {
 
     await expectMissing(join(srcRoot, 'session/handoff/transfer'));
     await expectMissing(join(srcRoot, 'session/handoff/sessionHandoffStoredTransferredState.ts'));
+    await expectMissing(join(srcRoot, 'session/handoff/workspace'));
   });
 
   it('keeps the legacy in-memory workspace export blob-map builder deleted', async () => {

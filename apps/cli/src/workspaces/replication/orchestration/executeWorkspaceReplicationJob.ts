@@ -1,3 +1,5 @@
+import { resolveWorkspaceReplicationJobStatusHeartbeatIntervalMs } from '@/configuration';
+
 import type { WorkspaceReplicationRelationshipStore } from '../relationships/workspaceReplicationRelationshipStore';
 import { planWorkspaceReplicationMissingBlobs } from '../transport/planWorkspaceReplicationMissingBlobs';
 import type { WorkspaceReplicationSourceOffer } from '../transport/createWorkspaceReplicationSourceOffer';
@@ -15,6 +17,7 @@ import {
 import { startWorkspaceReplicationJobLeaseHeartbeat } from '../state/workspaceReplicationJobLeaseHeartbeat';
 import {
   releaseWorkspaceReplicationScopeLease,
+  renewWorkspaceReplicationScopeLease,
   resolveWorkspaceReplicationScopeLeaseTtlMs,
   tryAcquireWorkspaceReplicationScopeLease,
 } from '../state/workspaceReplicationScopeLease';
@@ -211,6 +214,46 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
         ownerId: leaseOwnerId,
         nowMs,
         ttlMs: leaseTtlMs,
+      });
+    } catch (error) {
+      return await markJobFailedAndRethrow({
+        activeServerDir: params.activeServerDir,
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        error,
+      });
+    }
+
+    if (renewed.renewed) {
+      return null;
+    }
+
+    const latest = await params.jobStore.read(params.jobId);
+    if (!latest) {
+      throw new WorkspaceReplicationError({
+        code: 'job_not_found',
+        message: `Workspace replication job not found: ${params.jobId}`,
+      });
+    }
+    return latest;
+  };
+
+  const stopIfScopeLeaseLost = async (): Promise<WorkspaceReplicationJobRecord | null> => {
+    if (!scopeLeaseAcquired) {
+      return null;
+    }
+
+    const nowMs = resolveNowMs(params.now);
+    let renewed: Awaited<ReturnType<typeof renewWorkspaceReplicationScopeLease>>;
+    try {
+      renewed = await renewWorkspaceReplicationScopeLease({
+        activeServerDir: params.activeServerDir,
+        relationshipId: scopeRelationshipId,
+        directionId: scopeDirectionId,
+        ownerId: scopeLeaseOwnerId,
+        nowMs,
+        ttlMs: scopeLeaseTtlMs,
       });
     } catch (error) {
       return await markJobFailedAndRethrow({
@@ -630,6 +673,11 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       return lostLeaseAfterTransfer;
     }
 
+    const lostScopeLeaseAfterTransfer = await stopIfScopeLeaseLost();
+    if (lostScopeLeaseAfterTransfer) {
+      return lostScopeLeaseAfterTransfer;
+    }
+
     latest = await runWorkspaceReplicationJob({
       jobStore: params.jobStore,
       jobId: params.jobId,
@@ -670,6 +718,11 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     const lostLeaseBeforeApply = await stopIfLeaseLost();
     if (lostLeaseBeforeApply) {
       return lostLeaseBeforeApply;
+    }
+
+    const lostScopeLeaseBeforeApply = await stopIfScopeLeaseLost();
+    if (lostScopeLeaseBeforeApply) {
+      return lostScopeLeaseBeforeApply;
     }
 
     // 3.5) one-way-safe divergence gating (fail closed) again after blob transfer completes.
@@ -719,35 +772,82 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       return cancelledBeforeApply;
     }
 
-	    const applyResult = await params.applyPlan({
-	      job: latest,
-	      offer,
-	    }).catch(async (error: unknown) => {
-	      if (isCancelRequestedError(error)) {
-	        return await abortJobAndReturn({
-	          activeServerDir: params.activeServerDir,
-	          jobStore: params.jobStore,
-	          jobId: params.jobId,
-	          now: params.now,
-	        });
-	      }
-	      const cancelled = await abortIfCancellationRequested({
-	        activeServerDir: params.activeServerDir,
-	        jobStore: params.jobStore,
-	        jobId: params.jobId,
-	        now: params.now,
-	      });
-	      if (cancelled) {
-	        return cancelled;
-	      }
-	      return await markJobFailedAndRethrow({
-	        activeServerDir: params.activeServerDir,
-	        jobStore: params.jobStore,
-	        jobId: params.jobId,
-	        now: params.now,
+    const statusHeartbeatIntervalMs = resolveWorkspaceReplicationJobStatusHeartbeatIntervalMs();
+    let statusHeartbeatStopped = false;
+    const statusHeartbeatState: { inFlight: Promise<void> | null } = { inFlight: null };
+    const probeStatusHeartbeatOnce = async (): Promise<void> => {
+      if (statusHeartbeatStopped) return;
+      if (statusHeartbeatState.inFlight) {
+        try {
+          await statusHeartbeatState.inFlight;
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      statusHeartbeatState.inFlight = runWorkspaceReplicationJob({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        run: async (record) => record,
+      })
+        .then(() => undefined)
+        .catch(() => undefined)
+        .finally(() => {
+          statusHeartbeatState.inFlight = null;
+        });
+      try {
+        await statusHeartbeatState.inFlight;
+      } catch {
+        // ignore
+      }
+    };
+
+    const statusHeartbeatHandle = setInterval(probeStatusHeartbeatOnce, statusHeartbeatIntervalMs);
+    statusHeartbeatHandle.unref?.();
+
+    let applyResult: Awaited<ReturnType<typeof params.applyPlan>> | WorkspaceReplicationJobRecord;
+    try {
+      applyResult = await params.applyPlan({
+        job: latest,
+        offer,
+      }).catch(async (error: unknown) => {
+        if (isCancelRequestedError(error)) {
+          return await abortJobAndReturn({
+            activeServerDir: params.activeServerDir,
+            jobStore: params.jobStore,
+            jobId: params.jobId,
+            now: params.now,
+          });
+        }
+        const cancelled = await abortIfCancellationRequested({
+          activeServerDir: params.activeServerDir,
+          jobStore: params.jobStore,
+          jobId: params.jobId,
+          now: params.now,
+        });
+        if (cancelled) {
+          return cancelled;
+        }
+        return await markJobFailedAndRethrow({
+          activeServerDir: params.activeServerDir,
+          jobStore: params.jobStore,
+          jobId: params.jobId,
+          now: params.now,
 	        error,
 	      });
 	    });
+    } finally {
+      statusHeartbeatStopped = true;
+      clearInterval(statusHeartbeatHandle);
+      if (statusHeartbeatState.inFlight) {
+        try {
+          await statusHeartbeatState.inFlight;
+        } catch {
+          // ignore
+        }
+      }
+    }
 
     if ('jobId' in applyResult) {
       return applyResult;
@@ -756,6 +856,11 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     const lostLeaseAfterApply = await stopIfLeaseLost();
     if (lostLeaseAfterApply) {
       return lostLeaseAfterApply;
+    }
+
+    const lostScopeLeaseAfterApply = await stopIfScopeLeaseLost();
+    if (lostScopeLeaseAfterApply) {
+      return lostScopeLeaseAfterApply;
     }
 
     latest = await runWorkspaceReplicationJob({
@@ -801,6 +906,11 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     const lostLeaseBeforeBaselineCommit = await stopIfLeaseLost();
     if (lostLeaseBeforeBaselineCommit) {
       return lostLeaseBeforeBaselineCommit;
+    }
+
+    const lostScopeLeaseBeforeBaselineCommit = await stopIfScopeLeaseLost();
+    if (lostScopeLeaseBeforeBaselineCommit) {
+      return lostScopeLeaseBeforeBaselineCommit;
     }
 
     // 5) commit baseline
@@ -877,6 +987,11 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
     const lostLeaseAfterCommit = await stopIfLeaseLost();
     if (lostLeaseAfterCommit) {
       return lostLeaseAfterCommit;
+    }
+
+    const lostScopeLeaseAfterCommit = await stopIfScopeLeaseLost();
+    if (lostScopeLeaseAfterCommit) {
+      return lostScopeLeaseAfterCommit;
     }
 
     const completedAtMs = resolveNowMs(params.now);

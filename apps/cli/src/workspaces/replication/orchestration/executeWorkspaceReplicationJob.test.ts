@@ -7,6 +7,128 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceReplicationSourceOffer } from '../transport/createWorkspaceReplicationSourceOffer';
 
 describe('executeWorkspaceReplicationJob', () => {
+  it('heartbeats job updatedAtMs while apply is running so long apply phases stay observable', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-job-apply-heartbeat-'));
+    const previous = process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_STATUS_HEARTBEAT_INTERVAL_MS;
+    process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_STATUS_HEARTBEAT_INTERVAL_MS = '1000';
+    vi.useFakeTimers();
+
+    try {
+      const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { executeWorkspaceReplicationJob } = await import('./executeWorkspaceReplicationJob');
+
+      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+
+      const scope = {
+        sourceMachineId: 'machine-source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine-target',
+        targetWorkspaceRoot: '/target',
+        mode: 'one_way_safe' as const,
+      };
+      const relationship = await relationships.ensureRelationship(scope);
+
+      const offer: WorkspaceReplicationSourceOffer = {
+        offerId: 'offer_apply_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_apply_1',
+        sourceFingerprint: 'fp_apply_1',
+        manifest: { entries: [], fingerprint: 'fp_apply_1' },
+        blobIndex: [],
+      };
+
+      await jobStore.write({
+        schemaVersion: 1,
+        jobId: 'job_apply_1',
+        relationshipId: relationship.relationshipId,
+        directionId: offer.directionId,
+        offerId: offer.offerId,
+        mode: 'one_way_safe',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'pending',
+          phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      const createDeferred = <T,>() => {
+        let resolve!: (value: T) => void;
+        let reject!: (error: unknown) => void;
+        const promise = new Promise<T>((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+        return { promise, resolve, reject };
+      };
+
+      const applyDeferred = createDeferred<Readonly<{ appliedFiles: number; appliedBytes: number; targetPath: string }>>();
+
+      const applyEntered = createDeferred<void>();
+
+      let applyStartedUpdatedAtMs = 0;
+      const applyPlan = vi.fn(async (input: any) => {
+        applyEntered.resolve();
+        applyStartedUpdatedAtMs = typeof input?.job?.updatedAtMs === 'number' ? input.job.updatedAtMs : 0;
+        return await applyDeferred.promise;
+      });
+
+      const runPromise = executeWorkspaceReplicationJob({
+        activeServerDir,
+        jobStore,
+        relationships,
+        jobId: 'job_apply_1',
+        now: () => Date.now(),
+        resolveSourceOfferById: async () => offer,
+        transferMissingBlobsToTargetCas: async () => ({ transferredFiles: 0, transferredBytes: 0 }),
+        applyPlan,
+        commitBaseline: async () => undefined,
+      });
+
+      await applyEntered.promise;
+      expect(applyPlan).toHaveBeenCalledTimes(1);
+      expect(applyStartedUpdatedAtMs).toBeGreaterThan(0);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      let midApplyUpdatedAtMs = 0;
+      for (let i = 0; i < 50; i += 1) {
+        const midApply = await jobStore.read('job_apply_1');
+        midApplyUpdatedAtMs = midApply?.updatedAtMs ?? 0;
+        if (midApplyUpdatedAtMs > applyStartedUpdatedAtMs) {
+          break;
+        }
+        // Allow the interval callback + fs writes to run.
+        await Promise.resolve();
+      }
+      expect(midApplyUpdatedAtMs).toBeGreaterThan(applyStartedUpdatedAtMs);
+
+      applyDeferred.resolve({ appliedFiles: 0, appliedBytes: 0, targetPath: '/target' });
+      const result = await runPromise;
+      expect(result.status.status).toBe('completed');
+    } finally {
+      vi.useRealTimers();
+      if (previous === undefined) {
+        delete process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_STATUS_HEARTBEAT_INTERVAL_MS;
+      } else {
+        process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_STATUS_HEARTBEAT_INTERVAL_MS = previous;
+      }
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('fails closed and does not call handlers when the replication scope lease is held', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-job-scope-lease-'));
 
@@ -228,8 +350,8 @@ describe('executeWorkspaceReplicationJob', () => {
     }
   });
 
-  it('fails closed and does not call handlers when cancel is requested', async () => {
-    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-job-cancel-'));
+	  it('fails closed and does not call handlers when cancel is requested', async () => {
+	    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-job-cancel-'));
 
     try {
       const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
@@ -986,6 +1108,109 @@ describe('executeWorkspaceReplicationJob', () => {
         delete process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_LEASE_TTL_MS;
       } else {
         process.env.HAPPIER_WORKSPACE_REPLICATION_JOB_LEASE_TTL_MS = previousLeaseTtl;
+      }
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('hard-stops and does not call apply when the scope lease is stolen mid-transfer (lost scope lease is fail-closed)', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-exec-scope-lease-stolen-'));
+
+    const previousScopeLeaseTtl = process.env.HAPPIER_WORKSPACE_REPLICATION_SCOPE_LEASE_TTL_MS;
+    process.env.HAPPIER_WORKSPACE_REPLICATION_SCOPE_LEASE_TTL_MS = '5000';
+
+    try {
+      const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
+      const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
+      const { tryAcquireWorkspaceReplicationScopeLease } = await import('../state/workspaceReplicationScopeLease');
+      const { executeWorkspaceReplicationJob } = await import('./executeWorkspaceReplicationJob');
+
+      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const relationships = createWorkspaceReplicationRelationshipStore({ activeServerDir });
+
+      const relationship = await relationships.ensureRelationship({
+        sourceMachineId: 'machine-source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine-target',
+        targetWorkspaceRoot: '/target',
+        mode: 'one_way_safe' as const,
+      });
+
+      const offer: WorkspaceReplicationSourceOffer = {
+        offerId: 'offer_scope_lease_stolen_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        sourceFingerprint: 'fp_1',
+        manifest: { entries: [], fingerprint: 'fp_1' },
+        blobIndex: [{ digest: 'sha256:deadbeef', sizeBytes: 10 }],
+      };
+
+      await jobStore.write({
+        schemaVersion: 1,
+        jobId: 'job_scope_lease_stolen_1',
+        relationshipId: relationship.relationshipId,
+        directionId: 'dir_1',
+        offerId: offer.offerId,
+        mode: 'one_way_safe',
+        correlationId: 'corr_scope_lease_stolen_1',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'pending',
+          phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {
+            plannedFiles: 0,
+            plannedBytes: 0,
+            transferredFiles: 0,
+            transferredBytes: 0,
+            appliedFiles: 0,
+            appliedBytes: 0,
+          },
+          warnings: [],
+          blockingDivergenceCandidates: [],
+        },
+      });
+
+      const transferMissingBlobsToTargetCas = vi.fn(async () => {
+        // The scope lease is held by the current process, but it expires; simulate another runner stealing it mid-flight.
+        await tryAcquireWorkspaceReplicationScopeLease({
+          activeServerDir,
+          relationshipId: relationship.relationshipId,
+          directionId: 'dir_1',
+          ownerId: 'other-runner',
+          nowMs: 7001,
+          ttlMs: 60_000,
+        });
+        return { transferredFiles: 1, transferredBytes: 10 };
+      });
+
+      const applyPlan = vi.fn(async () => ({ appliedFiles: 0, appliedBytes: 0, targetPath: '/target' }));
+      const commitBaseline = vi.fn(async () => undefined);
+
+      const result = await executeWorkspaceReplicationJob({
+        activeServerDir,
+        jobStore,
+        relationships,
+        jobId: 'job_scope_lease_stolen_1',
+        now: () => 1000,
+        resolveSourceOfferById: async () => offer,
+        transferMissingBlobsToTargetCas,
+        applyPlan,
+        commitBaseline,
+      });
+
+      expect(transferMissingBlobsToTargetCas).toHaveBeenCalledTimes(1);
+      expect(applyPlan).not.toHaveBeenCalled();
+      expect(commitBaseline).not.toHaveBeenCalled();
+      expect(result.status.checkpoint).not.toBe('apply_started');
+      expect(result.status.checkpoint).not.toBe('apply_completed');
+      expect(result.status.checkpoint).not.toBe('baseline_committed');
+    } finally {
+      if (previousScopeLeaseTtl === undefined) {
+        delete process.env.HAPPIER_WORKSPACE_REPLICATION_SCOPE_LEASE_TTL_MS;
+      } else {
+        process.env.HAPPIER_WORKSPACE_REPLICATION_SCOPE_LEASE_TTL_MS = previousScopeLeaseTtl;
       }
       await rm(activeServerDir, { recursive: true, force: true });
     }

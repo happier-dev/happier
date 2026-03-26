@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -8,6 +9,10 @@ import {
   SessionHandoffStatusSchema,
 } from '@happier-dev/protocol';
 
+import {
+  releaseSessionHandoffPrepareTargetJobLease,
+  tryAcquireSessionHandoffPrepareTargetJobLease,
+} from './sessionHandoffPrepareTargetJobLease';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 const SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION = 1 as const;
@@ -98,6 +103,26 @@ export async function recoverSessionHandoffPrepareTargetJobsAfterRestart(input: 
     if (isTerminalPrepareTargetStatusCode(job.status.status)) {
       return;
     }
+
+    // Fail closed: if another daemon instance still owns a live durable lease, do not flip the job
+    // into awaiting_recovery, since doing so would clobber a legitimately advancing job.
+    const probeOwnerId = `cli-daemon:${process.pid}:prepare-target-recovery:${randomUUID()}`;
+    const leaseAttempt = await tryAcquireSessionHandoffPrepareTargetJobLease({
+      activeServerDir: input.activeServerDir,
+      jobId: job.jobId,
+      ownerId: probeOwnerId,
+      nowMs: input.nowMs,
+      ttlMs: 250,
+    });
+    if (!leaseAttempt.acquired) {
+      return;
+    }
+    await releaseSessionHandoffPrepareTargetJobLease({
+      activeServerDir: input.activeServerDir,
+      jobId: job.jobId,
+      ownerId: probeOwnerId,
+    }).catch(() => undefined);
+
     await store.update(job.jobId, (current) => {
       const { schemaVersion: _schemaVersion, ...rest } = current;
       const previousProgress = rest.status.progress;

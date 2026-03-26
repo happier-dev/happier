@@ -12,7 +12,7 @@ import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replicatio
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 import { createWorkspaceReplicationJobStore } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';
 
-import { createSessionHandoffWorkspaceReplicationMetadata } from '../workspace/sessionHandoffWorkspaceReplicationMetadata';
+import { createSessionHandoffWorkspaceReplicationMetadata } from './sessionHandoffWorkspaceReplicationMetadata';
 
 import { prepareSessionHandoffWorkspaceTarget } from './sessionHandoffWorkspaceReplicationAdapter';
 
@@ -143,6 +143,109 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
       expect(typeof baseline!.savedAtMs).toBe('number');
 
       const written = await readFile(join(targetWorkspaceRoot, 'README.md'), 'utf8');
+      expect(written).toBe(fileContents);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+      await rm(targetWorkspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to transfer_snapshot when sync_changes baseline is missing (one_way_safe)', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-adapter-missing-baseline-'));
+    const targetWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-handoff-adapter-missing-baseline-target-'));
+
+    try {
+      const fileContents = 'hello missing baseline\n';
+      const fileDigest = `sha256:${createHash('sha256').update(fileContents).digest('hex')}`;
+      const seedPath = join(activeServerDir, 'seed.txt');
+      await writeFile(seedPath, fileContents, 'utf8');
+
+      const cas = createWorkspaceReplicationCasStore({ activeServerDir });
+      await cas.commitFile({
+        digest: fileDigest,
+        sourcePath: seedPath,
+      });
+
+      const sourceManifest = makeManifest([
+        {
+          relativePath: 'README.md',
+          kind: 'file',
+          digest: fileDigest,
+          sizeBytes: Buffer.byteLength(fileContents),
+          executable: false,
+        },
+      ]);
+
+      const metadata = createSessionHandoffWorkspaceReplicationMetadata({
+        sourceRootPath: '/source',
+        workspaceExportArtifacts: {
+          manifest: sourceManifest,
+        },
+      });
+      if (!metadata) {
+        throw new Error('Expected workspace replication metadata to be available');
+      }
+
+      const offer = {
+        offerId: 'offer_1',
+        relationshipId: 'rel_1',
+        directionId: 'dir_1',
+        sourceFingerprint: sourceManifest.fingerprint!,
+        manifest: sourceManifest,
+        blobIndex: [{ digest: fileDigest, sizeBytes: Buffer.byteLength(fileContents) }],
+      } as const;
+
+      const onWorkspaceReplicationJobStarted = vi.fn(async () => undefined);
+
+      const result = await prepareSessionHandoffWorkspaceTarget({
+        activeServerDir,
+        actualTransportStrategy: 'server_routed_stream',
+        handoffId: 'handoff_1',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        targetPath: targetWorkspaceRoot,
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'replace_existing',
+        } as any,
+        metadata,
+        machineTransferChannel: {
+          onEnvelope: () => () => {},
+          sendEnvelope: () => {},
+        } as any,
+        transfers: {
+          requestServerRoutedSourceOffer: async () => offer,
+          requestServerRoutedBlobPackToFile: async () => {
+            throw new Error('Unexpected blob-pack request (CAS already seeded)');
+          },
+        } as any,
+        blobPackTargetBytes: 1024,
+        blobPackMaxBlobs: 10,
+        blobPackMaxSingleBlobBytes: 1024 * 1024,
+        onWorkspaceReplicationJobStarted,
+      });
+
+      const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+      const jobRecord = await jobStore.findByCorrelationId('session_handoff_workspace_prepare_target:handoff_1');
+      expect(jobRecord).not.toBeNull();
+      expect(onWorkspaceReplicationJobStarted).toHaveBeenCalledWith(jobRecord!.jobId);
+      expect(jobRecord!.status.status).toBe('completed');
+      expect(jobRecord!.status.checkpoint).toBe('baseline_committed');
+      expect(jobRecord!.resumeContext?.apply.strategy).toBe('transfer_snapshot');
+      expect(jobRecord!.result?.targetPath).toBe(result.importedWorkspace.targetPath);
+
+      const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir });
+      const baseline = await baselineStore.load({
+        sourceMachineId: 'machine_source',
+        sourceWorkspaceRoot: '/source',
+        targetMachineId: 'machine_target',
+        targetWorkspaceRoot,
+        mode: 'one_way_safe',
+      });
+      expect(baseline).not.toBeNull();
+
+      const written = await readFile(join(result.importedWorkspace.targetPath, 'README.md'), 'utf8');
       expect(written).toBe(fileContents);
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });

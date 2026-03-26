@@ -24,9 +24,10 @@ const FROZEN_ENGINE_SURFACE_MODULE_SUFFIXES = [
 
 function assertDoesNotImportModule(source: string, moduleSuffix: string, filePath: string): void {
   const escaped = moduleSuffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const importFrom = new RegExp(String.raw`\\bfrom\\s+['"][^'"]*${escaped}[^'"]*['"]`, 'g');
-  const dynamicImport = new RegExp(String.raw`\\bimport\\s*\\(\\s*['"][^'"]*${escaped}[^'"]*['"]\\s*\\)`, 'g');
-  const requireCall = new RegExp(String.raw`\\brequire\\s*\\(\\s*['"][^'"]*${escaped}[^'"]*['"]\\s*\\)`, 'g');
+  // Note: do not use String.raw with `\\b` here; it will match a *literal* `\b` instead of a word boundary.
+  const importFrom = new RegExp(`\\bfrom\\s+['"][^'"]*${escaped}[^'"]*['"]`, 'g');
+  const dynamicImport = new RegExp(`\\bimport\\s*\\(\\s*['"][^'"]*${escaped}[^'"]*['"]\\s*\\)`, 'g');
+  const requireCall = new RegExp(`\\brequire\\s*\\(\\s*['"][^'"]*${escaped}[^'"]*['"]\\s*\\)`, 'g');
 
   const hit = source.match(importFrom) ?? source.match(dynamicImport) ?? source.match(requireCall);
   if (hit && hit.length > 0) {
