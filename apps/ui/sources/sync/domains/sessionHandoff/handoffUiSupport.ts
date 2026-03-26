@@ -1,4 +1,4 @@
-import { evaluateVendorHandoffEligibility, resolveAgentIdFromFlavor } from '@happier-dev/agents';
+import { AGENTS_CORE, resolveAgentIdFromFlavor, resolveVendorHandoffIdFromSessionMetadata } from '@happier-dev/agents';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 
 type SessionLike = Readonly<{
@@ -26,10 +26,15 @@ export function canHandoffConversation(params: Readonly<{ sessionId?: string | n
     const agentId = resolveAgentIdFromFlavor(metadata.flavor);
     if (!agentId) return false;
 
+    const agent = AGENTS_CORE[agentId];
+    if (!agent) return false;
     const sessionStorageMode = metadata.directSessionV1 ? 'direct' : 'persisted';
-    return evaluateVendorHandoffEligibility({
-        agentId,
-        metadata,
-        storageMode: sessionStorageMode,
-    }).eligible === true;
+    if (!agent.sessionStorage[sessionStorageMode]) return false;
+    if (agent.handoff.vendorStateTransfer === 'unsupported') return false;
+
+    // Keep the UI consistent with daemon eligibility: handoff requires a vendor-resumable id so the
+    // target can reliably resume the session vendor state (and so QA can fail fast before stopping
+    // the source session).
+    if (!resolveVendorHandoffIdFromSessionMetadata(agentId, metadata)) return false;
+    return true;
 }

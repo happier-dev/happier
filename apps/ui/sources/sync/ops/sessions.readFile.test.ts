@@ -98,6 +98,9 @@ describe('sessionReadFile', () => {
         machineRPCSpy.mockImplementation(async (_machineId: string, method: string) => {
             expect(policyConsulted).toBe(true);
 
+            if (method === RPC_METHODS.STAT_FILE) {
+                return { success: true, exists: true, kind: 'file', sizeBytes: 5, modifiedMs: 0 };
+            }
             if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
                 return {
                     success: true,
@@ -141,6 +144,9 @@ describe('sessionReadFile', () => {
         machineRPCSpy.mockImplementation(async (_machineId: string, method: string) => {
             expect(policyConsulted).toBe(true);
 
+            if (method === RPC_METHODS.STAT_FILE) {
+                return { success: true, exists: true, kind: 'file', sizeBytes: 5, modifiedMs: 0 };
+            }
             if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
                 return {
                     success: true,
@@ -187,6 +193,9 @@ describe('sessionReadFile', () => {
         machineRPCSpy.mockImplementation(async (_machineId: string, method: string) => {
             expect(policyConsulted).toBe(true);
 
+            if (method === RPC_METHODS.STAT_FILE) {
+                return { success: true, exists: true, kind: 'file', sizeBytes: 50 * 1024 * 1024, modifiedMs: 0 };
+            }
             if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
                 return {
                     success: true,

@@ -29,6 +29,20 @@ describe('handoffUiSupport', () => {
         ).toBe(true);
     });
 
+    it('returns true for a persisted claude session with a machine id even when vendor handoff id is missing', () => {
+        expect(
+            canHandoffConversation({
+                sessionId: 'sess_1',
+                session: {
+                    metadata: {
+                        flavor: 'claude',
+                        machineId: 'machine_1',
+                    },
+                },
+            }),
+        ).toBe(false);
+    });
+
     it('returns true for a direct opencode session with a machine id', () => {
         expect(
             canHandoffConversation({
@@ -115,11 +129,9 @@ describe('handoffUiSupport', () => {
                     metadata: {
                         flavor: 'codex',
                         machineId: 'machine_1',
-                        codexSessionId: 'codex_session_1',
-                        codexBackendMode: 'appServer',
                     },
                 },
             }),
-        ).toBe(true);
+        ).toBe(false);
     });
 });

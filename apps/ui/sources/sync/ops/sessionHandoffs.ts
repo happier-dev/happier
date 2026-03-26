@@ -26,6 +26,7 @@ import { sync } from '../sync';
 import { storage } from '../domains/state/storage';
 import { machineRpcWithServerScope } from '../runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { isRpcMethodNotAvailableError, readRpcErrorCode } from '../runtime/rpcErrors';
+import { isSocketIoAckTimeoutError } from '../runtime/socketIoAckTimeout';
 
 import { resumeSession } from './sessions';
 import { readMachineTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
@@ -234,6 +235,7 @@ function isTransientDaemonRpcAvailabilityError(error: unknown): boolean {
     return isRpcMethodNotAvailableError(error as any)
         || readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
         || isMachineRpcTimeoutError(error)
+        || isSocketIoAckTimeoutError(error)
         || shouldFallbackFromMachineRpc(error);
 }
 

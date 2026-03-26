@@ -3766,6 +3766,104 @@ describe('sessionHandoffs ops', () => {
         }
     });
 
+    it('treats socket.io ack timeouts as transient while polling target prepare status', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS = '10000';
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_retry_prepare_ack_timeout',
+                status: {
+                    handoffId: 'handoff_retry_prepare_ack_timeout',
+                    jobId: 'job_prepare_ack_timeout_1',
+                    status: 'pending',
+                    phase: 'staging_target',
+                    transportStrategy: 'direct_peer',
+                    recoveryActions: [],
+                },
+            })
+            .mockImplementationOnce(() => {
+                throw new Error('operation has timed out');
+            })
+            .mockResolvedValueOnce({
+                status: {
+                    handoffId: 'handoff_retry_prepare_ack_timeout',
+                    jobId: 'job_prepare_ack_timeout_1',
+                    status: 'pending',
+                    phase: 'staging_target',
+                    transportStrategy: 'direct_peer',
+                    recoveryActions: [],
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_retry_prepare_ack_timeout',
+                status: {
+                    handoffId: 'handoff_retry_prepare_ack_timeout',
+                    jobId: 'job_prepare_ack_timeout_1',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    transportStrategy: 'direct_peer',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'claude_session_retry_prepare_ack_timeout',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: '/repo',
+                    agent: 'claude',
+                    resume: 'claude_session_retry_prepare_ack_timeout',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            });
+
+        let nowMs = 0;
+        try {
+            const { prepareTargetSessionHandoffWithRetry } = await import('./sessionHandoffs');
+            const result = await prepareTargetSessionHandoffWithRetry({
+                handoffId: 'handoff_retry_prepare_ack_timeout',
+                sourceMachineId: 'machine_source',
+                targetMachineId: 'machine_target',
+                targetPath: '/repo',
+                negotiatedTransportStrategy: 'direct_peer',
+                sourceSessionStorageMode: 'persisted',
+                allowServerRoutedFallback: true,
+                handoffMetadataV2: {},
+            }, {
+                timeoutMs: 25,
+                pollTimeoutMs: 25,
+                intervalMs: 1,
+                now: () => nowMs,
+                sleep: async (delayMs) => {
+                    nowMs += delayMs;
+                },
+            });
+
+            expect(result).toEqual({
+                ok: true,
+                response: expect.objectContaining({
+                    handoffId: 'handoff_retry_prepare_ack_timeout',
+                    remoteSessionId: 'claude_session_retry_prepare_ack_timeout',
+                }),
+            });
+            expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+                machineId: 'machine_target',
+                method: 'daemon.sessionHandoff.prepareTarget',
+            }));
+            expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+                machineId: 'machine_target',
+                method: 'daemon.sessionHandoff.prepareTargetResult.get',
+            }));
+            expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
+                machineId: 'machine_target',
+                method: 'daemon.sessionHandoff.status.get',
+            }));
+        } finally {
+            delete process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_MACHINE_RPC_POLL_TIMEOUT_MS;
+        }
+    });
+
     it('uses a separate poll timeout budget after a job-backed prepare ack', async () => {
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({
