@@ -855,6 +855,7 @@ describe('executeChannelBridgeTick', () => {
     const { deps, sentToSession } = createDepsHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '99',
@@ -923,6 +924,7 @@ describe('executeChannelBridgeTick', () => {
     const { deps, sentToSession } = createDepsHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-1001',
       threadId: '99',
@@ -2054,6 +2056,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-3002',
       threadId: null,
@@ -2091,6 +2094,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-3003',
       threadId: null,
@@ -2130,6 +2134,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
 
     await baseStore.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-3004',
       threadId: null,
@@ -2166,6 +2171,7 @@ describe('executeChannelBridgeTick', () => {
     });
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-3004b',
       threadId: null,
@@ -2208,6 +2214,7 @@ describe('executeChannelBridgeTick', () => {
     });
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram-alt',
       conversationId: '-3004b-alt',
       threadId: null,
@@ -2247,6 +2254,7 @@ describe('executeChannelBridgeTick', () => {
     });
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-3004c',
       threadId: null,
@@ -2286,6 +2294,7 @@ describe('executeChannelBridgeTick', () => {
     });
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: '-3004c',
       threadId: null,
@@ -2328,6 +2337,7 @@ describe('executeChannelBridgeTick', () => {
 
     await baseStore.upsertBinding({
       ...ref,
+      ...DEFAULT_BINDING_POLICY,
       sessionId: 'sess-old',
       lastForwardedSeq: 0,
     });
@@ -2337,6 +2347,7 @@ describe('executeChannelBridgeTick', () => {
       updateLastForwardedSeq: async (bindingRef, params) => {
         await baseStore.upsertBinding({
           ...bindingRef,
+          ...DEFAULT_BINDING_POLICY,
           sessionId: 'sess-new',
           lastForwardedSeq: 0,
         });
@@ -2372,6 +2383,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness('discord');
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'orphaned-room',
       threadId: null,
@@ -2398,6 +2410,7 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness('discord');
 
     await store.upsertBinding({
+      ...DEFAULT_BINDING_POLICY,
       providerId: 'telegram',
       conversationId: 'orphaned-room',
       threadId: null,
@@ -2444,6 +2457,7 @@ describe('executeChannelBridgeTick', () => {
 
     await store.upsertBinding({
       ...bindingRef,
+      ...DEFAULT_BINDING_POLICY,
       sessionId: 'sess-orphaned',
       lastForwardedSeq: 0,
     });

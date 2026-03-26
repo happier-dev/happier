@@ -34,7 +34,7 @@ describe('serializeAxiosErrorForLog', () => {
 
     const serialized = serializeAxiosErrorForLog(err);
     expect(serialized).toEqual(expect.objectContaining({
-      url: 'https://api.telegram.org/bot<redacted>/getUpdates',
+      url: 'https://api.telegram.org/botREDACTED/getUpdates',
     }));
   });
 });

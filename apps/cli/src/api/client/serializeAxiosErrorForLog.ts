@@ -7,7 +7,7 @@ function redactTelegramBotTokenPathname(pathname: string): string {
   const redacted = parts.map((part) => {
     const segment = String(part ?? '');
     if (segment.startsWith('bot') && segment.length > 3) {
-      return 'bot<redacted>';
+      return 'botREDACTED';
     }
     return segment;
   });
@@ -27,7 +27,7 @@ function redactUrlForLog(raw: unknown): string | undefined {
   } catch {
     // Best-effort: strip query/hash to avoid leaking secrets in URLs.
     const withoutQuery = value.split('?')[0]?.split('#')[0] ?? value;
-    return withoutQuery.replace(/\/bot[^/]+\//g, '/bot<redacted>/');
+    return withoutQuery.replace(/\/bot[^/]+\//g, '/botREDACTED/');
   }
 }
 

@@ -5,6 +5,12 @@ function asRecord(value: unknown): RecordLike | null {
   return value as RecordLike;
 }
 
+function shallowCloneRecord(value: unknown): RecordLike {
+  const record = asRecord(value);
+  if (!record) return {};
+  return { ...record };
+}
+
 export function resolveExperimentalSettingsFeatureToggleEnabled(params: Readonly<{
   settings: unknown;
   featureId: string;
@@ -22,17 +28,21 @@ export function resolveExperimentalSettingsFeatureToggleEnabled(params: Readonly
   return params.defaultEnabled === true;
 }
 
-export function ensureExperimentalSettingsFeatureToggleEnabled(params: Readonly<{
-  settings: unknown;
+export function ensureExperimentalSettingsFeatureToggleEnabled<TSettings extends object>(params: Readonly<{
+  settings: TSettings;
   featureId: string;
-}>): RecordLike {
-  const root = JSON.parse(JSON.stringify(asRecord(params.settings) ?? {})) as RecordLike;
+}>): TSettings {
+  const root = shallowCloneRecord(params.settings);
+
   if (root.experiments !== true) {
     root.experiments = true;
   }
 
-  const featureToggles = asRecord(root.featureToggles) ?? {};
-  featureToggles[params.featureId] = true;
-  root.featureToggles = featureToggles;
-  return root;
+  const existingFeatureToggles = asRecord(root.featureToggles);
+  root.featureToggles = {
+    ...(existingFeatureToggles ?? {}),
+    [params.featureId]: true,
+  };
+
+  return root as unknown as TSettings;
 }
