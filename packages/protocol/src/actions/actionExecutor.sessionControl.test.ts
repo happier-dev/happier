@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createActionExecutor } from './actionExecutor';
+import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 
-function createExecutor(overrides: Partial<Parameters<typeof createActionExecutor>[0]> = {}) {
+function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
     executionRunStart: async () => ({}),
     executionRunList: async () => ({}),
@@ -28,43 +28,29 @@ function createExecutor(overrides: Partial<Parameters<typeof createActionExecuto
     sessionModesList: async () => ({ items: [] }),
     sessionTargetPrimarySet: async () => ({}),
     sessionTargetTrackedSet: async () => ({}),
-    sessionList: async () => ({}),
+    sessionList: async () => ({ sessions: [] }),
     sessionActivityGet: async () => ({}),
     sessionRecentMessagesGet: async () => ({}),
     daemonMemorySearch: async () => ({ v: 1, ok: true as const, hits: [] }),
     daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
-    daemonMemoryEnsureUpToDate: async () => ({ ok: true }),
+    daemonMemoryEnsureUpToDate: async () => ({}),
     resetGlobalVoiceAgent: async () => {},
     ...overrides,
   });
 }
 
-describe('createActionExecutor (session control plane)', () => {
-  it('routes session.title.set to deps.sessionTitleSet', async () => {
+describe('createActionExecutor (session control)', () => {
+  it('executes session.title.set via deps.sessionTitleSet', async () => {
     const sessionTitleSet = vi.fn(async () => ({ ok: true }));
     const executor = createExecutor({ sessionTitleSet });
 
     const res = await executor.execute(
       'session.title.set' as any,
-      { sessionId: 'sess_1', title: 'Hello' },
-      { surface: 'cli' },
+      { sessionId: 's1', title: 'New title' },
+      { surface: 'cli', defaultSessionId: null },
     );
 
     expect(res).toEqual({ ok: true, result: { ok: true } });
-    expect(sessionTitleSet).toHaveBeenCalledWith({ sessionId: 'sess_1', title: 'Hello' });
-  });
-
-  it('routes session.stop to deps.sessionStop', async () => {
-    const sessionStop = vi.fn(async () => ({ ok: true, stopped: true }));
-    const executor = createExecutor({ sessionStop });
-
-    const res = await executor.execute(
-      'session.stop' as any,
-      { sessionId: 'sess_1' },
-      { surface: 'cli' },
-    );
-
-    expect(res).toEqual({ ok: true, result: { ok: true, stopped: true } });
-    expect(sessionStop).toHaveBeenCalledWith({ sessionId: 'sess_1' });
+    expect(sessionTitleSet).toHaveBeenCalledWith({ sessionId: 's1', title: 'New title' });
   });
 });

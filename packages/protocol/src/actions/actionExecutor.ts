@@ -90,6 +90,7 @@ export type ActionExecutorDeps = Readonly<{
 
   // Session messaging (socket message event, server-scoped)
   sessionSendMessage: (args: Readonly<{ sessionId: string; message: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionTitleSet?: (args: Readonly<{ sessionId: string; title: string; serverId?: string | null }>) => Promise<unknown>;
 
   // Permission response (session RPC, server-scoped)
   sessionPermissionRespond: (args: Readonly<{
@@ -833,6 +834,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionSendMessage({ sessionId, message: (parsed.data as any).message, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.title.set') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.sessionTitleSet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.title.set' };
+          }
+          const title = String((parsed.data as any).title ?? '').trim();
+          if (!title) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionTitleSet({ sessionId, title, ...(serverId ? { serverId } : {}) });
           return { ok: true, result: res };
         }
 

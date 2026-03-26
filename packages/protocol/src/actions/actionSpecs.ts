@@ -178,6 +178,43 @@ const OptionalSessionIdInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
 }).passthrough();
 
+const SessionIdRequiredInputSchema = z.object({
+  sessionId: z.string().min(1),
+}).passthrough();
+
+const SessionTitleSetInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  title: z.string().trim().min(1),
+}).passthrough();
+
+const SessionPermissionModeSetInputSchema = z.object({
+  sessionId: z.string().min(1),
+  permissionMode: z.string().trim().min(1),
+}).passthrough();
+
+const SessionModelSetInputSchema = z.object({
+  sessionId: z.string().min(1),
+  modelId: z.string().trim().min(1),
+}).passthrough();
+
+const SessionStatusGetInputSchema = z.object({
+  sessionId: z.string().min(1),
+  live: z.boolean().optional(),
+}).passthrough();
+
+const SessionHistoryGetInputSchema = z.object({
+  sessionId: z.string().min(1),
+  limit: z.number().int().min(1).max(250).optional(),
+  format: z.enum(['compact', 'raw']).optional(),
+  includeMeta: z.boolean().optional(),
+  includeStructuredPayload: z.boolean().optional(),
+}).passthrough();
+
+const SessionWaitIdleInputSchema = z.object({
+  sessionId: z.string().min(1),
+  timeoutSeconds: z.number().int().min(1).max(3600).optional(),
+}).passthrough();
+
 const IntentStartCommonSchema = z.object({
   sessionId: z.string().min(1).optional(),
   backendTargetKeys: z.array(BackendTargetKeySchema).min(1),
@@ -1356,6 +1393,59 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     inputSchema: SessionSendMessageInputSchema,
+  },
+  {
+    id: 'session.stop',
+    title: 'Stop session',
+    description: 'Request that the local daemon stops the specified session.',
+    safety: 'safe',
+    requiresApprovalQueue: true,
+    bindings: { mcpToolName: 'session_stop' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+    },
+    inputHints: {
+      title: 'Stop a session',
+      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
+    },
+    inputSchema: SessionIdRequiredInputSchema,
+  },
+  {
+    id: 'session.title.set',
+    title: 'Set session title',
+    description: 'Set the title (summary text) shown for a session.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { mcpToolName: 'session_title_set' },
+    examples: {
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","title":"Fix flaky tests"}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+    },
+    inputHints: {
+      title: 'Set title',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'title', title: 'Title', widget: 'text', required: true },
+      ],
+    },
+    inputSchema: SessionTitleSetInputSchema,
   },
   {
     id: 'session.permission.respond',

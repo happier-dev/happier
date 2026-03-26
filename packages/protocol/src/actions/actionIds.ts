@@ -21,6 +21,16 @@ export const ACTION_IDS = [
   'agents.models.list',
   // Session messaging
   'session.message.send',
+  // Session control plane (CLI/MCP)
+  'session.stop',
+  'session.title.set',
+  'session.model.set',
+  'session.permission_mode.set',
+  'session.archive',
+  'session.unarchive',
+  'session.status.get',
+  'session.history.get',
+  'session.wait.idle',
   // Intent start actions (first-class)
   'review.start',
   'subagents.plan.start',
