@@ -6,8 +6,17 @@ import type {
     ConnectionSocketStatus,
 } from './connectionHealthTypes';
 
+type ConnectionEndpointStatus =
+    | 'idle'
+    | 'offline'
+    | 'connecting'
+    | 'online'
+    | 'auth_failed'
+    | 'shutting_down';
+
 export function resolveConnectionHealth(params: Readonly<{
     socketStatus: ConnectionSocketStatus;
+    endpointStatus?: ConnectionEndpointStatus;
     hasSyncError?: boolean;
     machineGroups: ReadonlyArray<ConnectionHealthMachineGroup>;
 }>): ConnectionHealth {
@@ -17,6 +26,36 @@ export function resolveConnectionHealth(params: Readonly<{
             onlineCount: group.onlineCount,
         })),
     );
+
+    if (params.endpointStatus === 'connecting' && params.socketStatus !== 'connected') {
+        return {
+            kind: 'connecting',
+            machineCount: machines.machineCount,
+            onlineCount: machines.onlineCount,
+            hasUnknownMachines: machines.hasUnknownServers,
+            socketStatus: params.socketStatus,
+        };
+    }
+
+    if (params.endpointStatus === 'auth_failed') {
+        return {
+            kind: 'auth_required',
+            machineCount: machines.machineCount,
+            onlineCount: machines.onlineCount,
+            hasUnknownMachines: machines.hasUnknownServers,
+            socketStatus: params.socketStatus,
+        };
+    }
+
+    if (params.endpointStatus === 'offline' || params.endpointStatus === 'shutting_down') {
+        return {
+            kind: 'server_unreachable',
+            machineCount: machines.machineCount,
+            onlineCount: machines.onlineCount,
+            hasUnknownMachines: machines.hasUnknownServers,
+            socketStatus: params.socketStatus,
+        };
+    }
 
     if (params.hasSyncError || params.socketStatus === 'error') {
         return {

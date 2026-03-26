@@ -8,6 +8,7 @@ import {
     useMachineListByServerId,
     useMachineListStatusByServerId,
     useSetting,
+    useEndpointConnectivity,
     useSocketStatus,
     useSyncError,
 } from '@/sync/domains/state/storage';
@@ -19,6 +20,7 @@ import { resolveConnectionHealth } from './resolveConnectionHealth';
 export function useConnectionHealth() {
     const { theme } = useUnistyles();
     const socketStatus = useSocketStatus();
+    const endpointConnectivity = useEndpointConnectivity();
     const syncError = useSyncError();
     const allMachines = useAllMachines();
     const machineListByServerId = useMachineListByServerId();
@@ -52,6 +54,7 @@ export function useConnectionHealth() {
     const health = React.useMemo(() => {
         return resolveConnectionHealth({
             socketStatus: socketStatus.status,
+            endpointStatus: endpointConnectivity.status,
             hasSyncError: Boolean(syncError),
             machineGroups: activeSelectionMachineGroups.visibleMachineGroups.map((group) => {
                 if (group.status === 'loading' || group.status === 'signedOut') {
@@ -70,7 +73,7 @@ export function useConnectionHealth() {
                 };
             }),
         });
-    }, [activeSelectionMachineGroups.visibleMachineGroups, socketStatus.status, syncError]);
+    }, [activeSelectionMachineGroups.visibleMachineGroups, endpointConnectivity.status, socketStatus.status, syncError]);
 
     const presentation = React.useMemo(() => {
         return resolveConnectionHealthPresentation(health, {

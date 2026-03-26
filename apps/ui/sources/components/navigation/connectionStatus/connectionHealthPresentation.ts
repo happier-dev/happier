@@ -46,6 +46,14 @@ export function resolveConnectionHealthPresentation(
                 statusLabelKey: 'status.disconnected',
                 machineLabelKey: 'status.unknown',
             };
+        case 'auth_required':
+            return {
+                tone: 'attention',
+                color: statusColors.actionRequired,
+                isPulsing: false,
+                statusLabelKey: 'status.actionRequired',
+                machineLabelKey: 'status.unknown',
+            };
         case 'machine_offline':
             return {
                 tone: 'attention',

@@ -6,6 +6,7 @@ export type ConnectionHealthKind =
     | 'healthy'
     | 'connecting'
     | 'server_unreachable'
+    | 'auth_required'
     | 'server_error'
     | 'no_machine'
     | 'machine_offline';

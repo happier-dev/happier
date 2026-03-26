@@ -3,6 +3,26 @@ import { describe, expect, it } from 'vitest';
 import { resolveConnectionHealth } from './resolveConnectionHealth';
 
 describe('resolveConnectionHealth', () => {
+    it('treats endpoint shutting_down as server_unreachable even if the socket is connected', () => {
+        const result = resolveConnectionHealth({
+            endpointStatus: 'shutting_down',
+            socketStatus: 'connected',
+            machineGroups: [{ machineCount: 2, onlineCount: 2, status: 'idle' }],
+        });
+
+        expect(result.kind).toBe('server_unreachable');
+    });
+
+    it('treats endpoint connecting as connecting even when the socket is disconnected', () => {
+        const result = resolveConnectionHealth({
+            endpointStatus: 'connecting',
+            socketStatus: 'disconnected',
+            machineGroups: [{ machineCount: 0, onlineCount: 0, status: 'idle' }],
+        });
+
+        expect(result.kind).toBe('connecting');
+    });
+
     it('returns no_machine when the server is connected and there are no machines', () => {
         const result = resolveConnectionHealth({
             socketStatus: 'connected',
