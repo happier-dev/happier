@@ -44,6 +44,13 @@ export const FeatureGatesSchema = z.object({
     })
     .optional()
     .default({ enabled: false, quotas: DEFAULT_GATE_DISABLED }),
+  channelBridges: z
+    .object({
+      enabled: z.boolean(),
+      telegram: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({ enabled: false, telegram: DEFAULT_GATE_DISABLED }),
   updates: z
     .object({
       ota: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
