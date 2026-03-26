@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const reportServerUnreachableSpy = vi.fn<(...args: any[]) => void>();
 const startServerReachabilitySupervisorSpy = vi.fn<(...args: any[]) => Promise<void>>(async () => {});
+const stopServerReachabilitySupervisorSpy = vi.fn<(...args: any[]) => Promise<void>>(async () => {});
 
 function onlineState() {
     return {
@@ -20,6 +21,7 @@ describe('concurrentSessionCache teardown ordering', () => {
         vi.useFakeTimers();
         reportServerUnreachableSpy.mockReset();
         startServerReachabilitySupervisorSpy.mockClear();
+        stopServerReachabilitySupervisorSpy.mockClear();
     });
 
     afterEach(async () => {
@@ -42,6 +44,11 @@ describe('concurrentSessionCache teardown ordering', () => {
         process.env.EXPO_PUBLIC_HAPPIER_CONCURRENT_CACHE_REFRESH_INTERVAL_MS = '600000';
 
         vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', () => ({
+            setServerReachabilityNetworkAllowed: (_next: boolean) => {},
+            subscribeServerReachabilityNetworkAllowed: (listener: (allowed: boolean) => void) => {
+                listener(true);
+                return () => {};
+            },
             subscribeServerReachabilityState: (_serverUrl: string, listener: (state: any) => void) => {
                 setTimeout(() => {
                     listener(onlineState());
@@ -49,7 +56,9 @@ describe('concurrentSessionCache teardown ordering', () => {
                 return () => {};
             },
             startServerReachabilitySupervisor: startServerReachabilitySupervisorSpy,
+            stopServerReachabilitySupervisor: stopServerReachabilitySupervisorSpy,
             reportServerUnreachable: reportServerUnreachableSpy,
+            resetServerReachabilitySupervisors: async () => {},
         }));
 
         vi.doMock('@/auth/storage/tokenStorage', () => ({
@@ -171,6 +180,7 @@ describe('concurrentSessionCache teardown ordering', () => {
         stopConcurrentSessionCacheSync();
 
         expect(startServerReachabilitySupervisorSpy).toHaveBeenCalled();
+        expect(stopServerReachabilitySupervisorSpy).toHaveBeenCalled();
         expect(reportServerUnreachableSpy).not.toHaveBeenCalled();
     });
 });

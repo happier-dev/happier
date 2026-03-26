@@ -35,13 +35,24 @@ export async function readStoredSessionRawRecord(params: Readonly<{
     decryptEncrypted?: (ciphertext: string) => Promise<unknown> | unknown;
 }>): Promise<RawRecord | null> {
     const { content, decryptEncrypted } = params;
-    const rawContent = isStoredSessionPlainContent(content)
-        ? content.v
-        : isStoredSessionEncryptedContent(content) && decryptEncrypted
-            ? await decryptEncrypted(content.c)
+
+    const decodedContent = typeof content === 'string'
+        ? (() => {
+            try {
+                return JSON.parse(content);
+            } catch {
+                return content;
+            }
+        })()
+        : content;
+
+    const rawContent = isStoredSessionPlainContent(decodedContent)
+        ? decodedContent.v
+        : isStoredSessionEncryptedContent(decodedContent) && decryptEncrypted
+            ? await decryptEncrypted(decodedContent.c)
             : null;
 
-    const parsed = RawRecordSchema.safeParse(rawContent);
+    const parsed = RawRecordSchema.safeParse(rawContent ?? decodedContent);
     return parsed.success ? parsed.data : null;
 }
 

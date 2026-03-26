@@ -73,6 +73,7 @@ type SessionMachineRpcCallParams<TRequest> = Readonly<{
         request: TRequest;
         machineTarget: SessionMachineRpcTarget;
     }>) => TRequest) | null;
+    timeoutMs?: number;
 }>;
 
 type SessionMachineRpcSessionRouteCaller = <
@@ -149,6 +150,7 @@ async function callMachineRoute<TResponse extends Readonly<{ success: boolean }>
         route.machineTarget.machineId,
         callParams.machineMethod,
         machineRequest,
+        callParams.timeoutMs ? { timeoutMs: callParams.timeoutMs } : undefined,
     );
     return assertRpcResponseWithSuccess<TResponse>(response);
 }
@@ -172,6 +174,7 @@ async function callDefaultSessionRoute<TResponse extends Readonly<{ success: boo
             method: callParams.machineMethod,
             payload: machineRequest,
             preferScoped: true,
+            timeoutMs: callParams.timeoutMs,
         });
         return assertRpcResponseWithSuccess<TResponse>(response);
     }
@@ -181,6 +184,7 @@ async function callDefaultSessionRoute<TResponse extends Readonly<{ success: boo
         serverId: route.serverId,
         method: callParams.sessionMethod,
         payload: callParams.request,
+        timeoutMs: callParams.timeoutMs,
     });
     return assertRpcResponseWithSuccess<TResponse>(response);
 }
@@ -351,6 +355,7 @@ export async function callSessionMachineRpcWithFallback<
         request: TRequest;
         machineTarget: SessionMachineRpcTarget;
     }>) => TRequest) | null;
+    timeoutMs?: number;
 }>): Promise<TResponse> {
     const caller = createSessionMachineRpcFallbackCaller<TFailure>({
         sessionId: params.sessionId,
@@ -362,6 +367,7 @@ export async function callSessionMachineRpcWithFallback<
         machineMethod: params.machineMethod,
         sessionMethod: params.sessionMethod,
         toMachineRequest: params.toMachineRequest,
+        timeoutMs: params.timeoutMs,
     });
 }
 

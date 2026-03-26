@@ -22,8 +22,8 @@ describe('rpcErrors', () => {
     expect(isRpcMethodNotAvailableError({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, message: 'anything' })).toBe(true);
   });
 
-  it('detects RPC method unavailable by legacy message (exact/prefix match)', () => {
-    expect(isRpcMethodNotAvailableError({ message: 'RPC method not available' })).toBe(true);
+  it('does not detect RPC method unavailable by legacy message', () => {
+    expect(isRpcMethodNotAvailableError({ message: 'RPC method not available' })).toBe(false);
     expect(isRpcMethodNotAvailableError({ message: 'rpc METHOD NOT available ' })).toBe(false);
   });
 
@@ -31,8 +31,8 @@ describe('rpcErrors', () => {
     expect(isRpcMethodNotFoundError({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, message: 'anything' })).toBe(true);
   });
 
-  it('detects RPC method not found by legacy message (exact/prefix match)', () => {
-    expect(isRpcMethodNotFoundError({ message: 'Method not found' })).toBe(true);
+  it('does not detect RPC method not found by legacy message', () => {
+    expect(isRpcMethodNotFoundError({ message: 'Method not found' })).toBe(false);
     expect(isRpcMethodNotFoundError({ message: 'rpc method not found ' })).toBe(false);
   });
 });

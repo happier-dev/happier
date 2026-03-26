@@ -44,6 +44,18 @@ describe('decideMessageCatchUpPolicy', () => {
         })).toEqual({ kind: 'do_nothing' });
     });
 
+    it('forces a bounded incremental catch-up after reconnect even when the seq hint did not advance', () => {
+        expect(decideMessageCatchUpPolicy({
+            isForeground: true,
+            isSessionVisible: true,
+            isPinned: true,
+            materializedMaxSeq: 20,
+            sessionSeqHint: 20,
+            offlineForMs: 2500,
+            thresholds,
+        })).toEqual({ kind: 'incremental_batched', maxPages: 1 });
+    });
+
     it('returns tail_reset_latest_page when pinned and gap is large', () => {
         expect(decideMessageCatchUpPolicy({
             isForeground: true,

@@ -24,6 +24,10 @@ export function createConcurrentServerSocketTransport(params: Readonly<{
             clientPurpose: 'concurrent-server-cache' as const,
         },
         ...(transports ? { transports } : null),
+        // Avoid the socket.io global Manager cache. This transport is frequently created/destroyed as
+        // servers enter/exit the concurrent session cache, and cached Managers can retain listeners.
+        forceNew: true,
+        multiplex: false,
         reconnection: false,
         autoConnect: false,
     });
@@ -66,7 +70,17 @@ export function createConcurrentServerSocketTransport(params: Readonly<{
                 socket.disconnect();
             },
             async destroy() {
+                intentionalDisconnect = false;
+                connectedListeners.clear();
+                disconnectedListeners.clear();
+                errorListeners.clear();
+                socket.offAny?.();
                 socket.removeAllListeners();
+                try {
+                    socket.disconnect();
+                } catch {
+                    // ignore
+                }
             },
             isConnected() {
                 return socket.connected;

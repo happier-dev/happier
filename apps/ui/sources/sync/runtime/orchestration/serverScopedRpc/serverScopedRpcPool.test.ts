@@ -237,4 +237,32 @@ describe('resolveScopedMachineDataKey', () => {
 
         expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(3);
     });
+
+    it('does not attempt the machine list request when reachability probes fail (offline)', async () => {
+        const fetchSpy = vi.fn(async (url: string) => {
+            const href = String(url ?? '');
+            if (href.endsWith('/health') || href.endsWith('/v1/auth/ping')) {
+                throw new TypeError('Network request failed');
+            }
+            if (href.includes('/v1/machines')) {
+                throw new Error('unexpected machine list request');
+            }
+            throw new Error(`unexpected fetch url: ${href}`);
+        });
+        vi.stubGlobal('fetch', fetchSpy);
+
+        const decryptSpy = vi.fn(async () => new Uint8Array([1]));
+
+        await expect(resolveScopedMachineDataKey({
+            serverId: 'server-b',
+            serverUrl: 'https://server-b.example.test',
+            token: 'token-b',
+            machineId: 'machine-1',
+            decryptEncryptionKey: decryptSpy,
+            timeoutMs: 50,
+        })).resolves.toBeNull();
+
+        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(0);
+        expect(decryptSpy).not.toHaveBeenCalled();
+    });
 });

@@ -54,7 +54,7 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
         requestPath ? `${basePath}/${requestPath}` : basePath,
 }));
 
-import { createSessionMachineRpcFallbackCaller } from './sessionMachineRpcFallback';
+import { callSessionMachineRpcWithFallback, createSessionMachineRpcFallbackCaller } from './sessionMachineRpcFallback';
 
 function createServerFeatures(partial?: Readonly<{
     features?: unknown;
@@ -94,6 +94,121 @@ afterEach(() => {
 });
 
 describe('sessionMachineRpcFallback', () => {
+    it('propagates timeoutMs when using the callSessionMachineRpcWithFallback wrapper', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(createServerFeatures());
+
+        machineRPC.mockResolvedValue({ success: true, value: 'direct' });
+
+        const result = await (
+            callSessionMachineRpcWithFallback as unknown as (params: any) => Promise<unknown>
+        )({
+            sessionId: 'session-1',
+            request: { path: 'hello.txt' },
+            machineMethod: RPC_METHODS.STAT_FILE,
+            sessionMethod: RPC_METHODS.STAT_FILE,
+            resolveFallbackRoute: async () => ({
+                kind: 'selected',
+                route: {
+                    kind: 'server_routed_stream',
+                    serverId: 'server-owned',
+                },
+            }),
+            timeoutMs: 1234,
+        });
+
+        expect(result).toEqual({ success: true, value: 'direct' });
+        expect(machineRPC).toHaveBeenCalledWith(
+            'machine-1',
+            RPC_METHODS.STAT_FILE,
+            { path: 'hello.txt' },
+            { timeoutMs: 1234 },
+        );
+    });
+
+    it('propagates timeoutMs to direct machine RPC calls', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(createServerFeatures());
+
+        machineRPC.mockResolvedValue({ success: true, value: 'direct' });
+
+        const caller = createSessionMachineRpcFallbackCaller({
+            sessionId: 'session-1',
+            resolveFallbackRoute: async () => ({
+                kind: 'selected',
+                route: {
+                    kind: 'server_routed_stream',
+                    serverId: 'server-owned',
+                },
+            }),
+            reuseResolvedRoute: false,
+        });
+
+        await expect(caller.call({
+            request: { path: 'hello.txt' },
+            machineMethod: RPC_METHODS.STAT_FILE,
+            sessionMethod: RPC_METHODS.STAT_FILE,
+            timeoutMs: 1234,
+        })).resolves.toEqual({ success: true, value: 'direct' });
+
+        expect(machineRPC).toHaveBeenCalledWith(
+            'machine-1',
+            RPC_METHODS.STAT_FILE,
+            { path: 'hello.txt' },
+            { timeoutMs: 1234 },
+        );
+    });
+
+    it('propagates timeoutMs to server-scoped fallbacks for guarded methods', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(createServerFeatures({
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: false,
+                        serverRouted: {
+                            enabled: true,
+                        },
+                    },
+                },
+            },
+        }));
+
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, value: 'relayed' });
+
+        const caller = createSessionMachineRpcFallbackCaller({
+            sessionId: 'session-1',
+            resolveFallbackRoute: async () => ({
+                kind: 'selected',
+                route: {
+                    kind: 'server_routed_stream',
+                    serverId: 'server-owned',
+                },
+            }),
+            reuseResolvedRoute: false,
+        });
+
+        await expect(caller.call({
+            request: { path: 'hello.txt' },
+            machineMethod: RPC_METHODS.LIST_DIRECTORY,
+            sessionMethod: RPC_METHODS.LIST_DIRECTORY,
+            timeoutMs: 4321,
+        })).resolves.toEqual({ success: true, value: 'relayed' });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            serverId: 'server-owned',
+            method: RPC_METHODS.LIST_DIRECTORY,
+            payload: { path: 'hello.txt' },
+            preferScoped: true,
+            timeoutMs: 4321,
+        });
+    });
+
     it('does not attempt direct machine RPC for guarded file-system methods when shared policy disables machine transfer', async () => {
         readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
         resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');

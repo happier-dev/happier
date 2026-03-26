@@ -20,6 +20,7 @@ import {
 import {
     reportServerUnreachable,
     startServerReachabilitySupervisor,
+    stopServerReachabilitySupervisor,
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
@@ -354,6 +355,7 @@ function stopManagedServer(serverId: string): void {
     }
     entry.reachabilityUnsubscribe?.();
     entry.reachabilityUnsubscribe = null;
+    void stopServerReachabilitySupervisor(entry.serverUrl);
     entry.socket = null;
     for (const detach of entry.detachSocketTransportListeners.splice(0)) {
         detach();
