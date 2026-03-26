@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   readAuthFeatureEnv,
+  readChannelBridgesFeatureEnv,
   readConnectedServicesFeatureEnv,
   readMachineTransferFeatureEnv,
   readSessionHandoffFeatureEnv,
@@ -13,6 +14,20 @@ describe('readConnectedServicesFeatureEnv', () => {
     const env: NodeJS.ProcessEnv = {};
     const res = readConnectedServicesFeatureEnv(env);
     expect(res.quotasEnabled).toBe(true);
+  });
+});
+
+describe('readChannelBridgesFeatureEnv', () => {
+  it('defaults enabled to true when env is unset', () => {
+    const env: NodeJS.ProcessEnv = {};
+    const res = readChannelBridgesFeatureEnv(env);
+    expect(res.enabled).toBe(true);
+  });
+
+  it('defaults telegramEnabled to true when env is unset', () => {
+    const env: NodeJS.ProcessEnv = {};
+    const res = readChannelBridgesFeatureEnv(env);
+    expect(res.telegramEnabled).toBe(true);
   });
 });
 
