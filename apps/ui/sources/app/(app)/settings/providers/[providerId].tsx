@@ -315,6 +315,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         allowedModes: core.model.allowedModes,
         staticModels: getAgentStaticModels(core.id),
     });
+    const defaultModelLabel = catalogModelList[0] ?? core.model.defaultMode;
     const catalogModelListText = catalogModelList.length > 0
         ? catalogModelList.join(', ')
         : t('settingsProviders.catalogModelListEmpty');
@@ -968,7 +969,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                     />
                     <Item
                         title={t('settingsProviders.defaultModelTitle')}
-                        subtitle={core.model.defaultMode}
+                        subtitle={defaultModelLabel}
                         icon={<Ionicons name="star-outline" size={29} color={theme.colors.textSecondary} />}
                         mode="info"
                     />

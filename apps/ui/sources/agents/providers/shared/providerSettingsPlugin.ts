@@ -1,7 +1,7 @@
 import type React from 'react';
 import type { SettingDefinitionMap } from '@happier-dev/protocol';
 
-import type { AgentId } from '@/agents/catalog/catalog';
+import type { AgentId } from '@/agents/registry/registryCore';
 import type { TranslationKeyNoParams } from '@/text';
 
 export type TranslationRef = Readonly<{ key: TranslationKeyNoParams }>;

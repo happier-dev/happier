@@ -444,7 +444,24 @@ export function useServerSettingsScreenController(): ServerSettingsController {
                 setServerSelectionActiveTargetId(activeServerIdValue || null);
                 return;
             }
-            const nextGroupId = activeMultiServerProfileId ?? normalizedGroupProfiles[0]?.id ?? null;
+            const nextGroupId = (() => {
+                if (activeMultiServerProfileId) return activeMultiServerProfileId;
+                if (activeServerIdValue) {
+                    const candidates = normalizedGroupProfiles.filter((profile) => profile.serverIds.includes(activeServerIdValue));
+                    if (candidates.length > 0) {
+                        const multiServerCandidates = candidates.filter((profile) => profile.serverIds.length > 1);
+                        const pool = multiServerCandidates.length > 0 ? multiServerCandidates : candidates;
+                        let best = pool[0]!;
+                        for (const candidate of pool.slice(1)) {
+                            if (candidate.serverIds.length > best.serverIds.length) {
+                                best = candidate;
+                            }
+                        }
+                        return best.id;
+                    }
+                }
+                return normalizedGroupProfiles[0]?.id ?? null;
+            })();
             if (!nextGroupId) return;
             setServerSelectionActiveTargetKind('group');
             setServerSelectionActiveTargetId(nextGroupId);

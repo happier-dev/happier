@@ -173,6 +173,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
     return (
         <ItemGroup title={t('server.addTargetsTitle')}>
             <Item
+                testID="server-settings-add-server-toggle"
                 title={t('server.addServerTitle')}
                 subtitle={t('server.addServerSubtitle')}
                 icon={<Ionicons name="server-outline" size={20} color={theme.colors.textSecondary} />}
@@ -201,6 +202,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
 
                     <Text style={styles.labelText}>{t('server.customServerUrlLabel').toUpperCase()}</Text>
                     <TextInput
+                        testID="server-settings-add-url-input"
                         style={[
                             styles.textInput,
                             props.isValidating && styles.textInputValidating,
@@ -219,6 +221,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                         <>
                             <Text style={styles.labelText}>{t('server.serverNameLabel').toUpperCase()}</Text>
                             <TextInput
+                                testID="server-settings-add-name-input"
                                 style={[
                                     styles.textInput,
                                     props.isValidating && styles.textInputValidating,
@@ -247,6 +250,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                     <View style={styles.buttonRow}>
                         <View style={styles.buttonWrapper}>
                             <RoundButton
+                                testID="server-settings-add-reset"
                                 title={t('server.resetToDefault')}
                                 size="normal"
                                 display="inverted"
@@ -255,6 +259,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                         </View>
                         <View style={styles.buttonWrapper}>
                             <RoundButton
+                                testID="server-settings-add-confirm"
                                 title={props.isValidating
                                     ? t('server.validating')
                                     : props.autoMode

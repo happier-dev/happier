@@ -257,10 +257,36 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     const actual: any = await importOriginal();
-    return {
-        ...actual,
-        isAgentId: (v: any) => v === 'codex' || v === 'customAcp' || v === 'opencode',
-        getAgentCore: (agentId: string) => ({
+    const createMockAgentCore = (agentId: string) => {
+        if (agentId === 'claude') {
+            return {
+                id: agentId,
+                displayNameKey: 'Claude',
+                subtitleKey: 'subtitle',
+                availability: { experimental: false },
+                resume: { supportsVendorResume: false, experimental: false },
+                sessionModes: { kind: 'none' },
+                model: {
+                    supportsSelection: true,
+                    supportsFreeform: true,
+                    defaultMode: 'claude-sonnet-4-6',
+                    allowedModes: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+                    dynamicProbe: 'static-only',
+                    nonAcpApplyScope: 'spawn_only',
+                    acpApplyBehavior: 'set_model',
+                    acpModelConfigOptionId: null,
+                },
+                cli: {
+                    detectKey: agentId,
+                    installBanner: { installKind: 'installer', installCommand: null, guideUrl: null },
+                },
+                connectedService: { name: 'cloud' },
+                localControl: { supported: false },
+                ui: { agentPickerIconName: 'code-slash' },
+            };
+        }
+
+        return {
             id: agentId,
             displayNameKey:
                 agentId === 'customAcp'
@@ -289,7 +315,12 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
             connectedService: { name: agentId === 'customAcp' ? 'Custom ACP' : 'cloud' },
             localControl: { supported: false },
             ui: { agentPickerIconName: agentId === 'customAcp' ? 'git-network-outline' : 'code-slash' },
-        }),
+        };
+    };
+    return {
+        ...actual,
+        isAgentId: (v: any) => v === 'codex' || v === 'customAcp' || v === 'opencode' || v === 'claude',
+        getAgentCore: (agentId: string) => createMockAgentCore(agentId),
     };
 });
 
@@ -574,6 +605,16 @@ describe('ProviderSettingsScreen', () => {
         const items = screen.findAllByType('Item' as any);
         const permissionItem = items.find((item: any) => item?.props?.title === 'settingsSession.permissions.defaultPermissionModeTitle');
         expect(permissionItem).toBeTruthy();
+    });
+
+    it('shows the provider default model as a friendly model name instead of a raw model id', async () => {
+        mockProviderId = 'claude';
+
+        const screen = await renderProviderSettingsScreen();
+        const items = screen.findAllByType('Item' as any);
+        const defaultModelItem = items.find((item: any) => item?.props?.title === 'settingsProviders.defaultModelTitle');
+
+        expect(defaultModelItem?.props?.subtitle).toBe('Sonnet 4.6');
     });
 
     it('renders an authentication section when local CLI auth details are available', async () => {

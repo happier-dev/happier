@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AgentId } from '@/agents/catalog/catalog';
+import type { AgentId } from '@/agents/registry/registryCore';
 
 import type { ProviderSettingsPlugin } from '../shared/providerSettingsPlugin';
 import { buildProviderSettingArtifactEntries } from './buildProviderSettingArtifactEntries';
