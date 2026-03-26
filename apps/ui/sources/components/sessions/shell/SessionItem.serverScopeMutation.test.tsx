@@ -57,6 +57,8 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
 
 const stopSpy = vi.fn(async () => ({ success: true }));
 const archiveSpy = vi.fn(async () => ({ success: true, archivedAt: 1 }));
+const modalConfirmSpy = vi.fn(async () => true);
+let hideInactiveSessions = false;
 
 vi.mock('@/sync/ops', () => ({
     sessionStopWithServerScope: stopSpy,
@@ -81,18 +83,37 @@ installSessionShellCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
+            confirmResult: true,
             spies: {
                 alert: modalAlertSpy,
+                confirm: modalConfirmSpy,
             },
         }).module;
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useHasUnreadMessages: () => false,
-            useProfile: () => ({ id: 'u1' }),
-            useSession: () => null,
-            useSessionListMeaningfulActivityAt: () => null,
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useHasUnreadMessages: () => false,
+                useProfile: () => ({
+                    id: 'u1',
+                    timestamp: 0,
+                    firstName: null,
+                    lastName: null,
+                    username: null,
+                    avatar: null,
+                    linkedProviders: [],
+                    connectedServices: [],
+                    connectedServicesV2: [],
+                }),
+                useSession: () => null,
+                useSessionListMeaningfulActivityAt: () => null,
+                useSetting: (key: string) => {
+                    if (key === 'hideInactiveSessions') return hideInactiveSessions;
+                    return false;
+                },
+            },
         });
     },
 });
@@ -100,6 +121,7 @@ installSessionShellCommonModuleMocks({
 describe('SessionItem server-scoped mutations', () => {
     afterEach(() => {
         standardCleanup();
+        hideInactiveSessions = false;
     });
 
     it('stops active sessions using server scope when serverId is provided', async () => {
@@ -164,6 +186,7 @@ describe('SessionItem server-scoped mutations', () => {
         archiveSpy.mockClear();
         stopSpy.mockClear();
         modalAlertSpy.mockClear();
+        modalConfirmSpy.mockClear();
 
         const { SessionItem } = await import('./SessionItem');
 
@@ -216,5 +239,128 @@ describe('SessionItem server-scoped mutations', () => {
 
         expect(archiveSpy).toHaveBeenCalledWith('sess_2', { serverId: 'server_b' });
         expect(stopSpy).not.toHaveBeenCalled();
+    });
+
+    it('offers to archive a stopped unpinned session when hidden inactive sessions are enabled', async () => {
+        hideInactiveSessions = true;
+        archiveSpy.mockClear();
+        stopSpy.mockClear();
+        modalAlertSpy.mockClear();
+        modalConfirmSpy.mockClear();
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = {
+            id: 'sess_3',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_c"
+                serverName="Server C"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const swipeable = screen.find((node: any) => typeof node.props?.renderRightActions === 'function');
+        const rightActions = swipeable.props.renderRightActions();
+        const rightActionsScreen = await renderScreen(rightActions);
+        await act(async () => {
+            await pressTestInstanceAsync(
+                rightActionsScreen.find((node: any) => node.type === 'Pressable'),
+                'session swipe action',
+            );
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+        const actions = modalAlertSpy.mock.calls[0][2];
+        await act(async () => {
+            await actions[1].onPress();
+        });
+
+        expect(stopSpy).toHaveBeenCalledWith('sess_3', { serverId: 'server_c' });
+        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
+        expect(archiveSpy).toHaveBeenCalledWith('sess_3', { serverId: 'server_c' });
+    });
+
+    it('does not prompt to archive a stopped pinned session when hidden inactive sessions are enabled', async () => {
+        hideInactiveSessions = true;
+        archiveSpy.mockClear();
+        stopSpy.mockClear();
+        modalAlertSpy.mockClear();
+        modalConfirmSpy.mockClear();
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = {
+            id: 'sess_4',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_d"
+                serverName="Server D"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                pinned={true}
+            />,
+        );
+
+        const swipeable = screen.find((node: any) => typeof node.props?.renderRightActions === 'function');
+        const rightActions = swipeable.props.renderRightActions();
+        const rightActionsScreen = await renderScreen(rightActions);
+        await act(async () => {
+            await pressTestInstanceAsync(
+                rightActionsScreen.find((node: any) => node.type === 'Pressable'),
+                'session swipe action',
+            );
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+        const actions = modalAlertSpy.mock.calls[0][2];
+        await act(async () => {
+            await actions[1].onPress();
+        });
+
+        expect(stopSpy).toHaveBeenCalledWith('sess_4', { serverId: 'server_d' });
+        expect(modalConfirmSpy).not.toHaveBeenCalled();
+        expect(archiveSpy).not.toHaveBeenCalled();
     });
 });

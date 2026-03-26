@@ -281,15 +281,6 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     shouldShowAbortButtonForSessionState: () => false,
     useSessionStatus: () => 'online',
 }));
-vi.mock('@/utils/sessions/deriveTranscriptInteraction', () => ({
-    deriveTranscriptInteraction: () => ({
-        canApprovePermissions: false,
-        permissionDisabledReason: null,
-        canAbort: false,
-        canResume: false,
-        resumeDisabledReason: null,
-    }),
-}));
 vi.mock('@/utils/system/versionUtils', () => ({
     isVersionSupported: () => true,
     MINIMUM_CLI_VERSION: '0.0.0',

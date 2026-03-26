@@ -7,6 +7,7 @@ import { AttachmentFilePicker } from '@/components/sessions/attachments/Attachme
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { AttachmentFilePickerHandle, PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
 import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
+import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
 import { useSessionAgentInputExtraActionChips } from '@/components/sessions/agentInput/sessionActions/useSessionAgentInputExtraActionChips';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
@@ -209,7 +210,7 @@ export const SessionView = React.memo((props: {
 
     // Compute header props based on session state
     const headerProps = useMemo(() => {
-        if (!isDataReady) {
+        if (!isDataReady && !session) {
             // Loading state - show empty header
             return {
                 title: '',
@@ -432,7 +433,7 @@ export const SessionView = React.memo((props: {
 
             {/* Content based on state */}
             <View style={{ flex: 1, paddingTop: showTopHeader ? safeArea.top + headerHeight : 0 }}>
-                {!isDataReady ? (
+                {!isDataReady && !session ? (
                     // Loading state
                     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                         <ActivityIndicator size="small" color={theme.colors.textSecondary} />
@@ -629,7 +630,9 @@ function SessionViewLoaded({
     const settings = useSettings();
     const voiceEnabled = useFeatureEnabled('voice');
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
-    const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
+    const attachmentsUploadsFeatureEnabled = useFeatureEnabled('attachments.uploads');
+    const attachmentsUploadsTransferAvailable = useSessionFileUploadAvailability(sessionId);
+    const attachmentsUploadsEnabled = attachmentsUploadsFeatureEnabled && attachmentsUploadsTransferAvailable;
     const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
     const hasReviewCommentDrafts = reviewCommentsEnabled && reviewCommentDrafts.length > 0;
 

@@ -78,7 +78,17 @@ installSessionShellCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useHasUnreadMessages: () => false,
-            useProfile: () => ({ id: 'u1' }),
+            useProfile: () => ({
+                id: 'u1',
+                timestamp: 0,
+                firstName: null,
+                lastName: null,
+                username: null,
+                avatar: null,
+                linkedProviders: [],
+                connectedServices: [],
+                connectedServicesV2: [],
+            }),
             useSession: () => null,
             useSessionListRenderable: () => null,
             useSessionListMeaningfulActivityAt: () => null,

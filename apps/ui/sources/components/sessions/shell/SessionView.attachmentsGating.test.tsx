@@ -25,6 +25,8 @@ const sessionState = vi.hoisted(() => ({
   } as any,
 }));
 
+const attachmentsTransferAvailableState = vi.hoisted(() => ({ value: true }));
+
 installSessionShellCommonModuleMocks({
   reactNative: async () =>
     createReactNativeWebMock({
@@ -183,6 +185,10 @@ vi.mock('@/components/voice/surface/VoiceSurface', () => ({
 }));
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
   AttachmentFilePicker: () => null,
+}));
+
+vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
+  useSessionFileUploadAvailability: () => attachmentsTransferAvailableState.value,
 }));
 
 const featureEnabledState: Record<string, boolean> = {
@@ -345,6 +351,20 @@ const { SessionView } = await import('./SessionView');
 describe('SessionView attachments gating', () => {
   it('does not wire drag/drop/paste attachments when attachments.uploads is disabled', async () => {
     featureEnabledState['attachments.uploads'] = false;
+    attachmentsTransferAvailableState.value = true;
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>)).tree;
+
+    const agentInput = tree.findByType('AgentInput' as any);
+    expect(agentInput.props.onAttachmentsAdded).toBeUndefined();
+  });
+
+  it('fails closed when attachments.uploads is enabled but session file upload availability is false', async () => {
+    featureEnabledState['attachments.uploads'] = true;
+    attachmentsTransferAvailableState.value = false;
 
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<AppPaneProvider>

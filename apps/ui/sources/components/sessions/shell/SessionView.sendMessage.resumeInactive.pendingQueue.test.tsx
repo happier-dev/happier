@@ -7,8 +7,8 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { findTestInstanceByTypeWithProps } from '@/dev/testkit/render/renderScreen';
 import type { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import type { ResumeSessionResult } from '@/sync/ops/sessions';
-import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
-import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import type { Settings } from '@/sync/domains/settings/settings';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
@@ -174,7 +174,7 @@ installSessionShellCommonModuleMocks({
         return modalMock.module;
     },
     storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         const session: any = {
             id: 's1',
             seq: 0,
@@ -193,75 +193,75 @@ installSessionShellCommonModuleMocks({
             agentState: {},
         };
 
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                storage: {
-                    getState: () => ({
-                        sessions: { s1: session },
-                        machines: {
-                            'm-target': {
-                                id: 'm-target',
-                                active: true,
-                                activeAt: 10,
-                                metadata: { host: 'workstation.local' },
-                            },
+        const localSettingsFixture: Partial<LocalSettings> = {
+            acknowledgedCliVersions: {},
+            uiMultiPanePanelsEnabled: false,
+            detailsPaneTabsBehavior: 'preview',
+            rightPaneWidthPx: 360,
+            rightPaneWidthBasisPx: 1200,
+            detailsPaneWidthPx: 520,
+            detailsPaneWidthBasisPx: 1200,
+        };
+
+        const settingsFixture: Partial<Settings> = {
+            experiments: true,
+            featureToggles: {},
+            codexBackendMode: 'acp',
+            sessionMessageSendMode: 'server_pending',
+            sessionBusySteerSendPolicy: 'steer_immediately',
+        };
+
+        return createStorageModuleStub({
+            storage: {
+                getState: () => ({
+                    sessions: { s1: session },
+                    machines: {
+                        'm-target': {
+                            id: 'm-target',
+                            active: true,
+                            activeAt: 10,
+                            metadata: { host: 'workstation.local' },
                         },
-                        getProjectForSession: (sessionId: string) =>
-                            sessionId === 's1'
-                                ? {
-                                      key: {
-                                          machineId: 'm-target',
-                                          path: '/tmp/target',
-                                      },
-                                  }
-                                : null,
-                        settings: {
-                            sessionMessageSendMode: 'direct',
-                            sessionBusySteerSendPolicy: 'steerImmediately',
-                            codexBackendMode: 'acp',
-                        },
-                        sessionListViewDataByServerId: {},
-                    }),
-                } as any,
-                useSession: () => session,
-                useIsDataReady: () => true,
-                useRealtimeStatus: () => 'connected',
-                useSessionMessages: () => ({ messages: [], isLoaded: true }),
-                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-                useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
-                useSessionReviewCommentsDrafts: () => [],
-                useSessionUsage: () => null,
-                useLocalSetting: <K extends keyof LocalSettings>(key: K) => {
-                    const overrides: Partial<LocalSettings> = {
-                        acknowledgedCliVersions: {},
-                        uiMultiPanePanelsEnabled: false,
-                        detailsPaneTabsBehavior: 'preview',
-                        rightPaneWidthPx: 360,
-                        rightPaneWidthBasisPx: 1200,
-                        detailsPaneWidthPx: 520,
-                        detailsPaneWidthBasisPx: 1200,
-                    };
-                    return (overrides[key] ?? localSettingsDefaults[key]) as LocalSettings[K];
-                },
-                useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [
-                    (({
-                        acknowledgedCliVersions: {},
-                        uiMultiPanePanelsEnabled: false,
-                        detailsPaneTabsBehavior: 'preview',
-                        rightPaneWidthPx: 360,
-                        rightPaneWidthBasisPx: 1200,
-                        detailsPaneWidthPx: 520,
-                        detailsPaneWidthBasisPx: 1200,
-                    } as Partial<LocalSettings>)[key] ?? localSettingsDefaults[key]) as LocalSettings[K],
-                    vi.fn<(value: LocalSettings[K]) => void>(),
-                ],
-                useSetting: <K extends keyof Settings>(key: K) =>
-                    ((settingsState.current[key as string] as Settings[K] | undefined) ?? settingsDefaults[key]) as Settings[K],
-                useSettings: () => ({ ...settingsDefaults, ...settingsState.current, experiments: true, featureToggles: {}, codexBackendMode: 'acp' }),
-                useAutomations: () => [],
-                useMachine: () => null,
-            },
+                    },
+                    getProjectForSession: (sessionId: string) =>
+                        sessionId === 's1'
+                            ? {
+                                  key: {
+                                      machineId: 'm-target',
+                                      path: '/tmp/target',
+                                  },
+                              }
+                            : null,
+                    settings: {
+                        ...settingsFixture,
+                        ...settingsState.current,
+                        experiments: true,
+                        featureToggles: {},
+                        codexBackendMode: 'acp',
+                    },
+                    sessionListViewDataByServerId: {},
+                }),
+            } as any,
+            useSession: () => session,
+            useIsDataReady: () => true,
+            useRealtimeStatus: () => 'connected',
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+            useSessionReviewCommentsDrafts: () => [],
+            useSessionUsage: () => null,
+            useLocalSetting: (key: keyof LocalSettings) => (localSettingsFixture as any)[key],
+            useLocalSettingMutable: (key: keyof LocalSettings) => [(localSettingsFixture as any)[key], vi.fn()],
+            useSetting: (key: keyof Settings) => ((settingsState.current as any)[key] ?? (settingsFixture as any)[key]),
+            useSettings: () => ({
+                ...settingsFixture,
+                ...settingsState.current,
+                experiments: true,
+                featureToggles: {},
+                codexBackendMode: 'acp',
+            }) as any,
+            useAutomations: () => [],
+            useMachine: () => null,
         });
     },
 });

@@ -94,6 +94,10 @@ vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
     AttachmentFilePicker: () => null,
 }));
 
+vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
+    useSessionFileUploadAvailability: () => true,
+}));
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'attachments.uploads',
 }));

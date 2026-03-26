@@ -15,7 +15,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sessionArchiveWithServerScope, sessionRename, sessionStopWithServerScope } from '@/sync/ops';
-import { useHasUnreadMessages, useSessionListMeaningfulActivityAt, useSessionListRenderable } from '@/sync/domains/state/storage';
+import { useHasUnreadMessages, useSessionListMeaningfulActivityAt, useSessionListRenderable, useSetting } from '@/sync/domains/state/storage';
 import type { SessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -31,6 +31,7 @@ import {
     SESSION_LIST_ROW_HEIGHT_DEFAULT,
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
 } from './sessionListRowHeights';
+import { stopSessionAndMaybeArchive } from '../sessionStopArchiveFlow';
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
@@ -451,6 +452,7 @@ export const SessionItem = React.memo(
         const canStopSession = isOwnedByCurrentUser;
         const canArchiveSession = hasAdminAccess && !isActiveSession;
         const canRenameSession = hasAdminAccess;
+        const hideInactiveSessions = useSetting('hideInactiveSessions');
         const swipeEnabled = Platform.OS !== 'web' && (isActiveSession ? canStopSession : canArchiveSession);
         const [isRowHovered, setIsRowHovered] = React.useState(false);
         const [isActionsHovered, setIsActionsHovered] = React.useState(false);
@@ -529,14 +531,21 @@ export const SessionItem = React.memo(
         }, [onSetTags, activeTags]);
 
         const [mutatingSession, performMutation] = useHappyAction(async () => {
-            const result = isActiveSession
-                ? await sessionStopWithServerScope(resolvedSession.id, { serverId: serverId ?? null })
-                : await sessionArchiveWithServerScope(resolvedSession.id, { serverId: serverId ?? null });
+            if (isActiveSession) {
+                await stopSessionAndMaybeArchive({
+                    hideInactiveSessions: Boolean(hideInactiveSessions),
+                    isPinned: Boolean(pinned),
+                    stopSession: async () => await sessionStopWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
+                    archiveSession: async () => await sessionArchiveWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
+                    stopErrorMessage: t('sessionInfo.failedToStopSession'),
+                    archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
+                });
+                return;
+            }
+
+            const result = await sessionArchiveWithServerScope(resolvedSession.id, { serverId: serverId ?? null });
             if (!result.success) {
-                throw new HappyError(
-                    result.message || (isActiveSession ? t('sessionInfo.failedToStopSession') : t('sessionInfo.failedToArchiveSession')),
-                    false
-                );
+                throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
             }
         });
 
