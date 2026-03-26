@@ -260,6 +260,7 @@ function RenderTableBlock(props: {
            */}
           {Platform.OS === 'web' ? (
               <ScrollView
+                  testID="markdown-table-scroll"
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   nestedScrollEnabled={true}
@@ -269,6 +270,7 @@ function RenderTableBlock(props: {
               </ScrollView>
           ) : (
               <GestureHandlerScrollView
+                  testID="markdown-table-scroll"
                   horizontal
                   showsHorizontalScrollIndicator={true}
                   nestedScrollEnabled={true}

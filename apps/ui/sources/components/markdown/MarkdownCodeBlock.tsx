@@ -80,6 +80,7 @@ export const MarkdownCodeBlock = React.memo((props: Readonly<{
                 selectable={props.selectable}
                 wrap={false}
                 showCopyButton={true}
+                scrollTestID="markdown-code-block-scroll"
             />
         );
     }
@@ -92,6 +93,7 @@ export const MarkdownCodeBlock = React.memo((props: Readonly<{
                 selectable={props.selectable}
                 wrap={false}
                 showCopyButton={true}
+                scrollTestID="markdown-code-block-scroll"
             />
         );
     }
@@ -139,6 +141,7 @@ export const MarkdownCodeBlock = React.memo((props: Readonly<{
                     selectable={props.selectable}
                     wrap={false}
                     showCopyButton={true}
+                    scrollTestID="markdown-code-block-scroll"
                 />
             )}
         </View>
