@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { FeaturesResponse } from '@happier-dev/protocol';
@@ -11,6 +11,9 @@ const {
     readMachineTargetForSessionMock,
     canUseSessionRpcMock,
     shouldFallbackToSessionRpcMock,
+    readCachedMachineRpcDirectRouteMock,
+    recordCachedMachineRpcDirectRouteUnavailableMock,
+    recordCachedMachineRpcDirectRouteViableMock,
 } = vi.hoisted(() => ({
     machineRPC: vi.fn(),
     sessionRpcWithServerScopeMock: vi.fn(),
@@ -19,6 +22,9 @@ const {
     readMachineTargetForSessionMock: vi.fn(),
     canUseSessionRpcMock: vi.fn(),
     shouldFallbackToSessionRpcMock: vi.fn(),
+    readCachedMachineRpcDirectRouteMock: vi.fn(),
+    recordCachedMachineRpcDirectRouteUnavailableMock: vi.fn(),
+    recordCachedMachineRpcDirectRouteViableMock: vi.fn(),
 }));
 
 vi.mock('@/sync/api/session/apiSocket', () => ({
@@ -44,6 +50,13 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     canUseSessionRpc: (sessionId: string) => canUseSessionRpcMock(sessionId),
     shouldFallbackToSessionRpc: (sessionId: string, error: unknown) =>
         shouldFallbackToSessionRpcMock(sessionId, error),
+}));
+
+vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
+    readCachedMachineRpcDirectRoute: (input: unknown) => readCachedMachineRpcDirectRouteMock(input),
+    recordCachedMachineRpcDirectRouteUnavailable: (input: unknown, reason: string) =>
+        recordCachedMachineRpcDirectRouteUnavailableMock(input, reason),
+    recordCachedMachineRpcDirectRouteViable: (input: unknown) => recordCachedMachineRpcDirectRouteViableMock(input),
 }));
 
 import { createSessionFileTransferRpcCaller, INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from './sessionFileTransferRpcCaller';
@@ -79,12 +92,25 @@ afterEach(() => {
     readMachineTargetForSessionMock.mockReset();
     canUseSessionRpcMock.mockReset();
     shouldFallbackToSessionRpcMock.mockReset();
+    readCachedMachineRpcDirectRouteMock.mockReset();
+    recordCachedMachineRpcDirectRouteUnavailableMock.mockReset();
+    recordCachedMachineRpcDirectRouteViableMock.mockReset();
 
     canUseSessionRpcMock.mockReturnValue(true);
     shouldFallbackToSessionRpcMock.mockImplementation(
         (_sessionId: string, error: unknown) =>
             (error as { rpcErrorCode?: string } | null)?.rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
     );
+    readCachedMachineRpcDirectRouteMock.mockReturnValue({ status: 'unknown' });
+});
+
+beforeEach(() => {
+    canUseSessionRpcMock.mockReturnValue(true);
+    shouldFallbackToSessionRpcMock.mockImplementation(
+        (_sessionId: string, error: unknown) =>
+            (error as { rpcErrorCode?: string } | null)?.rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+    );
+    readCachedMachineRpcDirectRouteMock.mockReturnValue({ status: 'unknown' });
 });
 
 describe('sessionFileTransferRpcCaller', () => {
@@ -190,6 +216,35 @@ describe('sessionFileTransferRpcCaller', () => {
 
         expect(getReadyServerFeaturesMock).toHaveBeenCalledWith({ timeoutMs: 500, serverId: 'server-owned' });
         expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it('records direct-route unavailability when the session is inactive and a direct machine rpc attempt fails (no fallback)', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        canUseSessionRpcMock.mockReturnValue(false);
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(createServerFeatures());
+        shouldFallbackToSessionRpcMock.mockReturnValue(false);
+        readCachedMachineRpcDirectRouteMock.mockReturnValue({ status: 'unknown' });
+        machineRPC.mockRejectedValue({ message: 'machine exploded', rpcErrorCode: 'machine_rpc_direct_unavailable' });
+
+        const caller = createSessionFileTransferRpcCaller({ sessionId: 'session-1' });
+
+        await expect(
+            caller.call({
+                request: { path: 'broken.txt' },
+                machineMethod: 'machine.upload',
+                sessionMethod: 'session.upload',
+            }),
+        ).resolves.toEqual({
+            success: false,
+            error: 'machine exploded',
+            errorCode: 'machine_rpc_direct_unavailable',
+        });
+
+        expect(recordCachedMachineRpcDirectRouteUnavailableMock).toHaveBeenCalledWith(
+            { serverId: 'server-owned', remoteMachineId: 'machine-1' },
+            'machine_rpc_direct_unavailable',
+        );
     });
 
     it('fails closed when no direct machine target exists and session RPC is unavailable', async () => {

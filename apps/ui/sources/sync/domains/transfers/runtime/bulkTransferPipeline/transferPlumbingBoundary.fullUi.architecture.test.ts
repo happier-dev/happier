@@ -50,11 +50,6 @@ describe('bulkTransferPipeline (architecture)', () => {
             if (filePath.includes('/bulkTransferPipeline/')) {
                 continue;
             }
-            // Allow the low-level chunk-transfer plumbing to depend on its own internals without
-            // tripping the "feature code must not import plumbing directly" guard.
-            if (filePath.includes('/sync/domains/files/transfers/')) {
-                continue;
-            }
             const source = await readFile(filePath, 'utf8');
             // Prevent bypass via relative imports, dynamic imports, or require().
             assertDoesNotImportModule(source, 'chunkTransferClient', filePath);

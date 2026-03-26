@@ -48,6 +48,64 @@ function rightPaneLocator(page: Page) {
   return page.getByTestId('multi-pane-right-docked').or(page.getByTestId('multi-pane-right-overlay'));
 }
 
+function repositoryTreePathVariants(path: string): readonly [string, string] {
+  const trimmed = path.trim();
+  if (!trimmed) return [trimmed, trimmed];
+  return trimmed.endsWith('/') ? [trimmed, trimmed.slice(0, -1)] : [trimmed, `${trimmed}/`];
+}
+
+function repositoryTreeRowLocator(scope: Locator, path: string): Locator {
+  const [primary, alternate] = repositoryTreePathVariants(path);
+  return scope
+    .getByTestId(`repository-tree-row-${toTestIdSafeValue(primary)}`)
+    .or(scope.getByTestId(`repository-tree-row-${toTestIdSafeValue(alternate)}`));
+}
+
+function repositoryTreeRowMenuLocator(scope: Locator, path: string): Locator {
+  const [primary, alternate] = repositoryTreePathVariants(path);
+  return scope
+    .getByTestId(`repository-tree-row-menu-${toTestIdSafeValue(primary)}`)
+    .or(scope.getByTestId(`repository-tree-row-menu-${toTestIdSafeValue(alternate)}`));
+}
+
+async function maybeDismissDetectedClisModal(page: Page, timeoutMs = 5_000): Promise<void> {
+  const modal = page.locator('[data-testid="detected-clis:modal"]:visible').first();
+
+  if (timeoutMs > 0) {
+    const deadlineMs = Date.now() + timeoutMs;
+    while (Date.now() < deadlineMs) {
+      if ((await modal.count()) > 0) break;
+      await page.waitForTimeout(200);
+    }
+  }
+
+  if ((await modal.count()) === 0) return;
+
+  const okButton = page.locator('[data-testid="detected-clis:ok"]:visible').first();
+  if ((await okButton.count()) > 0) {
+    await okButton.click();
+    await expect(modal).toHaveCount(0, { timeout: 60_000 });
+    return;
+  }
+
+  const closeButton = page.locator('[data-testid="detected-clis:close"]:visible').first();
+  if ((await closeButton.count()) > 0) {
+    await closeButton.click();
+    await expect(modal).toHaveCount(0, { timeout: 60_000 });
+    return;
+  }
+
+  await page.keyboard.press('Escape').catch(() => {});
+  await expect(modal).toHaveCount(0, { timeout: 60_000 });
+}
+
+async function maybeDismissAgentPickerPopover(page: Page): Promise<void> {
+  const popover = page.locator('[data-testid="agent-input-chip-picker-popover"]:visible').first();
+  if ((await popover.count()) === 0) return;
+  await page.keyboard.press('Escape').catch(() => {});
+  await expect(popover).toHaveCount(0, { timeout: 60_000 });
+}
+
 async function capturePageDiagnostics(params: Readonly<{
   page: Page;
   outputPath: string;
@@ -204,8 +262,10 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
         await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
 
         await waitForInitialAppUi({ page, browserDiagnostics });
-        await page.getByTestId('welcome-create-account').click();
-        await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+        await maybeDismissDetectedClisModal(page, 1_000).catch(() => {});
+        await maybeDismissAgentPickerPopover(page).catch(() => {});
+        await page.getByTestId('welcome-create-account').first().click();
+        await expect(page.getByTestId('session-getting-started-kind-connect_machine')).toHaveCount(1, { timeout: 120_000 });
 
       await mkdir(testDir, { recursive: true });
 
@@ -353,7 +413,7 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
       // Download renamed file.
       await rightPane.getByTestId(`repository-tree-row-menu-${toTestIdSafeValue(renamedPath)}`).click();
       const [fileDownload] = await Promise.all([
-        page.waitForEvent('download'),
+        page.waitForEvent('download', { timeout: 60_000 }),
         clickDropdownOptionByItemId(page, 'repository-tree-menuitem-download'),
       ]);
       const fileDownloadPath = await fileDownload.path();
@@ -393,10 +453,10 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
 
       // Download folder as zip.
       const folderPath = 'download-me';
-      await expect(rightPane.getByTestId(`repository-tree-row-${toTestIdSafeValue(folderPath)}`)).toHaveCount(1, { timeout: 120_000 });
-      await rightPane.getByTestId(`repository-tree-row-menu-${toTestIdSafeValue(folderPath)}`).click();
+      await expect(repositoryTreeRowLocator(rightPane, folderPath)).toHaveCount(1, { timeout: 120_000 });
+      await repositoryTreeRowMenuLocator(rightPane, folderPath).click();
       const [zipDownload] = await Promise.all([
-        page.waitForEvent('download'),
+        page.waitForEvent('download', { timeout: 120_000 }),
         clickDropdownOptionByItemId(page, 'repository-tree-menuitem-zip'),
       ]);
       expect(zipDownload.suggestedFilename()).toMatch(/\.zip$/);

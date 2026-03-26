@@ -13,6 +13,8 @@ vi.mock('./downloadBulkPayloadToFile', () => ({
     downloadBulkPayloadToFile: (...args: unknown[]) => downloadBulkPayloadToFileMock(...args),
 }));
 
+const { downloadDaemonSessionFileToBase64, downloadDaemonSessionFileToDestination } = await import('./daemonSessionFiles');
+
 describe('daemonSessionFiles download size policy', () => {
     beforeEach(() => {
         createSessionFileTransferRpcCallerMock.mockReset();
@@ -60,8 +62,6 @@ describe('daemonSessionFiles download size policy', () => {
             await params.finalize({ downloadId: 'd1' });
             return { ok: true, name: init.name, sizeBytes: init.sizeBytes };
         });
-
-        const { downloadDaemonSessionFileToDestination } = await import('./daemonSessionFiles');
 
         const result = await downloadDaemonSessionFileToDestination({
             sessionId: 's1',
@@ -122,8 +122,6 @@ describe('daemonSessionFiles download size policy', () => {
             return { ok: true, name: init.name, sizeBytes: init.sizeBytes };
         });
 
-        const { downloadDaemonSessionFileToDestination } = await import('./daemonSessionFiles');
-
         const result = await downloadDaemonSessionFileToDestination({
             sessionId: 's1',
             request: { path: 'a.txt', asZip: false },
@@ -183,8 +181,6 @@ describe('daemonSessionFiles download size policy', () => {
             return { ok: true, name: init.name, sizeBytes: init.sizeBytes };
         });
 
-        const { downloadDaemonSessionFileToBase64 } = await import('./daemonSessionFiles');
-
         const result = await downloadDaemonSessionFileToBase64({
             sessionId: 's1',
             path: 'a.txt',
@@ -215,8 +211,6 @@ describe('daemonSessionFiles download size policy', () => {
             }
             return { call: statCall };
         });
-
-        const { downloadDaemonSessionFileToBase64 } = await import('./daemonSessionFiles');
 
         const result = await downloadDaemonSessionFileToBase64({
             sessionId: 's1',

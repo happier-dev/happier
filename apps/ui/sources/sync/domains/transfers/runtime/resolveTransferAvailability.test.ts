@@ -175,6 +175,103 @@ describe('resolveTransferAvailability', () => {
         });
     });
 
+    it('selects the direct machine RPC route when machine target is available and a server feature snapshot is present', async () => {
+        const { resolveSessionFileTransferRouteAvailability } = await import('./resolveTransferAvailability');
+
+        expect(resolveSessionFileTransferRouteAvailability({
+            serverId: 'server-1',
+            machineTargetAvailable: true,
+            sessionRpcAvailable: false,
+            sessionRpcTransferSizeBytes: 128,
+            serverFeatures: createServerFeaturesResponse({
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            serverRouted: {
+                                enabled: true,
+                            },
+                        },
+                    },
+                },
+                capabilities: {
+                    machines: {
+                        transfer: {
+                            serverRouted: {
+                                maxBytes: 256,
+                            },
+                        },
+                    },
+                },
+            }),
+        })).toEqual({
+            kind: 'selected',
+            route: {
+                kind: 'machine_rpc_direct',
+            },
+        });
+    });
+
+    it('fails closed for session file transfer when the server transfer policy snapshot is unavailable for a sized transfer (even if machine target is available)', async () => {
+        const { SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR, resolveSessionFileTransferRouteAvailability } = await import('./resolveTransferAvailability');
+
+        expect(resolveSessionFileTransferRouteAvailability({
+            serverId: 'server-1',
+            machineTargetAvailable: true,
+            sessionRpcAvailable: true,
+            sessionRpcTransferSizeBytes: 128,
+            serverFeatures: null,
+        })).toEqual({
+            kind: 'unavailable',
+            response: {
+                success: false,
+                error: SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            },
+        });
+    });
+
+    it('fails closed for session file transfer when the payload exceeds the server-routed size limit (even if machine target is available)', async () => {
+        const { SERVER_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR, resolveSessionFileTransferRouteAvailability } = await import('./resolveTransferAvailability');
+
+        expect(resolveSessionFileTransferRouteAvailability({
+            serverId: 'server-1',
+            machineTargetAvailable: true,
+            sessionRpcAvailable: true,
+            sessionRpcTransferSizeBytes: 512,
+            serverFeatures: createServerFeaturesResponse({
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            serverRouted: {
+                                enabled: true,
+                            },
+                        },
+                    },
+                },
+                capabilities: {
+                    machines: {
+                        transfer: {
+                            serverRouted: {
+                                maxBytes: 256,
+                            },
+                        },
+                    },
+                },
+            }),
+        })).toEqual({
+            kind: 'unavailable',
+            response: {
+                success: false,
+                error: SERVER_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            },
+        });
+    });
+
     it('returns direct-peer handoff selection details without speculative seam flags', async () => {
         const { resolveMachineTransferAvailability } = await import('./resolveTransferAvailability');
 

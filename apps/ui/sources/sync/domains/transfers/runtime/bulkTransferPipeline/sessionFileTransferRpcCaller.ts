@@ -136,7 +136,31 @@ export function createSessionFileTransferRpcCaller(params: Readonly<{
                 },
             });
 
-            return await caller.call<TResponse, TRequest>(callParams);
+            const response = await caller.call<TResponse, TRequest>(callParams);
+
+            // If the session is inactive, callers cannot fall back to server-routed session RPC.
+            // Ensure direct-route failures are recorded so feature availability can hide actions
+            // after a failure instead of staying stuck at "unknown".
+            if (
+                machineTarget
+                && sessionRpcAvailable === false
+                && preferredRoute.kind === 'selected'
+                && preferredRoute.route.kind === 'machine_rpc_direct'
+                && (response as { success?: unknown } | null)?.success === false
+            ) {
+                const errorCode = (response as { errorCode?: unknown } | null)?.errorCode;
+                recordCachedMachineRpcDirectRouteUnavailable(
+                    {
+                        serverId,
+                        remoteMachineId: machineTarget.machineId,
+                    },
+                    typeof errorCode === 'string' && errorCode.trim().length > 0
+                        ? errorCode
+                        : 'machine_rpc_direct_unavailable',
+                );
+            }
+
+            return response;
         },
     };
 }
