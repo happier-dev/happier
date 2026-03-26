@@ -14,7 +14,7 @@ type ActionExecutorLike = Readonly<{
   execute: (
     actionId: ActionId,
     input: unknown,
-    ctx: Readonly<{ defaultSessionId: string; surface: 'mcp' | 'cli' }>,
+    ctx: Readonly<{ defaultSessionId: string; surface: 'mcp' | 'cli' | 'session_agent' }>,
   ) => Promise<ActionExecutorResult>;
 }>;
 
@@ -54,7 +54,7 @@ function normalizeActionToolResult(actionId: ActionId, result: ActionExecutorRes
 export function createActionToolExecutorBridge(params: Readonly<{
   executor: ActionExecutorLike;
   isActionEnabled?: (id: ActionId) => boolean;
-  surface?: 'mcp' | 'cli';
+  surface?: 'mcp' | 'cli' | 'session_agent';
 }>): Readonly<{
   executeActionByToolName: (toolName: string, toolArgs: unknown, defaultSessionId: string) => Promise<ActionToolBridgeResult>;
   resolveActionOptions: (args: Readonly<{
@@ -68,7 +68,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
   isActionEnabled: (id: ActionId) => boolean;
 }> {
   const isActionEnabled = params.isActionEnabled ?? (() => true);
-  const surface = params.surface ?? 'mcp';
+  const surface = params.surface ?? 'session_agent';
   const actionToolNameToId = createActionToolNameToIdMap({ surface, isActionEnabled });
 
   return {

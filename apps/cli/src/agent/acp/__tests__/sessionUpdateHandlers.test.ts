@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { HandlerContext, SessionUpdate } from '../sessionUpdateHandlers';
-import { handleToolCall, handleToolCallUpdate } from '../sessionUpdateHandlers';
+import { handleToolCall, handleToolCallUpdate, markToolCallRunningAfterPermission } from '../sessionUpdateHandlers';
 import { DefaultTransport, defaultTransport } from '../../transport';
 import { CodexAcpTransport } from '@/backends/codex/acp/transport';
 import { GeminiTransport } from '@/backends/gemini/acp/transport';
@@ -146,12 +146,12 @@ describe('sessionUpdateHandlers tool call tracking', () => {
     });
   });
 
-  it('does not start an execution timeout while status is pending, but arms timeout when in_progress arrives', () => {
-    vi.useFakeTimers();
-    const ctx = createCtx();
+	  it('does not start an execution timeout while a tool call is waiting for permission (even if in_progress updates arrive), but arms after permission approval', () => {
+	    vi.useFakeTimers();
+	    const ctx = createCtx();
 
-    const pendingUpdate: SessionUpdate = {
-      sessionUpdate: 'tool_call',
+	    const pendingUpdate: SessionUpdate = {
+	      sessionUpdate: 'tool_call',
       toolCallId: 'call_test_pending',
       status: 'pending',
       kind: 'read',
@@ -159,31 +159,37 @@ describe('sessionUpdateHandlers tool call tracking', () => {
       content: { filePath: '/etc/hosts' },
     };
 
-    handleToolCall(pendingUpdate, ctx);
-    expect(ctx.activeToolCalls.has('call_test_pending')).toBe(true);
-    expect(ctx.toolCallTimeouts.has('call_test_pending')).toBe(false);
+	    handleToolCall(pendingUpdate, ctx);
+	    expect(ctx.activeToolCalls.has('call_test_pending')).toBe(true);
+	    expect(ctx.toolCallTimeouts.has('call_test_pending')).toBe(false);
+	    expect(ctx.toolCallLifecycleStates.get('call_test_pending')).toBe('waiting_for_permission');
 
-    const inProgressUpdate: SessionUpdate = {
-      sessionUpdate: 'tool_call_update',
-      toolCallId: 'call_test_pending',
-      status: 'in_progress',
+	    const inProgressUpdate: SessionUpdate = {
+	      sessionUpdate: 'tool_call_update',
+	      toolCallId: 'call_test_pending',
+	      status: 'in_progress',
       kind: 'read',
       title: 'Read /etc/hosts',
       content: { filePath: '/etc/hosts' },
-      meta: {},
-    };
+	      meta: {},
+	    };
 
-    handleToolCallUpdate(inProgressUpdate, ctx);
-    expect(ctx.toolCallTimeouts.has('call_test_pending')).toBe(true);
+	    handleToolCallUpdate(inProgressUpdate, ctx);
+	    expect(ctx.toolCallTimeouts.has('call_test_pending')).toBe(false);
+	    expect(ctx.toolCallLifecycleStates.get('call_test_pending')).toBe('waiting_for_permission');
 
-    vi.useRealTimers();
-  });
+	    markToolCallRunningAfterPermission('call_test_pending', ctx);
+	    expect(ctx.toolCallTimeouts.has('call_test_pending')).toBe(true);
+	    expect(ctx.toolCallLifecycleStates.get('call_test_pending')).toBe('running');
 
-  it('treats status-less tool_call messages as waiting for permission when lifecycle state is already permission-pending', () => {
-    vi.useFakeTimers();
-    class ShortTimeoutTransport extends DefaultTransport {
-      getToolCallTimeout(): number {
-        return 10;
+	    vi.useRealTimers();
+	  });
+
+	  it('keeps tool calls waiting for permission until permission approval even if an in_progress update arrives', () => {
+	    vi.useFakeTimers();
+	    class ShortTimeoutTransport extends DefaultTransport {
+	      getToolCallTimeout(): number {
+	        return 10;
       }
     }
 
@@ -213,24 +219,28 @@ describe('sessionUpdateHandlers tool call tracking', () => {
     );
     expect(timedOut).toHaveLength(0);
 
-    handleToolCallUpdate(
-      {
-        sessionUpdate: 'tool_call_update',
-        toolCallId: 'call_waiting_1',
-        status: 'in_progress',
-        kind: 'edit',
-        title: 'Edit file',
-        content: { filePath: '/tmp/a.txt', oldText: 'a', newText: 'b' },
-        meta: {},
-      },
-      ctx,
-    );
+	    handleToolCallUpdate(
+	      {
+	        sessionUpdate: 'tool_call_update',
+	        toolCallId: 'call_waiting_1',
+	        status: 'in_progress',
+	        kind: 'edit',
+	        title: 'Edit file',
+	        content: { filePath: '/tmp/a.txt', oldText: 'a', newText: 'b' },
+	        meta: {},
+	      },
+	      ctx,
+	    );
 
-    expect(ctx.toolCallTimeouts.has('call_waiting_1')).toBe(true);
-    expect(ctx.toolCallLifecycleStates.get('call_waiting_1')).toBe('running');
+	    expect(ctx.toolCallTimeouts.has('call_waiting_1')).toBe(false);
+	    expect(ctx.toolCallLifecycleStates.get('call_waiting_1')).toBe('waiting_for_permission');
 
-    vi.useRealTimers();
-  });
+	    markToolCallRunningAfterPermission('call_waiting_1', ctx);
+	    expect(ctx.toolCallTimeouts.has('call_waiting_1')).toBe(true);
+	    expect(ctx.toolCallLifecycleStates.get('call_waiting_1')).toBe('running');
+
+	    vi.useRealTimers();
+	  });
 
   it('infers tool kind/name for terminal tool_call_update events when kind/start are missing (Gemini)', () => {
     vi.useFakeTimers();

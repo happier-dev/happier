@@ -655,32 +655,41 @@ export function handleToolCallUpdate(
     startToolCall(toolCallId, toolKind, { ...update, status: 'pending' }, ctx, 'tool_call_update');
   }
 
-  if (effectiveStatus === 'in_progress' || effectiveStatus === 'pending') {
-    if (!ctx.activeToolCalls.has(toolCallId)) {
-      toolCallCountSincePrompt++;
-      startToolCall(toolCallId, toolKind, update, ctx, 'tool_call_update');
-    } else {
-      if (effectiveStatus === 'pending') {
-        markToolCallWaitingForPermission(toolCallId, ctx);
-      }
-      // If the tool call was previously pending permission, it may not have an execution timeout yet.
-      // Arm the timeout as soon as it transitions to in_progress.
-      if (effectiveStatus === 'in_progress') {
-        setToolCallLifecycleState(toolCallId, 'running', ctx);
-        const toolKindStr = typeof toolKind === 'string' ? toolKind : 'unknown';
-        armToolCallExecutionTimeout({
-          toolCallId,
-          toolKind,
-          toolKindStr,
-          ctx,
-          source: 'tool_call_update',
-          suffix: 'armed on in_progress',
-        });
-      }
+	  if (effectiveStatus === 'in_progress' || effectiveStatus === 'pending') {
+	    if (!ctx.activeToolCalls.has(toolCallId)) {
+	      toolCallCountSincePrompt++;
+	      startToolCall(toolCallId, toolKind, update, ctx, 'tool_call_update');
+	    } else {
+	      if (effectiveStatus === 'pending') {
+	        markToolCallWaitingForPermission(toolCallId, ctx);
+	      }
+	      // Some ACP agents can emit `status: in_progress` tool updates even while the tool is still
+	      // blocked behind an explicit permission prompt. In that state, arming the execution timeout
+	      // can cause confusing timeouts and/or "timeout-bump loops" while the user is still deciding.
+	      //
+	      // Only arm the execution timeout once we have transitioned out of the permission gate
+	      // (typically via `markToolCallRunningAfterPermission(...)` from the permission handler).
+	      if (effectiveStatus === 'in_progress') {
+	        const currentLifecycle = ctx.toolCallLifecycleStates.get(toolCallId);
+	        if (currentLifecycle === 'waiting_for_permission') {
+	          markToolCallWaitingForPermission(toolCallId, ctx);
+	        } else {
+	          setToolCallLifecycleState(toolCallId, 'running', ctx);
+	          const toolKindStr = typeof toolKind === 'string' ? toolKind : 'unknown';
+	          armToolCallExecutionTimeout({
+	            toolCallId,
+	            toolKind,
+	            toolKindStr,
+	            ctx,
+	            source: 'tool_call_update',
+	            suffix: 'armed on in_progress',
+	          });
+	        }
+	      }
 
-      if (hasMeaningfulToolUpdate(update)) {
-        // Refresh the existing tool call message with updated title/rawInput/locations (without
-        // resetting timeouts/start times).
+	      if (hasMeaningfulToolUpdate(update)) {
+	        // Refresh the existing tool call message with updated title/rawInput/locations (without
+	        // resetting timeouts/start times).
         emitToolCallRefresh(toolCallId, toolKind, update, ctx);
       } else {
         logger.debug(`[AcpBackend] Tool call ${toolCallId} already tracked, status: ${status}`);

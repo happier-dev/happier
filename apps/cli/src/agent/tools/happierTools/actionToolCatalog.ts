@@ -3,7 +3,7 @@ import { listActionSpecs, type ActionId } from '@happier-dev/protocol';
 import type { HappierBuiltInToolDefinition } from './types';
 
 type ActionEnabledPredicate = (id: ActionId) => boolean;
-type HappierBuiltInToolSurface = 'mcp' | 'cli';
+type HappierBuiltInToolSurface = 'mcp' | 'cli' | 'session_agent';
 
 const ACTION_TOOL_ENTRIES = Object.freeze(
   listActionSpecs()
@@ -25,7 +25,7 @@ export function isActionAvailableOnToolSurface(params: Readonly<{
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
 }>): boolean {
-  const surface = params.surface ?? 'mcp';
+  const surface = params.surface ?? 'session_agent';
   const isActionEnabled = params.isActionEnabled ?? (() => true);
   const surfaces = ACTION_SURFACES_BY_ID.get(params.actionId);
   if (!surfaces) {
@@ -38,7 +38,7 @@ export function createActionToolNameToIdMap(params?: Readonly<{
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
 }>): ReadonlyMap<string, ActionId> {
-  const surface = params?.surface ?? 'mcp';
+  const surface = params?.surface ?? 'session_agent';
 
   return new Map(
     ACTION_TOOL_ENTRIES
