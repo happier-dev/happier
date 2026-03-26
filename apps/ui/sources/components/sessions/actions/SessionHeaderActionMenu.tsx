@@ -20,9 +20,11 @@ import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { executeSessionForkAction } from '@/sync/domains/sessionFork/executeSessionForkAction';
 import { canHandoffConversation } from '@/sync/domains/sessionHandoff/handoffUiSupport';
 import { runSessionHandoffPickerFlow } from '@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHandoff/resolveSessionHandoffSourceMachineId';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import { resolveMachineTransferAvailability } from '@/sync/domains/transfers/runtime/resolveTransferAvailability';
 import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { useHasGlobalVoiceAgentConversation } from '@/voice/agent/useHasGlobalVoiceAgentConversation';
@@ -61,9 +63,17 @@ export function SessionHeaderActionMenu(props: Readonly<{
   const hasGlobalVoiceAgentConversation = useHasGlobalVoiceAgentConversation();
   const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
   const sessionServerId = normalizeNonEmptyString(resolveServerIdForSessionIdFromLocalCache(props.sessionId));
+  const serverSnapshot = useServerFeaturesSnapshotForServerId(sessionServerId, { enabled: Boolean(sessionServerId) });
+  const handoffTransportAvailable = React.useMemo(() => {
+    if (serverSnapshot.status !== 'ready') return false;
+    return resolveMachineTransferAvailability({
+      serverFeatures: serverSnapshot,
+      preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+    }).ok === true;
+  }, [serverSnapshot]);
   const sourceMachineId = React.useMemo(
-    () => readMachineTargetForSession(props.sessionId)?.machineId ?? normalizeNonEmptyString((props.session.metadata as any)?.machineId),
-    [props.sessionId, props.session.metadata],
+    () => resolveSessionHandoffSourceMachineId({ sessionMetadata: props.session.metadata as any }),
+    [props.session.metadata],
   );
   const [open, setOpen] = React.useState(false);
   const executor = React.useMemo(
@@ -86,7 +96,11 @@ export function SessionHeaderActionMenu(props: Readonly<{
       .filter((spec) => isActionEnabledInState({ settings } as any, spec.id, { surface: 'ui_button', placement: 'session_action_menu' } as any))
       .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
       .filter((spec) => spec.id !== 'session.fork' || canForkConversation({ session: props.session, replayEnabled: sessionReplayEnabled }) === true)
-      .filter((spec) => spec.id !== 'session.handoff' || (sessionHandoffEnabled && canHandoffConversation({ sessionId: props.sessionId, session: props.session }) === true))
+      .filter((spec) => spec.id !== 'session.handoff' || (
+        sessionHandoffEnabled
+        && handoffTransportAvailable
+        && canHandoffConversation({ sessionId: props.sessionId, session: props.session }) === true
+      ))
       .map((spec) => ({
         id: spec.id,
         title: spec.title,
@@ -116,6 +130,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
     sessionReplayEnabled,
     settings,
     showTeleportAction,
+    handoffTransportAvailable,
   ]);
 
   if (actions.length === 0) return null;
@@ -191,6 +206,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
             <Pressable
               onPress={toggle}
               hitSlop={15}
+              testID="session-header-action-menu-trigger"
               accessibilityRole="button"
               accessibilityLabel={t('session.actionMenu.openA11y')}
               style={({ pressed }) => ({

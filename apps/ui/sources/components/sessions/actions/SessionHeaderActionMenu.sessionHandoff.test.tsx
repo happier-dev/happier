@@ -22,6 +22,9 @@ const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const voiceSettingState = vi.hoisted(() => ({
   current: null as any,
 }));
+const serverSnapshotState = vi.hoisted(() => ({
+  current: { status: 'ready', features: { features: { sessions: { enabled: true, handoff: { enabled: true } }, machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: true } } } }, capabilities: {} } } as any,
+}));
 const voiceSessionSnapshotState = vi.hoisted(() => ({
   current: {
     adapterId: null,
@@ -184,6 +187,10 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => true,
 }));
 
+vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
+  useServerFeaturesSnapshotForServerId: () => serverSnapshotState.current,
+}));
+
 vi.mock('@/sync/domains/session/resolveSessionActionDefaultBackend', () => ({
   resolveSessionActionDefaultBackend: (...args: unknown[]) => resolveSessionActionDefaultBackendMock(...args),
 }));
@@ -209,6 +216,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     resolveSessionActionDefaultBackendMock.mockReset();
     readMachineTargetForSessionMock.mockReset();
     readMachineTargetForSessionMock.mockReturnValue(null);
+    serverSnapshotState.current = { status: 'ready', features: { features: { sessions: { enabled: true, handoff: { enabled: true } }, machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: true } } } }, capabilities: {} } } as any;
 
     createDefaultActionExecutorMock.mockReturnValue({
       execute: vi.fn(),
@@ -246,7 +254,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     });
   });
 
-  it('passes the reachable source machine target into the session handoff flow context', async () => {
+  it('passes the session metadata source machine id into the session handoff flow context', async () => {
     readMachineTargetForSessionMock.mockReturnValue({
       machineId: 'machine_rebound',
       basePath: '/workspace/repo',
@@ -282,10 +290,48 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(runSessionHandoffPickerFlowMock).toHaveBeenCalledWith({
       execute: expect.any(Function),
       sessionId: 'sess_1',
-      sourceMachineId: 'machine_rebound',
+      sourceMachineId: 'machine_source',
       serverId: 'server_a',
       placement: 'session_action_menu',
     });
+  });
+
+  it('fails closed (does not surface session.handoff) when machine transfer is disabled on the selected server', async () => {
+    const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+    serverSnapshotState.current = {
+      status: 'ready',
+      features: FeaturesResponseSchema.parse({
+        features: {
+          sessions: { enabled: true, handoff: { enabled: true } },
+          machines: {
+            enabled: true,
+            transfer: {
+              enabled: false,
+              directPeer: { enabled: false },
+              serverRouted: { enabled: false },
+            },
+          },
+        },
+        capabilities: {},
+      }),
+    } as any;
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_1"
+          session={{
+            id: 'sess_1',
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+            },
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(Array.isArray(dropdown.props.items)).toBe(true);
+    expect(dropdown.props.items.some((item: any) => item?.id === 'session.handoff')).toBe(false);
   });
 
   it('seeds configured ACP backend targets into non-handoff action drafts', async () => {
