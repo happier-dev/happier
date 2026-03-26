@@ -1053,6 +1053,8 @@ export const zhHans: TranslationStructure = {
     executionRunsSubtitle: "跨设备执行运行",
     connectedServices: "已连接服务",
     connectedServicesSubtitle: "Claude/Codex 订阅与 OAuth 配置",
+    channelBridges: "Channel Bridges",
+    channelBridgesSubtitle: "Bridge external chats (Telegram) into sessions",
     featuresTitle: "功能",
     featuresSubtitle: "启用或禁用应用功能",
     developer: "开发者",
@@ -2469,6 +2471,16 @@ export const zhHans: TranslationStructure = {
       compact: "紧凑",
       compactDescription: "使用更紧凑的间距以在屏幕上显示更多行",
     },
+  },
+
+  settingsChannelBridges: {
+    unsupported: "此环境不支持频道桥接。",
+    enableInFeatures: "启用频道桥接",
+    enableInFeaturesSubtitle: "频道桥接为实验功能，默认关闭。",
+    description: "频道桥接可将外部聊天（Telegram）附加到会话，并将消息转发给代理。",
+    telegramTitle: "Telegram",
+    telegramFooter: "请通过 CLI 配置 Telegram，然后在 Telegram 中使用 /sessions、/attach、/detach、/help 管理绑定。",
+    diagnosticsTitle: "诊断",
   },
 
   settingsFeatures: {

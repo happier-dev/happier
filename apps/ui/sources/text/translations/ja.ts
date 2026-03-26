@@ -1405,6 +1405,8 @@ export const ja: TranslationStructure = {
     executionRunsSubtitle: "複数マシンでの実行",
     connectedServices: "接続済みサービス",
     connectedServicesSubtitle: "Claude/Codex のサブスクリプションと OAuth プロファイル",
+    channelBridges: "Channel Bridges",
+    channelBridgesSubtitle: "Bridge external chats (Telegram) into sessions",
     featuresTitle: "機能",
     featuresSubtitle: "アプリ機能の有効/無効を切り替え",
     developer: "開発者",
@@ -2867,6 +2869,16 @@ export const ja: TranslationStructure = {
       compact: "コンパクト",
       compactDescription: "余白を詰めて画面により多くの行を表示します",
     },
+  },
+
+  settingsChannelBridges: {
+    unsupported: "Channel bridges are not supported in this environment.",
+    enableInFeatures: "Enable Channel Bridges",
+    enableInFeaturesSubtitle: "Channel bridges are experimental and disabled by default.",
+    description: "Channel bridges let you attach external chats (Telegram) to sessions and forward messages to the agent.",
+    telegramTitle: "Telegram",
+    telegramFooter: "Configure Telegram via CLI, then manage bindings in Telegram with /sessions, /attach, /detach, /help.",
+    diagnosticsTitle: "Diagnostics",
   },
 
   settingsFeatures: {

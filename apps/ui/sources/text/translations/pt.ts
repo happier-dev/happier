@@ -1330,6 +1330,8 @@ export const pt: TranslationStructure = {
     executionRunsSubtitle: "Execuções em várias máquinas",
     connectedServices: "Serviços conectados",
     connectedServicesSubtitle: "Assinaturas Claude/Codex e perfis OAuth",
+    channelBridges: "Channel Bridges",
+    channelBridgesSubtitle: "Bridge external chats (Telegram) into sessions",
     featuresTitle: "Recursos",
     featuresSubtitle: "Ativar ou desativar recursos do aplicativo",
     developer: "Desenvolvedor",
@@ -2810,6 +2812,16 @@ export const pt: TranslationStructure = {
       compact: "Compacto",
       compactDescription: "Mostra mais linhas na tela com espaçamento reduzido",
     },
+  },
+
+  settingsChannelBridges: {
+    unsupported: "Channel bridges are not supported in this environment.",
+    enableInFeatures: "Enable Channel Bridges",
+    enableInFeaturesSubtitle: "Channel bridges are experimental and disabled by default.",
+    description: "Channel bridges let you attach external chats (Telegram) to sessions and forward messages to the agent.",
+    telegramTitle: "Telegram",
+    telegramFooter: "Configure Telegram via CLI, then manage bindings in Telegram with /sessions, /attach, /detach, /help.",
+    diagnosticsTitle: "Diagnostics",
   },
 
   settingsFeatures: {

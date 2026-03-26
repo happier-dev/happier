@@ -1128,6 +1128,8 @@ export const en = {
         executionRunsSubtitle: 'Subagents across machines',
         connectedServices: 'Connected services',
         connectedServicesSubtitle: 'Claude/Codex subscriptions and OAuth profiles',
+        channelBridges: 'Channel Bridges',
+        channelBridgesSubtitle: 'Bridge external chats (Telegram) into sessions',
         featuresTitle: 'Features',
         featuresSubtitle: 'Enable or disable app features',
         developer: 'Developer',
@@ -2515,6 +2517,16 @@ export const en = {
             compact: 'Compact',
             compactDescription: 'Fit more rows on screen with tighter spacing',
         },
+    },
+
+    settingsChannelBridges: {
+        unsupported: 'Channel bridges are not supported in this environment.',
+        enableInFeatures: 'Enable Channel Bridges',
+        enableInFeaturesSubtitle: 'Channel bridges are experimental and disabled by default.',
+        description: 'Channel bridges let you attach external chats (Telegram) to sessions and forward messages to the agent.',
+        telegramTitle: 'Telegram',
+        telegramFooter: 'Configure Telegram via CLI, then manage bindings in Telegram with /sessions, /attach, /detach, /help.',
+        diagnosticsTitle: 'Diagnostics',
     },
 
     settingsFeatures: {

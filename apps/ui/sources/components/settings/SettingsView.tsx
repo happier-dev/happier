@@ -32,6 +32,7 @@ import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior'
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
@@ -66,6 +67,10 @@ export const SettingsView = React.memo(function SettingsView() {
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.discoverable !== false;
     const automationsNeedLocalEnablement = automationsSupport?.blockedBy === 'local_policy';
+    const channelBridgesDecision = useFeatureDecision('channelBridges');
+    const showChannelBridges = getFeatureBuildPolicyDecision('channelBridges') !== 'deny'
+        && channelBridgesDecision?.state !== 'unsupported';
+    const channelBridgesNeedLocalEnablement = channelBridgesDecision?.blockedBy === 'local_policy';
     const profile = useProfile();
     const displayName = getDisplayName(profile);
     const avatarUrl = getAvatarUrl(profile);
@@ -400,6 +405,16 @@ export const SettingsView = React.memo(function SettingsView() {
                         subtitle={t('settings.connectedServicesSubtitle')}
                         icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={() => router.push('/(app)/settings/connected-services')}
+                    />
+                ) : null}
+                {showChannelBridges ? (
+                    <Item
+                        title={t('settings.channelBridges')}
+                        subtitle={channelBridgesNeedLocalEnablement
+                            ? t('settingsFeatures.expChannelBridgesSubtitle')
+                            : t('settings.channelBridgesSubtitle')}
+                        icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.orange} />}
+                        onPress={() => router.push(channelBridgesNeedLocalEnablement ? '/(app)/settings/features' : '/(app)/settings/channel-bridges')}
                     />
                 ) : null}
                 {mcpServersEnabled && (
