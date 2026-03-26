@@ -156,6 +156,81 @@ test('vendorBundledPackageRuntimeDependencies vendors packages that only expose 
   }
 });
 
+test('vendorBundledPackageRuntimeDependencies does not clobber an existing bundled node_modules tree when vendoring fails', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'cli-common-vendor-runtime-deps-atomic-'));
+  try {
+    const srcPackageDir = join(tempRoot, 'packages', 'protocol');
+    const destPackageDir = join(tempRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol');
+    const srcPackageJsonPath = join(srcPackageDir, 'package.json');
+
+    const depADir = join(tempRoot, 'node_modules', 'dep-a');
+
+    mkdirSync(srcPackageDir, { recursive: true });
+    mkdirSync(destPackageDir, { recursive: true });
+    mkdirSync(depADir, { recursive: true });
+
+    writeFileSync(
+      srcPackageJsonPath,
+      `${JSON.stringify(
+        {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          dependencies: {
+            'dep-a': '^1.0.0',
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+
+    // dep-a depends on dep-b, which is intentionally missing. Vendoring should throw.
+    writeFileSync(
+      join(depADir, 'package.json'),
+      `${JSON.stringify(
+        {
+          name: 'dep-a',
+          version: '1.0.0',
+          main: 'index.js',
+          dependencies: {
+            'dep-b': '^1.0.0',
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+    writeFileSync(join(depADir, 'index.js'), 'module.exports = { a: true };\n', 'utf8');
+
+    const existingDepADir = join(destPackageDir, 'node_modules', 'dep-a');
+    mkdirSync(existingDepADir, { recursive: true });
+    writeFileSync(
+      join(existingDepADir, 'package.json'),
+      `${JSON.stringify({ name: 'dep-a', version: 'old', main: 'index.js' }, null, 2)}\n`,
+      'utf8',
+    );
+    writeFileSync(join(existingDepADir, 'index.js'), 'module.exports = { a: \"old\" };\n', 'utf8');
+
+    const workspaces = await import('../dist/workspaces/index.js');
+    assert.equal(typeof workspaces.vendorBundledPackageRuntimeDependencies, 'function');
+
+    assert.throws(() => {
+      workspaces.vendorBundledPackageRuntimeDependencies({ srcPackageJsonPath, destPackageDir });
+    }, /dep-b/i);
+
+    // The existing tree should remain intact on failure (vendoring is atomic).
+    assert.equal(
+      JSON.parse(readFileSync(join(destPackageDir, 'node_modules', 'dep-a', 'package.json'), 'utf8')).version,
+      'old',
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('vendorBundledPackageRuntimeDependencies vendors installed packages without a root export', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'cli-common-vendor-runtime-deps-no-export-'));
   try {

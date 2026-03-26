@@ -163,6 +163,8 @@ describe('bundleWorkspaceDeps', () => {
 
     expect(bundledTransfersPkgJson.scripts).toBeUndefined();
     expect(bundledTransfersPkgJson.name).toBe('@happier-dev/transfers');
+    expect(bundledTransfersPkgJson.dependencies?.['@happier-dev/protocol']).toBeUndefined();
+    expect(bundledTransfersPkgJson.dependencies?.['base64-js']).toBeUndefined();
 
       expect(bundledReleaseRuntimePkgJson.scripts).toBeUndefined();
       expect(bundledReleaseRuntimePkgJson.devDependencies).toBeUndefined();

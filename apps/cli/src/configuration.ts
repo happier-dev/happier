@@ -32,6 +32,22 @@ function resolveIntEnvWithBounds(
   return opts.max != null ? Math.min(parsed, opts.max) : parsed
 }
 
+/**
+ * Workspace replication job status heartbeat interval.
+ *
+ * During long-running apply operations we periodically "touch" the job record (updatedAtMs)
+ * so UI liveness/idle-timeout logic can rely on durable progress, even when the apply layer
+ * itself does not emit incremental checkpoints.
+ */
+export function resolveWorkspaceReplicationJobStatusHeartbeatIntervalMs(): number {
+  // Default: 5s. Defensive min: 250ms. Defensive max: 60s.
+  return resolveIntEnvWithBounds('HAPPIER_WORKSPACE_REPLICATION_JOB_STATUS_HEARTBEAT_INTERVAL_MS', {
+    min: 250,
+    max: 60_000,
+    default: 5_000,
+  });
+}
+
 export function isDaemonProcessArgv(args: readonly string[]): boolean {
   if (args.length < 2) return false
   if (args[0] !== 'daemon') return false
@@ -66,10 +82,16 @@ class Configuration {
   public readonly sessionControlHttpTimeoutMs: number
   // Vendor CLI `--help` invocation timeout (defense-in-depth against hung vendor CLIs).
   public readonly vendorCliHelpTimeoutMs: number
+  // Spawn/restart coordination: when resuming an existing session while a stop is in-flight, wait
+  // briefly for the runner to exit so we don't strand the session stopped due to idempotency.
+  public readonly daemonSpawnExistingSessionWaitForExitMs: number
+  public readonly daemonSpawnExistingSessionWaitForExitPollIntervalMs: number
   // Managed runtime installable auto-update background check interval.
   public readonly installablesRuntimeAutoUpdateCheckIntervalMs: number
   // File system RPC limits (Files tab + transfers).
   public readonly filesReadMaxBytes: number
+  // Prompt transfer payload limits (prompt assets + prompt registry items).
+  public readonly promptTransferJsonMaxBytes: number
   public readonly filesTransferChunkBytes: number
   public readonly filesTransferSessionTtlMs: number
   public readonly filesUploadMaxFileBytes: number
@@ -252,6 +274,17 @@ class Configuration {
           ? Math.min(vendorHelpTimeoutMs, 60_000)
           : 5_000;
 
+    // Default: 5s. Set to 0 to disable waiting.
+    this.daemonSpawnExistingSessionWaitForExitMs = resolveIntEnvWithBounds(
+      'HAPPIER_DAEMON_SPAWN_EXISTING_SESSION_WAIT_FOR_EXIT_MS',
+      { min: 0, max: 60_000, default: 5_000 },
+    );
+    // Default: 50ms. Defensive bounds protect against busy-wait.
+    this.daemonSpawnExistingSessionWaitForExitPollIntervalMs = resolveIntEnvWithBounds(
+      'HAPPIER_DAEMON_SPAWN_EXISTING_SESSION_WAIT_FOR_EXIT_POLL_INTERVAL_MS',
+      { min: 10, max: 2_000, default: 50 },
+    );
+
     // Default: 6 hours. Defensive minimum: 1 minute.
     this.installablesRuntimeAutoUpdateCheckIntervalMs = resolveIntEnvWithBounds(
       'HAPPIER_INSTALLABLES_AUTO_UPDATE_CHECK_INTERVAL_MS',
@@ -261,6 +294,11 @@ class Configuration {
     // Default: 2.5MB. Defensive minimum: 1 byte.
     this.filesReadMaxBytes = resolveIntEnvWithBounds('HAPPIER_FILES_READ_MAX_BYTES', {
       min: 1, default: 2_500_000,
+    });
+
+    // Default: 2.5MB. Defensive min: 1 byte; max: 10MB.
+    this.promptTransferJsonMaxBytes = resolveIntEnvWithBounds('HAPPIER_PROMPT_TRANSFER_JSON_MAX_BYTES', {
+      min: 1, max: 10_000_000, default: 2_500_000,
     });
 
     // Default: 256KB. Defensive min: 1KB; max: 5MB.

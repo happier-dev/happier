@@ -1,6 +1,6 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export function findRepoRoot(startDir: string): string {
@@ -22,6 +22,18 @@ function readJson(path: string): any {
 
 function writeJson(path: string, value: any): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function stripInternalBundledWorkspaceDependencies(value: any): any {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+
+  const out: Record<string, unknown> = {};
+  for (const [name, version] of Object.entries(value)) {
+    if (name.startsWith('@happier-dev/')) continue;
+    out[name] = version;
+  }
+
+  return out;
 }
 
 function sleepSync(ms: number): void {
@@ -60,9 +72,9 @@ export function sanitizeBundledPackageJson(raw: any): any {
     module,
     types,
     exports,
-    dependencies,
+    dependencies: stripInternalBundledWorkspaceDependencies(dependencies),
     peerDependencies,
-    optionalDependencies,
+    optionalDependencies: stripInternalBundledWorkspaceDependencies(optionalDependencies),
     engines,
   };
 }
@@ -119,6 +131,60 @@ function resetDir(path: string): void {
   mkdirSync(path, { recursive: true });
 }
 
+function atomicReplaceDirSync(params: Readonly<{
+  destDir: string;
+  buildInto: (tempDir: string) => void;
+}>): void {
+  const parentDir = dirname(params.destDir);
+  const baseName = basename(params.destDir);
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const tempDir = resolve(parentDir, `.${baseName}.__sync_tmp__.${suffix}`);
+  const backupDir = resolve(parentDir, `.${baseName}.__sync_backup__.${suffix}`);
+
+  // Ensure temp/backup paths are clear before building.
+  rmDirSafeSync(tempDir);
+  rmDirSafeSync(backupDir);
+
+  let didRenameDestToBackup = false;
+  try {
+    params.buildInto(tempDir);
+
+    if (existsSync(params.destDir)) {
+      renameSync(params.destDir, backupDir);
+      didRenameDestToBackup = true;
+    }
+    renameSync(tempDir, params.destDir);
+
+    if (didRenameDestToBackup) {
+      rmDirSafeSync(backupDir);
+    }
+  } catch (error) {
+    // Best-effort cleanup and rollback. Never leave a half-populated destination.
+    try {
+      if (existsSync(tempDir)) rmDirSafeSync(tempDir);
+    } catch {
+      // ignore
+    }
+
+    if (didRenameDestToBackup) {
+      try {
+        if (!existsSync(params.destDir) && existsSync(backupDir)) {
+          renameSync(backupDir, params.destDir);
+        }
+      } catch {
+        // ignore rollback errors; we'll still rethrow original
+      }
+      try {
+        if (existsSync(backupDir)) rmDirSafeSync(backupDir);
+      } catch {
+        // ignore
+      }
+    }
+
+    throw error;
+  }
+}
+
 function copyIfExists(src: string, dest: string): boolean {
   if (!existsSync(src)) return false;
   cpSync(src, dest, { recursive: true });
@@ -162,14 +228,19 @@ export function bundleWorkspacePackage(params: Readonly<{
     throw new Error(`Missing dist/ for ${params.packageName}. Run its build first.`);
   }
 
-  resetDir(params.destDir);
-  cpSync(distDir, resolve(params.destDir, 'dist'), { recursive: true });
-  writeJson(resolve(params.destDir, 'package.json'), sanitizeBundledPackageJson(rawPackageJson));
+  atomicReplaceDirSync({
+    destDir: params.destDir,
+    buildInto: (tempDir) => {
+      resetDir(tempDir);
+      cpSync(distDir, resolve(tempDir, 'dist'), { recursive: true });
+      writeJson(resolve(tempDir, 'package.json'), sanitizeBundledPackageJson(rawPackageJson));
 
-  const files = params.includeFiles ?? ['README.md'];
-  for (const f of files) {
-    copyIfExists(resolve(params.srcDir, f), resolve(params.destDir, f));
-  }
+      const files = params.includeFiles ?? ['README.md'];
+      for (const f of files) {
+        copyIfExists(resolve(params.srcDir, f), resolve(tempDir, f));
+      }
+    },
+  });
 }
 
 export function bundleWorkspacePackages(params: Readonly<{
@@ -342,10 +413,24 @@ export function vendorBundledPackageRuntimeDependencies(params: Readonly<{
     throw new Error(`Missing package.json: ${params.srcPackageJsonPath}`);
   }
 
-  vendorRuntimeDependencyTree({
-    packageJsonPath: params.srcPackageJsonPath,
-    resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
-    destNodeModulesDir: resolve(params.destPackageDir, 'node_modules'),
+  const destNodeModulesDir = resolve(params.destPackageDir, 'node_modules');
+
+  // Vendoring is used while local dev daemons/sessions may already be importing from the
+  // bundled workspace copies under apps/*/node_modules/@happier-dev/*.
+  //
+  // Copying directly into the destination can produce transiently invalid package.json files
+  // (and broken Node ESM resolution) if a reader observes a partially-copied dependency tree.
+  //
+  // Build into a sibling temp directory and swap atomically to keep the destination always-valid.
+  atomicReplaceDirSync({
+    destDir: destNodeModulesDir,
+    buildInto: (tempNodeModulesDir) => {
+      vendorRuntimeDependencyTree({
+        packageJsonPath: params.srcPackageJsonPath,
+        resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
+        destNodeModulesDir: tempNodeModulesDir,
+      });
+    },
   });
 }
 
@@ -358,12 +443,17 @@ export function bundleInstalledPackageWithRuntimeDependencies(params: Readonly<{
   const resolved = resolveInstalledPackage({ require, packageName: params.packageName });
   const destPackageDir = resolve(params.destNodeModulesDir, ...params.packageName.split('/'));
 
-  resetDir(destPackageDir);
-  cpSync(resolved.packageDir, destPackageDir, { recursive: true, dereference: true });
+  atomicReplaceDirSync({
+    destDir: destPackageDir,
+    buildInto: (tempDir) => {
+      resetDir(tempDir);
+      cpSync(resolved.packageDir, tempDir, { recursive: true, dereference: true });
 
-  vendorRuntimeDependencyTree({
-    packageJsonPath: resolved.packageJsonPath,
-    resolveFromPackageJsonPath: resolved.packageJsonPath,
-    destNodeModulesDir: resolve(destPackageDir, 'node_modules'),
+      vendorRuntimeDependencyTree({
+        packageJsonPath: resolved.packageJsonPath,
+        resolveFromPackageJsonPath: resolved.packageJsonPath,
+        destNodeModulesDir: resolve(tempDir, 'node_modules'),
+      });
+    },
   });
 }
