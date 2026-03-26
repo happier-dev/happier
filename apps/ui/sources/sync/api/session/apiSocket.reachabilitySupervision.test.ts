@@ -386,4 +386,46 @@ describe('apiSocket reachability supervision', () => {
 
         expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);
     });
+
+    it('stops reachability supervision when disconnecting', async () => {
+        const unsubscribeSpy = vi.fn();
+        const stopSpy = vi.fn(async (_serverUrl: string) => {});
+
+        vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>();
+            return {
+                ...actual,
+                subscribeServerReachabilityState: (_serverUrl: string, listener: (state: any) => void) => {
+                    listener({
+                        phase: 'offline',
+                        reason: 'initial_connect',
+                        attempt: 0,
+                        nextRetryAt: null,
+                        lastConnectedAt: null,
+                        lastDisconnectedAt: Date.now(),
+                        lastErrorMessage: null,
+                    });
+                    return unsubscribeSpy;
+                },
+                startServerReachabilitySupervisor: vi.fn(async () => {}),
+                stopServerReachabilitySupervisor: stopSpy,
+            };
+        });
+
+        vi.doMock('@/sync/api/session/connection/createSyncSocketTransport', () => ({
+            createSyncSocketTransport: () => {
+                throw new Error('createSyncSocketTransport should not be called in this test');
+            },
+        }));
+
+        const { apiSocket } = await import('./apiSocket');
+        const encryption = { getSessionEncryption: () => null } as unknown as Encryption;
+
+        apiSocket.initialize({ endpoint: 'https://api.example.test', token: 'token-a' }, encryption);
+        apiSocket.disconnect();
+
+        expect(unsubscribeSpy).toHaveBeenCalledTimes(1);
+        expect(stopSpy).toHaveBeenCalledTimes(1);
+        expect(stopSpy.mock.calls[0]?.[0]).toBe('https://api.example.test');
+    });
 });

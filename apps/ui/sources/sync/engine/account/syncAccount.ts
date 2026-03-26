@@ -219,6 +219,7 @@ export async function registerPushTokenIfAvailable(params: {
 
             try {
                 await registerPushTokenApi(serverCredentials, token, {
+                    serverId: profile.id,
                     apiEndpoint: profile.serverUrl,
                     clientServerUrl: profile.serverUrl,
                     retry: 'none',
@@ -248,6 +249,14 @@ export async function registerPushTokenIfAvailable(params: {
 
         // Best-effort cleanup when Expo rotates the token: remove the old token from servers we can still reach.
         if (didRegisterAnyServer && previousToken && previousToken !== token) {
+            const unregisterPreviousToken = async (serverCredentials: AuthCredentials, apiEndpoint?: string) => {
+                try {
+                    await deletePushTokenApi(serverCredentials, previousToken, { apiEndpoint });
+                } catch {
+                    // best-effort; ignore
+                }
+            };
+
             for (const profile of profiles) {
                 let serverCredentials: AuthCredentials | null = null;
                 try {
@@ -256,12 +265,10 @@ export async function registerPushTokenIfAvailable(params: {
                     serverCredentials = null;
                 }
                 if (!serverCredentials) continue;
-                try {
-                    await deletePushTokenApi(serverCredentials, previousToken, { apiEndpoint: profile.serverUrl });
-                } catch {
-                    // best-effort; ignore
-                }
+                await unregisterPreviousToken(serverCredentials, profile.serverUrl);
             }
+
+            await unregisterPreviousToken(credentials, activeServerUrl ?? undefined);
         }
         log.log('Push token registered successfully');
     } catch (error) {

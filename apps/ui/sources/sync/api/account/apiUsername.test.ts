@@ -30,14 +30,25 @@ function mockServerConfig() {
     }));
 }
 
+function resolveNonHealthCall(fetchMock: ReturnType<typeof vi.fn>, expectedUrl: string): RequestInit {
+    const call = fetchMock.mock.calls.find(([input]) => String(input) === expectedUrl);
+    const init = call?.[1];
+    if (!init) {
+        throw new Error(`Expected fetch call for ${expectedUrl}`);
+    }
+    return init;
+}
+
 describe('setAccountUsername', () => {
     it('returns the username on success', async () => {
         mockServerConfig();
-        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
-            ok: true,
-            status: 200,
-            json: async () => ({ username: 'alice' }),
-        }));
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+            const url = String(input);
+            if (url === 'https://api.example.test/health') {
+                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ username: 'alice' }) };
+        });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         const { setAccountUsername } = await import('./apiUsername');
@@ -50,10 +61,7 @@ describe('setAccountUsername', () => {
                 headers: expect.any(Headers),
             }),
         );
-        const requestInit = fetchMock.mock.calls[0]?.[1];
-        if (!requestInit) {
-            throw new Error('Expected fetch to receive RequestInit');
-        }
+        const requestInit = resolveNonHealthCall(fetchMock, 'https://api.example.test/v1/account/username');
         expect((requestInit.headers as Headers).get('Authorization')).toBe('Bearer t');
         expect((requestInit.headers as Headers).get('Content-Type')).toBe('application/json');
         expect(res).toEqual({ username: 'alice' });
@@ -61,13 +69,16 @@ describe('setAccountUsername', () => {
 
     it('throws HappyError(username-taken) on 409 username-taken', async () => {
         mockServerConfig();
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url === 'https://api.example.test/health') {
+                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            }
+            return { ok: false, status: 409, json: async () => ({ error: 'username-taken' }) };
+        });
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => ({
-                ok: false,
-                status: 409,
-                json: async () => ({ error: 'username-taken' }),
-            })) as unknown as typeof fetch,
+            fetchMock as unknown as typeof fetch,
         );
 
         const { setAccountUsername } = await import('./apiUsername');
@@ -80,13 +91,16 @@ describe('setAccountUsername', () => {
 
     it('throws HappyError(invalid-username) on 400 invalid-username', async () => {
         mockServerConfig();
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url === 'https://api.example.test/health') {
+                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            }
+            return { ok: false, status: 400, json: async () => ({ error: 'invalid-username' }) };
+        });
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => ({
-                ok: false,
-                status: 400,
-                json: async () => ({ error: 'invalid-username' }),
-            })) as unknown as typeof fetch,
+            fetchMock as unknown as typeof fetch,
         );
 
         const { setAccountUsername } = await import('./apiUsername');
@@ -99,13 +113,16 @@ describe('setAccountUsername', () => {
 
     it('maps username-disabled to config-kind HappyError', async () => {
         mockServerConfig();
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url === 'https://api.example.test/health') {
+                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            }
+            return { ok: false, status: 400, json: async () => ({ error: 'username-disabled' }) };
+        });
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => ({
-                ok: false,
-                status: 400,
-                json: async () => ({ error: 'username-disabled' }),
-            })) as unknown as typeof fetch,
+            fetchMock as unknown as typeof fetch,
         );
 
         const { setAccountUsername } = await import('./apiUsername');
@@ -119,15 +136,22 @@ describe('setAccountUsername', () => {
 
     it('falls back to default 4xx message when error body is not JSON', async () => {
         mockServerConfig();
-        vi.stubGlobal(
-            'fetch',
-            vi.fn(async () => ({
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url === 'https://api.example.test/health') {
+                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            }
+            return {
                 ok: false,
                 status: 400,
                 json: async () => {
                     throw new Error('invalid json');
                 },
-            })) as unknown as typeof fetch,
+            };
+        });
+        vi.stubGlobal(
+            'fetch',
+            fetchMock as unknown as typeof fetch,
         );
 
         const { setAccountUsername } = await import('./apiUsername');
@@ -141,13 +165,16 @@ describe('setAccountUsername', () => {
 
     it('throws parse error when success payload does not include username', async () => {
         mockServerConfig();
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url === 'https://api.example.test/health') {
+                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ ok: true }) };
+        });
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => ({
-                ok: true,
-                status: 200,
-                json: async () => ({ ok: true }),
-            })) as unknown as typeof fetch,
+            fetchMock as unknown as typeof fetch,
         );
 
         const { setAccountUsername } = await import('./apiUsername');

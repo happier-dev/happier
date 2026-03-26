@@ -14,9 +14,10 @@ export async function fetchFeed(
         limit?: number;
         before?: string;
         after?: string;
+        retry?: 'default' | 'none';
     }
 ): Promise<{ items: FeedItem[]; hasMore: boolean }> {
-    return await backoff(async () => {
+    const run = async () => {
         const params = new URLSearchParams();
         if (options?.limit) params.set('limit', options.limit.toString());
         if (options?.before) params.set('before', options.before);
@@ -30,7 +31,7 @@ export async function fetchFeed(
             headers: {
                 'Authorization': `Bearer ${credentials.token}`
             }
-        }, { includeAuth: false });
+        }, { includeAuth: false, retry: options?.retry });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -64,5 +65,11 @@ export async function fetchFeed(
             items: itemsWithCounter,
             hasMore: parsed.data.hasMore
         };
-    });
+    };
+
+    if (options?.retry === 'none') {
+        return await run();
+    }
+
+    return await backoff(run);
 }

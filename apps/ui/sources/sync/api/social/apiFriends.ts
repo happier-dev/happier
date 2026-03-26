@@ -4,13 +4,13 @@ import { serverFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import {
     UserProfile,
-    UserResponse,
-    FriendsResponse,
-    UsersSearchResponse,
     UserResponseSchema,
     FriendsResponseSchema,
     UsersSearchResponseSchema
 } from '@/sync/domains/social/friendTypes';
+
+type RetryMode = 'default' | 'none';
+type RetryOptions = Readonly<{ retry?: RetryMode }>;
 
 /**
  * Search for users by username (returns multiple results)
@@ -51,8 +51,7 @@ export async function searchUsersByUsername(
         const data = await response.json();
         const parsed = UsersSearchResponseSchema.safeParse(data);
         if (!parsed.success) {
-            console.error('Failed to parse search response:', parsed.error);
-            return [];
+            throw new HappyError('Invalid user search response', false, { kind: 'server' });
         }
         
         return parsed.data.users;
@@ -64,9 +63,10 @@ export async function searchUsersByUsername(
  */
 export async function getUserProfile(
     credentials: AuthCredentials,
-    userId: string
+    userId: string,
+    opts: RetryOptions = {},
 ): Promise<UserProfile | null> {
-    return await backoff(async () => {
+    const run = async () => {
         const response = await serverFetch(
             `/v1/user/${userId}`,
             {
@@ -98,12 +98,17 @@ export async function getUserProfile(
         const data = await response.json();
         const parsed = UserResponseSchema.safeParse(data);
         if (!parsed.success) {
-            console.error('Failed to parse user response:', parsed.error);
-            return null;
+            throw new HappyError('Invalid user profile response', false, { kind: 'server' });
         }
 
         return parsed.data.user;
-    });
+    };
+
+    if (opts.retry === 'none') {
+        return await run();
+    }
+
+    return await backoff(run);
 }
 
 /**
@@ -166,8 +171,7 @@ export async function sendFriendRequest(
         const data = await response.json();
         const parsed = UserResponseSchema.safeParse(data);
         if (!parsed.success) {
-            console.error('Failed to parse add friend response:', parsed.error);
-            return null;
+            throw new HappyError('Invalid friend response', false, { kind: 'server' });
         }
 
         return parsed.data.user;
@@ -184,9 +188,10 @@ export async function sendFriendRequest(
  * Get friends list (includes all statuses: friend, pending, requested)
  */
 export async function getFriendsList(
-    credentials: AuthCredentials
+    credentials: AuthCredentials,
+    opts: RetryOptions = {},
 ): Promise<UserProfile[]> {
-    return await backoff(async () => {
+    const run = async () => {
         const response = await serverFetch('/v1/friends', {
             method: 'GET',
             headers: {
@@ -214,12 +219,17 @@ export async function getFriendsList(
         const data = await response.json();
         const parsed = FriendsResponseSchema.safeParse(data);
         if (!parsed.success) {
-            console.error('Failed to parse friends list:', parsed.error);
-            return [];
+            throw new HappyError('Invalid friends list response', false, { kind: 'server' });
         }
 
         return parsed.data.friends;
-    });
+    };
+
+    if (opts.retry === 'none') {
+        return await run();
+    }
+
+    return await backoff(run);
 }
 
 /**
@@ -259,8 +269,7 @@ export async function removeFriend(
         const data = await response.json();
         const parsed = UserResponseSchema.safeParse(data);
         if (!parsed.success) {
-            console.error('Failed to parse remove friend response:', parsed.error);
-            return null;
+            throw new HappyError('Invalid friend response', false, { kind: 'server' });
         }
 
         return parsed.data.user;

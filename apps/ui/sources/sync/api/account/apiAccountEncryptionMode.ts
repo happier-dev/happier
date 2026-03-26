@@ -9,10 +9,23 @@ import {
 
 type AccountEncryptionMode = AccountEncryptionModeResponse['mode'];
 
+function normalizeAccountEncryptionMode(raw: unknown): AccountEncryptionMode {
+    const value = String(raw ?? '').trim();
+    // Fail closed to E2EE for unknown/legacy values.
+    if (value === 'plain') return 'plain';
+    if (value === 'e2ee') return 'e2ee';
+    return 'e2ee';
+}
+
+function normalizeUpdatedAt(raw: unknown): number {
+    return typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
+}
+
 export async function fetchAccountEncryptionMode(
     credentials: AuthCredentials,
+    opts: Readonly<{ retry?: 'default' | 'none' }> = {},
 ): Promise<{ mode: AccountEncryptionMode; updatedAt: number }> {
-    return await backoff(async () => {
+    const run = async (): Promise<AccountEncryptionModeResponse> => {
         const response = await serverFetch(
             '/v1/account/encryption',
             {
@@ -42,15 +55,25 @@ export async function fetchAccountEncryptionMode(
         if (!parsed.success) {
             throw new Error('Failed to parse account encryption mode response');
         }
-        return parsed.data;
-    });
+        return {
+            mode: normalizeAccountEncryptionMode(parsed.data.mode),
+            updatedAt: normalizeUpdatedAt(parsed.data.updatedAt),
+        };
+    };
+
+    if (opts.retry === 'none') {
+        return await run();
+    }
+
+    return await backoff(run);
 }
 
 export async function updateAccountEncryptionMode(
     credentials: AuthCredentials,
     mode: AccountEncryptionMode,
+    opts: Readonly<{ retry?: 'default' | 'none' }> = {},
 ): Promise<{ mode: AccountEncryptionMode; updatedAt: number }> {
-    return await backoff(async () => {
+    const run = async (): Promise<AccountEncryptionModeResponse> => {
         const response = await serverFetch(
             '/v1/account/encryption',
             {
@@ -79,6 +102,15 @@ export async function updateAccountEncryptionMode(
         if (!parsed.success) {
             throw new Error('Failed to parse account encryption mode response');
         }
-        return parsed.data;
-    });
+        return {
+            mode: normalizeAccountEncryptionMode(parsed.data.mode),
+            updatedAt: normalizeUpdatedAt(parsed.data.updatedAt),
+        };
+    };
+
+    if (opts.retry === 'none') {
+        return await run();
+    }
+
+    return await backoff(run);
 }

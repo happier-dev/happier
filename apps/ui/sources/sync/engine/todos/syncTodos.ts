@@ -1,7 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { log } from '@/log';
-import { initializeTodoSync } from '@/sync/domains/todos/todoOps';
 import { storage } from '@/sync/domains/state/storage';
+import { fetchTodos as fetchTodosDomain } from '@/sync/domains/todos/todoOps';
 
 type RawEncryption = {
     decryptRaw: (value: string) => Promise<any>;
@@ -10,13 +10,10 @@ type RawEncryption = {
 export async function fetchTodos(params: { credentials: AuthCredentials }): Promise<void> {
     const { credentials } = params;
 
-    try {
-        log.log('📝 Fetching todos...');
-        await initializeTodoSync(credentials);
-        log.log('📝 Todos loaded');
-    } catch (error) {
-        log.log('📝 Failed to fetch todos:');
-    }
+    log.log('📝 Fetching todos...');
+    const todoState = await fetchTodosDomain(credentials, { retry: 'none' });
+    storage.getState().applyTodos(todoState);
+    log.log('📝 Todos loaded');
 }
 
 export async function applyTodoSocketUpdates(params: {

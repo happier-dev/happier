@@ -16,6 +16,7 @@ export interface KvItem {
 export interface KvListParams {
     prefix?: string;
     limit?: number;
+    retry?: 'default' | 'none';
 }
 
 export interface KvListResponse {
@@ -120,12 +121,12 @@ export async function kvList(
         ? `/v1/kv?${queryParams.toString()}`
         : '/v1/kv';
 
-    return await backoff(async () => {
+    const run = async () => {
         const response = await serverFetch(url, {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`
             }
-        }, { includeAuth: false });
+        }, { includeAuth: false, retry: params.retry });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -143,7 +144,13 @@ export async function kvList(
 
         const data = await response.json() as KvListResponse;
         return data;
-    });
+    };
+
+    if (params.retry === 'none') {
+        return await run();
+    }
+
+    return await backoff(run);
 }
 
 /**

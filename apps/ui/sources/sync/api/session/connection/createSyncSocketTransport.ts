@@ -20,6 +20,10 @@ export function createSyncSocketTransport(params: Readonly<{
             clientPurpose: 'sync' as const,
         },
         ...(params.transports ? { transports: params.transports } : null),
+        // Avoid the socket.io global Manager cache. We manage connection lifecycles explicitly,
+        // and cached Managers can retain sockets/listeners across rebuilds.
+        forceNew: true,
+        multiplex: false,
         reconnection: false,
         autoConnect: false,
     });
@@ -52,6 +56,9 @@ export function createSyncSocketTransport(params: Readonly<{
 
     const transport: ManagedConnectionTransport = {
         async connect(): Promise<void> {
+            // Defensive: disconnect() may be called while already disconnected/connecting, which might not emit
+            // a 'disconnect' event. Reset so the next disconnect isn't misclassified as intentional.
+            intentionalDisconnect = false;
             socket.connect();
         },
         async disconnect(options?: { intentional?: boolean }): Promise<void> {
@@ -59,9 +66,11 @@ export function createSyncSocketTransport(params: Readonly<{
             socket.disconnect();
         },
         async destroy(): Promise<void> {
+            intentionalDisconnect = false;
             connectedListeners.clear();
             disconnectedListeners.clear();
             errorListeners.clear();
+            socket.offAny?.();
             socket.removeAllListeners?.();
             try {
                 socket.disconnect();

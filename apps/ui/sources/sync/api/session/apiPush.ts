@@ -1,4 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
 import { serverFetch } from '@/sync/http/client';
@@ -8,17 +9,27 @@ import { z } from 'zod';
 export async function registerPushToken(
     credentials: AuthCredentials,
     token: string,
-    opts: Readonly<{ apiEndpoint?: string; clientServerUrl?: string; retry?: 'default' | 'none' }> = {},
+    opts: Readonly<{ serverId?: string; apiEndpoint?: string; clientServerUrl?: string; retry?: 'default' | 'none' }> = {},
 ): Promise<void> {
     const API_ENDPOINT = (opts.apiEndpoint ?? '').trim().replace(/\/+$/, '');
     const CLIENT_SERVER_URL = (opts.clientServerUrl ?? '').trim().replace(/\/+$/, '');
     const path = '/v1/push-tokens';
 
     const run = async () => {
+        const endpointCredentials = (() => {
+            if (!API_ENDPOINT) return null;
+            const serverId = String(opts.serverId ?? '').trim();
+            if (!serverId) return null;
+            return TokenStorage.getCredentialsForServerUrl(API_ENDPOINT, { serverId });
+        })();
+
+        const resolvedCredentials = endpointCredentials ? await endpointCredentials.catch(() => null) : null;
+        const effectiveCredentials = resolvedCredentials ?? credentials;
+
         const doFetch = API_ENDPOINT
             ? (p: string, init: RequestInit) => runtimeFetchWithServerReachability({
                 serverUrl: API_ENDPOINT,
-                token: credentials.token,
+                token: effectiveCredentials.token,
                 url: `${API_ENDPOINT}${p}`,
                 init,
             })
@@ -27,7 +38,7 @@ export async function registerPushToken(
         const response = await doFetch(path, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${credentials.token}`,
+                'Authorization': `Bearer ${effectiveCredentials.token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(CLIENT_SERVER_URL ? { token, clientServerUrl: CLIENT_SERVER_URL } : { token }),

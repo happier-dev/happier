@@ -128,6 +128,7 @@ export async function fetchAndApplyFeed(params: {
         while (hasMore && loadedCount < maxItems) {
             const response = await fetchFeedApi(credentials, {
                 limit: 100,
+                retry: 'none',
                 ...cursor,
             });
 
@@ -149,6 +150,7 @@ export async function fetchAndApplyFeed(params: {
         if (!head && allItems.length < 100) {
             const response = await fetchFeedApi(credentials, {
                 limit: 100,
+                retry: 'none',
             });
             allItems.push(...response.items);
         }
@@ -188,6 +190,6 @@ export async function fetchAndApplyFeed(params: {
             `📰 fetchFeed completed - loaded ${compatibleItems.length} compatible items (${allItems.length - compatibleItems.length} filtered)`,
         );
     } catch (error) {
-        console.error('Failed to fetch feed:', error);
+        throw error;
     }
 }

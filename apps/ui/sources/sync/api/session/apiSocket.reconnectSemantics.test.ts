@@ -238,6 +238,86 @@ describe('apiSocket reconnect semantics', () => {
         expect(onReconnected).toHaveBeenCalledTimes(1);
     });
 
+    it('disconnects the transport when reachability goes offline while a connect is in-flight', async () => {
+        const connectedListeners = new Set<() => void>();
+        const disconnectedListeners = new Set<(event: TransportDisconnectEvent) => void>();
+        const errorListeners = new Set<(error: unknown) => void>();
+        let connected = false;
+        let connecting = false;
+
+        const disconnectSpy = vi.fn(async (_params?: { intentional?: boolean }) => {
+            connecting = false;
+            connected = false;
+        });
+
+        const transport: ManagedConnectionTransport = {
+            connect: vi.fn(async () => {
+                connecting = true;
+            }),
+            disconnect: disconnectSpy,
+            destroy: vi.fn(async () => {
+                connecting = false;
+                connected = false;
+                connectedListeners.clear();
+                disconnectedListeners.clear();
+                errorListeners.clear();
+            }),
+            isConnected: () => connected,
+            onConnected: (listener) => {
+                connectedListeners.add(listener);
+                return () => connectedListeners.delete(listener);
+            },
+            onDisconnected: (listener) => {
+                disconnectedListeners.add(listener);
+                return () => disconnectedListeners.delete(listener);
+            },
+            onError: (listener) => {
+                errorListeners.add(listener);
+                return () => errorListeners.delete(listener);
+            },
+        };
+
+        transportFactory.createSyncSocketTransportSpy.mockImplementation((params: any) => ({
+            socket: { onAny: vi.fn() },
+            transport,
+            ...params,
+        }));
+
+        const { apiSocket } = await import('./apiSocket');
+
+        const endpoint = 'https://server.example.test';
+        apiSocket.initialize({ endpoint, token: 'token-1' }, { getSessionEncryption: vi.fn(), getMachineEncryption: vi.fn() } as never);
+
+        await settleAsyncWork();
+
+        emitReachability(endpoint, {
+            phase: 'online',
+            reason: null,
+            attempt: 1,
+            nextRetryAt: null,
+            lastConnectedAt: Date.now(),
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        });
+        await settleAsyncWork();
+
+        expect(connecting).toBe(true);
+        expect(transport.isConnected()).toBe(false);
+
+        emitReachability(endpoint, {
+            phase: 'offline',
+            reason: 'network_error',
+            attempt: 2,
+            nextRetryAt: Date.now() + 1000,
+            lastConnectedAt: null,
+            lastDisconnectedAt: Date.now(),
+            lastErrorMessage: 'network_error',
+        });
+        await settleAsyncWork();
+
+        expect(disconnectSpy).toHaveBeenCalledWith({ intentional: true });
+    });
+
     it('does not fire onReconnected after an intentional disconnect cycle', async () => {
         const controller = createTransportController();
         transportFactory.lastController = controller;

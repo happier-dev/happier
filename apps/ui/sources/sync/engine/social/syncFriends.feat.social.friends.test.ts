@@ -51,6 +51,9 @@ describe('syncFriends', () => {
 
         const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
             const url = new URL(String(input));
+            if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') {
+                return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+            }
             if (url.pathname === '/v1/features') {
                 return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
             }
@@ -74,6 +77,9 @@ describe('syncFriends', () => {
 
         const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
             const url = new URL(String(input));
+            if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') {
+                return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+            }
             if (url.pathname === '/v1/features') {
                 return {
                     ok: true,
@@ -101,6 +107,9 @@ describe('syncFriends', () => {
 
         const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
             const url = new URL(String(input));
+            if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') {
+                return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+            }
             if (url.pathname === '/v1/features') {
                 return {
                     ok: true,

@@ -17,7 +17,16 @@ vi.mock('@/utils/timing/time', async (importOriginal) => {
 const credentials: AuthCredentials = { token: 'test', secret: 'secret' };
 
 function stubFetch(responseFactory: () => Promise<unknown>) {
-    vi.stubGlobal('fetch', vi.fn(responseFactory) as unknown as typeof fetch);
+    vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: unknown) => {
+            const url = String(input);
+            if (url.endsWith('/health')) {
+                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            }
+            return await responseFactory();
+        }) as unknown as typeof fetch,
+    );
 }
 
 describe('apiVendorTokens', () => {

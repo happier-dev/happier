@@ -18,6 +18,7 @@ import { createSyncSocketTransport } from '@/sync/api/session/connection/createS
 import {
     reportServerUnreachable,
     startServerReachabilitySupervisor,
+    stopServerReachabilitySupervisor,
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 
@@ -199,9 +200,11 @@ class ApiSocket {
         const serverUrl = canonicalizeServerUrl(endpoint) || endpoint;
 
         if (this.reachabilityUnsubscribe && this.reachabilityServerUrl && this.reachabilityServerUrl !== serverUrl) {
+            const previousServerUrl = this.reachabilityServerUrl;
             this.reachabilityUnsubscribe();
             this.reachabilityUnsubscribe = null;
             this.reachabilityServerUrl = null;
+            void stopServerReachabilitySupervisor(previousServerUrl);
         }
 
         if (!this.reachabilityUnsubscribe) {
@@ -216,9 +219,13 @@ class ApiSocket {
     }
 
     disconnect() {
+        const previousServerUrl = this.reachabilityServerUrl;
         this.reachabilityUnsubscribe?.();
         this.reachabilityUnsubscribe = null;
         this.reachabilityServerUrl = null;
+        if (previousServerUrl) {
+            void stopServerReachabilitySupervisor(previousServerUrl);
+        }
         // Intentional disconnects (app backgrounding, server switch, logout) must not be treated as a "reconnect".
         // Reset these flags so the next successful connect becomes a new baseline (no onReconnected callback).
         this.hasConnectedOnce = false;

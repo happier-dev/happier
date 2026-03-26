@@ -86,7 +86,9 @@ describe('apiSharing server-scoped session routes', () => {
             'https://owner.example/v1/sessions/session-1/shares',
             expect.objectContaining({ method: 'GET' }),
         );
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        const sharesCall = runtimeFetchMock.mock.calls.find((call) => call[0] === 'https://owner.example/v1/sessions/session-1/shares');
+        expect(sharesCall).toBeTruthy();
+        expectHeaderValue(sharesCall?.[1]?.headers, 'Authorization', 'Bearer owner-token');
     });
 
     it('creates session shares through the preferred owner server and preserves the request body', async () => {
@@ -132,7 +134,9 @@ describe('apiSharing server-scoped session routes', () => {
                 body: JSON.stringify({ userId: 'user-2', accessLevel: 'edit' }),
             }),
         );
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'Authorization', 'Bearer owner-token');
-        expectHeaderValue(runtimeFetchMock.mock.calls[0]?.[1]?.headers, 'Content-Type', 'application/json');
+        const createCall = runtimeFetchMock.mock.calls.find((call) => call[0] === 'https://owner.example/v1/sessions/session-1/shares');
+        expect(createCall).toBeTruthy();
+        expectHeaderValue(createCall?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectHeaderValue(createCall?.[1]?.headers, 'Content-Type', 'application/json');
     });
 });

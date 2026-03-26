@@ -32,18 +32,22 @@ function mockServerConfig() {
 describe('apiAccountEncryptionMode', () => {
   it('fails closed to e2ee when the server does not implement /v1/account/encryption', async () => {
     mockServerConfig();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: false,
-        status: 404,
-        json: async () => ({ error: 'not_found' }),
-      })) as unknown as typeof fetch,
-    );
+    vi.stubGlobal('fetch', (vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/health')) {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      if (url.endsWith('/v1/auth/ping')) {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      if (url.endsWith('/v1/account/encryption')) {
+        return { ok: false, status: 404, json: async () => ({ error: 'not_found' }) };
+      }
+      throw new Error(`Unexpected fetch to ${url}`);
+    })) as unknown as typeof fetch);
 
     const { fetchAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
     const res = await fetchAccountEncryptionMode(credentials);
     expect(res).toEqual({ mode: 'e2ee', updatedAt: 0 });
   });
 });
-

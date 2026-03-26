@@ -5,7 +5,7 @@ import { ServerFetchAbortedForServerSwitchError, serverFetch } from '@/sync/http
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { parseServerFeatures } from './serverFeaturesParse';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { normalizeBaseUrl } from './probeAuthenticatedServerAuthPingEndpoint';
 
 const TTL_READY_MS = 10 * 60 * 1000;
@@ -142,9 +142,15 @@ async function getServerFeaturesSnapshotWithRetry(
                 let response: Response;
                 try {
                     response = isExplicitServerRequest
-                        ? await runtimeFetch(joinBaseAndPath(explicitServerUrl!, '/v1/features'), {
-                            method: 'GET',
-                            signal: controller.signal,
+                        ? await runtimeFetchWithServerReachability({
+                            serverUrl: explicitServerUrl!,
+                            token: null,
+                            url: joinBaseAndPath(explicitServerUrl!, '/v1/features'),
+                            init: {
+                                method: 'GET',
+                                signal: controller.signal,
+                            },
+                            timeoutMs,
                         })
                         : await serverFetch(
                             '/v1/features',

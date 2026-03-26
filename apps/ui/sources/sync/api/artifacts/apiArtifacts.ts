@@ -7,8 +7,11 @@ import { serverFetch } from '@/sync/http/client';
 /**
  * Fetch all artifacts for the account
  */
-export async function fetchArtifacts(credentials: AuthCredentials): Promise<Artifact[]> {
-    return await backoff(async () => {
+export async function fetchArtifacts(
+    credentials: AuthCredentials,
+    opts: Readonly<{ retry?: 'default' | 'none' }> = {},
+): Promise<Artifact[]> {
+    const run = async () => {
         const response = await serverFetch('/v1/artifacts', {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -32,14 +35,24 @@ export async function fetchArtifacts(credentials: AuthCredentials): Promise<Arti
 
         const data = await response.json() as Artifact[];
         return data;
-    });
+    };
+
+    if (opts.retry === 'none') {
+        return await run();
+    }
+
+    return await backoff(run);
 }
 
 /**
  * Fetch a single artifact with full body
  */
-export async function fetchArtifact(credentials: AuthCredentials, artifactId: string): Promise<Artifact> {
-    return await backoff(async () => {
+export async function fetchArtifact(
+    credentials: AuthCredentials,
+    artifactId: string,
+    opts: Readonly<{ retry?: 'default' | 'none' }> = {},
+): Promise<Artifact> {
+    const run = async () => {
         const response = await serverFetch(`/v1/artifacts/${artifactId}`, {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -66,7 +79,13 @@ export async function fetchArtifact(credentials: AuthCredentials, artifactId: st
 
         const data = await response.json() as Artifact;
         return data;
-    });
+    };
+
+    if (opts.retry === 'none') {
+        return await run();
+    }
+
+    return await backoff(run);
 }
 
 /**
@@ -74,9 +93,10 @@ export async function fetchArtifact(credentials: AuthCredentials, artifactId: st
  */
 export async function createArtifact(
     credentials: AuthCredentials, 
-    request: ArtifactCreateRequest
+    request: ArtifactCreateRequest,
+    opts: Readonly<{ retry?: 'default' | 'none' }> = {},
 ): Promise<Artifact> {
-    return await backoff(async () => {
+    const run = async () => {
         const response = await serverFetch('/v1/artifacts', {
             method: 'POST',
             headers: {
@@ -105,7 +125,13 @@ export async function createArtifact(
 
         const data = await response.json() as Artifact;
         return data;
-    });
+    };
+
+    if (opts.retry === 'none') {
+        return await run();
+    }
+
+    return await backoff(run);
 }
 
 /**
@@ -114,9 +140,10 @@ export async function createArtifact(
 export async function updateArtifact(
     credentials: AuthCredentials,
     artifactId: string,
-    request: ArtifactUpdateRequest
+    request: ArtifactUpdateRequest,
+    opts: Readonly<{ retry?: 'default' | 'none' }> = {},
 ): Promise<ArtifactUpdateResponse> {
-    return await backoff(async () => {
+    const run = async () => {
         const response = await serverFetch(`/v1/artifacts/${artifactId}`, {
             method: 'POST',
             headers: {
@@ -145,7 +172,13 @@ export async function updateArtifact(
 
         const data = await response.json() as ArtifactUpdateResponse;
         return data;
-    });
+    };
+
+    if (opts.retry === 'none') {
+        return await run();
+    }
+
+    return await backoff(run);
 }
 
 /**
@@ -153,9 +186,10 @@ export async function updateArtifact(
  */
 export async function deleteArtifact(
     credentials: AuthCredentials,
-    artifactId: string
+    artifactId: string,
+    opts: Readonly<{ retry?: 'default' | 'none' }> = {},
 ): Promise<void> {
-    return await backoff(async () => {
+    const run = async () => {
         const response = await serverFetch(`/v1/artifacts/${artifactId}`, {
             method: 'DELETE',
             headers: {
@@ -179,5 +213,12 @@ export async function deleteArtifact(
             }
             throw new Error(`Failed to delete artifact: ${response.status}`);
         }
-    });
+    };
+
+    if (opts.retry === 'none') {
+        await run();
+        return;
+    }
+
+    await backoff(run);
 }

@@ -156,12 +156,10 @@ export async function fetchAndApplyMachines(params: {
             },
         });
     } catch (error) {
-        console.error('Failed to fetch machines:', error);
         return;
     }
 
     if (!response.ok) {
-        console.error(`Failed to fetch machines: ${response.status}`);
         return;
     }
 
@@ -169,7 +167,6 @@ export async function fetchAndApplyMachines(params: {
     try {
         data = await response.json();
     } catch (error) {
-        console.error('Failed to parse machines response:', error);
         return;
     }
     const machines = data as Array<{

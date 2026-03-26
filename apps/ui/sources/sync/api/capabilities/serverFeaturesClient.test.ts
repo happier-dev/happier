@@ -6,6 +6,8 @@ let activeServerSnapshot = {
     generation: 1,
 };
 
+let featuresFetchMock: ReturnType<typeof vi.fn>;
+
 const frozenServerFeaturesTime = new Date('2026-02-13T00:00:00.000Z');
 const frozenServerFeaturesTimeAfterCooldown = new Date('2026-02-13T00:01:00.000Z');
 const frozenServerFeaturesTimeAfterErrorTtl = new Date('2026-02-13T00:00:06.000Z');
@@ -50,7 +52,17 @@ describe('serverFeaturesClient', () => {
             serverUrl: 'https://active.example.test',
             generation: 1,
         };
-        globalThis.fetch = vi.fn() as unknown as typeof fetch;
+        featuresFetchMock = vi.fn();
+        globalThis.fetch = vi.fn(async (...args: any[]) => {
+            const url = String(args[0] ?? '');
+            if (url.endsWith('/health')) {
+                return createResponse(200, { ok: true });
+            }
+            if (url.endsWith('/v1/auth/ping')) {
+                return createResponse(200, { ok: true });
+            }
+            return await featuresFetchMock(...args);
+        }) as unknown as typeof fetch;
     });
 
     afterEach(() => {
@@ -78,7 +90,7 @@ describe('serverFeaturesClient', () => {
             },
         };
         let resolver: ((value: Response) => void) | null = null;
-        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        featuresFetchMock.mockImplementation(
             () =>
                 new Promise<Response>((resolve) => {
                     resolver = resolve;
@@ -91,7 +103,9 @@ describe('serverFeaturesClient', () => {
         const first = getServerFeaturesSnapshot({ force: true, timeoutMs: 2000 });
         const second = getServerFeaturesSnapshot({ force: true, timeoutMs: 2000 });
 
-        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+        // Reachability supervision performs an async health probe before starting the /v1/features request.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(featuresFetchMock.mock.calls.length).toBe(1);
 
         const resolveFetch: (value: Response) => void =
             resolver ?? (() => { throw new Error('Expected fetch resolver to be assigned'); });
@@ -103,7 +117,7 @@ describe('serverFeaturesClient', () => {
     });
 
     it('classifies 404 features endpoint as unsupported', async () => {
-        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(createResponse(404, {}));
+        featuresFetchMock.mockResolvedValueOnce(createResponse(404, {}));
 
         const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
@@ -127,7 +141,7 @@ describe('serverFeaturesClient', () => {
             },
         } as unknown as Response;
 
-        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(htmlResponse);
+        featuresFetchMock.mockResolvedValueOnce(htmlResponse);
 
         const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
@@ -157,7 +171,7 @@ describe('serverFeaturesClient', () => {
             },
         };
 
-        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+        featuresFetchMock
             .mockResolvedValueOnce(createResponse(404, {}))
             // If the client incorrectly refetches during cooldown, this 200 would flip the snapshot to ready.
             .mockResolvedValueOnce(createResponse(200, payload));
@@ -172,7 +186,7 @@ describe('serverFeaturesClient', () => {
 
         expect(first.status).toBe('unsupported');
         expect(second.status).toBe('unsupported');
-        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+        expect(featuresFetchMock.mock.calls.length).toBe(1);
     });
 
     it('allows forced revalidation after endpoint-missing cooldown expires', async () => {
@@ -193,7 +207,7 @@ describe('serverFeaturesClient', () => {
             },
         };
 
-        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+        featuresFetchMock
             .mockResolvedValueOnce(createResponse(404, {}))
             .mockResolvedValueOnce(createResponse(200, payload));
 
@@ -204,14 +218,14 @@ describe('serverFeaturesClient', () => {
 
         const first = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
         expect(first.status).toBe('unsupported');
-        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+        expect(featuresFetchMock.mock.calls.length).toBe(1);
 
         // After cooldown, a forced refresh should revalidate.
         setFrozenServerFeaturesClock(frozenServerFeaturesTimeAfterCooldown);
 
         const second = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
         expect(second.status).toBe('ready');
-        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+        expect(featuresFetchMock.mock.calls.length).toBe(2);
     });
 
     it('retries after a short ttl when probing fails (network error)', async () => {
@@ -232,7 +246,7 @@ describe('serverFeaturesClient', () => {
             },
         };
 
-        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+        featuresFetchMock
             .mockRejectedValueOnce(new Error('network down'))
             .mockResolvedValueOnce(createResponse(200, payload));
 
@@ -241,20 +255,28 @@ describe('serverFeaturesClient', () => {
 
         useFrozenServerFeaturesClock();
 
-        const first = await getServerFeaturesSnapshot({ timeoutMs: 50 });
+        const firstPromise = getServerFeaturesSnapshot({ timeoutMs: 50 });
+        await vi.advanceTimersByTimeAsync(0);
+        const first = await firstPromise;
         expect(first.status).toBe('error');
-        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+        expect(featuresFetchMock.mock.calls.length).toBe(1);
 
         // Within the short error TTL, we should not refetch.
-        const second = await getServerFeaturesSnapshot({ timeoutMs: 50 });
+        const secondPromise = getServerFeaturesSnapshot({ timeoutMs: 50 });
+        await vi.advanceTimersByTimeAsync(0);
+        const second = await secondPromise;
         expect(second.status).toBe('error');
-        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+        expect(featuresFetchMock.mock.calls.length).toBe(1);
 
         // After TTL, the client should retry.
         setFrozenServerFeaturesClock(frozenServerFeaturesTimeAfterErrorTtl);
-        const third = await getServerFeaturesSnapshot({ timeoutMs: 50 });
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
+        const thirdPromise = getServerFeaturesSnapshot({ timeoutMs: 50 });
+        await vi.advanceTimersByTimeAsync(0);
+        const third = await thirdPromise;
         expect(third.status).toBe('ready');
-        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+        expect(featuresFetchMock.mock.calls.length).toBe(2);
     });
 
     it('retries a server-switch abort without caching a timeout error', async () => {
@@ -278,7 +300,7 @@ describe('serverFeaturesClient', () => {
         const abortError = new Error('aborted');
         abortError.name = 'AbortError';
 
-        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+        featuresFetchMock
             .mockImplementationOnce(() => {
                 activeServerSnapshot = {
                     serverId: 'server-b',
@@ -295,14 +317,14 @@ describe('serverFeaturesClient', () => {
         const first = await getServerFeaturesSnapshot({ timeoutMs: 50 });
         expect(first.status).toBe('ready');
 
-        const calls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        const calls = featuresFetchMock.mock.calls;
         expect(calls.length).toBe(2);
         expect(String(calls[0]?.[0] ?? '')).toContain('https://active.example.test');
         expect(String(calls[1]?.[0] ?? '')).toContain('https://other.example.test');
 
         const second = await getServerFeaturesSnapshot({ timeoutMs: 50 });
         expect(second.status).toBe('ready');
-        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+        expect(featuresFetchMock.mock.calls.length).toBe(2);
     });
 
     it('recovers from a server-switch abort race by retrying automatically', async () => {
@@ -327,7 +349,7 @@ describe('serverFeaturesClient', () => {
         abortError.name = 'AbortError';
 
         let firstCallSignal: AbortSignal | null = null;
-        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+        featuresFetchMock
             .mockImplementationOnce((_input: RequestInfo | URL, init?: RequestInit) => {
                 return new Promise<Response>((_resolve, reject) => {
                     const signal = init?.signal;
@@ -350,6 +372,11 @@ describe('serverFeaturesClient', () => {
         resetServerFeaturesClientForTests();
 
         const pending = getServerFeaturesSnapshot({ timeoutMs: 2000, force: true });
+        for (let i = 0; i < 10 && !firstCallSignal; i += 1) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+        expect(firstCallSignal).toBeTruthy();
+
         activeServerSnapshot = {
             serverId: 'server-b',
             serverUrl: 'https://other.example.test',
@@ -357,13 +384,10 @@ describe('serverFeaturesClient', () => {
         };
         abortServerFetches();
 
-        // Defensive: ensure our fetch mock observed the abort signal wiring.
-        expect(firstCallSignal).toBeTruthy();
-
         const result = await pending;
         expect(result.status).toBe('ready');
 
-        const calls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        const calls = featuresFetchMock.mock.calls;
         expect(calls.length).toBe(2);
         expect(String(calls[0]?.[0] ?? '')).toContain('https://active.example.test');
         expect(String(calls[1]?.[0] ?? '')).toContain('https://other.example.test');
@@ -396,7 +420,7 @@ describe('serverFeaturesClient', () => {
             secondCallStartedResolve = resolve;
         });
 
-        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => {
+        featuresFetchMock.mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => {
             callIndex += 1;
             const signal = init?.signal;
             if (!signal) return Promise.reject(new Error('missing signal'));
@@ -440,7 +464,7 @@ describe('serverFeaturesClient', () => {
         const result = await pending;
         expect(result.status).toBe('ready');
 
-        const calls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        const calls = featuresFetchMock.mock.calls;
         expect(calls.length).toBe(3);
         expect(String(calls[0]?.[0] ?? '')).toContain('https://active.example.test');
         expect(String(calls[1]?.[0] ?? '')).toContain('https://other.example.test');
@@ -465,7 +489,7 @@ describe('serverFeaturesClient', () => {
             },
         };
 
-        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(createResponse(200, payload));
+        featuresFetchMock.mockResolvedValueOnce(createResponse(200, payload));
 
         const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
@@ -473,7 +497,11 @@ describe('serverFeaturesClient', () => {
         const result = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50, serverId: 'server-b' });
         expect(result.status).toBe('ready');
 
-        const calls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        const rawCalls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        expect(rawCalls.some(([input]) => String(input).includes('https://other.example.test/health'))).toBe(true);
+        expect(rawCalls.some(([input]) => String(input).includes('https://other.example.test/v1/features'))).toBe(true);
+
+        const calls = featuresFetchMock.mock.calls;
         expect(calls.length).toBe(1);
         expect(String(calls[0]?.[0] ?? '')).toContain('https://other.example.test');
     });

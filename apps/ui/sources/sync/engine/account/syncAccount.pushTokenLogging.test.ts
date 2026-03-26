@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { clearLastRegisteredExpoPushToken, saveLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
 
 const mocks = vi.hoisted(() => ({
     registerPushToken: vi.fn(),
+    deletePushToken: vi.fn(),
     listServerProfiles: vi.fn(),
     getActiveServerSnapshot: vi.fn(),
     getCredentialsForServerUrl: vi.fn(),
@@ -31,6 +33,7 @@ vi.mock('expo-constants', () => ({
 
 vi.mock('@/sync/api/session/apiPush', () => ({
     registerPushToken: mocks.registerPushToken,
+    deletePushToken: mocks.deletePushToken,
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -91,6 +94,7 @@ beforeEach(() => {
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    clearLastRegisteredExpoPushToken();
 });
 
 describe('registerPushTokenIfAvailable logging', () => {
@@ -183,7 +187,7 @@ describe('registerPushTokenIfAvailable logging', () => {
             token: 'active-server-token',
             secret: 'active-server-secret',
         });
-        expect(mocks.registerPushToken.mock.calls[2]?.[2]).toEqual({ clientServerUrl: 'https://s2.example.test' });
+        expect(mocks.registerPushToken.mock.calls[2]?.[2]).toMatchObject({ clientServerUrl: 'https://s2.example.test' });
         expect(messages.join('\n')).toContain('Push token registered successfully');
         expect(messages.join('\n')).not.toContain(secretPushToken);
     });
@@ -200,6 +204,8 @@ describe('registerPushTokenIfAvailable logging', () => {
         mocks.registerPushToken
             .mockResolvedValueOnce({ ok: true })
             .mockResolvedValueOnce({ ok: true });
+        mocks.deletePushToken.mockResolvedValue(undefined);
+        saveLastRegisteredExpoPushToken('ExponentPushToken[old-token]');
         const { messages, log } = collectLogs();
         const { registerPushTokenIfAvailable } = await import('./syncAccount');
 
@@ -208,7 +214,8 @@ describe('registerPushTokenIfAvailable logging', () => {
             log,
         });
 
-        expect(mocks.getCredentialsForServerUrl).toHaveBeenCalledTimes(1);
+        // One for the profile registration pass, one for best-effort token rotation cleanup.
+        expect(mocks.getCredentialsForServerUrl).toHaveBeenCalledTimes(2);
         expect(mocks.registerPushToken).toHaveBeenCalledTimes(2);
         expect(mocks.registerPushToken.mock.calls[0]?.[2]).toMatchObject({
             apiEndpoint: 'https://profile.example.test',
@@ -218,6 +225,11 @@ describe('registerPushTokenIfAvailable logging', () => {
             token: 'active-server-token',
             secret: 'active-server-secret',
         });
+        expect(mocks.deletePushToken).toHaveBeenCalledWith(
+            { token: 'active-server-token', secret: 'active-server-secret' },
+            'ExponentPushToken[old-token]',
+            { apiEndpoint: 'https://active.example.test' },
+        );
         expect(messages.join('\n')).toContain('Push token registered successfully');
         expect(messages.join('\n')).not.toContain(secretPushToken);
     });
