@@ -47,6 +47,7 @@ import { buildHandoffSessionMetadataFromTrackedSession } from './sessions/buildH
 import { createOnChildExited } from './sessions/onChildExited';
 import { waitForVisibleConsoleSessionWebhook } from './sessions/visibleConsoleSpawnWaiter';
 import { createStopSession } from './sessions/stopSession';
+import { waitForExistingSessionExitIfStopRequested } from './sessions/waitForExistingSessionExitIfStopRequested';
 import { resolveSpawnWebhookResult } from './sessions/resolveSpawnWebhookResult';
 import { isSessionRunnerActive as isSessionRunnerActiveInDaemon } from './sessions/isSessionRunnerActive';
 import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
@@ -444,8 +445,24 @@ export async function startDaemon(): Promise<void> {
               // - sessions we are tracking (including in-flight attaches), and
               // - runners started outside this daemon (lock file check).
               if (await isSessionRunnerActive(normalizedExistingSessionId)) {
-                logger.debug(`[DAEMON RUN] Resume requested for ${normalizedExistingSessionId}, but session is already running`);
-                return { type: 'success', sessionId: normalizedExistingSessionId };
+                // If the daemon has *just* requested the runner to stop (e.g. aborting a handoff),
+                // a best-effort "restart on source" can race and leave the session stopped. When
+                // we detect an in-flight stop marker, wait briefly for the runner to exit before
+                // applying the idempotent "already running" rule.
+                if (configuration.daemonSpawnExistingSessionWaitForExitMs > 0) {
+                  await waitForExistingSessionExitIfStopRequested({
+                    sessionId: normalizedExistingSessionId,
+                    pidToTrackedSession,
+                    isSessionRunnerActive,
+                    timeoutMs: configuration.daemonSpawnExistingSessionWaitForExitMs,
+                    pollIntervalMs: configuration.daemonSpawnExistingSessionWaitForExitPollIntervalMs,
+                  });
+                }
+
+                if (await isSessionRunnerActive(normalizedExistingSessionId)) {
+                  logger.debug(`[DAEMON RUN] Resume requested for ${normalizedExistingSessionId}, but session is already running`);
+                  return { type: 'success', sessionId: normalizedExistingSessionId };
+                }
               }
             }
 
@@ -515,14 +532,15 @@ export async function startDaemon(): Promise<void> {
 
               let sessionAttachPayload: import('@/agent/runtime/sessionAttachPayload').SessionAttachFilePayload | null = null;
               if (normalizedExistingSessionId) {
-                const credentials = await readCredentials().catch(() => null);
-                const tokenForFetch = credentials?.token ?? '';
+                const storedCredentials = await readCredentials().catch(() => null);
+                const effectiveCredentials = storedCredentials ?? credentials;
+                const tokenForFetch = effectiveCredentials?.token ?? '';
 
                 const attachContext = await resolveExistingSessionAttachContext({
                   token: tokenForFetch,
                   sessionId: normalizedExistingSessionId,
                   agent: backendTarget?.kind === 'builtInAgent' ? backendTarget.agentId : 'customAcp',
-                  credentials,
+                  credentials: effectiveCredentials,
                 });
 
                 if (!attachContext.ok) {
@@ -798,6 +816,7 @@ export async function startDaemon(): Promise<void> {
                   pid: tmuxPid, // Real PID from tmux -P flag
                   spawnOptions: options,
                   tmuxSessionId: tmuxResult.sessionId,
+                  tmuxTmpDir: typeof tmuxTmpDir === 'string' && tmuxTmpDir.trim().length > 0 ? tmuxTmpDir.trim() : undefined,
                   vendorResumeId: effectiveResume || undefined,
                   directoryCreated,
                   message: directoryCreated

@@ -98,6 +98,8 @@ vi.mock('@/configuration', () => ({
     happyHomeDir: '/tmp/happy-home',
     currentCliVersion: '0.0.0-test',
     serverUrl: 'http://localhost:9999',
+    daemonSpawnExistingSessionWaitForExitMs: 5_000,
+    daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
   },
 }));
 

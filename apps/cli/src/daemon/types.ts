@@ -35,9 +35,17 @@ export interface TrackedSession {
   message?: string;
   /** tmux session identifier (format: session:window) */
   tmuxSessionId?: string;
+  /** tmux server tmpdir used for isolated tmux spawns (when provided). */
+  tmuxTmpDir?: string;
   /**
    * Sessions reattached from disk markers after daemon restart are potentially unsafe to kill by PID
    * (avoids PID reuse killing unrelated processes). We keep them kill-protected.
    */
   reattachedFromDiskMarker?: boolean;
+  /**
+   * Set when the daemon requests the session runner to stop (SIGTERM dispatched). Used as a
+   * coordination hint so "resume/restart" requests can wait for the runner to fully exit instead
+   * of racing the in-flight stop.
+   */
+  stopRequestedAtMs?: number;
 }

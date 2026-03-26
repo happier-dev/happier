@@ -135,6 +135,8 @@ vi.mock('@/configuration', () => ({
     privateKeyFile: '/tmp/key',
     happyHomeDir: '/tmp/home',
     currentCliVersion: '0.0.0-test',
+    daemonSpawnExistingSessionWaitForExitMs: 5_000,
+    daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
   },
 }));
 

@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger';
+import { TmuxUtilities } from '@/integrations/tmux/TmuxUtilities';
 
 import { isPidSafeHappySessionProcess } from '../pidSafety';
 import type { TrackedSession } from '../types';
@@ -40,11 +41,65 @@ export function createStopSession(params: Readonly<{
       const session = pidToTrackedSession.get(pid);
       if (!session) continue;
 
+      if (session.startedBy === 'daemon') {
+        const terminal = session.spawnOptions?.terminal;
+        const tmuxTmpDirFromSpawn =
+          terminal?.mode === 'tmux' && typeof terminal.tmux?.tmpDir === 'string' ? terminal.tmux.tmpDir.trim() : '';
+        const tmuxTmpDir =
+          typeof session.tmuxTmpDir === 'string' && session.tmuxTmpDir.trim().length > 0
+            ? session.tmuxTmpDir.trim()
+            : tmuxTmpDirFromSpawn;
+        const tmuxEnv = tmuxTmpDir ? { TMUX_TMPDIR: tmuxTmpDir } : undefined;
+        const uid = typeof (process as any).getuid === 'function' ? ((process as any).getuid() as number) : null;
+        const socketPath = tmuxTmpDir && uid !== null ? `${tmuxTmpDir}/tmux-${uid}/default` : undefined;
+
+        const tmux = new TmuxUtilities(undefined, tmuxEnv, socketPath);
+
+        const tmuxWindowTarget = typeof session.tmuxSessionId === 'string' ? session.tmuxSessionId.trim() : '';
+        if (tmuxWindowTarget) {
+          let killed = await tmux.killWindow(tmuxWindowTarget);
+          if (!killed) {
+            const direct = await tmux.executeTmuxCommand(['kill-window', '-t', tmuxWindowTarget], undefined, undefined, undefined, socketPath);
+            killed = direct !== null && direct.returncode === 0;
+            if (!killed) {
+              logger.debug(
+                `[DAEMON RUN] Failed to kill tmux window for daemon-spawned session ${normalizedSessionId} (${tmuxWindowTarget})`,
+              );
+            }
+          }
+          if (killed) {
+            session.stopRequestedAtMs = Date.now();
+            logger.debug(`[DAEMON RUN] Killed tmux window for daemon-spawned session ${normalizedSessionId} (${tmuxWindowTarget})`);
+            stoppedAny = true;
+            continue;
+          }
+        }
+
+        // If we haven't recorded a window target yet (e.g. stop requested during spawn/respawn),
+        // fall back to killing the whole tmux session when the spawn was isolated/dedicated.
+        const tmuxSessionName =
+          terminal?.mode === 'tmux' && typeof terminal.tmux?.sessionName === 'string' ? terminal.tmux.sessionName.trim() : '';
+        const isolated = terminal?.mode === 'tmux' && terminal.tmux?.isolated === true;
+        if (!tmuxWindowTarget && tmuxSessionName && (isolated || tmuxTmpDir)) {
+          const res = await tmux.executeTmuxCommand(['kill-session'], tmuxSessionName, undefined, undefined, socketPath);
+          if (res !== null && res.returncode === 0) {
+            session.stopRequestedAtMs = Date.now();
+            logger.debug(`[DAEMON RUN] Killed isolated tmux session for daemon-spawned session ${normalizedSessionId} (${tmuxSessionName})`);
+            stoppedAny = true;
+            continue;
+          }
+          logger.debug(
+            `[DAEMON RUN] Failed to kill isolated tmux session for daemon-spawned session ${normalizedSessionId} (${tmuxSessionName})`,
+          );
+        }
+      }
+
       if (session.startedBy === 'daemon' && session.childProcess) {
         try {
           try {
             // Prefer killing the full process group when the daemon spawned a detached session runner.
             process.kill(-pid, 'SIGTERM');
+            session.stopRequestedAtMs = Date.now();
             logger.debug(
               `[DAEMON RUN] Sent SIGTERM to daemon-spawned session process group ${normalizedSessionId} (pid=${pid})`,
             );
@@ -55,6 +110,7 @@ export function createStopSession(params: Readonly<{
           }
 
           session.childProcess.kill('SIGTERM');
+          session.stopRequestedAtMs = Date.now();
           logger.debug(`[DAEMON RUN] Sent SIGTERM to daemon-spawned session ${normalizedSessionId} (pid=${pid})`);
           stoppedAny = true;
         } catch (error) {
@@ -72,6 +128,7 @@ export function createStopSession(params: Readonly<{
 
       try {
         process.kill(pid, 'SIGTERM');
+        session.stopRequestedAtMs = Date.now();
         logger.debug(`[DAEMON RUN] Sent SIGTERM to external session PID ${pid} (${normalizedSessionId})`);
         stoppedAny = true;
       } catch (error) {

@@ -9,9 +9,11 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { Metadata } from '@/api/types';
+import { resolveCatalogAgentIdForCliSubcommand } from '@/backends/catalog';
 import { TrackedSession } from './types';
 import { SPAWN_SESSION_ERROR_CODES, SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 import { mergeSpawnSessionOptions, SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
+import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
 
 function safeTokenEquals(provided: string, expected: string): boolean {
   const hashA = createHash('sha256').update(provided).digest();
@@ -237,6 +239,107 @@ export function createDaemonControlApp({
           error: result.errorMessage,
           errorCode: result.errorCode,
         };
+    }
+  });
+
+  typed.post('/continue-with-replay', {
+    schema: {
+      body: z.object({
+        directory: z.string(),
+        agent: z.string(),
+        approvedNewDirectoryCreation: z.boolean().optional(),
+        permissionMode: z.string().optional(),
+        permissionModeUpdatedAt: z.number().optional(),
+        modelId: z.string().optional(),
+        modelUpdatedAt: z.number().optional(),
+        replay: z.object({
+          previousSessionId: z.string(),
+          strategy: z.string().optional(),
+          recentMessagesCount: z.number().optional(),
+          maxSeedChars: z.number().optional(),
+          seedMode: z.string().optional(),
+        }),
+      }),
+      response: {
+        200: z.object({
+          success: z.boolean(),
+          sessionId: z.string().optional(),
+          approvedNewDirectoryCreation: z.boolean().optional(),
+        }),
+        400: z.object({
+          success: z.boolean(),
+          error: z.string(),
+          errorCode: z.string().optional(),
+        }),
+        401: authSchema401,
+        409: z.object({
+          success: z.boolean(),
+          requiresUserApproval: z.boolean().optional(),
+          actionRequired: z.string().optional(),
+          directory: z.string().optional(),
+        }),
+        500: z.object({
+          success: z.boolean(),
+          error: z.string().optional(),
+          errorCode: z.string().optional(),
+        }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    const agentId = resolveCatalogAgentIdForCliSubcommand(request.body.agent);
+    if (!agentId) {
+      reply.code(400);
+      return {
+        success: false,
+        error: 'Unknown agent id',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      };
+    }
+
+    let result: SpawnSessionResult;
+    try {
+      result = await continueSessionWithReplay(
+        {
+          directory: request.body.directory,
+          agentId,
+          approvedNewDirectoryCreation: request.body.approvedNewDirectoryCreation,
+          permissionMode: request.body.permissionMode,
+          permissionModeUpdatedAt: request.body.permissionModeUpdatedAt,
+          modelId: request.body.modelId,
+          modelUpdatedAt: request.body.modelUpdatedAt,
+          replay: request.body.replay,
+        },
+        { spawnSession },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(500);
+      return {
+        success: false,
+        error: `Failed to spawn session: ${message}`,
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      };
+    }
+
+    switch (result.type) {
+      case 'success':
+        if (!result.sessionId) {
+          reply.code(500);
+          return { success: false, error: 'Failed to spawn session: no session ID returned' };
+        }
+        return { success: true, sessionId: result.sessionId, approvedNewDirectoryCreation: true };
+      case 'requestToApproveDirectoryCreation':
+        reply.code(409);
+        return {
+          success: false,
+          requiresUserApproval: true,
+          actionRequired: 'CREATE_DIRECTORY',
+          directory: result.directory,
+        };
+      case 'error':
+        reply.code(result.errorCode === SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST ? 400 : 500);
+        return { success: false, error: result.errorMessage, errorCode: result.errorCode };
     }
   });
 
