@@ -6,7 +6,8 @@ This suite contains **native** (iOS/Android) E2E flows executed via **Maestro**.
 
 - **Playwright remains the canonical web UI E2E** (`suites/ui-e2e`).
 - Maestro focuses on **native-only regressions**: touch/keyboard/back/gesture/popup rendering.
-- Selectors are **`testID`-only**. Do not rely on translated visible copy.
+- Selectors are **`testID`-only** inside Happier. Do not rely on translated visible copy.
+  - Exception: the **Expo Dev Client** boot screen is not our UI; bootstrap flows may use visible copy to connect to Metro.
 
 ## Run (local)
 
@@ -14,6 +15,7 @@ Prereqs:
 - Java 17+
 - Android emulator / iOS simulator
 - Maestro installed (`maestro --version`)
+- Metro running for the Expo Dev Client with native E2E selectors enabled (`EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS=1`) (default Metro URL: `http://127.0.0.1:8081`)
 
 From repo root:
 
@@ -22,6 +24,11 @@ HAPPIER_E2E_SERVER_URL=http://127.0.0.1:<port> yarn -s test:e2e:mobile:android
 # or (if already exported):
 yarn -s test:e2e:mobile:android
 ```
+
+Optional overrides:
+- `HAPPIER_E2E_DEV_CLIENT_METRO_URL` (defaults to `http://127.0.0.1:8081`, translated for Android emulator to `http://10.0.2.2:8081`)
+- `HAPPIER_E2E_MOBILE_DEVICE_HOST` (force device-visible host when running on real devices)
+- `HAPPIER_E2E_ANDROID_ADB_REVERSE=1` (best-effort `adb reverse` for host Metro/server ports; recommended for local Android emulator runs)
 
 Artifacts are written under:
 - `packages/tests/.project/logs/e2e/mobile-maestro/`

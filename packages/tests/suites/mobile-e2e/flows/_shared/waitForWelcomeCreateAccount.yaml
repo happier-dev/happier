@@ -1,0 +1,26 @@
+# Waits for Happier's Welcome screen to be ready for interaction in dev builds.
+#
+# In development builds, Expo's developer menu onboarding sheet can appear and
+# block the UI. This flow repeatedly:
+# - dismisses the developer menu if present, and
+# - waits for the Welcome screen "Create account" button.
+#
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+
+- runFlow:
+    file: dismissDeveloperMenuMaybe.yaml
+
+- extendedWaitUntil:
+    visible: welcome-create-account
+    timeout: 240000
+
+- runFlow:
+    file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+
+- runFlow:
+    file: dismissDeveloperMenuMaybe.yaml
+
+- assertVisible: welcome-create-account

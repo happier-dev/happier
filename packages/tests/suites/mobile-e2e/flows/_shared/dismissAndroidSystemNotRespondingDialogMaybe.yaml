@@ -1,0 +1,14 @@
+# Best-effort dismissal of Android "isn't responding" (ANR) dialogs.
+#
+# These dialogs are system-owned and can occur on slow emulators. We use visible
+# copy here because it's not our UI and it is not localized in our test setup.
+#
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    optional: true
+    commands:
+      - extendedWaitUntil:
+          visible: "isn't responding"
+          timeout: 1000
+      - tapOn: "Wait"

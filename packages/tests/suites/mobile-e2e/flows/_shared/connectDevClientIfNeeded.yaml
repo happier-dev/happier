@@ -1,0 +1,63 @@
+# Expo Dev Client bootstrap helper.
+#
+# Maestro flows generally rely on our app `testID`s only. This file is the
+# exception: the Expo Dev Client boot screen is not our UI, so we must use
+# visible copy to connect to Metro.
+#
+# Preconditions:
+# - `${HAPPIER_E2E_DEV_CLIENT_METRO_URL}` is set (passed via Maestro `-e`).
+#
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+
+# Dev Client UI can appear in two shapes:
+# 1) Manual connect screen (URL input + Connect button)
+# 2) A list of discovered development servers (tap an entry to connect)
+
+- runFlow:
+    when:
+      visible: "DEVELOPMENT SERVERS"
+    commands:
+      - runFlow:
+          file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+
+- runFlow:
+    when:
+      visible: "Development servers"
+    commands:
+      - runFlow:
+          file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+
+- runFlow:
+    when:
+      visible: "Connect"
+    commands:
+      - runFlow:
+          file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+      # Focus the URL input and replace it with the Metro URL.
+      - tapOn:
+          text: "http://localhost:8081"
+      - eraseText
+      - inputText: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
+      - tapOn:
+          text: "Connect"
+
+- runFlow:
+    when:
+      visible: "New development server"
+    commands:
+      - runFlow:
+          file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+      # Prefer the deterministic "New development server" path, since discovered
+      # server list items can disappear immediately after tapping (making
+      # conditional flows hard to express reliably).
+      - tapOn: "New development server"
+      - assertVisible: "Connect"
+      - tapOn:
+          text: "http://localhost:8081"
+      - eraseText
+      - inputText: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
+      - tapOn:
+          text: "Connect"

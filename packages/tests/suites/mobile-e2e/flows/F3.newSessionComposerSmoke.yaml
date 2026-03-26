@@ -4,9 +4,9 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     clearState: true
 
 - runFlow:
-    when:
-      visible:
-        id: welcome-configure-server
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
     file: _shared/configureServerIfNeeded.yaml
 
 - runFlow:
@@ -15,16 +15,11 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - runFlow:
     file: _shared/gotoNewSessionComposer.yaml
 
-- assertVisible:
-    id: agent-input-agent-chip
-- assertVisible:
-    id: agent-input-permission-chip
-- assertVisible:
-    id: agent-input-session-mode-chip
+- assertVisible: agent-input-agent-chip
+- assertVisible: agent-input-permission-chip
+- assertVisible: agent-input-session-mode-chip
 
-- tapOn:
-    id: new-session-composer-input
+- tapOn: new-session-composer-input
 - inputText: "MOBILE_E2E_NEW_SESSION_SMOKE"
 
-- assertVisible:
-    id: new-session-composer-send
+- assertVisible: new-session-composer-send

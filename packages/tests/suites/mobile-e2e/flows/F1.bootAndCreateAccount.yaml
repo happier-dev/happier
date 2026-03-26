@@ -4,9 +4,9 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     clearState: true
 
 - runFlow:
-    when:
-      visible:
-        id: welcome-configure-server
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
     file: _shared/configureServerIfNeeded.yaml
 
 - runFlow:
