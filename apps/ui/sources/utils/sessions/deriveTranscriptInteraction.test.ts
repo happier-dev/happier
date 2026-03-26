@@ -37,6 +37,22 @@ describe('deriveTranscriptInteraction', () => {
         });
     });
 
+    it('treats inactive sessions as inactive even for view-only access', () => {
+        expect(
+            deriveTranscriptInteraction({
+                kind: 'session',
+                accessLevel: 'view',
+                canApprovePermissions: false,
+                isSessionActive: false,
+            }),
+        ).toEqual({
+            canSendMessages: false,
+            canApprovePermissions: false,
+            permissionDisabledReason: 'inactive',
+            disableToolNavigation: undefined,
+        });
+    });
+
     it('allows sending in edit/admin while permission approvals may be not granted', () => {
         expect(deriveTranscriptInteraction({ kind: 'session', accessLevel: 'edit', canApprovePermissions: false })).toEqual({
             canSendMessages: true,

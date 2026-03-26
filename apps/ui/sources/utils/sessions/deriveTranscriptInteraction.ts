@@ -55,13 +55,15 @@ export function deriveTranscriptInteraction(
     const baseCanApprovePermissions = isOwner || input.canApprovePermissions === true;
     const isSessionActive = input.isSessionActive !== false;
     const canApprovePermissions = baseCanApprovePermissions && isSessionActive;
-    const permissionDisabledReason: TranscriptInteraction['permissionDisabledReason'] = isOwner
-        ? (canApprovePermissions ? undefined : 'inactive')
-        : input.accessLevel === 'view'
-            ? 'readOnly'
-            : canApprovePermissions
-                ? undefined
-                : (baseCanApprovePermissions ? 'inactive' : 'notGranted');
+    const permissionDisabledReason: TranscriptInteraction['permissionDisabledReason'] = !isSessionActive
+        ? 'inactive'
+        : isOwner
+            ? (canApprovePermissions ? undefined : 'inactive')
+            : input.accessLevel === 'view'
+                ? 'readOnly'
+                : canApprovePermissions
+                    ? undefined
+                    : (baseCanApprovePermissions ? 'inactive' : 'notGranted');
 
     return {
         canSendMessages,
