@@ -7,6 +7,8 @@ import { fetchAndApplyMachines } from './syncMachines';
 describe('fetchAndApplyMachines error propagation', () => {
     it('throws when the machine list request fails', async () => {
         const credentials: AuthCredentials = { token: 't', secret: 's' };
+        const networkError = new Error('Network request failed');
+        const applyMachines = vi.fn();
 
         await expect(
             fetchAndApplyMachines({
@@ -18,10 +20,12 @@ describe('fetchAndApplyMachines error propagation', () => {
                 },
                 machineDataKeys: new Map(),
                 request: vi.fn(async () => {
-                    throw new Error('Network request failed');
+                    throw networkError;
                 }),
-                applyMachines: vi.fn(),
+                applyMachines,
             }),
-        ).rejects.toThrow('Network request failed');
+        ).rejects.toBe(networkError);
+
+        expect(applyMachines).not.toHaveBeenCalled();
     });
 });

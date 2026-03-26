@@ -147,28 +147,18 @@ export async function fetchAndApplyMachines(params: {
     const concurrencyLimit = Math.max(1, Math.trunc(params.machineDisplayHydrationConcurrencyLimit ?? 4));
     const shouldContinue = params.shouldContinue ?? (() => true);
 
-    let response: Response;
-    try {
-        response = await request('/v1/machines', {
-            headers: {
-                'Authorization': `Bearer ${credentials.token}`,
-                'Content-Type': 'application/json',
-            },
-        });
-    } catch (error) {
-        return;
-    }
+    const response = await request('/v1/machines', {
+        headers: {
+            'Authorization': `Bearer ${credentials.token}`,
+            'Content-Type': 'application/json',
+        },
+    });
 
     if (!response.ok) {
-        return;
+        throw new Error(`Failed to fetch machines: ${response.status}`);
     }
 
-    let data: unknown;
-    try {
-        data = await response.json();
-    } catch (error) {
-        return;
-    }
+    const data: unknown = await response.json();
     const machines = data as Array<{
         id: string;
         metadata: string;

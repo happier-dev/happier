@@ -25,8 +25,8 @@ function stubWebRuntime(origin: string) {
     vi.stubGlobal('document', {});
 }
 
-async function importFresh() {
-    vi.resetModules();
+async function importFresh(options: Readonly<{ resetModules?: boolean }> = {}) {
+    if (options.resetModules !== false) vi.resetModules();
     return await import('./serverProfiles');
 }
 

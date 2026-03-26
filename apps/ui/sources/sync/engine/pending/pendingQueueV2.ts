@@ -185,7 +185,7 @@ export async function fetchAndApplyPendingMessagesV2(params: {
         return;
     }
 
-    const queued = rows.filter((r) => r.status === 'queued').sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
+    const queued = rows.filter((r) => r.status === 'queued').sort((a, b) => a.position - b.position || a.createdAt - b.createdAt || a.localId.localeCompare(b.localId));
     const discarded = rows.filter((r) => r.status === 'discarded').sort((a, b) => (a.discardedAt ?? a.updatedAt) - (b.discardedAt ?? b.updatedAt));
 
     const pendingMessages = [];

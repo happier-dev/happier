@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('react-native-mmkv', () => {
-    throw new Error('MMKV should not be imported in web runtime');
+const mmkvCtor = vi.fn(() => {
+    throw new Error('MMKV should not be constructed in web runtime');
 });
+
+vi.mock('react-native-mmkv', () => ({
+    MMKV: mmkvCtor,
+}));
 
 describe('pushTokenRegistration', () => {
     beforeEach(() => {
         vi.resetModules();
+        mmkvCtor.mockClear();
 
         vi.stubGlobal('window', {});
         vi.stubGlobal('document', {});
@@ -29,7 +34,7 @@ describe('pushTokenRegistration', () => {
         vi.unstubAllGlobals();
     });
 
-    it('roundtrips token using localStorage on web without importing MMKV', async () => {
+    it('roundtrips token using localStorage on web without constructing MMKV', async () => {
         const module = await import('./pushTokenRegistration');
 
         expect(module.loadLastRegisteredExpoPushToken()).toBeNull();
@@ -38,5 +43,7 @@ describe('pushTokenRegistration', () => {
 
         module.clearLastRegisteredExpoPushToken();
         expect(module.loadLastRegisteredExpoPushToken()).toBeNull();
+
+        expect(mmkvCtor).not.toHaveBeenCalled();
     });
 });

@@ -7,7 +7,7 @@ import { LocalSettings, localSettingsDefaults, localSettingsParse } from '../set
 import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
 import { Profile, profileDefaults, profileParse } from '../profiles/profile';
 import { isModelMode, isPermissionMode, type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/registry/registryCore';
 import { SecretStringSchema, type SecretString } from '../../encryption/secretSettings';
 import {
     readPersistedNewSessionCheckoutDraft,

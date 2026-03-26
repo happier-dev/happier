@@ -94,7 +94,64 @@ function storageId(): string {
     return scopedStorageId('server-profiles', scope);
 }
 
-const storage = new MMKV({ id: storageId() });
+type PersistedStateStorage = Readonly<{
+    getString: (key: string) => string | undefined;
+    set: (key: string, value: string) => void;
+}>;
+
+let persistedStateStorage: PersistedStateStorage | null = null;
+
+function resolveWebStorageBackend(): Storage | null {
+    const windowStorage = (globalThis as any).window?.localStorage;
+    if (windowStorage && typeof windowStorage.getItem === 'function') return windowStorage as Storage;
+    const localStorage = (globalThis as any).localStorage;
+    if (localStorage && typeof localStorage.getItem === 'function') return localStorage as Storage;
+    const sessionStorage = (globalThis as any).sessionStorage;
+    if (sessionStorage && typeof sessionStorage.getItem === 'function') return sessionStorage as Storage;
+    return null;
+}
+
+function createWebPersistedStateStorage(): PersistedStateStorage {
+    const storage = resolveWebStorageBackend();
+    const fallback = new Map<string, string>();
+    const prefix = `${storageId()}:`;
+    const resolveKey = (key: string) => `${prefix}${key}`;
+
+    return {
+        getString: (key: string) => {
+            const resolvedKey = resolveKey(key);
+            try {
+                const value = storage?.getItem(resolvedKey) ?? null;
+                return typeof value === 'string' ? value : fallback.get(resolvedKey);
+            } catch {
+                return fallback.get(resolvedKey);
+            }
+        },
+        set: (key: string, value: string) => {
+            const resolvedKey = resolveKey(key);
+            try {
+                storage?.setItem(resolvedKey, value);
+            } catch {
+                // ignore
+            }
+            fallback.set(resolvedKey, value);
+        },
+    };
+}
+
+function createNativePersistedStateStorage(): PersistedStateStorage {
+    const storage = new MMKV({ id: storageId() });
+    return {
+        getString: (key: string) => storage.getString(key),
+        set: (key: string, value: string) => storage.set(key, value),
+    };
+}
+
+function getPersistedStateStorage(): PersistedStateStorage {
+    if (persistedStateStorage) return persistedStateStorage;
+    persistedStateStorage = isWebRuntime() ? createWebPersistedStateStorage() : createNativePersistedStateStorage();
+    return persistedStateStorage;
+}
 
 function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
     const entries: PreconfiguredServer[] = [];
@@ -369,7 +426,7 @@ function dedupeEquivalentProfiles(params: Readonly<{
 }
 
 function readPersistedState(): Required<PersistedServerState> {
-    const raw = storage.getString(STATE_KEY);
+    const raw = getPersistedStateStorage().getString(STATE_KEY);
     if (!raw) {
         const seeded = applyRuntimeSeedPolicy({});
         return {
@@ -425,7 +482,7 @@ function readPersistedState(): Required<PersistedServerState> {
 }
 
 function writePersistedState(state: Required<PersistedServerState>): void {
-    storage.set(STATE_KEY, JSON.stringify(state));
+    getPersistedStateStorage().set(STATE_KEY, JSON.stringify(state));
 }
 
 function readTabActiveServerId(): string | null {
