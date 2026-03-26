@@ -1,5 +1,3 @@
-import { storage } from '@/sync/domains/state/storage';
-
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLanguageEnglishName, getLanguageNativeName, type SupportedLanguage } from './_all';
 import type { TranslationStructure, Translations } from './_types';
 import { getDeviceLocales } from './deviceLocales';
@@ -65,6 +63,8 @@ export type TranslationKeyNoParams = {
     [K in TranslationKey]: TranslationParams<K> extends never ? K : never;
 }[TranslationKey];
 
+let preferredLanguageOverride: SupportedLanguage | null = null;
+
 function isTranslationFunction(value: unknown): value is TranslationFunction {
     return typeof value === 'function';
 }
@@ -98,13 +98,7 @@ function resolveLanguageFromDeviceLocales(): SupportedLanguage {
 }
 
 function resolveActiveLanguage(): SupportedLanguage {
-    const preferredLanguage = storage.getState().settings?.preferredLanguage ?? null;
-    if (typeof preferredLanguage === 'string') {
-        const trimmed = preferredLanguage.trim();
-        if (isSupportedLanguage(trimmed)) return trimmed;
-    }
-
-    return resolveLanguageFromDeviceLocales();
+    return preferredLanguageOverride ?? resolveLanguageFromDeviceLocales();
 }
 
 function getTranslationTree(language: SupportedLanguage): Translations {
@@ -168,6 +162,17 @@ export function getTranslationValue(key: string): unknown {
 
 export function getAllTranslationKeys(): TranslationKey[] {
     return [...ALL_TRANSLATION_KEYS];
+}
+
+export function setPreferredLanguageFromSettings(value: unknown): void {
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed && isSupportedLanguage(trimmed)) {
+            preferredLanguageOverride = trimmed;
+            return;
+        }
+    }
+    preferredLanguageOverride = null;
 }
 
 export function t<K extends TranslationKey>(
