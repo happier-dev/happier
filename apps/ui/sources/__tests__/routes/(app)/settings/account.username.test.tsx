@@ -89,6 +89,13 @@ describe('Settings → Account (username)', () => {
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({}),
+                } as unknown as Response;
+            }
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
