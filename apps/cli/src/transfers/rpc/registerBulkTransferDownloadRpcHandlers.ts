@@ -1,4 +1,5 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import { parseTransferRecipientPublicKeyBase64 } from '@/machines/transfer/transferChunkEncryption';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { TransferSessionStore } from '../core/transferSessionStore';
@@ -55,6 +56,18 @@ export function registerBulkTransferDownloadRpcHandlers(
           response: {
             success: false,
             error: 'Missing recipientPublicKeyBase64',
+          },
+        };
+      }
+      try {
+        // Validate early so init fails closed instead of crashing later during chunk encryption.
+        parseTransferRecipientPublicKeyBase64(recipientPublicKeyBase64);
+      } catch (error) {
+        return {
+          kind: 'rejected',
+          response: {
+            success: false,
+            error: error instanceof Error ? error.message : 'Invalid recipientPublicKeyBase64',
           },
         };
       }

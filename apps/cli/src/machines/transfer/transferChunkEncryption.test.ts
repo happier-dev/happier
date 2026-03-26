@@ -47,6 +47,13 @@ describe('decryptEncryptedTransferChunkEnvelope', () => {
 });
 
 describe('parseTransferRecipientPublicKeyBase64', () => {
+  it('fails closed before base64 decoding when recipientPublicKeyBase64 is oversized', () => {
+    const fromSpy = vi.spyOn(Buffer, 'from');
+    expect(() => parseTransferRecipientPublicKeyBase64('A'.repeat(10_000))).toThrow('Invalid transfer recipient public key');
+    expect(fromSpy).not.toHaveBeenCalled();
+    fromSpy.mockRestore();
+  });
+
   it('caches parsed recipient keys to avoid repeated base64 decode work', () => {
     const recipientPublicKeyBytes = Buffer.alloc(32, 7);
     const recipientPublicKeyBase64 = recipientPublicKeyBytes.toString('base64');

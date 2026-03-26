@@ -658,6 +658,55 @@ describe('server routed machine transfer', () => {
     }
   });
 
+  it('fails closed before decoding when a sender pads openPayloadBase64 beyond the encoded envelope bound', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_OPEN_PAYLOAD_MAX_BYTES = '16';
+    const { source, target, sentEnvelopes } = createLoopbackChannels();
+    const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
+    const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
+
+    const recipientSecretKeySeed = new Uint8Array(32).fill(9);
+    const recipientPublicKeyBase64 = Buffer.from(deriveBoxPublicKeyFromSeed(recipientSecretKeySeed)).toString('base64');
+
+    // Valid decoded payload (small), but padded to be huge on the wire.
+    const smallOpenPayloadBase64 = Buffer.from(JSON.stringify({ ok: true }), 'utf8').toString('base64');
+    const paddedOpenPayloadBase64 = `${' '.repeat(100)}${smallOpenPayloadBase64}${' '.repeat(100)}`;
+
+    const unregister = registerServerRoutedTransferResponder({
+      machineTransferChannel: source,
+      loadTransferPayloadSource: () => {
+        throw new Error('Expected padded open payload to fail before loading payload');
+      },
+      chunkBytes: 4,
+    });
+
+    try {
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_padded_open_payload',
+          kind: 'open',
+          manifestHash: 'sha256:test',
+          recipientPublicKeyBase64,
+          openPayloadBase64: paddedOpenPayloadBase64,
+        },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(
+        sentEnvelopes.some(
+          (entry) =>
+            entry.targetMachineId === 'machine_target'
+            && entry.envelope.kind === 'abort'
+            && entry.envelope.transferId === 'transfer_padded_open_payload'
+            && entry.envelope.reason === 'invalid_open_request:open_payload_too_large',
+        ),
+      ).toBe(true);
+    } finally {
+      unregister();
+    }
+  });
+
   it('decodes openPayloadBase64 and passes it to loadTransferPayloadSource', async () => {
     process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES = '1024';
     process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '1000';
@@ -1011,6 +1060,13 @@ describe('server routed machine transfer', () => {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
+  it('respects timeout env overrides above the default (within the hard clamp)', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '300000';
+    const { resolveServerRoutedTransferTimeoutMs } = await import('./serverRoutedTransport');
+    expect(resolveServerRoutedTransferTimeoutMs()).toBe(300_000);
+    delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
+  });
+
   it('hard-clamps oversized timeout env overrides and still cleans up responder state on timeout', async () => {
     const scheduledTimeouts: Array<Readonly<{
       delay: number;
@@ -1065,7 +1121,7 @@ describe('server routed machine transfer', () => {
         }
 
         expect(scheduledTimeouts.length).toBeGreaterThan(0);
-        expect(scheduledTimeouts[0]?.delay).toBe(90_000);
+        expect(scheduledTimeouts[0]?.delay).toBe(30 * 60_000);
 
         scheduledTimeouts[0]?.callback();
 
@@ -1430,6 +1486,72 @@ describe('server routed machine transfer', () => {
     } finally {
       unregister();
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('fails closed on server max-bytes before decrypting a chunk that would exceed the limit (prevents crypto work on guaranteed-oversize payloads)', async () => {
+    process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES = '8';
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES = '256';
+
+    type Listener = (payload: MachineTransferReceiveEnvelope) => void;
+    const listeners = new Set<Listener>();
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-predecrypt-max-bytes-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    // This is intentionally NOT a valid encrypted chunk; we want to prove the receiver rejects on
+    // max-bytes *before* attempting to decrypt (which would otherwise fail for crypto reasons).
+    const ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES = 1 + 12 + 16;
+    const estimatedPlainBytes = 16; // > max-bytes (8)
+    const encryptedPayloadBytes = Buffer.alloc(estimatedPlainBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES, 7);
+    const payloadBase64 = encryptedPayloadBytes.toString('base64');
+    const encryptedDataKeyEnvelopeBase64 = Buffer.alloc(64, 9).toString('base64');
+
+    const target = {
+      onEnvelope(listener: Listener) {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      sendEnvelope(payload: MachineTransferSendEnvelope) {
+        if (payload.targetMachineId !== 'machine_source' || payload.envelope.kind !== 'open') {
+          return;
+        }
+
+        void (async () => {
+          for (const listener of listeners) {
+            listener({
+              sourceMachineId: 'machine_source',
+              targetMachineId: 'machine_target',
+              envelope: {
+                transferId: 'transfer_predecrypt_max_bytes',
+                kind: 'chunk',
+                sequence: 0,
+                payloadBase64,
+                encryptedDataKeyEnvelopeBase64,
+              },
+            });
+          }
+        })();
+      },
+    };
+
+    const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
+
+    try {
+      await expect(
+        requestServerRoutedTransferToFile({
+          transferId: 'transfer_predecrypt_max_bytes',
+          sourceMachineId: 'machine_source',
+          machineTransferChannel: target,
+          destinationPath,
+        }),
+      ).rejects.toThrow('Transfer exceeds the server-routed transfer size limit');
+
+      await expect(readdir(tempDir)).resolves.toEqual([]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+      delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES;
     }
   });
 

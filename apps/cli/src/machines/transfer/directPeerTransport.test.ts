@@ -1198,7 +1198,7 @@ describe('direct peer machine transfer', () => {
     }
   });
 
-  it('hard-clamps the direct-peer /open request body limit even when the env override is huge', async () => {
+  it('honors a larger direct-peer /open request body limit when configured (streams instead of failing pre-fetch)', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_OPEN_BODY_MAX_BYTES = '1048576';
 
     const openBody = {
@@ -1208,7 +1208,10 @@ describe('direct peer machine transfer', () => {
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
 
     const fetchFn: typeof fetch = vi.fn(async () => {
-      throw new Error('fetch should not be called');
+      return new Response('fail', {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
     });
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-open-body-hard-clamp-'));
@@ -1227,7 +1230,44 @@ describe('direct peer machine transfer', () => {
         now: () => 1_000,
         destinationPath,
         openBody,
-      })).rejects.toThrow('Direct peer transfer open request body exceeds the configured body-limit');
+      })).rejects.toThrow('Direct peer request failed with status 500');
+
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('hard-clamps the direct-peer /open request body limit to a bounded ceiling even when the env override is absurd', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_OPEN_BODY_MAX_BYTES = '999999999';
+
+    const openBody = {
+      payload: 'x'.repeat(1_100_000),
+    };
+
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+
+    const fetchFn: typeof fetch = vi.fn(async () => {
+      throw new Error('fetch should not be called');
+    });
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-open-body-hard-ceiling-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    try {
+      await expect(requestDirectPeerTransferToFile({
+        transferId: 'transfer_open_body_hard_ceiling',
+        endpointCandidates: [{
+          kind: 'http',
+          url: 'http://example.test/machine-transfers/direct/transfer_open_body_hard_ceiling',
+          authorizationToken: 'abc',
+          expiresAt: 10_000,
+        }],
+        fetchFn,
+        now: () => 1_000,
+        destinationPath,
+        openBody,
+      })).rejects.toThrow('body-limit (1048576 bytes)');
 
       expect(fetchFn).not.toHaveBeenCalled();
     } finally {
@@ -2683,6 +2723,87 @@ describe('direct peer machine transfer', () => {
     expect(fetchedBadEndpoint).toBe(false);
     await expect(readFile(destinationPath)).resolves.toEqual(payload);
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  });
+
+  it('skips endpoint candidates with an oversized authorizationToken (does not send huge auth headers)', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-oversized-auth-token-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+
+    const payload = Buffer.from('payload-via-oversized-auth-token-skip', 'utf8');
+    let recipientPublicKeyBase64 = '';
+    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('bad.example')) {
+        throw new Error(`Unexpected fetch to candidate with oversized auth token: ${url}`);
+      }
+
+      const headers = init?.headers as Record<string, string> | undefined;
+      expect(headers).toMatchObject({
+        authorization: 'Bearer ok-token',
+        'x-happier-transfer-recipient-public-key': expect.any(String),
+      });
+
+      if (url.endsWith('/open')) {
+        recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
+        return new Response(JSON.stringify({
+          transferId: 'transfer_oversized_auth_token_skip',
+          manifestHash: createTransferManifestHash(payload),
+          totalChunks: 1,
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+
+      expect(url).toBe('http://good.example/machine-transfers/direct/transfer_oversized_auth_token_skip/chunks/0');
+      return new Response(JSON.stringify({
+        transferId: 'transfer_oversized_auth_token_skip',
+        kind: 'chunk',
+        sequence: 0,
+        ...createEncryptedTransferChunkEnvelope({
+          transferId: 'transfer_oversized_auth_token_skip',
+          sequence: 0,
+          payload,
+          recipientPublicKeyBase64,
+          randomBytes: (length) => new Uint8Array(length).fill(9),
+        }),
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    try {
+      await requestDirectPeerTransferToFile({
+        transferId: 'transfer_oversized_auth_token_skip',
+        endpointCandidates: [
+          {
+            kind: 'http',
+            url: 'http://bad.example/machine-transfers/direct/transfer_oversized_auth_token_skip',
+            authorizationToken: 'x'.repeat(10_000),
+            expiresAt: 10_000,
+          },
+          {
+            kind: 'http',
+            url: 'http://good.example/machine-transfers/direct/transfer_oversized_auth_token_skip',
+            authorizationToken: 'ok-token',
+            expiresAt: 10_000,
+          },
+        ],
+        fetchFn,
+        now: () => 1_000,
+        destinationPath,
+      });
+
+      const calledUrls = (fetchFn as any).mock.calls.map((call: any[]) => String(call[0]));
+      expect(calledUrls.some((url: string) => url.includes('bad.example'))).toBe(false);
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   });
 
   it('accepts endpoint candidates with explicit authorizationToken (no query-token auth)', async () => {

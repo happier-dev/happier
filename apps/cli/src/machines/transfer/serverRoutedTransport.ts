@@ -25,10 +25,11 @@ import { createTransferPayloadFileSink, type TransferPayloadFileResult } from '.
 import { readPositiveIntEnv } from '../../utils/readPositiveIntEnv';
 import { clampTransferChunkBytes } from './transferChunkSizeLimit';
 
-const DEFAULT_TRANSFER_TIMEOUT_MS = 90_000;
-// Keep request-side and responder-side timeouts within the same operational ceiling so callers
-// cannot turn a bounded transfer into an effectively unbounded wait via env or explicit override.
-const TRANSFER_TIMEOUT_HARD_MAX_MS = DEFAULT_TRANSFER_TIMEOUT_MS;
+// Default is intentionally large enough to cover deferred source-export on large workspaces.
+const DEFAULT_TRANSFER_TIMEOUT_MS = 10 * 60_000;
+// Large-repo workspace handoff exports can legitimately take minutes before the first byte is
+// available (deferred source export). Keep a hard cap, but allow env overrides above the default.
+const TRANSFER_TIMEOUT_HARD_MAX_MS = 30 * 60_000;
 const DEFAULT_TRANSFER_MAX_ACTIVE_TRANSFERS = 128;
 const TRANSFER_MAX_ACTIVE_TRANSFERS_HARD_MAX = 10_000;
 const DEFAULT_TRANSFER_CHUNK_BYTES = 256 * 1024;
@@ -109,6 +110,10 @@ function readTransferTimeoutMs(): number {
     readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS', DEFAULT_TRANSFER_TIMEOUT_MS),
     TRANSFER_TIMEOUT_HARD_MAX_MS,
   );
+}
+
+export function resolveServerRoutedTransferTimeoutMs(): number {
+  return readTransferTimeoutMs();
 }
 
 function readTransferMaxActiveTransfers(): number {
@@ -300,6 +305,14 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
   const openPayloadMaxBytes = readTransferOpenPayloadMaxBytes();
 
   const decodeOpenPayload = (payloadBase64: string): unknown => {
+    // Fail closed on *encoded* size before any base64 decode. Node's base64 decoder is permissive
+    // about whitespace, so a hostile peer could otherwise send a tiny decoded payload padded with
+    // a huge amount of ASCII whitespace and still pass a decoded-bytes check.
+    const maxEncodedChars = Math.ceil(openPayloadMaxBytes / 3) * 4;
+    if (payloadBase64.length > maxEncodedChars) {
+      throw new ServerRoutedInvalidOpenRequestError('Open payload exceeds max bytes');
+    }
+
     const estimatedDecodedBytes = estimateBase64DecodedBytes(payloadBase64);
     if (!Number.isFinite(estimatedDecodedBytes) || estimatedDecodedBytes > openPayloadMaxBytes) {
       throw new ServerRoutedInvalidOpenRequestError('Open payload exceeds max bytes');
@@ -698,6 +711,7 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
   openBody?: unknown;
   timeoutMs?: number;
   maxInMemoryPayloadBytes?: number;
+  maxTotalBytes?: number | null;
   onChunk: (chunk: Buffer, info: Readonly<{ sequence: number }>) => Promise<void> | void;
   onFinish: (manifestHash: string) => Promise<TPayload>;
   onAbort?: () => Promise<void> | void;
@@ -727,6 +741,7 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
     let timeout: NodeJS.Timeout | null = null;
     let timeoutNonce = 0;
     let nextExpectedSequence = 0;
+    let receivedBytes = 0;
     let envelopeQueue = Promise.resolve();
 
     const armTimeout = () => {
@@ -826,16 +841,29 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
               ) {
                 throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
               }
+
+              // Enforce max-bytes before decrypting so oversized transfers cannot force expensive crypto work.
+              if (params.maxTotalBytes !== null && typeof params.maxTotalBytes === 'number' && params.maxTotalBytes > 0) {
+                const estimatedPlainBytes = Math.max(
+                  0,
+                  estimatedEncryptedPayloadBytes - ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES,
+                );
+                if (isServerRoutedTransferOverSizeLimit(receivedBytes + estimatedPlainBytes, params.maxTotalBytes)) {
+                  throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxTotalBytes}`);
+                }
+              }
             }
-            await params.onChunk(decryptEncryptedTransferChunkEnvelope({
+            const decrypted = decryptEncryptedTransferChunkEnvelope({
               transferId: params.transferId,
               sequence: chunkEnvelope.sequence,
               payloadBase64: chunkEnvelope.payloadBase64,
               encryptedDataKeyEnvelopeBase64,
               recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
-            }), {
+            });
+            await params.onChunk(decrypted, {
               sequence: chunkEnvelope.sequence,
             });
+            receivedBytes += decrypted.length;
             nextExpectedSequence = chunkEnvelope.sequence + 1;
             params.machineTransferChannel.sendEnvelope({
               targetMachineId: params.sourceMachineId,
@@ -924,6 +952,7 @@ export async function requestServerRoutedTransferToFile(params: Readonly<{
       // File-backed transfers are still bounded per chunk to avoid OOM, but they must not be constrained
       // by the small-only whole-buffer in-memory cap (`HAPPIER_FILES_READ_MAX_BYTES`).
       maxInMemoryPayloadBytes: readTransferChunkBytes(),
+      maxTotalBytes: maxBytes,
       onChunk: async (chunk) => {
         const nextBytes = receivedBytes + chunk.length;
         if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(nextBytes, maxBytes)) {

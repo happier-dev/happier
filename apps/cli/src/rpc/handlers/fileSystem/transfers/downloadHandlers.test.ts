@@ -103,39 +103,59 @@ describe('file transfers (download)', () => {
   });
 
   it('removes temp zip files when archive creation fails before a download session opens', async () => {
-    const workspace = mkdtempSync(join(tmpdir(), 'happier-files-download-'));
-    mkdirSync(join(workspace, 'folder'), { recursive: true });
-    for (let index = 0; index <= configuration.filesZipMaxEntryCount; index += 1) {
-      writeFileSync(join(workspace, 'folder', `file-${index}.txt`), `file-${index}\n`, 'utf8');
+    const previousMaxEntryCount = process.env.HAPPIER_FILES_ZIP_MAX_ENTRY_COUNT;
+    process.env.HAPPIER_FILES_ZIP_MAX_ENTRY_COUNT = '5';
+    try {
+      // This test must not scale with production defaults (10k entries), otherwise it can
+      // time out on slower filesystems. Reload configuration-sensitive modules with the
+      // smaller limit so the failure path remains deterministic and fast.
+      vi.resetModules();
+      const [{ configuration: localConfiguration }, { registerBulkTransferDownloadRpcHandlers: localRegisterDownload }] =
+        await Promise.all([
+          import('@/configuration'),
+          import('@/transfers/rpc/registerBulkTransferDownloadRpcHandlers'),
+        ]);
+
+      const workspace = mkdtempSync(join(tmpdir(), 'happier-files-download-'));
+      mkdirSync(join(workspace, 'folder'), { recursive: true });
+      for (let index = 0; index <= localConfiguration.filesZipMaxEntryCount; index += 1) {
+        writeFileSync(join(workspace, 'folder', `file-${index}.txt`), `file-${index}\n`, 'utf8');
+      }
+
+      const store = new TransferSessionStore({ ttlMs: 1000 });
+      const mgr = createRpcHandlerManager();
+      localRegisterDownload(mgr as unknown as RpcHandlerManager, {
+        workingDirectory: workspace,
+        store,
+      });
+
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT);
+      if (!init) throw new Error('expected download init handler');
+      const recipientKeyPair = createTransferRecipientKeyPair();
+
+      const zipDir = join(tmpdir(), 'happier', 'file-zips');
+      mkdirSync(zipDir, { recursive: true });
+      const beforeEntries = new Set(readdirSync(zipDir));
+
+      await expect(init({
+        t: 'session_file_download_v1',
+        path: 'folder',
+        asZip: true,
+        recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+      })).resolves.toEqual({
+        success: false,
+        error: 'Zip exceeds entry count limit',
+      });
+
+      const afterEntries = readdirSync(zipDir).filter((entry) => !beforeEntries.has(entry));
+      expect(afterEntries).toEqual([]);
+    } finally {
+      if (previousMaxEntryCount === undefined) {
+        delete process.env.HAPPIER_FILES_ZIP_MAX_ENTRY_COUNT;
+      } else {
+        process.env.HAPPIER_FILES_ZIP_MAX_ENTRY_COUNT = previousMaxEntryCount;
+      }
     }
-
-    const store = new TransferSessionStore({ ttlMs: 1000 });
-    const mgr = createRpcHandlerManager();
-    registerBulkTransferDownloadRpcHandlers(mgr as unknown as RpcHandlerManager, {
-      workingDirectory: workspace,
-      store,
-    });
-
-    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT);
-    if (!init) throw new Error('expected download init handler');
-    const recipientKeyPair = createTransferRecipientKeyPair();
-
-    const zipDir = join(tmpdir(), 'happier', 'file-zips');
-    mkdirSync(zipDir, { recursive: true });
-    const beforeEntries = new Set(readdirSync(zipDir));
-
-    await expect(init({
-      t: 'session_file_download_v1',
-      path: 'folder',
-      asZip: true,
-      recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
-    })).resolves.toEqual({
-      success: false,
-      error: 'Zip exceeds entry count limit',
-    });
-
-    const afterEntries = readdirSync(zipDir).filter((entry) => !beforeEntries.has(entry));
-    expect(afterEntries).toEqual([]);
   });
 
   it('refreshes download session expiry on chunk progress so long downloads use idle timeout semantics', async () => {
@@ -197,6 +217,30 @@ describe('file transfers (download)', () => {
     })).resolves.toEqual({
       success: false,
       error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+    });
+  });
+
+  it('fails closed when recipientPublicKeyBase64 is invalid (rejects at init instead of crashing during chunk encryption)', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-files-download-'));
+    writeFileSync(join(workspace, 'file.txt'), 'hello\n', 'utf8');
+
+    const store = new TransferSessionStore({ ttlMs: 1000 });
+    const mgr = createRpcHandlerManager();
+    registerBulkTransferDownloadRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      workingDirectory: workspace,
+      store,
+    });
+
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT);
+    if (!init) throw new Error('expected download init handler');
+
+    await expect(init({
+      t: 'session_file_download_v1',
+      path: 'file.txt',
+      recipientPublicKeyBase64: 'not-base64',
+    })).resolves.toEqual({
+      success: false,
+      error: 'Invalid transfer recipient public key',
     });
   });
 

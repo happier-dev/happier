@@ -129,6 +129,12 @@ export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalize
 
     const session = params.store.getUploadSession(uploadId);
     if (!session) return { success: false, error: 'Upload session not found' };
+    if (index < session.nextIndex) {
+      // Route fallback can retry a chunk after the daemon already persisted it (for example, when the
+      // response was lost during a transport switch). Treat already-written chunk indices as idempotent.
+      params.store.refreshUploadExpiry(uploadId);
+      return { success: true };
+    }
     if (index !== session.nextIndex) return { success: false, error: 'Unexpected chunk index' };
     let buffer: Buffer;
     if (session.recipientSecretKeySeed) {

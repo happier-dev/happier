@@ -49,7 +49,9 @@ const DIRECT_PEER_MAX_TOTAL_CHUNKS_HARD_MAX = 10_000_000;
 const DEFAULT_DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_MAX_ENTRIES = 2048;
 const DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_HARD_MAX_ENTRIES = 100_000;
 const DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_FULL_ERROR = 'Direct peer published transfer registry is full';
-const DEFAULT_DIRECT_PEER_OPEN_BODY_MAX_BYTES = 256 * 1024;
+// Default is intentionally small; larger /open bodies should be an explicit opt-in because the
+// direct-peer server can be reachable on a LAN.
+const DEFAULT_DIRECT_PEER_OPEN_BODY_MAX_BYTES = 64 * 1024;
 const DEFAULT_DIRECT_PEER_BIND_HOST = '0.0.0.0';
 // Tolerate small clock skew by default so candidates published by a peer with a slightly "behind"
 // clock are still attempted (auth TTL is still enforced by the responder).
@@ -73,9 +75,10 @@ const ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES = 1 + 12 + 16; // version + nonce 
 // Encrypted data-key envelopes are small and fixed-size today (~105 bytes for V1), but we still
 // cap them independently so hostile peers cannot force large base64 decode allocations.
 const ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES = 1024;
-// Direct-peer /open bodies should stay tiny (transfer metadata only). Keep the hard cap below a
-// page-sized JSON allocation so large requester-side bodies fail closed before any network work.
-const DIRECT_PEER_OPEN_BODY_HARD_MAX_BYTES = 64 * 1024;
+// Direct-peer /open bodies should stay small (transfer metadata and/or bounded on-demand selectors).
+// Keep a hard cap so hostile peers can't force unbounded work; allow raising above the default via
+// env when replication requests need more room.
+const DIRECT_PEER_OPEN_BODY_HARD_MAX_BYTES = 1024 * 1024;
 // Above this threshold, stream the JSON body instead of materializing one request buffer.
 const DIRECT_PEER_OPEN_BODY_STREAMING_THRESHOLD_BYTES = 8 * 1024;
 
