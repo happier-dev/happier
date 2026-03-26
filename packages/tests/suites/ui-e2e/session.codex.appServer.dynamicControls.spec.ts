@@ -12,6 +12,7 @@ import {
     openNewSessionPathSelection,
 } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -173,19 +174,42 @@ async function fillAndClickComposerSend(params: Readonly<{
 }
 
 async function ensureSignedIn(page: Page, uiBaseUrl: string): Promise<void> {
-    await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
+    await waitForInitialAppUi({ page, timeoutMs: 120_000 }).catch(() => {});
     const startedAt = Date.now();
     while (Date.now() - startedAt < 120_000) {
-        if ((await page.getByTestId('session-getting-started-kind-connect_machine').count()) > 0) {
-            return;
+        if ((await page.getByTestId('new-session-composer-input').count()) > 0) return;
+        if ((await page.getByTestId('session-getting-started-kind-connect_machine').count()) > 0) return;
+        if ((await page.getByTestId('sidebar-expand-button').count()) > 0) return;
+
+        const createAccountByTestId = page.getByTestId('welcome-create-account').first();
+        if ((await createAccountByTestId.count()) > 0) {
+            await createAccountByTestId.click().catch(() => {});
+            await page.waitForTimeout(500);
+            await waitForInitialAppUi({ page, timeoutMs: 30_000 }).catch(() => {});
+            continue;
         }
-        const createAccount = page.getByTestId('welcome-create-account');
-        if ((await createAccount.count()) > 0) {
-            await createAccount.click().catch(() => {});
+
+        const createAccountButton = page.getByRole('button', { name: 'Create account' }).first();
+        if ((await createAccountButton.count()) > 0) {
+            await createAccountButton.click().catch(() => {});
+            await page.waitForTimeout(500);
+            await waitForInitialAppUi({ page, timeoutMs: 30_000 }).catch(() => {});
+            continue;
         }
+
+        const pathname = new URL(page.url()).pathname;
+        if (pathname !== '/new') {
+            await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
+        }
+
         await page.waitForTimeout(500);
     }
-    await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 1_000 });
+    await expect(
+        page.getByTestId('new-session-composer-input')
+            .or(page.getByTestId('session-getting-started-kind-connect_machine'))
+            .or(page.getByTestId('sidebar-expand-button')),
+    ).toHaveCount(1, { timeout: 1_000 });
 }
 
 async function setCodexBackendModeToAppServer(page: Page, uiBaseUrl: string): Promise<void> {
@@ -288,22 +312,115 @@ async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
     return { daemon, requestLogPath, machineId };
 }
 
-async function maybeSelectAiBackendFromDialog(page: Page, backendLabel: string): Promise<boolean> {
-    const pickerDialog = page.getByRole('dialog').filter({ hasText: 'Select AI Backend' }).first();
-    if ((await pickerDialog.count()) === 0) return false;
+async function maybeResolveSelectAiBackendWizard(page: Page, backendId: string): Promise<boolean> {
+    const backendOptionTestIds = [
+        `new-session-agent:${backendId}`,
+        `agent-input-chip-picker.option:engine:${backendId}`,
+    ] as const;
 
-    await expect(pickerDialog).toContainText('Select AI Backend', { timeout: 60_000 });
-    await pickerDialog.getByText(backendLabel, { exact: true }).click();
+    const openDialogs = page.locator('[role="dialog"][data-state="open"]');
+    const selectAiBackendDialog = openDialogs
+        .filter({
+            has: page.locator(
+                backendOptionTestIds.map((testId) => `[data-testid="${testId}"]`).join(', '),
+            ),
+        })
+        .first();
 
-    await expect(pickerDialog).toHaveCount(0, { timeout: 60_000 }).catch(async () => {
+    if ((await selectAiBackendDialog.count()) === 0) return false;
+
+    const clickByTestId = async (testId: string) => {
+        const option = selectAiBackendDialog.getByTestId(testId);
+        if ((await option.count()) === 0) return false;
+        await expect(option).toBeEnabled({ timeout: 60_000 });
+        await option.click();
+        return true;
+    };
+
+    const selected =
+        (await clickByTestId(backendOptionTestIds[0]))
+        || (await clickByTestId(backendOptionTestIds[1]));
+
+    if (!selected) return false;
+
+    const applyButton = selectAiBackendDialog.getByTestId('agent-input-chip-picker.apply');
+    if ((await applyButton.count()) > 0) {
+        await expect(applyButton).toBeEnabled({ timeout: 60_000 });
+        await applyButton.click();
+    }
+
+    await expect(selectAiBackendDialog).toHaveCount(0, { timeout: 10_000 }).catch(async () => {
         await page.keyboard.press('Escape').catch(() => {});
-        await expect(pickerDialog).toHaveCount(0, { timeout: 10_000 });
+        await expect(selectAiBackendDialog).toHaveCount(0, { timeout: 60_000 });
     });
+
     return true;
+}
+
+async function maybeDismissDetectedClisModal(page: Page, opts?: Readonly<{ timeoutMs?: number }>): Promise<boolean> {
+    const timeoutMs = opts?.timeoutMs ?? 5_000;
+    const deadlineMs = Date.now() + timeoutMs;
+
+    const modal = page.locator('[data-testid="detected-clis:modal"]:visible').first();
+    while (Date.now() < deadlineMs) {
+        if ((await modal.count()) > 0) break;
+        await page.waitForTimeout(200);
+    }
+
+    if ((await modal.count()) === 0) return false;
+
+    try {
+        await page.getByTestId('detected-clis:ok').click({ timeout: 5_000 });
+    } catch {
+        try {
+            await page.getByTestId('detected-clis:close').click({ timeout: 5_000 });
+        } catch {
+            await page.keyboard.press('Escape');
+        }
+    }
+
+    await expect(modal).toHaveCount(0, { timeout: 60_000 });
+    return true;
+}
+
+async function selectNewSessionBackend(page: Page, backendId: string): Promise<void> {
+    const modal = page.locator('[data-testid="detected-clis:modal"]:visible').first();
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        await maybeDismissDetectedClisModal(page, { timeoutMs: attempt === 0 ? 30_000 : 3_000 }).catch(() => false);
+
+        const openDialogs = page.locator('[role="dialog"][data-state="open"]');
+        const topDialog = openDialogs.last();
+
+        const dialogOption = topDialog.locator(`[data-testid="new-session-agent:${backendId}"]:visible`).first();
+        const inlineOption = page.locator(`[data-testid="new-session-agent:${backendId}"]:visible`).first();
+
+        const target = (await dialogOption.count()) > 0 ? dialogOption : inlineOption;
+
+        await expect(target).toBeEnabled({ timeout: 120_000 });
+        await target.scrollIntoViewIfNeeded().catch(() => {});
+
+        try {
+            await target.click({ timeout: 3_000 });
+            return;
+        } catch (error) {
+            if ((await modal.count()) > 0) continue;
+            throw error;
+        }
+    }
+
+    await expect(modal).toHaveCount(0, { timeout: 60_000 });
 }
 
 async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseUrl: string; machineId: string }>): Promise<void> {
     await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new`);
+
+    const blockingGuidance = params.page.locator('[data-testid^="session-getting-started-kind-"]');
+    if ((await blockingGuidance.count()) > 0) {
+        await expect(blockingGuidance).toHaveCount(0, { timeout: 180_000 });
+    }
+
+    await maybeDismissDetectedClisModal(params.page, { timeoutMs: 15_000 }).catch(() => false);
 
     await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
     await expect(params.page.getByTestId('new-session-composer-input')).toBeVisible({ timeout: 180_000 });
@@ -332,15 +449,10 @@ async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseU
     }
     await params.page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
 
-    // Prefer the New Session Wizard's inline backend list (no overlays) over the agent-input chip pickers.
-    const codexOption = params.page.getByTestId('new-session-agent:codex');
-    if ((await codexOption.count()) > 0) {
-        await codexOption.scrollIntoViewIfNeeded().catch(() => {});
-        await expect(codexOption).toBeEnabled({ timeout: 120_000 });
-        await codexOption.click();
-    } else {
-        await maybeSelectAiBackendFromDialog(params.page, 'Codex').catch(() => false);
-    }
+    await maybeDismissDetectedClisModal(params.page, { timeoutMs: 30_000 }).catch(() => false);
+    await expect(blockingGuidance).toHaveCount(0, { timeout: 60_000 });
+
+    await selectNewSessionBackend(params.page, 'codex');
 
     const pathChip = params.page.getByTestId('agent-input-path-chip');
     if ((await pathChip.count()) > 0) {
@@ -360,12 +472,14 @@ async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseU
     }
 
     const pathSelectorInput = params.page.getByTestId('path-selector-input');
-    await expect(pathSelectorInput).toHaveCount(1, { timeout: 60_000 });
-    const pathValue = (await pathSelectorInput.inputValue().catch(() => '')) ?? '';
-    const looksLikePath = /^[A-Za-z]:[\\/]/.test(pathValue) || /[\\/]/.test(pathValue);
-    if (!looksLikePath) {
-        const selectedPath = '/tmp';
-        await pathSelectorInput.fill(selectedPath);
+    if ((await pathSelectorInput.count()) > 0) {
+        await expect(pathSelectorInput).toHaveCount(1, { timeout: 60_000 });
+        const pathValue = (await pathSelectorInput.inputValue().catch(() => '')) ?? '';
+        const looksLikePath = /^[A-Za-z]:[\\/]/.test(pathValue) || /[\\/]/.test(pathValue);
+        if (!looksLikePath) {
+            const selectedPath = '/tmp';
+            await pathSelectorInput.fill(selectedPath);
+        }
     }
 
 }
@@ -379,8 +493,17 @@ async function openAgentActionMenu(page: Page): Promise<void> {
     }
 
     const modeChip = page.getByTestId('agent-input-session-mode-chip');
-    await expect(modeChip).toHaveCount(1, { timeout: 60_000 });
-    await modeChip.click();
+    if ((await modeChip.count()) > 0) {
+        await expect(modeChip).toHaveCount(1, { timeout: 60_000 });
+        await modeChip.click();
+        const anyModeOption = page.locator('[data-testid^="agent-input-session-mode-option:"], [data-testid^="agent-input-simple-option:"]').first();
+        await expect(anyModeOption).toHaveCount(1, { timeout: 60_000 });
+        return;
+    }
+
+    // On enhanced /new flows, session mode options can be rendered inline without a chip/menu trigger.
+    const inlineModeOptions = page.locator('[data-testid^="agent-input-session-mode-option:"], [data-testid^="agent-input-simple-option:"]');
+    if ((await inlineModeOptions.count()) > 0) return;
 }
 
 async function readVisibleModelSelectionOptionTestIds(page: Page): Promise<string[]> {
@@ -398,19 +521,19 @@ async function readVisibleModelSelectionOptionTestIds(page: Page): Promise<strin
 }
 
 async function clickModelSelectionOption(page: Page, optionId: string): Promise<void> {
-    const wizardOption = page.getByTestId(`new-session-model:${optionId}`);
-    try {
-        await expect(wizardOption).toHaveCount(1, { timeout: 120_000 });
-        await wizardOption.click();
-        return;
-    } catch {
-        // fall through to the overlay surface
-    }
-
     const overlayOption = page.getByTestId(`model-picker-overlay-option:${optionId}`);
     try {
         await expect(overlayOption).toHaveCount(1, { timeout: 120_000 });
         await overlayOption.click();
+        return;
+    } catch {
+        // fall through to the wizard surface
+    }
+
+    const wizardOption = page.getByTestId(`new-session-model:${optionId}`);
+    try {
+        await expect(wizardOption).toHaveCount(1, { timeout: 120_000 });
+        await wizardOption.click();
     } catch (error) {
         const visibleOptionIds = await readVisibleModelSelectionOptionTestIds(page).catch(() => []);
         throw new Error(
@@ -423,12 +546,24 @@ async function clickModelSelectionOption(page: Page, optionId: string): Promise<
 }
 
 async function clickSelectedModelControlOption(page: Page, controlId: string, valueId: string): Promise<void> {
-    const option = page.getByTestId(`model-picker-overlay-selected-option-control-option:${controlId}:${valueId}`);
+    const configOption = page.getByTestId(`agent-input-config-option-option:${controlId}:${valueId}`);
     try {
-        await expect(option).toHaveCount(1, { timeout: 120_000 });
-        await option.click();
+        await expect(configOption).toHaveCount(1, { timeout: 5_000 });
+        await configOption.click();
+        return;
+    } catch {
+        // fall through to the model overlay surface
+    }
+
+    const overlayOption = page.getByTestId(`model-picker-overlay-selected-option-control-option:${controlId}:${valueId}`);
+    try {
+        await expect(overlayOption).toHaveCount(1, { timeout: 5_000 });
+        await overlayOption.click();
+        return;
     } catch (error) {
-        const visibleOptionIds = await page.locator('[data-testid^="model-picker-overlay-selected-option-control-option:"]').evaluateAll((nodes) => {
+        const visibleOptionIds = await page.locator(
+            '[data-testid^="agent-input-config-option-option:"], [data-testid^="model-picker-overlay-selected-option-control-option:"]',
+        ).evaluateAll((nodes) => {
             return nodes
                 .map((node) => node.getAttribute('data-testid'))
                 .filter((value): value is string => typeof value === 'string' && value.length > 0);
@@ -491,6 +626,38 @@ async function clickSessionModeOption(page: Page, optionId: string): Promise<voi
     }
 }
 
+async function ensureSessionMode(page: Page, optionId: 'plan' | 'default'): Promise<void> {
+    const modeChip = page.getByTestId('agent-input-session-mode-chip');
+    await expect(modeChip).toHaveCount(1, { timeout: 60_000 });
+
+    const expectedLabel = optionId === 'plan' ? /plan/i : /default/i;
+    const readChipText = async () => (await modeChip.textContent().catch(() => '')) ?? '';
+
+    if (expectedLabel.test(await readChipText())) return;
+
+    // If the chip opens a picker, the option elements will appear; otherwise the chip cycles modes.
+    await modeChip.click();
+    if (expectedLabel.test(await readChipText())) return;
+
+    const anyModeOption = page.locator('[data-testid^="agent-input-session-mode-option:"], [data-testid^="agent-input-simple-option:"]').first();
+    try {
+        await expect(anyModeOption).toHaveCount(1, { timeout: 1_500 });
+        await clickSessionModeOption(page, optionId);
+        await page.keyboard.press('Escape').catch(() => {});
+        return;
+    } catch {
+        // fall through to cycle behavior
+    }
+
+    for (let i = 0; i < 4; i += 1) {
+        await modeChip.click();
+        if (expectedLabel.test(await readChipText())) return;
+        await page.waitForTimeout(100);
+    }
+
+    throw new Error(`Failed to set session mode to ${optionId}; chip text was: ${(await readChipText()) || '(empty)'}`);
+}
+
 test.describe('ui e2e: Codex app-server dynamic controls', () => {
     test.describe.configure({ mode: 'serial' });
 
@@ -508,6 +675,7 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
             testDir: suiteDir,
             dbProvider: 'sqlite',
             extraEnv: {
+                HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
                 HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
                 // Presence updates are throttled in the DB; keep the presence timeout comfortably above
                 // that threshold so the UI doesn't briefly classify the daemon machine as "offline".
@@ -562,8 +730,9 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         daemon = prepared.daemon;
 
         await selectCodexAgentAndMachine({ page, uiBaseUrl, machineId: prepared.machineId });
-        await openAgentActionMenu(page);
-        await clickSessionModeOption(page, 'plan');
+        await ensureSessionMode(page, 'plan');
+
+        await expect(page.locator('[data-testid^="session-getting-started-kind-"]')).toHaveCount(0, { timeout: 60_000 });
 
         // Ensure no picker overlays remain open before re-opening the agent/model selector.
         const actionMenuOverlay = page.getByTestId('agent-input-action-menu-overlay');
@@ -572,10 +741,8 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
             await expect(actionMenuOverlay).toHaveCount(0, { timeout: 60_000 });
         }
 
-        const wizardModelMini = page.getByTestId('new-session-model:gpt-5.4-mini');
-        if ((await wizardModelMini.count()) === 0) {
-            await page.getByTestId('agent-input-agent-chip').click();
-        }
+        await maybeResolveSelectAiBackendWizard(page, 'codex').catch(() => false);
+        await openAgentActionMenu(page);
         await clickModelSelectionOption(page, 'gpt-5.4-mini');
         await clickSelectedModelControlOption(page, 'reasoning_effort', 'high');
 
@@ -628,12 +795,11 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
         await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
 
-        await openAgentActionMenu(page);
-        await clickSessionModeOption(page, 'plan');
+        await ensureSessionMode(page, 'plan');
 
         const wizardModelMini = page.getByTestId('new-session-model:gpt-5.4-mini');
         if ((await wizardModelMini.count()) === 0) {
-            await page.getByTestId('agent-input-agent-chip').click();
+            await openAgentActionMenu(page);
         }
         await clickModelSelectionOption(page, 'gpt-5.4-mini');
         await clickSelectedModelControlOption(page, 'reasoning_effort', 'high');
@@ -647,12 +813,11 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         });
         await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_2_plan_gpt-5.4-mini_high_standard')).toHaveCount(1, { timeout: 180_000 });
 
-        await openAgentActionMenu(page);
-        await clickSessionModeOption(page, 'default');
+        await ensureSessionMode(page, 'default');
 
         const wizardModelFrontier = page.getByTestId('new-session-model:gpt-5.4');
         if ((await wizardModelFrontier.count()) === 0) {
-            await page.getByTestId('agent-input-agent-chip').click();
+            await openAgentActionMenu(page);
         }
         await clickModelSelectionOption(page, 'gpt-5.4');
         await clickSelectedModelControlOption(page, 'reasoning_effort', 'medium');
@@ -705,7 +870,7 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         await selectCodexAgentAndMachine({ page, uiBaseUrl, machineId: prepared.machineId });
         const wizardModelMini = page.getByTestId('new-session-model:gpt-5.4-mini');
         if ((await wizardModelMini.count()) === 0) {
-            await page.getByTestId('agent-input-agent-chip').click();
+            await openAgentActionMenu(page);
         }
         await clickModelSelectionOption(page, 'gpt-5.4-mini');
         await expect(page.getByTestId('model-picker-overlay-selected-option-control:speed')).toHaveCount(0, { timeout: 60_000 });

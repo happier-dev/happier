@@ -219,6 +219,7 @@ describe('built-in Happier tools', () => {
       toolName: 'action_spec_get',
       args: { id: 'session.mode.set' },
       sessionId: 'sess-1',
+      surface: 'mcp',
       deps: {
         changeTitle: async () => ({ success: true }),
         startExecutionRun: async () => unsupported(),
@@ -331,7 +332,7 @@ describe('built-in Happier tools', () => {
 
     const result = await dispatchBuiltInHappierTool({
       toolName: 'action_execute',
-      args: { actionId: 'session.mode.set', input: { sessionId: 'sess-1', modeId: 'plan' } },
+      args: { actionId: 'action.spec.search', input: { query: 'review' } },
       sessionId: 'sess-1',
       surface: 'cli',
       deps: {

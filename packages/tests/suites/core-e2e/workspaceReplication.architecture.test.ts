@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { repoRootDir } from '../../src/testkit/paths';
 
 const PRODUCTION_FILE_SUFFIXES = ['.ts', '.tsx'] as const;
+const UI_BULK_TRANSFER_PIPELINE_DIR_FRAGMENT = '/sync/domains/transfers/runtime/bulkTransferPipeline/' as const;
+const UI_BULK_TRANSFER_PIPELINE_PUBLIC_IMPORT = "@/sync/domains/transfers/runtime/bulkTransferPipeline" as const;
 const BANNED_HANDOFF_BASE64_TOKENS = [
   "contentBase64",
 ] as const;
@@ -17,6 +19,25 @@ const BANNED_UI_TRANSFER_PLUMBING_TOKENS = [
 ] as const;
 const BANNED_UI_TRANSFER_RPC_PREFIXES = [
   'RPC_METHODS.DAEMON_BULK_TRANSFER_',
+] as const;
+const BANNED_LEGACY_SESSION_TRANSFER_FAMILY_TOKENS = [
+  // Legacy app↔daemon transfer family (should be fully deleted, not just unused).
+  'DAEMON_SESSION_FILES_',
+  'DAEMON_SESSION_ATTACHMENTS_UPLOAD_',
+  'RPC_METHODS.DAEMON_SESSION_FILES_',
+  'RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_',
+  'RPC_METHODS.FILES_',
+  'RPC_METHODS.ATTACHMENTS_CONFIGURE',
+] as const;
+const RETIRED_UI_TRANSFER_MODULE_PATHS = [
+  'apps/ui/sources/sync/domains/transfers/runtime/uploadMachineTransferJsonPayload.ts',
+  'apps/ui/sources/sync/domains/transfers/runtime/downloadMachineTransferJsonPayload.ts',
+  'apps/ui/sources/sync/domains/transfers/runtime/sessionFileTransferRpcCaller.ts',
+  'apps/ui/sources/sync/domains/transfers/runtime/chunkTransferClient.ts',
+  'apps/ui/sources/sync/domains/transfers/runtime/transferChunkEncryption.ts',
+  'apps/ui/sources/sync/domains/transfers/runtime/uploadBulkPayloadFromFile.ts',
+  'apps/ui/sources/sync/domains/transfers/runtime/uploadBulkJsonPayload.ts',
+  'apps/ui/sources/sync/domains/transfers/runtime/downloadBulkJsonPayload.ts',
 ] as const;
 
 async function listFilesRecursively(directory: string): Promise<string[]> {
@@ -55,6 +76,17 @@ function hasInlineBase64PayloadAssembly(content: string): boolean {
     || /\b(?:content|payload|encryptedDataKeyEnvelope)Base64\b/.test(content);
 }
 
+async function pathExists(rootRelativePath: string): Promise<boolean> {
+  const root = repoRootDir();
+  const absolute = join(root, rootRelativePath);
+  try {
+    await readFile(absolute, 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function readProductionSources(rootRelativePath: string): Promise<Array<Readonly<{ path: string; content: string }>>> {
   const root = repoRootDir();
   const sourceRoot = join(root, rootRelativePath);
@@ -78,7 +110,9 @@ async function readProductionSourceFiles(rootRelativePaths: readonly string[]): 
 describe('workspace replication architecture closures', () => {
   it('keeps the direct-peer handoff runtime free of inline/base64 bulk payload assembly', async () => {
     const sources = await readProductionSourceFiles([
-      'apps/cli/src/session/handoff/workspace',
+      'apps/cli/src/session/handoff/prepare',
+      'apps/cli/src/session/handoff/metadata',
+      'apps/cli/src/session/handoff/state',
       'apps/cli/src/session/handoff/workspaceReplicationAdapter',
       'apps/cli/src/api/machine',
     ]);
@@ -95,7 +129,7 @@ describe('workspace replication architecture closures', () => {
     const sources = await readProductionSources('apps/ui/sources');
 
     for (const { path, content } of sources) {
-      if (path.includes('/sync/domains/transfers/runtime/bulkTransferPipeline/')) {
+      if (path.includes(UI_BULK_TRANSFER_PIPELINE_DIR_FRAGMENT)) {
         continue;
       }
 
@@ -105,6 +139,43 @@ describe('workspace replication architecture closures', () => {
       for (const token of BANNED_UI_TRANSFER_RPC_PREFIXES) {
         expect(content, path).not.toContain(token);
       }
+    }
+  });
+
+  it('requires UI feature code to import bulk transfer primitives only from the bulkTransferPipeline public entrypoint', async () => {
+    const sources = await readProductionSources('apps/ui/sources');
+    const internalImportRegex = new RegExp(
+      String.raw`from\s+['"]${UI_BULK_TRANSFER_PIPELINE_PUBLIC_IMPORT.replace(/\//g, '\\/')}/`,
+      'g',
+    );
+
+    for (const { path, content } of sources) {
+      if (path.includes(UI_BULK_TRANSFER_PIPELINE_DIR_FRAGMENT)) {
+        continue;
+      }
+      expect(content.match(internalImportRegex), path).toBe(null);
+    }
+  });
+
+  it('does not reference the legacy app↔daemon session files/attachments transfer family in production sources', async () => {
+    const sources = await readProductionSourceFiles([
+      'apps/ui/sources',
+      'apps/cli/src',
+      'packages/protocol/src',
+    ]);
+
+    for (const { path, content } of sources) {
+      for (const token of BANNED_LEGACY_SESSION_TRANSFER_FAMILY_TOKENS) {
+        expect(content, path).not.toContain(token);
+      }
+    }
+  });
+
+  it('keeps retired UI transfer helper modules deleted and the canonical bulkTransferPipeline entrypoint present', async () => {
+    expect(await pathExists('apps/ui/sources/sync/domains/transfers/runtime/bulkTransferPipeline/index.ts')).toBe(true);
+
+    for (const rootRelativePath of RETIRED_UI_TRANSFER_MODULE_PATHS) {
+      expect(await pathExists(rootRelativePath), rootRelativePath).toBe(false);
     }
   });
 });

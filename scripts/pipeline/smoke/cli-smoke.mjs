@@ -175,14 +175,38 @@ function main() {
   const prefixDir = dryRun ? withinRepo(repoRoot, 'dist/smoke/DRY_RUN_PREFIX') : mkTmpDir('happier-cli-smoke-prefix-');
   const homeDir = dryRun ? withinRepo(repoRoot, 'dist/smoke/DRY_RUN_HOME') : mkTmpDir('happier-cli-smoke-home-');
   const packDir = dryRun ? withinRepo(repoRoot, 'dist/smoke/DRY_RUN_PACK') : mkTmpDir('happier-cli-smoke-pack-');
+  const npmCacheDir = dryRun ? withinRepo(repoRoot, 'dist/smoke/DRY_RUN_NPM_CACHE') : path.join(homeDir, '.npm-cache');
+  const npmUserConfigPath = dryRun ? withinRepo(repoRoot, 'dist/smoke/DRY_RUN_NPMRC') : path.join(homeDir, '.npmrc');
+  const npmEnv = {
+    HOME: homeDir,
+    npm_config_userconfig: npmUserConfigPath,
+    npm_config_cache: npmCacheDir,
+    npm_config_update_notifier: 'false',
+    npm_config_audit: 'false',
+    npm_config_fund: 'false',
+  };
 
   if (!skipBuild) {
     run(opts, 'yarn', ['workspace', workspaceName, 'build'], { cwd: repoRoot });
   }
 
+  if (!dryRun) {
+    fs.mkdirSync(npmCacheDir, { recursive: true });
+    fs.writeFileSync(npmUserConfigPath, '', 'utf8');
+  }
   const tgzPath = npmPack(absPkgDir, packDir, opts);
 
-  run(opts, 'npm', ['install', '-g', '--prefix', prefixDir, tgzPath], { cwd: repoRoot });
+  run(opts, 'npm', [
+    'install',
+    '-g',
+    '--prefix',
+    prefixDir,
+    '--cache',
+    npmCacheDir,
+    '--userconfig',
+    npmUserConfigPath,
+    tgzPath,
+  ], { cwd: repoRoot, env: npmEnv });
 
   const binPath = opts.dryRun ? path.join(prefixDir, process.platform === 'win32' ? 'happier.cmd' : 'bin/happier') : resolveInstalledBin(prefixDir);
 

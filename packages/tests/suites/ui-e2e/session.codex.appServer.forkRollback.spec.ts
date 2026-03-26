@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 
@@ -9,6 +9,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -114,6 +115,17 @@ async function writeFakeCodexAppServerScript(params: { scriptPath: string; reque
   await writeFile(params.scriptPath, script, { encoding: 'utf8', mode: 0o755 });
 }
 
+async function writeExecutableStub(params: Readonly<{ targetPath: string; stdoutLine: string }>): Promise<void> {
+  const line = params.stdoutLine.replaceAll('"', '\\"');
+  const contents = process.platform === 'win32'
+    ? `@echo off\r\necho ${line}\r\n`
+    : `#!/bin/sh\necho "${line}"\n`;
+  await writeFile(params.targetPath, contents, 'utf8');
+  if (process.platform !== 'win32') {
+    await chmod(params.targetPath, 0o755);
+  }
+}
+
 async function waitForLoggedRequest(params: {
   requestLogPath: string;
   predicate: (entry: { id?: unknown; method?: unknown; params?: Record<string, unknown> | null }) => boolean;
@@ -173,6 +185,32 @@ async function setSessionReplayEnabled(page: Page, uiBaseUrl: string, enabled: b
   }
 }
 
+async function maybeDismissDetectedClisModal(page: Page, opts?: Readonly<{ timeoutMs?: number }>): Promise<boolean> {
+  const timeoutMs = opts?.timeoutMs ?? 5_000;
+  const deadlineMs = Date.now() + timeoutMs;
+
+  const modal = page.locator('[data-testid="detected-clis:modal"]:visible').first();
+  while (Date.now() < deadlineMs) {
+    if ((await modal.count()) > 0) break;
+    await page.waitForTimeout(200);
+  }
+
+  if ((await modal.count()) === 0) return false;
+
+  try {
+    await page.getByTestId('detected-clis:ok').click({ timeout: 5_000 });
+  } catch {
+    try {
+      await page.getByTestId('detected-clis:close').click({ timeout: 5_000 });
+    } catch {
+      await page.keyboard.press('Escape');
+    }
+  }
+
+  await expect(modal).toHaveCount(0, { timeout: 60_000 });
+  return true;
+}
+
 async function createCodexSessionFromComposer(params: {
   page: Page;
   uiBaseUrl: string;
@@ -182,24 +220,41 @@ async function createCodexSessionFromComposer(params: {
   const { page, uiBaseUrl, machineId, prompt } = params;
 
   await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
+  await maybeDismissDetectedClisModal(page).catch(() => false);
   await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-  await expect(page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 60_000 });
-  await page.getByTestId('agent-input-agent-chip').click();
-  const inlineCodexOption = page.getByTestId('new-session-agent:codex');
-  if ((await inlineCodexOption.count()) > 0) {
-    await inlineCodexOption.click();
-  } else {
-    const pickerDialog = page.getByRole('dialog').last();
-    await expect(pickerDialog).toContainText('Select AI Backend', { timeout: 60_000 });
-    await pickerDialog.getByText('Codex', { exact: true }).click();
-  }
-
   await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 60_000 });
   await openNewSessionMachineSelection({ page, uiBaseUrl });
   await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
   await page.getByTestId(`new-session-machine:${machineId}`).click();
 
   await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
+  await maybeDismissDetectedClisModal(page, { timeoutMs: 30_000 }).catch(() => false);
+
+  // Agent options can depend on the selected machine (CLI availability), so pick machine first.
+  // After the machine is selected, open the agent picker and select Codex.
+  await expect(page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 60_000 });
+  await page.getByTestId('agent-input-agent-chip').click();
+  await maybeDismissDetectedClisModal(page, { timeoutMs: 30_000 }).catch(() => false);
+
+  const openDialogs = page.locator('[role="dialog"][data-state="open"]');
+  const topDialog = openDialogs.last();
+  const dialogOption = topDialog.locator('[data-testid="new-session-agent:codex"]:visible').first();
+  const inlineOption = page.locator('[data-testid="new-session-agent:codex"]:visible').first();
+  const codexAgentRow = (await dialogOption.count()) > 0 ? dialogOption : inlineOption;
+  await expect(codexAgentRow).toBeEnabled({ timeout: 60_000 });
+  await codexAgentRow.scrollIntoViewIfNeeded().catch(() => {});
+  await codexAgentRow.click();
+
+  const applyButton = page.locator('[data-testid="agent-input-chip-picker.apply"]:visible').first();
+  if ((await applyButton.count()) > 0) {
+    await expect(applyButton).toBeEnabled({ timeout: 60_000 });
+    await applyButton.click();
+    await expect(applyButton).toHaveCount(0, { timeout: 60_000 }).catch(async () => {
+      await page.keyboard.press('Escape').catch(() => {});
+      await expect(page.locator('[data-testid="agent-input-chip-picker.apply"]:visible')).toHaveCount(0, { timeout: 60_000 });
+    });
+  }
+
   await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
   await page.getByTestId('new-session-composer-input').fill(prompt);
   await page.getByTestId('new-session-composer-input').press('Enter');
@@ -277,6 +332,11 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
     const testDir = resolve(join(suiteDir, 't1-codex-app-server-fork-rollback'));
     await mkdir(testDir, { recursive: true });
 
+    const fakeBinDir = resolve(join(testDir, 'fake-bin'));
+    await mkdir(fakeBinDir, { recursive: true });
+    const fakeCodexCliPath = resolve(join(fakeBinDir, process.platform === 'win32' ? 'codex.cmd' : 'codex'));
+    await writeExecutableStub({ targetPath: fakeCodexCliPath, stdoutLine: 'codex 0.0.0-e2e' });
+
     const fakeCodexAppServerPath = resolve(join(testDir, 'fake-codex-app-server.mjs'));
     const fakeCodexRequestLogPath = resolve(join(testDir, 'fake-codex-app-server.requests.jsonl'));
     await writeFakeCodexAppServerScript({ scriptPath: fakeCodexAppServerPath, requestLogPath: fakeCodexRequestLogPath });
@@ -296,8 +356,7 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
     });
 
     await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('terminal-connect-approve').click();
+    await approveTerminalConnect({ page });
     await cliLogin.waitForSuccess();
     await cliLogin.stop().catch(() => {});
 
@@ -308,6 +367,9 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
         ...process.env,
         HOME: cliHomeDir,
         CI: '1',
+        PATH: process.platform === 'win32'
+          ? `${fakeBinDir};${process.env.PATH ?? ''}`
+          : `${fakeBinDir}:${process.env.PATH ?? ''}`,
         HAPPIER_HOME_DIR: cliHomeDir,
         HAPPIER_SERVER_URL: server.baseUrl,
         HAPPIER_WEBAPP_URL: uiBaseUrl,

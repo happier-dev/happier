@@ -254,17 +254,13 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
         expectedVersion: before.metadataVersion,
       });
 
-      let afterPatched: Awaited<ReturnType<typeof fetchSessionV2>> | null = null;
       await waitFor(async () => {
         const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-        if (snap.metadata !== updatedCiphertext) return false;
-        afterPatched = snap;
-        return true;
+        return snap.metadata === updatedCiphertext;
       }, { timeoutMs: 20_000 });
 
-      if (!afterPatched) {
-        throw new Error('Failed to observe patched metadata ciphertext in session snapshot');
-      }
+      const afterPatched = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+      expect(afterPatched.metadata).toBe(updatedCiphertext);
 
       const metadataAfter = decryptLegacyBase64(afterPatched.metadata, secret) as Record<string, unknown>;
       expect(metadataAfter.acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 2000, modeId: 'plan' });

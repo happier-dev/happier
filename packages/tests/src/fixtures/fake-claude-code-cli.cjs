@@ -34,6 +34,7 @@ const sessionId =
   process.env.HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID ||
   process.env.HAPPY_E2E_FAKE_CLAUDE_SESSION_ID ||
   `fake-claude-session-${randomUUID()}`;
+const processNonce = randomUUID();
 const logPath = process.env.HAPPIER_E2E_FAKE_CLAUDE_LOG || process.env.HAPPY_E2E_FAKE_CLAUDE_LOG || '';
 
 const mcpConfigs = parseMcpConfigs(argv);
@@ -223,7 +224,10 @@ async function runSdkStreamUntilEof() {
       uuid: randomUUID(),
       session_id: sessionId,
       message: {
-        id: `fake-assistant-${turn}`,
+        // Message ids must be unique across *vendor sessions* (separate processes) because the Happier UI
+        // can render fork chains that include messages from multiple sessions in a single transcript list.
+        // Keep ids stable within a turn so multi-chunk scenarios still update the same logical message.
+        id: `fake-assistant-${processNonce}-${turn}`,
         type: 'message',
         role: 'assistant',
         model: 'fake-claude',

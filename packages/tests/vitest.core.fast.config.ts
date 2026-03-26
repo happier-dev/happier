@@ -15,6 +15,7 @@ export default defineConfig({
     globals: false,
     env: {
       HAPPIER_FEATURE_POLICY_ENV: '',
+      HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
     },
   },
 });
