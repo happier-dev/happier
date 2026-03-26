@@ -4,9 +4,24 @@ import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent } from '.
 import { run } from '../proc/proc.mjs';
 import { spawnProc } from '../proc/proc.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpoClearCache } from './expo.mjs';
+import { coerceHappyMonorepoRootFromPath } from '../paths/paths.mjs';
+import { pathExists } from '../fs/fs.mjs';
 
 const DEFAULT_EXPO_MAX_OLD_SPACE_SIZE_MB = 8192;
 const DEFAULT_EXPO_EXPORT_MAX_WORKERS_NONINTERACTIVE = 1;
+
+async function resolveExpoBin(runnerDir) {
+  const workspaceBin = join(runnerDir, 'node_modules', '.bin', 'expo');
+  if (await pathExists(workspaceBin)) return workspaceBin;
+
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(runnerDir);
+  if (monorepoRoot) {
+    const rootBin = join(monorepoRoot, 'node_modules', '.bin', 'expo');
+    if (await pathExists(rootBin)) return rootBin;
+  }
+
+  return workspaceBin;
+}
 
 function coercePositiveInt(v) {
   const n = Number(String(v ?? '').trim());
@@ -145,7 +160,7 @@ export async function expoExec({
   await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env });
   const workspaceDepsDir = projectDir ?? runnerDir;
   await ensureWorkspacePackagesBuiltForComponent(workspaceDepsDir, { quiet, env });
-  const expoBin = join(runnerDir, 'node_modules', '.bin', 'expo');
+  const expoBin = await resolveExpoBin(runnerDir);
   const effectiveEnv = applyExpoNodeHeapEnv(env);
   const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
   await run(expoBin, effectiveArgs, { cwd, env: effectiveEnv, stdio: quiet ? 'ignore' : 'inherit' });
@@ -166,7 +181,7 @@ export async function expoSpawn({
   await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env });
   const workspaceDepsDir = projectDir ?? runnerDir;
   await ensureWorkspacePackagesBuiltForComponent(workspaceDepsDir, { quiet, env });
-  const expoBin = join(runnerDir, 'node_modules', '.bin', 'expo');
+  const expoBin = await resolveExpoBin(runnerDir);
   const effectiveEnv = applyExpoNodeHeapEnv(env);
   const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
   return spawnProc(label, expoBin, effectiveArgs, effectiveEnv, { cwd, ...(options ?? {}) });

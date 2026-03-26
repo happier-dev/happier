@@ -66,6 +66,28 @@ async function writeExpoStub({ expoPath }) {
   await chmod(expoPath, 0o755);
 }
 
+async function writeExpoStubCaptureCwd({ expoPath }) {
+  await mkdir(join(expoPath, '..'), { recursive: true });
+  await writeFile(
+    expoPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      '',
+      'echo "expo:cwd=$(pwd) bin=$0 args=$*" >> "${OUTPUT_PATH:?}"',
+      '',
+      '# Fail if protocol dist output is missing (simulates Metro failing on exports->dist targets).',
+      'if [[ ! -f "../../packages/protocol/dist/rpcErrors.js" ]]; then',
+      '  echo "missing ../../packages/protocol/dist/rpcErrors.js" >&2',
+      '  exit 3',
+      'fi',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+  await chmod(expoPath, 0o755);
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -155,4 +177,74 @@ test('expoExec builds workspace dist deps for the projectDir (not the runnerDir)
     argvLog,
     new RegExp(`${escapeRegExp(join(root, 'packages', 'protocol'))} :: -s build`),
   );
+});
+
+test('expoExec falls back to the monorepo root expo bin when runnerDir lacks node_modules/.bin', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-expo-root-bin-fallback-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  // Minimal Happy monorepo markers.
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeJson(join(root, 'package.json'), { name: 'repo', private: true });
+  await writeFile(join(root, 'yarn.lock'), '# lock\n', 'utf-8');
+
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), {
+    name: '@happier-dev/app',
+    private: true,
+    dependencies: {
+      '@happier-dev/protocol': '0.0.0',
+    },
+  });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+
+  const protocolDir = join(root, 'packages', 'protocol');
+  await mkdir(protocolDir, { recursive: true });
+  await writeJson(join(protocolDir, 'package.json'), {
+    name: '@happier-dev/protocol',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: {
+      '.': { default: './dist/index.js', types: './dist/index.d.ts' },
+      './rpcErrors': { default: './dist/rpcErrors.js', types: './dist/rpcErrors.d.ts' },
+    },
+    scripts: { build: 'tsc -p tsconfig.json' },
+  });
+  await writeJson(join(protocolDir, 'tsconfig.json'), { compilerOptions: { outDir: 'dist' } });
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnStub({ binDir, outputPath });
+
+  // Only place the expo binary at the monorepo root.
+  const expoPath = join(root, 'node_modules', '.bin', 'expo');
+  await writeExpoStubCaptureCwd({ expoPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await expoExec({
+    dir: join(root, 'apps', 'ui'),
+    projectDir: join(root, 'apps', 'ui'),
+    args: ['export', '--platform', 'web', '--output-dir', join(root, 'out')],
+    env: process.env,
+    ensureDepsLabel: 'happy',
+    quiet: true,
+  });
+
+  const argvLog = await readFile(outputPath, 'utf-8');
+  assert.match(argvLog, /expo:cwd=/);
+  // macOS can report tmp paths via `/private/var/...` even if `mkdtemp()` returns `/var/...`.
+  // Only assert stable suffixes.
+  assert.match(argvLog, /expo:cwd=.*\/apps\/ui\b/);
+  assert.match(argvLog, /bin=.*\/node_modules\/\.bin\/expo\b/);
 });
