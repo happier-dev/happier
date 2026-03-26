@@ -31,6 +31,7 @@ export function AutomationSettingsPopoverContent(props: Props) {
             <View style={styles.fullWidth}>
                 <View style={[styles.headerSection, showDetails ? styles.headerSectionWithBorder : null]}>
                     <Item
+                        testID="session-authoring-automation-toggle-label"
                         title={enableTitle}
                         subtitle={enableSubtitle}
                         subtitleLines={0}
