@@ -1,7 +1,7 @@
 import { buildBackendTargetKey, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
 
-import { AGENT_IDS, type AgentId } from '@/agents/catalog/catalog';
+import { AGENT_IDS, type AgentId } from '@/agents/registry/registryCore';
 
 const DEFAULT_BACKEND_ENABLED_BY_TARGET_KEY: Record<string, boolean> = Object.fromEntries(
     AGENT_IDS.map((id) => [buildBackendTargetKey({ kind: 'builtInAgent', agentId: id }), true]),

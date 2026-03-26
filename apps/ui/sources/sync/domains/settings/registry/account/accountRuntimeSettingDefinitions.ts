@@ -1,6 +1,6 @@
 import { AcpCatalogSettingsV1Schema, BackendTargetRefSchema, LlmTaskRunnerConfigV1Schema, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
-import { isAgentId } from '@/agents/catalog/catalog';
+import { isAgentId } from '@/agents/registry/registryCore';
 
 function buildExecutionRunsGuidanceSummaryProperties(value: unknown): Record<string, number> {
     const entries = Array.isArray(value) ? value : [];

@@ -1,7 +1,7 @@
 import { buildBackendTargetKey, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
 
-import { AGENT_IDS, type AgentId } from '@/agents/catalog/catalog';
+import { AGENT_IDS, type AgentId } from '@/agents/registry/registryCore';
 import { PERMISSION_MODES } from '@/constants/PermissionModes';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 

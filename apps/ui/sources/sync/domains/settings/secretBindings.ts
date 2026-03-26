@@ -1,10 +1,20 @@
-import type { Settings } from '@/sync/domains/settings/settings';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 
 type EnvVarRequirementLike = Readonly<{
     name: string;
     kind?: string | null;
 }>;
+
+type SettingsLike = Readonly<{
+    profiles: ReadonlyArray<Readonly<{ id: string; envVarRequirements?: unknown }>>;
+    secrets?: ReadonlyArray<Readonly<{ id: string }>>;
+    secretBindingsByProfileId?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+}>;
+
+function normalizeEnvVarRequirements(value: unknown): EnvVarRequirementLike[] {
+    if (!Array.isArray(value)) return [];
+    return value as EnvVarRequirementLike[];
+}
 
 function normalizeEnvVarName(input: string): string | null {
     const trimmed = input.trim();
@@ -14,12 +24,12 @@ function normalizeEnvVarName(input: string): string | null {
     return upper;
 }
 
-function getAllowedSecretEnvVarNamesByProfileId(settings: Settings): Record<string, Set<string>> {
+function getAllowedSecretEnvVarNamesByProfileId(settings: SettingsLike): Record<string, Set<string>> {
     const out: Record<string, Set<string>> = {};
 
     for (const p of settings.profiles) {
         const names: Set<string> = new Set<string>(
-            (p.envVarRequirements ?? [])
+            normalizeEnvVarRequirements(p.envVarRequirements)
                 .filter((r: EnvVarRequirementLike) => (r.kind ?? 'secret') === 'secret')
                 .map((r: EnvVarRequirementLike) => normalizeEnvVarName(String(r.name ?? '')))
                 .filter((n: string | null): n is string => typeof n === 'string' && n.length > 0),
@@ -35,7 +45,7 @@ function getAllowedSecretEnvVarNamesByProfileId(settings: Settings): Record<stri
         const builtIn = getBuiltInProfile(profileId);
         if (!builtIn) continue;
         const names: Set<string> = new Set<string>(
-            (builtIn.envVarRequirements ?? [])
+            normalizeEnvVarRequirements(builtIn.envVarRequirements)
                 .filter((r: EnvVarRequirementLike) => (r.kind ?? 'secret') === 'secret')
                 .map((r: EnvVarRequirementLike) => normalizeEnvVarName(String(r.name ?? '')))
                 .filter((n: string | null): n is string => typeof n === 'string' && n.length > 0),
@@ -55,7 +65,7 @@ function getAllowedSecretEnvVarNamesByProfileId(settings: Settings): Record<stri
  * - No bindings referencing deleted secrets.
  * - Env var names are normalized to uppercase.
  */
-export function pruneSecretBindings(settings: Settings): Settings {
+export function pruneSecretBindings<TSettings extends SettingsLike>(settings: TSettings): TSettings {
     const bindings = settings.secretBindingsByProfileId ?? {};
     if (Object.keys(bindings).length === 0) return settings;
 
@@ -103,5 +113,5 @@ export function pruneSecretBindings(settings: Settings): Settings {
     return {
         ...settings,
         secretBindingsByProfileId: next,
-    };
+    } as TSettings;
 }

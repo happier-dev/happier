@@ -1,15 +1,13 @@
+import * as accountSettingsParse from './parse/accountSettingsParse';
 import { isSettingsSyncDebugEnabled } from './debugSettings';
 import { pruneSecretBindings } from './secretBindings';
-import { PROVIDER_SETTINGS_PLUGINS } from '@/agents/providers/registry/providerSettingsRegistry';
 import {
     PROVIDER_SETTINGS_DEFAULTS,
     PROVIDER_SETTINGS_SHAPE,
 } from '@/agents/providers/registry/providerSettingArtifacts';
 import { z } from 'zod';
 import { ACCOUNT_SETTING_ARTIFACTS } from './registry/account/accountSettingArtifacts';
-import { assertProviderSettingKeysCompatible } from './registry/provider/assertProviderSettingKeysCompatible';
 import { stripDeprecatedSessionOnlyKeys } from './parse/accountSettingsLegacyCleanup';
-import { parseAccountSettings } from './parse/accountSettingsParse';
 
 // NOTE: We intentionally do NOT support legacy provider config objects (e.g. `openaiConfig`).
 // Profiles must use `environmentVariables` + `envVarRequirements` only.
@@ -23,9 +21,20 @@ import { parseAccountSettings } from './parse/accountSettingsParse';
 // happy-cli maintains its own local settings schemaVersion separately.
 export const SUPPORTED_SCHEMA_VERSION = 6;
 
-assertProviderSettingKeysCompatible({
+function assertProviderSettingsDoNotShadowCoreKeys(params: {
+    coreSettingKeys: readonly string[];
+    providerSettingKeys: readonly string[];
+}): void {
+    const core = new Set([...params.coreSettingKeys, 'schemaVersion']);
+    for (const key of params.providerSettingKeys) {
+        if (!core.has(key)) continue;
+        throw new Error(`Provider setting "${key}" collides with core setting "${key}"`);
+    }
+}
+
+assertProviderSettingsDoNotShadowCoreKeys({
     coreSettingKeys: Object.keys(ACCOUNT_SETTING_ARTIFACTS.shape),
-    plugins: PROVIDER_SETTINGS_PLUGINS,
+    providerSettingKeys: Object.keys(PROVIDER_SETTINGS_SHAPE),
 });
 
 const SettingsSchemaMetadata = z.object({
@@ -72,7 +81,7 @@ Object.freeze(settingsDefaults);
 //
 
 export function settingsParse(settings: unknown): Settings {
-    return parseAccountSettings({
+    return accountSettingsParse.parseAccountSettings({
         settings,
         schema: SettingsSchema,
         defaults: settingsDefaults as Record<string, unknown>,

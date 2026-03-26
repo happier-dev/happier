@@ -2,7 +2,7 @@ import { buildBackendTargetKey, normalizeCodexBackendMode } from '@happier-dev/p
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { z } from 'zod';
 
-import { AGENT_IDS, getAgentCore } from '@/agents/catalog/catalog';
+import { AGENT_IDS, getAgentCore } from '@/agents/registry/registryCore';
 import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 import { SessionTmuxMachineOverrideSchema } from '../registry/account/accountRuntimeSettingDefinitions';

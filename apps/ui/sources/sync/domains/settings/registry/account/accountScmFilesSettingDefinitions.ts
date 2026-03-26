@@ -1,7 +1,7 @@
 import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
 
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID } from '@/agents/registry/registryCore';
 import { SCM_COMMIT_STRATEGIES } from '@/scm/settings/commitStrategy';
 import {
     SCM_DIFF_MODE_OPTIONS,

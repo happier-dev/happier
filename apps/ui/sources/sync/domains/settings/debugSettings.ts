@@ -1,5 +1,3 @@
-import type { Settings } from './settings';
-
 const WEB_FLAG_KEY = 'HAPPIER_DEBUG_SETTINGS_SYNC';
 
 function readWebFlag(): boolean {
@@ -36,7 +34,14 @@ function safeKeys(obj: unknown): string[] {
     return Object.keys(obj as Record<string, unknown>);
 }
 
-export function summarizeSettingsDelta(delta: Partial<Settings>): Record<string, unknown> {
+type SettingsLike = Readonly<{
+    schemaVersion?: number;
+    secrets?: unknown;
+    secretBindingsByProfileId?: unknown;
+    profiles?: unknown;
+}>;
+
+export function summarizeSettingsDelta(delta: Partial<SettingsLike>): Record<string, unknown> {
     const keys = safeKeys(delta).sort();
     const out: Record<string, unknown> = { keys };
 
@@ -67,7 +72,7 @@ export function summarizeSettingsDelta(delta: Partial<Settings>): Record<string,
     return out;
 }
 
-export function summarizeSettings(settings: Partial<Settings>, extra?: { version?: number | null }): Record<string, unknown> {
+export function summarizeSettings(settings: Partial<SettingsLike>, extra?: { version?: number | null }): Record<string, unknown> {
     return {
         ...(extra ? extra : {}),
         schemaVersion: (settings as any)?.schemaVersion ?? null,
