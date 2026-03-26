@@ -85,6 +85,24 @@ describe('resolveTransferAvailability', () => {
         });
     });
 
+    it('fails closed for session relay when the server transfer policy snapshot is unavailable for a sized transfer', async () => {
+        const { SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR, resolveSessionRelayTransferAvailability } = await import('./resolveTransferAvailability');
+
+        expect(resolveSessionRelayTransferAvailability({
+            serverId: 'server-1',
+            sessionRpcAvailable: true,
+            sessionRpcTransferSizeBytes: 128,
+            serverFeatures: null,
+        })).toEqual({
+            kind: 'unavailable',
+            response: {
+                success: false,
+                error: SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            },
+        });
+    });
+
     it('fails closed for session relay when the payload exceeds the server-routed size limit', async () => {
         const { SERVER_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR, resolveSessionRelayTransferAvailability } = await import('./resolveTransferAvailability');
 

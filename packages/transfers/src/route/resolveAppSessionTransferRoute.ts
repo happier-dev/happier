@@ -10,6 +10,7 @@ export type AppSessionTransferRoute = 'machine_rpc_direct' | 'server_routed_stre
 export type AppSessionTransferUnavailableReasonCode =
     | 'inactive_session_rpc_unavailable'
     | 'transfer_disabled'
+    | 'transfer_policy_unavailable'
     | 'transfer_too_large';
 
 export type AppSessionTransferRouteResult =
@@ -32,17 +33,24 @@ type ResolveAppSessionTransferRouteInput = Readonly<{
 export function resolveAppSessionTransferRoute(
     input: ResolveAppSessionTransferRouteInput,
 ): AppSessionTransferRouteResult {
-    const transferEnabled = input.serverFeatures
-        ? readServerEnabledBit(input.serverFeatures, 'machines.transfer')
-        : null;
-    if (transferEnabled === false) {
-        return {
-            kind: 'unavailable',
-            reasonCode: 'transfer_disabled',
-        };
+    if (input.serverFeatures) {
+        // Treat missing/malformed enabled bits as disabled (fail closed).
+        const transferEnabled = readServerEnabledBit(input.serverFeatures, 'machines.transfer') === true;
+        if (!transferEnabled) {
+            return {
+                kind: 'unavailable',
+                reasonCode: 'transfer_disabled',
+            };
+        }
     }
 
     const maxBytes = resolveServerRoutedTransferMaxBytesFromFeatures(input.serverFeatures);
+    if (input.serverFeatures == null && typeof input.sessionRpcTransferSizeBytes === 'number') {
+        return {
+            kind: 'unavailable',
+            reasonCode: 'transfer_policy_unavailable',
+        };
+    }
     if (
         typeof input.sessionRpcTransferSizeBytes === 'number'
         && isServerRoutedTransferOverSizeLimit(input.sessionRpcTransferSizeBytes, maxBytes)
@@ -57,7 +65,7 @@ export function resolveAppSessionTransferRoute(
         // Direct machine RPC must not be selected without a server feature snapshot; otherwise
         // callers can accidentally bypass the shared policy choke point when the snapshot is
         // missing/unavailable.
-        if (input.serverFeatures && transferEnabled === true) {
+        if (input.serverFeatures) {
             return {
                 kind: 'selected',
                 route: 'machine_rpc_direct',
@@ -72,14 +80,15 @@ export function resolveAppSessionTransferRoute(
         };
     }
 
-    const serverRoutedEnabled = input.serverFeatures
-        ? readServerEnabledBit(input.serverFeatures, 'machines.transfer.serverRouted')
-        : null;
-    if (serverRoutedEnabled === false) {
-        return {
-            kind: 'unavailable',
-            reasonCode: 'transfer_disabled',
-        };
+    if (input.serverFeatures) {
+        // Treat missing/malformed enabled bits as disabled (fail closed).
+        const serverRoutedEnabled = readServerEnabledBit(input.serverFeatures, 'machines.transfer.serverRouted') === true;
+        if (!serverRoutedEnabled) {
+            return {
+                kind: 'unavailable',
+                reasonCode: 'transfer_disabled',
+            };
+        }
     }
 
     return {

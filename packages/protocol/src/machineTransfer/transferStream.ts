@@ -4,6 +4,7 @@ const MAX_TRANSFER_ID_LENGTH = 512;
 const MAX_TRANSFER_MANIFEST_HASH_LENGTH = 256;
 const MAX_TRANSFER_ENDPOINT_URL_LENGTH = 2048;
 const MAX_TRANSFER_ENDPOINT_AUTH_TOKEN_LENGTH = 2048;
+const MAX_MACHINE_ID_LENGTH = 256;
 
 // Open envelopes must stay small to avoid unbounded JSON buffering on the receiver.
 const MAX_TRANSFER_OPEN_PAYLOAD_BASE64_LENGTH = 256 * 1024;
@@ -122,7 +123,7 @@ export type TransferStreamEnvelope = z.infer<typeof TransferStreamEnvelopeSchema
 
 export const MachineTransferSendEnvelopeSchema = z
   .object({
-    targetMachineId: z.string().min(1),
+    targetMachineId: boundedString(MAX_MACHINE_ID_LENGTH),
     envelope: TransferStreamEnvelopeSchema,
   })
   .strict();
@@ -130,8 +131,8 @@ export type MachineTransferSendEnvelope = z.infer<typeof MachineTransferSendEnve
 
 export const MachineTransferReceiveEnvelopeSchema = z
   .object({
-    sourceMachineId: z.string().min(1),
-    targetMachineId: z.string().min(1),
+    sourceMachineId: boundedString(MAX_MACHINE_ID_LENGTH),
+    targetMachineId: boundedString(MAX_MACHINE_ID_LENGTH),
     envelope: TransferStreamEnvelopeSchema,
   })
   .strict();

@@ -7,7 +7,12 @@ function normalizeTransferEndpointCandidate(candidate: TransferEndpointCandidate
     }
     try {
         const parsedUrl = new URL(parsedCandidate.data.url);
-        parsedUrl.searchParams.delete('token');
+        // Endpoint URLs are untrusted and may contain legacy/accidental secrets in userinfo/query/hash.
+        // Strip them so cache fingerprints don't leak tokens and don't churn unnecessarily.
+        parsedUrl.username = '';
+        parsedUrl.password = '';
+        parsedUrl.search = '';
+        parsedUrl.hash = '';
         return `${parsedCandidate.data.kind}:${parsedUrl.toString()}`;
     } catch {
         return `${parsedCandidate.data.kind}:${parsedCandidate.data.url}`;

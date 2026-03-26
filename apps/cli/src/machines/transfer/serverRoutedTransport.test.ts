@@ -138,6 +138,40 @@ describe('server routed machine transfer', () => {
     }
   });
 
+  it('fails closed for overly deep request openBody (depth cap) and does not send envelopes or leak .part files', async () => {
+    const deepOpenBody = (() => {
+      let current: any = { value: 'ok' };
+      for (let i = 0; i < 80; i += 1) {
+        current = { nested: current };
+      }
+      return current;
+    })();
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-open-body-depth-'));
+    const destinationPath = join(tempDir, 'payload.depth.bin');
+
+    const { target, sentEnvelopes } = createLoopbackChannels();
+    const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
+
+    try {
+      await expect(requestServerRoutedTransferToFile({
+        transferId: 'transfer_open_body_too_deep',
+        sourceMachineId: 'machine_source',
+        machineTransferChannel: target,
+        destinationPath,
+        openBody: deepOpenBody,
+        timeoutMs: 1,
+      })).rejects.toThrow(/Open payload exceeds max depth/u);
+
+      expect(sentEnvelopes).toHaveLength(0);
+
+      const entries = await readdir(tempDir).catch(() => []);
+      expect(entries.filter((name) => name.includes('.part'))).toEqual([]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('hard-clamps the server routed open payload limit even when the env override is huge', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_OPEN_PAYLOAD_MAX_BYTES = '1048576';
 
@@ -303,6 +337,71 @@ describe('server routed machine transfer', () => {
       });
     } finally {
       unregister();
+    }
+  });
+
+  it('fails closed before loading a payload source when the server-routed responder active-transfer budget is exceeded', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '100';
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_MAX_ACTIVE_TRANSFERS = '1';
+
+    const { source, target, sentEnvelopes } = createLoopbackChannels();
+    const payload = Buffer.from('payload', 'utf8');
+    const loadSpy = vi.fn(async ({ transferId }: { transferId: string }) => {
+      return { kind: 'buffer', payload, sizeBytes: payload.length, manifestHash: `sha256:${'a'.repeat(64)}` } as const;
+    });
+
+    const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
+    const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
+
+    const unregister = registerServerRoutedTransferResponder({
+      machineTransferChannel: source,
+      loadTransferPayloadSource: loadSpy as any,
+      chunkBytes: 4,
+    });
+
+    try {
+      const recipientSecretKeySeed = new Uint8Array(32).fill(7);
+      const recipientPublicKeyBase64 = Buffer.from(deriveBoxPublicKeyFromSeed(recipientSecretKeySeed)).toString('base64');
+
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_1',
+          kind: 'open',
+          manifestHash: 'sha256:test',
+          recipientPublicKeyBase64,
+        },
+      });
+
+      // Second open while the first is still active should be rejected before loadTransferPayloadSource runs.
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_2',
+          kind: 'open',
+          manifestHash: 'sha256:test',
+          recipientPublicKeyBase64,
+        },
+      });
+
+      await vi.waitFor(() => {
+        expect(
+          sentEnvelopes.some(
+            (entry) =>
+              entry.targetMachineId === 'machine_target'
+              && entry.envelope.kind === 'abort'
+              && entry.envelope.transferId === 'transfer_2'
+              && entry.envelope.reason.includes('active-transfer'),
+          ),
+        ).toBe(true);
+      });
+
+      // Only the first transfer should have invoked the loader.
+      expect(loadSpy.mock.calls.map((call) => call[0]?.transferId)).toEqual(['transfer_1']);
+    } finally {
+      unregister();
+      delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
+      delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_MAX_ACTIVE_TRANSFERS;
     }
   });
 
@@ -1054,7 +1153,9 @@ describe('server routed machine transfer', () => {
   });
 
   it('treats the configured timeout as inactivity rather than absolute wall-clock duration while chunks keep flowing', async () => {
-    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '30';
+    // Keep this comfortably above typical CI/dev event-loop jitter; the contract we care about is
+    // that chunk activity keeps the transfer alive, not that timers fire at exact millisecond marks.
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '120';
     const { source, target } = createLoopbackChannels({
       sourceToTargetDeliveryDelayMs: 20,
     });

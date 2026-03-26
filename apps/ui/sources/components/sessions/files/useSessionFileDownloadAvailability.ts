@@ -1,5 +1,5 @@
 import { useSessionFileTransferAvailability } from './useSessionFileTransferAvailability';
 
-export function useSessionFileUploadAvailability(sessionId: string): boolean {
+export function useSessionFileDownloadAvailability(sessionId: string): boolean {
     return useSessionFileTransferAvailability(sessionId);
 }

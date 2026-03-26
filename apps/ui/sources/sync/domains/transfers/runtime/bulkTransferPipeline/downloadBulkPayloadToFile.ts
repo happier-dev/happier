@@ -1,5 +1,5 @@
-import { type ChunkDownloadProgress, downloadInChunks } from '@/sync/domains/files/transfers/chunkTransferClient';
-import { createTransferRecipientKeyPair } from '@/sync/domains/files/transfers/transferChunkEncryption';
+import { type ChunkDownloadProgress, downloadInChunks } from './chunkTransferClient';
+import { createTransferRecipientKeyPair } from './transferChunkEncryption';
 
 type BulkTransferFailureResponse = Readonly<{
     success: false;

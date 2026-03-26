@@ -121,8 +121,17 @@ describe('sessionFileTransferRpcCaller', () => {
         ).resolves.toEqual({ success: true, value: 'ok' });
 
         expect(machineRPC).toHaveBeenCalledTimes(2);
-        expect(machineRPC).toHaveBeenNthCalledWith(1, 'machine-1', RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT, { t: 'session_file_upload_v1', path: '/repo/first.txt', sizeBytes: 1 });
-        expect(machineRPC).toHaveBeenNthCalledWith(2, 'machine-1', RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT, { t: 'session_file_upload_v1', path: '/repo/second.txt', sizeBytes: 1 });
+        // machineRPC may receive an optional 4th "options" argument (e.g. timeout); assert the stable call prefix.
+        expect(machineRPC.mock.calls[0]?.slice(0, 3)).toEqual([
+            'machine-1',
+            RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
+            { t: 'session_file_upload_v1', path: '/repo/first.txt', sizeBytes: 1 },
+        ]);
+        expect(machineRPC.mock.calls[1]?.slice(0, 3)).toEqual([
+            'machine-1',
+            RPC_METHODS.DAEMON_BULK_TRANSFER_UPLOAD_INIT,
+            { t: 'session_file_upload_v1', path: '/repo/second.txt', sizeBytes: 1 },
+        ]);
         // Policy must be consulted before any direct machine RPC attempt. Depending on how the runtime composes
         // route selection and direct-route guarding, this may involve one or more feature reads per call.
         expect(getReadyServerFeaturesMock.mock.calls.length).toBeGreaterThanOrEqual(2);

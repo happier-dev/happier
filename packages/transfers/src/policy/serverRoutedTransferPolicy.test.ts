@@ -10,6 +10,7 @@ import {
 
 describe('serverRoutedTransferPolicy', () => {
     it('normalizes the env max-bytes value', () => {
+        expect(resolveServerRoutedTransferMaxBytesFromEnv({})).toBe(2 * 1024 * 1024 * 1024);
         expect(resolveServerRoutedTransferMaxBytesFromEnv({
             HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES: '42.9',
         })).toBe(42);

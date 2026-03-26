@@ -181,4 +181,48 @@ describe('resolvePromptAssetDownloadSource', () => {
       error: 'prompt asset path resolves through a symlink',
     });
   });
+
+  it('fails closed when the prompt asset transfer payload exceeds the prompt transfer size limit', async () => {
+    const previous = process.env.HAPPIER_PROMPT_TRANSFER_JSON_MAX_BYTES;
+    process.env.HAPPIER_PROMPT_TRANSFER_JSON_MAX_BYTES = '32';
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
+
+    try {
+      const homeDir = mkdtempSync(join(tmpdir(), 'happier-prompt-home-'));
+      const happierHomeDir = mkdtempSync(join(tmpdir(), 'happier-prompt-happier-home-'));
+      tempDirs.push(homeDir, happierHomeDir);
+
+      mkdirSync(join(homeDir, '.agents', 'skills', 'reviewer'), { recursive: true });
+      writeFileSync(join(homeDir, '.agents', 'skills', 'reviewer', 'SKILL.md'), '# Reviewer\n', 'utf8');
+
+      const { resolvePromptAssetDownloadSource } = await import('./resolvePromptAssetDownloadSource');
+      const registry = createPromptAssetAdapterRegistry({
+        homedir: () => homeDir,
+        happierHomeDir: () => happierHomeDir,
+      });
+
+      const result = await resolvePromptAssetDownloadSource({
+        adapterRegistry: registry,
+        request: {
+          assetTypeId: 'agents.skill',
+          scope: 'user',
+          externalRef: { skillName: 'reviewer' },
+        },
+      });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Prompt transfer payload exceeds size limit',
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HAPPIER_PROMPT_TRANSFER_JSON_MAX_BYTES;
+      } else {
+        process.env.HAPPIER_PROMPT_TRANSFER_JSON_MAX_BYTES = previous;
+      }
+      const { reloadConfiguration: reloadAfter } = await import('@/configuration');
+      reloadAfter();
+    }
+  });
 });

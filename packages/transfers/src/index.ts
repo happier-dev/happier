@@ -1,6 +1,7 @@
 export {
     resolveAppSessionTransferAvailability,
     INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+    SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR,
     SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR,
     type AppSessionTransferAvailabilityResult,
 } from './route/resolveAppSessionTransferAvailability.js';

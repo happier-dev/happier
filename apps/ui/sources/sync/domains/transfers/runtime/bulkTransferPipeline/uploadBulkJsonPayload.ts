@@ -1,4 +1,4 @@
-import { type ChunkUploadProgress } from '@/sync/domains/files/transfers/chunkTransferClient';
+import { type ChunkUploadProgress } from './chunkTransferClient';
 
 import { type BulkTransferFailureResponse, uploadBulkPayloadFromFile } from './uploadBulkPayloadFromFile';
 import { resolveBulkTransferJsonMaxBytes } from './resolveBulkTransferJsonMaxBytes';

@@ -4,6 +4,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from '@/sync/runtime/sessionMachineRpcFallback';
 import {
     resolveAppSessionTransferAvailability,
+    SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR as TRANSFERS_SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR,
     SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR,
 } from '@happier-dev/transfers';
 export { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from '@/sync/runtime/sessionMachineRpcFallback';
@@ -11,6 +12,7 @@ export { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from '@/sync/runtime/sessionMa
 const SERVER_ROUTED_TRANSFER_DISABLED_ERROR = 'Server-routed transfer is disabled on the selected server';
 
 export { SERVER_ROUTED_TRANSFER_DISABLED_ERROR };
+export const SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR = TRANSFERS_SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR;
 export const SERVER_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR = SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR;
 
 type TransferRpcFailure = Readonly<{ success: false; error: string; errorCode?: string }>;
@@ -69,7 +71,7 @@ function resolveServerFeaturesPayload(serverFeatures: unknown): ServerFeatures |
 function mapUnavailableSessionTransferAvailabilityToFailure(
     route: Readonly<{
         kind: 'unavailable';
-        reasonCode: 'inactive_session_rpc_unavailable' | 'transfer_disabled' | 'transfer_too_large';
+        reasonCode: 'inactive_session_rpc_unavailable' | 'transfer_disabled' | 'transfer_policy_unavailable' | 'transfer_too_large';
         errorMessage: string;
     }>,
 ): TransferRpcFailure {
@@ -77,6 +79,14 @@ function mapUnavailableSessionTransferAvailabilityToFailure(
         return {
             success: false,
             error: route.errorMessage,
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        };
+    }
+
+    if (route.reasonCode === 'transfer_policy_unavailable') {
+        return {
+            success: false,
+            error: SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR,
             errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
         };
     }
@@ -95,6 +105,17 @@ export function resolveSessionFileTransferRouteAvailability(input: Readonly<{
     sessionRpcTransferSizeBytes?: number | null;
     serverFeatures?: ServerFeatures | null;
 }>): SessionFileTransferRouteAvailability {
+    if (!input.machineTargetAvailable && !input.sessionRpcAvailable) {
+        return {
+            kind: 'unavailable',
+            response: {
+                success: false,
+                error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            },
+        };
+    }
+
     const route = resolveAppSessionTransferAvailability({
         machineTargetAvailable: input.machineTargetAvailable,
         sessionRpcAvailable: input.sessionRpcAvailable,

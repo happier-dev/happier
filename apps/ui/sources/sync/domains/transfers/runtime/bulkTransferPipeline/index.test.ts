@@ -2,7 +2,7 @@ import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/prot
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createEncryptedTransferChunkEnvelope } from '@/sync/domains/files/transfers/transferChunkEncryption';
+import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
 
 import {
     downloadBulkJsonPayload,
@@ -143,6 +143,23 @@ describe('bulkTransferPipeline', () => {
             response: {
                 success: false,
                 error: 'Server-routed transfer is disabled on the selected server',
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            },
+        });
+    });
+
+    it('fails closed when transfer size is known but server transfer policy is unavailable', () => {
+        expect(resolveBulkTransferPolicyAndRoute({
+            serverId: 'server-1',
+            machineTargetAvailable: false,
+            sessionRpcAvailable: true,
+            transferSizeBytes: 128,
+            serverFeatures: null,
+        })).toEqual({
+            kind: 'unavailable',
+            response: {
+                success: false,
+                error: 'Server transfer policy is unavailable on the selected server',
                 errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
             },
         });
@@ -295,6 +312,7 @@ describe('bulkTransferPipeline', () => {
 
     it('downloads a JSON payload through the shared bulk download surface and parses it', async () => {
         let recipientPublicKeyBase64 = '';
+        const encodedPayload = new TextEncoder().encode(JSON.stringify({ kind: 'metadata', count: 2 }));
 
         await expect(downloadBulkJsonPayload({
             init: async (request) => {
@@ -303,7 +321,7 @@ describe('bulkTransferPipeline', () => {
                     success: true as const,
                     downloadId: 'download-json-1',
                     chunkSizeBytes: 4096,
-                    sizeBytes: 28,
+                    sizeBytes: encodedPayload.byteLength,
                     name: 'metadata.json',
                 };
             },
@@ -312,7 +330,7 @@ describe('bulkTransferPipeline', () => {
                 ...await createEncryptedTransferChunkEnvelope({
                     transferId: request.downloadId,
                     sequence: request.index,
-                    payload: new TextEncoder().encode(JSON.stringify({ kind: 'metadata', count: 2 })),
+                    payload: encodedPayload,
                     recipientPublicKeyBase64,
                     randomBytes: (length) => new Uint8Array(length).fill(17),
                 }),

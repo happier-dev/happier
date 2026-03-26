@@ -3,6 +3,8 @@ import { networkInterfaces } from 'node:os';
 import * as fsPromises from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 
+import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
+
 import fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import {
@@ -132,94 +134,6 @@ function formatCandidateHost(host: string): string {
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }
 
-function estimateJsonStringUtf8BytesBounded(value: string, maxBytes: number): number {
-  // Quotes.
-  let bytes = 2;
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit === 0x22 /* " */ || codeUnit === 0x5c /* \\ */) {
-      bytes += 2;
-    } else if (codeUnit <= 0x1f) {
-      // JSON escapes control chars as \u00XX.
-      bytes += 6;
-    } else if (codeUnit >= 0xd800 && codeUnit <= 0xdfff) {
-      // Surrogates are uncommon in our payloads; fail closed by assuming an escaped form.
-      bytes += 6;
-    } else if (codeUnit <= 0x7f) {
-      bytes += 1;
-    } else if (codeUnit <= 0x7ff) {
-      bytes += 2;
-    } else {
-      bytes += 3;
-    }
-    if (bytes > maxBytes) {
-      return maxBytes + 1;
-    }
-  }
-  return bytes;
-}
-
-function estimateJsonUtf8BytesBounded(value: unknown, maxBytes: number): number {
-  const seenObjects = new Set<object>();
-
-  const estimateValue = (input: unknown): number => {
-    if (input === null) return 4;
-    if (typeof input === 'string') return estimateJsonStringUtf8BytesBounded(input, maxBytes);
-    if (typeof input === 'boolean') return input ? 4 : 5;
-    if (typeof input === 'number') {
-      if (!Number.isFinite(input)) return 4; // null
-      return Buffer.byteLength(String(input), 'utf8');
-    }
-    if (typeof input === 'undefined' || typeof input === 'function' || typeof input === 'symbol') {
-      // JSON.stringify omits these in objects and turns them into null in arrays. We overestimate
-      // by treating them as null so we fail closed for large request bodies.
-      return 4;
-    }
-    if (typeof input === 'bigint') {
-      return maxBytes + 1;
-    }
-
-    if (Array.isArray(input)) {
-      let bytes = 2; // []
-      for (let index = 0; index < input.length; index += 1) {
-        if (index > 0) bytes += 1; // comma
-        bytes += estimateValue(input[index]);
-        if (bytes > maxBytes) return maxBytes + 1;
-      }
-      return bytes;
-    }
-
-    if (typeof input === 'object') {
-      const obj = input as object;
-      if (seenObjects.has(obj)) {
-        return maxBytes + 1;
-      }
-      seenObjects.add(obj);
-      try {
-        let bytes = 2; // {}
-        let wroteAny = false;
-        // Avoid `Object.keys(...)` which can allocate a large array for oversized inputs.
-        for (const key in obj as Record<string, unknown>) {
-          if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
-          if (wroteAny) bytes += 1; // comma
-          wroteAny = true;
-          bytes += estimateJsonStringUtf8BytesBounded(key, maxBytes);
-          bytes += 1; // colon
-          bytes += estimateValue((obj as Record<string, unknown>)[key]);
-          if (bytes > maxBytes) return maxBytes + 1;
-        }
-        return bytes;
-      } finally {
-        seenObjects.delete(obj);
-      }
-    }
-
-    return maxBytes + 1;
-  };
-
-  return estimateValue(value);
-}
-
 function readDirectPeerAuthorizationToken(value: string | undefined): string | null {
   const raw = String(value ?? '').trim();
   if (!raw) return null;
@@ -236,16 +150,21 @@ function extractDirectPeerRequestAuth(candidate: TransferEndpointCandidate): Rea
   const explicitAuthorizationToken = typeof candidate.authorizationToken === 'string'
     ? candidate.authorizationToken.trim()
     : '';
-  const marker = '/machine-transfers/direct/';
   try {
     const parsed = new URL(candidate.url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('Invalid direct peer endpoint candidate');
+    }
     // Never allow credentialed URLs to propagate.
     parsed.username = '';
     parsed.password = '';
     // Direct-peer candidates must not rely on query params for auth or routing. Strip any query/hash.
     parsed.search = '';
     parsed.hash = '';
-    if (!parsed.pathname.includes(marker)) {
+    // Only accept base transfer endpoints: /machine-transfers/direct/<transferKey>
+    // This avoids sending auth headers to attacker-controlled URLs that smuggle additional segments.
+    const segments = parsed.pathname.split('/').filter((segment) => segment.length > 0);
+    if (segments.length !== 3 || segments[0] !== 'machine-transfers' || segments[1] !== 'direct' || segments[2].length === 0) {
       throw new Error('Invalid direct peer endpoint candidate');
     }
     const authorizationToken = explicitAuthorizationToken;
@@ -689,9 +608,13 @@ function serializeDirectPeerOpenRequestBodyToBytes(params: Readonly<{
   return buffer.subarray(0, offset);
 }
 
-function createDirectPeerOpenRequestBodyStream(params: Readonly<{ openBody: unknown }>): ReadableStream<Uint8Array> {
+function createDirectPeerOpenRequestBodyStream(params: Readonly<{ openBody: unknown; maxBodyBytes: number }>): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const iterator = iterateDirectPeerJsonChunks(params.openBody);
+  const maxBodyBytes = Math.max(0, Math.floor(params.maxBodyBytes));
+  let writtenBytes = 0;
+  const createOverLimitError = () =>
+    new Error(`Direct peer transfer open request body exceeds the configured body-limit (${maxBodyBytes} bytes)`);
   return new ReadableStream<Uint8Array>({
     pull(controller) {
       const next = iterator.next();
@@ -699,7 +622,15 @@ function createDirectPeerOpenRequestBodyStream(params: Readonly<{ openBody: unkn
         controller.close();
         return;
       }
-      controller.enqueue(encoder.encode(next.value));
+      const chunk = next.value;
+      const chunkBytes = Buffer.byteLength(chunk, 'utf8');
+      if (writtenBytes + chunkBytes > maxBodyBytes) {
+        controller.error(createOverLimitError());
+        iterator.return?.(undefined);
+        return;
+      }
+      writtenBytes += chunkBytes;
+      controller.enqueue(encoder.encode(chunk));
     },
     cancel() {
       iterator.return?.(undefined);
@@ -722,7 +653,7 @@ function createDirectPeerOpenRequestBodyTransmission(params: Readonly<{
   if (estimatedBytes > DIRECT_PEER_OPEN_BODY_STREAMING_THRESHOLD_BYTES) {
     return {
       kind: 'stream',
-      body: () => createDirectPeerOpenRequestBodyStream(params),
+      body: () => createDirectPeerOpenRequestBodyStream({ ...params, maxBodyBytes }),
     };
   }
   return {
@@ -1020,6 +951,12 @@ function isBase64TrimChar(code: number): boolean {
   // We only expect ASCII base64 strings; treat common ASCII whitespace/control as trim chars.
   // This avoids allocating via `value.trim()` on potentially large payloads.
   return code <= 0x20 || code === 0xfeff;
+}
+
+function isJsonContentType(contentType: string | null): boolean {
+  const normalized = String(contentType ?? '').trim().toLowerCase();
+  // Allow charset/etc parameters.
+  return normalized.startsWith('application/json');
 }
 
 export function createDirectPeerTransferApp(params: Readonly<{
@@ -1440,6 +1377,9 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
         lastError = new Error(`Direct peer request failed with status ${openResponse.status}`);
         continue;
       }
+      if (!isJsonContentType(openResponse.headers.get('content-type'))) {
+        throw createInvalidDirectPeerTransferResponseError(params.transferId);
+      }
       let json: unknown;
       json = await readJsonResponseWithBodyLimit({
         response: openResponse,
@@ -1469,6 +1409,9 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
         });
         if (!chunkResponse.ok) {
           throw new Error(`Direct peer request failed with status ${chunkResponse.status}`);
+        }
+        if (!isJsonContentType(chunkResponse.headers.get('content-type'))) {
+          throw createInvalidDirectPeerTransferResponseError(params.transferId);
         }
         let chunkJson: unknown;
         chunkJson = await readJsonResponseWithBodyLimit({

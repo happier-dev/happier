@@ -1,5 +1,5 @@
 import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
-import { openLocalUploadSourceReader, resolveLocalUploadSourceSizeBytes } from '@/sync/domains/files/transfers/localUploadSourceReader';
+import { openLocalUploadSourceReader, resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUploadSourceReader';
 import { uploadDaemonSessionAttachmentFromReader } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 
@@ -23,6 +23,22 @@ export type SessionAttachmentsUploadFileResult =
     | Readonly<{ success: true; path: string; sizeBytes: number; sha256: string }>
     | Readonly<{ success: false; error: string; errorCode?: string }>;
 
+function parseOptionalPositiveInt(value: unknown): number | undefined {
+    const raw = String(value ?? '').trim();
+    if (!raw) return undefined;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return undefined;
+    const normalized = Math.floor(parsed);
+    return normalized > 0 ? normalized : undefined;
+}
+
+function resolveUploadPreflightSizeTimeoutMs(): number {
+    const raw = parseOptionalPositiveInt(process.env.EXPO_PUBLIC_HAPPIER_FILES_UPLOAD_PREFLIGHT_SIZE_TIMEOUT_MS);
+    const fallback = 2_000;
+    const resolved = raw ?? fallback;
+    return Math.min(20_000, Math.max(100, resolved));
+}
+
 function describeUploadSource(source: AttachmentsUploadFileSource): Readonly<{
     name: string;
     sizeBytes: number;
@@ -43,6 +59,33 @@ function describeUploadSource(source: AttachmentsUploadFileSource): Readonly<{
     };
 }
 
+async function resolveSizeBytesWithTimeout(source: AttachmentsUploadFileSource): Promise<
+    | Readonly<{ ok: true; value: number | null }>
+    | Readonly<{ ok: false; error: string }>
+> {
+    const timeoutMs = resolveUploadPreflightSizeTimeoutMs();
+    return await new Promise((resolve) => {
+        const timeoutId = setTimeout(
+            () => resolve({ ok: false, error: 'Upload preflight size resolution timed out' } as const),
+            timeoutMs,
+        );
+
+        resolveLocalUploadSourceSizeBytes(source).then(
+            (value) => {
+                clearTimeout(timeoutId);
+                resolve({ ok: true, value } as const);
+            },
+            (error) => {
+                clearTimeout(timeoutId);
+                resolve({
+                    ok: false,
+                    error: error instanceof Error ? error.message : 'Upload preflight failed to resolve file size',
+                } as const);
+            },
+        );
+    });
+}
+
 export async function sessionAttachmentsUploadFile(args: Readonly<{
     sessionId: string;
     file: AttachmentsUploadFileSource;
@@ -52,9 +95,14 @@ export async function sessionAttachmentsUploadFile(args: Readonly<{
 }>): Promise<SessionAttachmentsUploadFileResult> {
     try {
         let described = describeUploadSource(args.file);
-        const resolvedSizeBytes = await resolveLocalUploadSourceSizeBytes(args.file);
-        if (resolvedSizeBytes != null) {
-            described = { ...described, sizeBytes: resolvedSizeBytes };
+        if (described.sizeBytes < 0) {
+            const resolved = await resolveSizeBytesWithTimeout(args.file);
+            if (!resolved.ok) {
+                return { success: false, error: resolved.error };
+            }
+            if (resolved.value != null) {
+                described = { ...described, sizeBytes: resolved.value };
+            }
         }
 
         if (described.sizeBytes < 0) {

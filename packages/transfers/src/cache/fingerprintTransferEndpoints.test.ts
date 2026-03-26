@@ -51,4 +51,26 @@ describe('fingerprintTransferEndpoints', () => {
             { kind: 'http', expiresAt: 10_000 } as any,
         ])).toBeNull();
     });
+
+    it('ignores userinfo, query strings, and hashes when fingerprinting endpoints', () => {
+        expect(
+            fingerprintTransferEndpoints([
+                {
+                    kind: 'https',
+                    url: 'https://user:pass@example.test/machine-transfers/direct/a?token=abc&foo=bar#frag',
+                    authorizationToken: 'token-a',
+                    expiresAt: 10_000,
+                },
+            ]),
+        ).toEqual(
+            fingerprintTransferEndpoints([
+                {
+                    kind: 'https',
+                    url: 'https://example.test/machine-transfers/direct/a',
+                    authorizationToken: 'token-b',
+                    expiresAt: 10_000,
+                },
+            ]),
+        );
+    });
 });

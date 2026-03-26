@@ -1,6 +1,6 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { createSessionFileTransferRpcCaller } from '@/sync/domains/transfers/runtime/sessionFileTransferRpcCaller';
+import { createSessionFileTransferRpcCaller } from './sessionFileTransferRpcCaller';
 
 import type { BulkTransferFailureResponse, BulkTransferFileReader } from './uploadBulkPayloadFromFile';
 import { uploadBulkPayloadFromFile } from './uploadBulkPayloadFromFile';

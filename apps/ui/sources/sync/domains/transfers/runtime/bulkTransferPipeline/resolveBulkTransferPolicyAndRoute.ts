@@ -3,6 +3,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import {
     INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
     resolveAppSessionTransferAvailability,
+    SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR,
     SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR,
     type AppSessionTransferRoute,
 } from '@happier-dev/transfers';
@@ -28,9 +29,12 @@ export type BulkTransferPolicyAndRouteResult =
         response: BulkTransferFailureResponse;
     }>;
 
-function mapUnavailableReasonToMessage(reasonCode: 'inactive_session_rpc_unavailable' | 'transfer_disabled' | 'transfer_too_large'): string {
+function mapUnavailableReasonToMessage(reasonCode: 'inactive_session_rpc_unavailable' | 'transfer_disabled' | 'transfer_policy_unavailable' | 'transfer_too_large'): string {
     if (reasonCode === 'inactive_session_rpc_unavailable') {
         return INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR;
+    }
+    if (reasonCode === 'transfer_policy_unavailable') {
+        return SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR;
     }
     if (reasonCode === 'transfer_disabled') {
         return SERVER_ROUTED_TRANSFER_DISABLED_ERROR;

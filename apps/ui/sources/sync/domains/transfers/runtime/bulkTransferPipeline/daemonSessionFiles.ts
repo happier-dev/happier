@@ -5,8 +5,8 @@ import {
     rebasePathRequestToMachineTarget,
     rebaseTransferRequestPathToMachineTarget,
 } from '@/sync/runtime/sessionMachineRpcFallback';
-import { createSessionFileTransferRpcCaller } from '@/sync/domains/transfers/runtime/sessionFileTransferRpcCaller';
-import { mergeTransferChunks } from '@/sync/domains/transfers/runtime/mergeTransferChunks';
+import { createSessionFileTransferRpcCaller } from './sessionFileTransferRpcCaller';
+import { mergeTransferChunks } from './mergeTransferChunks';
 
 import {
     type BulkTransferFileDestination,
@@ -181,11 +181,14 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
     onProgress?: ((progress: Readonly<{ downloadedBytes: number; totalBytes: number }>) => void) | null;
 }>): Promise<Readonly<{ ok: true; name: string; sizeBytes: number }> | Readonly<{ ok: false; error: string }>> {
     let sessionRpcTransferSizeBytes: number | null = null;
+    // We intentionally keep an "unsized" transfer client around so abort/cleanup can still run
+    // even when the actual bulk payload is denied once the size becomes known.
+    const initTransferClient = createSessionFileTransferRpcCaller({
+        sessionId: params.sessionId,
+    });
+
     if (!params.request.asZip) {
-        const statClient = createSessionFileTransferRpcCaller({
-            sessionId: params.sessionId,
-        });
-        const stat = await statClient.call<SessionStatFileResponse, SessionStatFileRequest>({
+        const stat = await initTransferClient.call<SessionStatFileResponse, SessionStatFileRequest>({
             request: { path: params.request.path },
             machineMethod: RPC_METHODS.STAT_FILE,
             sessionMethod: RPC_METHODS.STAT_FILE,
@@ -206,15 +209,18 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
         sessionRpcTransferSizeBytes = Math.floor(stat.sizeBytes);
     }
 
-    const transferClient = createSessionFileTransferRpcCaller({
-        sessionId: params.sessionId,
-        ...(sessionRpcTransferSizeBytes !== null ? { sessionRpcTransferSizeBytes } : {}),
-    });
+    let bulkTransferClient = initTransferClient;
+    if (sessionRpcTransferSizeBytes !== null) {
+        bulkTransferClient = createSessionFileTransferRpcCaller({
+            sessionId: params.sessionId,
+            sessionRpcTransferSizeBytes,
+        });
+    }
 
     return await downloadBulkPayloadToFile({
         destination: params.destination,
         init: async (request) => {
-            const init = await transferClient.call<
+            const init = await bulkTransferClient.call<
                 SessionFileDownloadInitResponse,
                 Readonly<{ t: 'session_file_download_v1'; path: string; asZip: boolean; recipientPublicKeyBase64: string }>
             >({
@@ -228,10 +234,21 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
                 sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT,
                 toMachineRequest: rebaseTransferRequestPathToMachineTarget,
             });
+
+            // Zip downloads do not have a stable size before init. Once we learn the actual
+            // size, re-select the transfer route so size-based policy limits apply to the
+            // bulk chunk stream.
+            if (init.success === true && params.request.asZip) {
+                bulkTransferClient = createSessionFileTransferRpcCaller({
+                    sessionId: params.sessionId,
+                    sessionRpcTransferSizeBytes: init.sizeBytes,
+                });
+            }
+
             if (init.success === true && params.onInit) {
                 const sideEffect = await params.onInit({ name: init.name, sizeBytes: init.sizeBytes });
                 if (sideEffect && sideEffect.success === false) {
-                    await transferClient.call<SessionFileDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
+                    await initTransferClient.call<SessionFileDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
                         request: {
                             downloadId: init.downloadId,
                         },
@@ -244,19 +261,19 @@ export async function downloadDaemonSessionFileToDestination(params: Readonly<{
             return init;
         },
         readChunk: async (request) =>
-            await transferClient.call<SessionFileDownloadChunkResponse, typeof request>({
+            await bulkTransferClient.call<SessionFileDownloadChunkResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
                 sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK,
             }),
         finalize: async (request) =>
-            await transferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
+            await bulkTransferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
                 sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE,
             }),
         abort: async (request) =>
-            await transferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
+            await initTransferClient.call<SessionFileDownloadFinalizeResponse, typeof request>({
                 request,
                 machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,
                 sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT,

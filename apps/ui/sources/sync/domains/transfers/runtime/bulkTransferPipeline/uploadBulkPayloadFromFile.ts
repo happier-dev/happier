@@ -1,4 +1,4 @@
-import { type ChunkUploadProgress, uploadInChunks } from '@/sync/domains/files/transfers/chunkTransferClient';
+import { type ChunkUploadProgress, uploadInChunks } from './chunkTransferClient';
 
 export type BulkTransferFailureResponse = Readonly<{
     success: false;

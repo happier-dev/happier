@@ -29,8 +29,15 @@ export async function resolvePromptAssetDownloadSource(input: Readonly<{
     };
   }
 
-  return {
-    success: true,
-    source: await writePromptAssetTransferPayload(result.item),
-  };
+  try {
+    return {
+      success: true,
+      source: await writePromptAssetTransferPayload(result.item),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Prompt asset payload packaging failed',
+    };
+  }
 }

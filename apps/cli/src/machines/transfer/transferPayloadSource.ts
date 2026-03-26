@@ -37,17 +37,21 @@ export function createFileTransferPayloadSource(input: Readonly<{
   manifestHash?: string;
   dispose?: TransferPayloadDispose;
 }>): TransferPayloadSource {
+  const sizeBytes =
+    typeof input.sizeBytes === 'number' && Number.isFinite(input.sizeBytes) && input.sizeBytes >= 0
+      ? Math.floor(input.sizeBytes)
+      : undefined;
   return {
     kind: 'file',
     filePath: input.filePath,
-    ...(typeof input.sizeBytes === 'number' ? { sizeBytes: input.sizeBytes } : {}),
+    ...(typeof sizeBytes === 'number' ? { sizeBytes } : {}),
     ...(typeof input.manifestHash === 'string' ? { manifestHash: input.manifestHash } : {}),
     ...(input.dispose ? { dispose: input.dispose } : {}),
   };
 }
 
 export async function resolveTransferPayloadSizeBytes(source: TransferPayloadSource): Promise<number> {
-  if (typeof source.sizeBytes === 'number') {
+  if (typeof source.sizeBytes === 'number' && Number.isFinite(source.sizeBytes) && source.sizeBytes >= 0) {
     return source.sizeBytes;
   }
   if (source.kind === 'buffer') {

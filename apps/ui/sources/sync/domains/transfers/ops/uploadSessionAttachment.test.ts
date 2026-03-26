@@ -15,6 +15,8 @@ const uploadDaemonSessionAttachmentFromReaderSpy = vi.fn();
 const randomUUIDSpy = vi.fn(() => '12345678-0000-4000-8000-123456789abc');
 const isRuntimeFeatureEnabledSpy = vi.fn<(params: unknown) => Promise<boolean>>(async (_params) => true);
 const recipientPublicKeyBase64 = Buffer.alloc(32, 7).toString('base64');
+const resolveLocalUploadSourceSizeBytesSpy = vi.fn();
+let localUploadSourceReaderActual: typeof import('@/sync/runtime/files/localUploadSourceReader') | null = null;
 
 async function driveMockBulkUpload(params: Readonly<{
     fileReader: Readonly<{
@@ -106,6 +108,21 @@ vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionAtta
     };
 });
 
+vi.mock('@/sync/runtime/files/localUploadSourceReader', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/runtime/files/localUploadSourceReader')>(
+        '@/sync/runtime/files/localUploadSourceReader',
+    );
+    localUploadSourceReaderActual = actual;
+    if (!resolveLocalUploadSourceSizeBytesSpy.getMockImplementation()) {
+        resolveLocalUploadSourceSizeBytesSpy.mockImplementation((source: unknown) => (actual as any).resolveLocalUploadSourceSizeBytes(source));
+    }
+
+    return {
+        ...actual,
+        resolveLocalUploadSourceSizeBytes: (source: unknown) => resolveLocalUploadSourceSizeBytesSpy(source),
+    };
+});
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
     resolvePreferredServerIdForSessionId: () => 'server-owned',
 }));
@@ -180,6 +197,14 @@ afterEach(() => {
     randomUUIDSpy.mockClear();
     isRuntimeFeatureEnabledSpy.mockClear();
     isRuntimeFeatureEnabledSpy.mockImplementation(async () => true);
+    resolveLocalUploadSourceSizeBytesSpy.mockClear();
+    if (localUploadSourceReaderActual) {
+        resolveLocalUploadSourceSizeBytesSpy.mockImplementation((source: unknown) =>
+            (localUploadSourceReaderActual as any).resolveLocalUploadSourceSizeBytes(source),
+        );
+    }
+    delete process.env.EXPO_PUBLIC_HAPPIER_FILES_UPLOAD_PREFLIGHT_SIZE_TIMEOUT_MS;
+    vi.useRealTimers();
 });
 
 describe('uploadSessionAttachment', () => {
@@ -424,6 +449,40 @@ describe('uploadSessionAttachment', () => {
         });
 
         expect(res).toEqual({ success: false, error: 'Unknown attachment size' });
+        expect(sessionRPCSpy).not.toHaveBeenCalled();
+        expect(uploadBulkPayloadFromFileSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when native attachment size resolution times out', async () => {
+        vi.useFakeTimers();
+        process.env.EXPO_PUBLIC_HAPPIER_FILES_UPLOAD_PREFLIGHT_SIZE_TIMEOUT_MS = '50';
+        resolveLocalUploadSourceSizeBytesSpy.mockImplementation(() => new Promise(() => {}));
+
+        const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
+
+        const resPromise = sessionAttachmentsUploadFile({
+            sessionId: 's1',
+            file: { kind: 'native', uri: 'file:///tmp/hanging.txt', name: 'hanging.txt', sizeBytes: null, mimeType: 'text/plain' },
+            messageLocalId: 'm1',
+            config: {
+                uploadLocation: 'workspace',
+                workspaceRelativeDir: '.happier/uploads',
+                vcsIgnoreStrategy: 'git_info_exclude',
+                vcsIgnoreWritesEnabled: true,
+                maxFileBytes: 25 * 1024 * 1024,
+            },
+        });
+
+        const racedPromise = Promise.race([
+            resPromise,
+            new Promise<unknown>((resolve) => setTimeout(() => resolve({ timeout: true }), 100)),
+        ]);
+
+        await vi.advanceTimersByTimeAsync(100);
+
+        const raced = await racedPromise;
+
+        expect(raced).toEqual({ success: false, error: 'Upload preflight size resolution timed out' });
         expect(sessionRPCSpy).not.toHaveBeenCalled();
         expect(uploadBulkPayloadFromFileSpy).not.toHaveBeenCalled();
     });

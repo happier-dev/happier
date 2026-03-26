@@ -4,6 +4,7 @@ import type { FeaturesResponse } from '@happier-dev/protocol';
 
 import {
     INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+    SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR,
     SERVER_ROUTED_TRANSFER_DISABLED_ERROR,
     SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR,
     resolveAppSessionTransferAvailability,
@@ -138,6 +139,19 @@ describe('resolveAppSessionTransferAvailability', () => {
             kind: 'unavailable',
             reasonCode: 'transfer_disabled',
             errorMessage: SERVER_ROUTED_TRANSFER_DISABLED_ERROR,
+        });
+    });
+
+    it('returns a canonical policy-unavailable error when transfer size is known but server features are unavailable', () => {
+        expect(resolveAppSessionTransferAvailability({
+            machineTargetAvailable: false,
+            sessionRpcAvailable: true,
+            sessionRpcTransferSizeBytes: 5,
+            serverFeatures: null,
+        })).toEqual({
+            kind: 'unavailable',
+            reasonCode: 'transfer_policy_unavailable',
+            errorMessage: SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR,
         });
     });
 });

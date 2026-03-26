@@ -132,4 +132,36 @@ describe('resolvePromptAssetUploadTarget', () => {
     });
     expect(readFileSync(commandPath, 'utf8')).toBe('# Changed on disk\n');
   });
+
+  it('fails closed when the uploaded JSON payload exceeds the prompt transfer size limit', async () => {
+    const previous = process.env.HAPPIER_PROMPT_TRANSFER_JSON_MAX_BYTES;
+    process.env.HAPPIER_PROMPT_TRANSFER_JSON_MAX_BYTES = '16';
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
+
+    try {
+      const homeDir = mkdtempSync(join(tmpdir(), 'happier-prompt-home-'));
+      tempDirs.push(homeDir);
+
+      const result = resolvePromptAssetUploadTarget({
+        adapterRegistry: createPromptAssetAdapterRegistry({
+          homedir: () => homeDir,
+        }),
+        sizeBytes: 17,
+      });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Prompt transfer payload exceeds size limit',
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HAPPIER_PROMPT_TRANSFER_JSON_MAX_BYTES;
+      } else {
+        process.env.HAPPIER_PROMPT_TRANSFER_JSON_MAX_BYTES = previous;
+      }
+      const { reloadConfiguration: reloadAfter } = await import('@/configuration');
+      reloadAfter();
+    }
+  });
 });

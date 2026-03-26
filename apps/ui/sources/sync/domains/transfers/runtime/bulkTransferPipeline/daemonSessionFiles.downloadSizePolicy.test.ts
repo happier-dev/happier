@@ -5,7 +5,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 const createSessionFileTransferRpcCallerMock = vi.hoisted(() => vi.fn());
 const downloadBulkPayloadToFileMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/domains/transfers/runtime/sessionFileTransferRpcCaller', () => ({
+vi.mock('./sessionFileTransferRpcCaller', () => ({
     createSessionFileTransferRpcCaller: (params: unknown) => createSessionFileTransferRpcCallerMock(params),
 }));
 
@@ -17,6 +17,67 @@ describe('daemonSessionFiles download size policy', () => {
     beforeEach(() => {
         createSessionFileTransferRpcCallerMock.mockReset();
         downloadBulkPayloadToFileMock.mockReset();
+    });
+
+    it('re-resolves zip download routes using init-reported size (uses sized transfer caller for chunks)', async () => {
+        const initCall = vi.fn(async (params: any) => {
+            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) {
+                return {
+                    success: true,
+                    downloadId: 'd1',
+                    chunkSizeBytes: 8,
+                    sizeBytes: 50,
+                    name: 'a.zip',
+                };
+            }
+            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT) {
+                return { success: true };
+            }
+            throw new Error(`unexpected init call: ${params.sessionMethod}`);
+        });
+
+        const bulkCall = vi.fn(async (params: any) => {
+            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK) {
+                return { success: true, isLast: true, contentBase64: '' };
+            }
+            if (params.sessionMethod === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE) {
+                return { success: true };
+            }
+            throw new Error(`unexpected bulk call: ${params.sessionMethod}`);
+        });
+
+        createSessionFileTransferRpcCallerMock.mockImplementation((params: any) => {
+            if (params?.sessionRpcTransferSizeBytes !== undefined) {
+                return { call: bulkCall };
+            }
+            return { call: initCall };
+        });
+
+        downloadBulkPayloadToFileMock.mockImplementation(async (params: any) => {
+            const init = await params.init({ recipientPublicKeyBase64: 'pk', asZip: true });
+            expect(init.success).toBe(true);
+            await params.readChunk({ downloadId: 'd1', index: 0 });
+            await params.finalize({ downloadId: 'd1' });
+            return { ok: true, name: init.name, sizeBytes: init.sizeBytes };
+        });
+
+        const { downloadDaemonSessionFileToDestination } = await import('./daemonSessionFiles');
+
+        const result = await downloadDaemonSessionFileToDestination({
+            sessionId: 's1',
+            request: { path: 'a.zip', asZip: true },
+            destination: {
+                writeBytes: async () => undefined,
+                close: async () => undefined,
+            },
+        });
+
+        expect(result).toEqual({ ok: true, name: 'a.zip', sizeBytes: 50 });
+        expect(createSessionFileTransferRpcCallerMock).toHaveBeenCalledTimes(2);
+        expect(createSessionFileTransferRpcCallerMock).toHaveBeenNthCalledWith(1, { sessionId: 's1' });
+        expect(createSessionFileTransferRpcCallerMock).toHaveBeenNthCalledWith(2, { sessionId: 's1', sessionRpcTransferSizeBytes: 50 });
+        expect(initCall).toHaveBeenCalledTimes(1);
+        expect(bulkCall).toHaveBeenCalledTimes(2);
     });
 
     it('preflights STAT_FILE and passes size into the bulk transfer route selection', async () => {

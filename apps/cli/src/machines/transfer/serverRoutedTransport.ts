@@ -1,5 +1,7 @@
 import { BOX_BUNDLE_PUBLIC_KEY_BYTES, type MachineTransferReceiveEnvelope, type MachineTransferSendEnvelope } from '@happier-dev/protocol';
 
+import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
+
 import {
   isServerRoutedTransferOverSizeLimit,
   resolveServerRoutedTransferMaxBytes,
@@ -27,11 +29,16 @@ const DEFAULT_TRANSFER_TIMEOUT_MS = 90_000;
 // Keep request-side and responder-side timeouts within the same operational ceiling so callers
 // cannot turn a bounded transfer into an effectively unbounded wait via env or explicit override.
 const TRANSFER_TIMEOUT_HARD_MAX_MS = DEFAULT_TRANSFER_TIMEOUT_MS;
+const DEFAULT_TRANSFER_MAX_ACTIVE_TRANSFERS = 128;
+const TRANSFER_MAX_ACTIVE_TRANSFERS_HARD_MAX = 10_000;
 const DEFAULT_TRANSFER_CHUNK_BYTES = 256 * 1024;
 const DEFAULT_TRANSFER_OPEN_PAYLOAD_MAX_BYTES = 64 * 1024;
 // Open payloads should stay tiny metadata-only envelopes. Keep the hard ceiling well below the
 // file-backed chunk path so env overrides cannot turn the open envelope into a large-buffer path.
 const TRANSFER_OPEN_PAYLOAD_HARD_MAX_BYTES = 64 * 1024;
+// Open payloads are small metadata envelopes. Cap nesting depth to prevent stack overflows and
+// pathological CPU work when serializing or validating JSON-like payloads.
+const TRANSFER_OPEN_PAYLOAD_HARD_MAX_DEPTH = 64;
 const ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES = 1 + 12 + 16; // version + nonce + auth tag
 // Encrypted data-key envelopes are small and fixed-size today (~105 bytes for V1), but we still
 // cap them independently so hostile payloads cannot force large base64 decode allocations.
@@ -68,6 +75,18 @@ export class ServerRoutedInvalidOpenRequestError extends Error {
   }
 }
 
+export class ServerRoutedAbortTransferError extends Error {
+  readonly code: 'abort_transfer';
+  readonly reason: string;
+
+  constructor(reason: string, message?: string) {
+    super(message ?? `Server routed transfer aborted: ${reason}`);
+    this.name = 'ServerRoutedAbortTransferError';
+    this.code = 'abort_transfer';
+    this.reason = reason;
+  }
+}
+
 type MachineTransferReceiveOpenEnvelope = Extract<MachineTransferReceiveEnvelope['envelope'], { kind: 'open' }>;
 type MachineTransferReceiveChunkEnvelope = Extract<MachineTransferReceiveEnvelope['envelope'], { kind: 'chunk' }>;
 type MachineTransferSendOpenEnvelope = Extract<MachineTransferSendEnvelope['envelope'], { kind: 'open' }>;
@@ -89,6 +108,16 @@ function readTransferTimeoutMs(): number {
   return Math.min(
     readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS', DEFAULT_TRANSFER_TIMEOUT_MS),
     TRANSFER_TIMEOUT_HARD_MAX_MS,
+  );
+}
+
+function readTransferMaxActiveTransfers(): number {
+  return Math.min(
+    readPositiveIntEnv(
+      'HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_MAX_ACTIVE_TRANSFERS',
+      DEFAULT_TRANSFER_MAX_ACTIVE_TRANSFERS,
+    ),
+    TRANSFER_MAX_ACTIVE_TRANSFERS_HARD_MAX,
   );
 }
 
@@ -134,99 +163,41 @@ function estimateBase64DecodedBytes(value: string): number {
   return Math.max(0, Math.floor((trimmedLength * 3) / 4) - paddingBytes);
 }
 
-function estimateJsonStringUtf8BytesBounded(value: string, maxBytes: number): number {
-  let bytes = 2; // quotes
-  for (let index = 0; index < value.length; index += 1) {
-    const codePoint = value.codePointAt(index) ?? 0;
-    if (codePoint > 0xffff) {
-      index += 1;
+function assertOpenPayloadDepthBounded(value: unknown): void {
+  const seenObjects = new Set<object>();
+  const stack: Array<Readonly<{ value: unknown; depth: number }>> = [{ value, depth: 0 }];
+
+  while (stack.length > 0) {
+    const next = stack.pop();
+    if (!next) break;
+
+    if (next.depth > TRANSFER_OPEN_PAYLOAD_HARD_MAX_DEPTH) {
+      throw new Error(`Open payload exceeds max depth (${next.depth} > ${TRANSFER_OPEN_PAYLOAD_HARD_MAX_DEPTH})`);
     }
 
-    // Escape overhead is overestimated for safety.
-    if (codePoint === 0x22 || codePoint === 0x5c) {
-      bytes += 2; // \" or \\
-    } else if (codePoint <= 0x1f) {
-      bytes += 6; // \u00XX
-    } else if (codePoint <= 0x7f) {
-      bytes += 1;
-    } else if (codePoint <= 0x7ff) {
-      bytes += 2;
-    } else if (codePoint <= 0xffff) {
-      bytes += 3;
-    } else {
-      bytes += 4;
+    const nextValue = next.value;
+    if (nextValue === null) continue;
+
+    if (Array.isArray(nextValue)) {
+      if (seenObjects.has(nextValue)) continue;
+      seenObjects.add(nextValue);
+      for (let i = 0; i < nextValue.length; i += 1) {
+        stack.push({ value: nextValue[i], depth: next.depth + 1 });
+      }
+      continue;
     }
 
-    if (bytes > maxBytes) {
-      return maxBytes + 1;
+    if (typeof nextValue === 'object') {
+      const obj = nextValue as object;
+      if (seenObjects.has(obj)) continue;
+      seenObjects.add(obj);
+      const record = obj as Record<string, unknown>;
+      for (const key in record) {
+        if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+        stack.push({ value: record[key], depth: next.depth + 1 });
+      }
     }
   }
-  return bytes;
-}
-
-function estimateJsonUtf8BytesBounded(value: unknown, maxBytes: number): number {
-  const seenObjects = new Set<object>();
-
-  const estimateValue = (input: unknown): number => {
-    if (input === null) return 4; // null
-    if (input === true) return 4; // true
-    if (input === false) return 5; // false
-
-    if (typeof input === 'number') {
-      if (!Number.isFinite(input)) return maxBytes + 1;
-      return String(input).length;
-    }
-    if (typeof input === 'string') {
-      return estimateJsonStringUtf8BytesBounded(input, maxBytes);
-    }
-    if (typeof input === 'undefined' || typeof input === 'function' || typeof input === 'symbol') {
-      // JSON.stringify omits these in objects and turns them into null in arrays. Overestimate.
-      return 4;
-    }
-    if (typeof input === 'bigint') {
-      // JSON.stringify throws; fail closed before calling it.
-      return maxBytes + 1;
-    }
-
-    if (Array.isArray(input)) {
-      let bytes = 2; // []
-      for (let index = 0; index < input.length; index += 1) {
-        if (index > 0) bytes += 1; // comma
-        bytes += estimateValue(input[index]);
-        if (bytes > maxBytes) return maxBytes + 1;
-      }
-      return bytes;
-    }
-
-    if (typeof input === 'object') {
-      const obj = input as object;
-      if (seenObjects.has(obj)) {
-        return maxBytes + 1;
-      }
-      seenObjects.add(obj);
-      try {
-        let bytes = 2; // {}
-        const record = obj as Record<string, unknown>;
-        let index = 0;
-        for (const key in record) {
-          if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
-          if (index > 0) bytes += 1; // comma
-          index += 1;
-          bytes += estimateJsonStringUtf8BytesBounded(key, maxBytes);
-          bytes += 1; // colon
-          bytes += estimateValue(record[key]);
-          if (bytes > maxBytes) return maxBytes + 1;
-        }
-        return bytes;
-      } finally {
-        seenObjects.delete(obj);
-      }
-    }
-
-    return maxBytes + 1;
-  };
-
-  return estimateValue(value);
 }
 
 function isReceiveOpenEnvelope(
@@ -318,10 +289,12 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
   chunkBytes?: number;
 }>): () => void {
   const activeTransfers = new Map<string, ActiveTransferState>();
+  const pendingOpenTransfers = new Set<string>();
   const chunkBytes = clampTransferChunkBytes(typeof params.chunkBytes === 'number' && params.chunkBytes > 0
     ? params.chunkBytes
     : readTransferChunkBytes());
   const timeoutMs = readTransferTimeoutMs();
+  const maxActiveTransfers = readTransferMaxActiveTransfers();
   const maxBytes = resolveServerRoutedTransferMaxBytes();
   const inMemoryMaxBytes = resolveInMemoryTransferMaxBytes();
   const openPayloadMaxBytes = readTransferOpenPayloadMaxBytes();
@@ -398,6 +371,7 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
     void (async () => {
 	    const envelope = payload.envelope;
 	    if (isReceiveOpenEnvelope(envelope)) {
+        const transferId = envelope.transferId;
 	      if (envelope.transferId.length === 0 || envelope.transferId.length > TRANSFER_ID_HARD_MAX_CHARS) {
 	        params.machineTransferChannel.sendEnvelope({
 	          targetMachineId: payload.sourceMachineId,
@@ -409,6 +383,34 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
 	        });
 	        return;
 	      }
+        const existing = activeTransfers.get(transferId) ?? null;
+        const hasPending = pendingOpenTransfers.has(transferId);
+        if (!existing && !hasPending) {
+          if (activeTransfers.size + pendingOpenTransfers.size >= maxActiveTransfers) {
+            params.machineTransferChannel.sendEnvelope({
+              targetMachineId: payload.sourceMachineId,
+              envelope: {
+                transferId,
+                kind: 'abort',
+                reason: 'active-transfer-limit',
+              },
+            });
+            return;
+          }
+          pendingOpenTransfers.add(transferId);
+        } else if (hasPending) {
+          params.machineTransferChannel.sendEnvelope({
+            targetMachineId: payload.sourceMachineId,
+            envelope: {
+              transferId,
+              kind: 'abort',
+              reason: 'transfer_busy',
+            },
+          });
+          return;
+        }
+
+        try {
 	      if (envelope.openPayloadBase64 !== undefined && typeof envelope.openPayloadBase64 !== 'string') {
 	        params.machineTransferChannel.sendEnvelope({
 	          targetMachineId: payload.sourceMachineId,
@@ -496,28 +498,51 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
               transferId: envelope.transferId,
               openPayload,
             });
-          } catch (error) {
-            if (error instanceof ServerRoutedInvalidOpenRequestError) {
-              params.machineTransferChannel.sendEnvelope({
-                targetMachineId: payload.sourceMachineId,
-                envelope: {
-                  transferId: envelope.transferId,
-                  kind: 'abort',
-                  reason: 'invalid_open_request:open_payload_invalid',
-                },
-              });
-              return;
-            }
-            params.machineTransferChannel.sendEnvelope({
-              targetMachineId: payload.sourceMachineId,
-              envelope: {
-                transferId: envelope.transferId,
-                kind: 'abort',
-                reason: 'internal_error',
-              },
-            });
-            return;
-          }
+	          } catch (error) {
+	            if (error instanceof ServerRoutedInvalidOpenRequestError) {
+	              params.machineTransferChannel.sendEnvelope({
+	                targetMachineId: payload.sourceMachineId,
+	                envelope: {
+	                  transferId: envelope.transferId,
+	                  kind: 'abort',
+	                  reason: 'invalid_open_request:open_payload_invalid',
+	                },
+	              });
+	              return;
+	            }
+		            if (error instanceof ServerRoutedAbortTransferError) {
+		              params.machineTransferChannel.sendEnvelope({
+		                targetMachineId: payload.sourceMachineId,
+		                envelope: {
+		                  transferId: envelope.transferId,
+		                  kind: 'abort',
+		                  reason: error.reason,
+		                },
+		              });
+		              return;
+		            }
+
+		            const rawMessage = error instanceof Error ? (error.message || error.name) : String(error);
+		            const sanitized = rawMessage.replace(/\s+/gu, ' ').slice(0, 200);
+		            try {
+		              const { logger } = await import('@/utils/logger');
+		              logger.debug('[MACHINE TRANSFER] Unexpected server-routed responder failure', {
+		                transferId: envelope.transferId,
+		                error: sanitized,
+		              });
+		            } catch {
+		              // Best-effort: logging must not interfere with aborting the transfer.
+		            }
+		            params.machineTransferChannel.sendEnvelope({
+		              targetMachineId: payload.sourceMachineId,
+		              envelope: {
+		                transferId: envelope.transferId,
+		                kind: 'abort',
+		                reason: 'internal_error',
+	              },
+	            });
+	            return;
+	          }
 
           if (!transferPayloadSource) {
             params.machineTransferChannel.sendEnvelope({
@@ -557,7 +582,6 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
           }
 
           const totalChunks = Math.max(1, Math.ceil(transferSizeBytes / chunkBytes));
-          const existing = activeTransfers.get(envelope.transferId) ?? null;
           cleanupTransfer(envelope.transferId, existing);
 
           const stateBase: ActiveTransferState = {
@@ -588,6 +612,9 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
           if (transferPayloadSource) {
             await disposeTransferPayloadSource(transferPayloadSource).catch(() => undefined);
           }
+        }
+        } finally {
+          pendingOpenTransfers.delete(transferId);
         }
     }
 
@@ -683,6 +710,7 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
   const openPayloadMaxBytes = readTransferOpenPayloadMaxBytes();
   let openPayloadBase64: string | undefined;
   if (params.openBody !== undefined) {
+    assertOpenPayloadDepthBounded(params.openBody);
     const estimatedBytes = estimateJsonUtf8BytesBounded(params.openBody, openPayloadMaxBytes);
     if (!Number.isFinite(estimatedBytes) || estimatedBytes > openPayloadMaxBytes) {
       throw new Error(`Open payload exceeds max bytes (${estimatedBytes} > ${openPayloadMaxBytes})`);

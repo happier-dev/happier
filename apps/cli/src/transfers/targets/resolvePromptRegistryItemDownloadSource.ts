@@ -25,8 +25,15 @@ export async function resolvePromptRegistryItemDownloadSource(input: Readonly<{
     };
   }
 
-  return {
-    success: true,
-    source: await writePromptRegistryTransferPayload(result.item),
-  };
+  try {
+    return {
+      success: true,
+      source: await writePromptRegistryTransferPayload(result.item),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Prompt registry payload packaging failed',
+    };
+  }
 }

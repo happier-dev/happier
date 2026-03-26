@@ -185,18 +185,6 @@ export function registerBulkTransferUploadRpcHandlers(
         workingDirectory: deps.workingDirectory,
       });
 
-      deps.attachmentUpload.pathAllowanceRegistry.setAdditionalAllowedReadDirs(resolvedTarget.target.additionalAllowedReadDirs);
-      deps.attachmentUpload.pathAllowanceRegistry.setAdditionalAllowedWriteDirs(resolvedTarget.target.additionalAllowedWriteDirs);
-
-      try {
-        await ensureAttachmentIgnoreRule({
-          workingDirectory: deps.workingDirectory,
-          config,
-        });
-      } catch {
-        // Best effort.
-      }
-
       if (!resolvedTarget.success) {
         return {
           kind: 'rejected',
@@ -243,6 +231,18 @@ export function registerBulkTransferUploadRpcHandlers(
           kind: 'rejected',
           response: { success: false, error: target.error },
         };
+      }
+
+      deps.attachmentUpload.pathAllowanceRegistry.setAdditionalAllowedReadDirs(resolvedTarget.target.additionalAllowedReadDirs);
+      deps.attachmentUpload.pathAllowanceRegistry.setAdditionalAllowedWriteDirs(resolvedTarget.target.additionalAllowedWriteDirs);
+
+      try {
+        await ensureAttachmentIgnoreRule({
+          workingDirectory: deps.workingDirectory,
+          config,
+        });
+      } catch {
+        // Best effort.
       }
 
       return {

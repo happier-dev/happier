@@ -6,6 +6,7 @@ import {
   type PromptAssetMutationResponseV1,
 } from '@happier-dev/protocol';
 
+import { configuration } from '@/configuration';
 import type { PromptAssetAdapter } from '@/promptAssets/types';
 
 import type { UploadTransferTarget } from './uploadTransferTarget';
@@ -46,6 +47,9 @@ export function resolvePromptAssetUploadTarget(input: Readonly<{
   const sizeBytes = Math.floor(rawSize);
   if (sizeBytes < 0) {
     return { success: false, error: 'Invalid sizeBytes' };
+  }
+  if (sizeBytes > configuration.promptTransferJsonMaxBytes) {
+    return { success: false, error: 'Prompt transfer payload exceeds size limit' };
   }
 
   return {

@@ -58,6 +58,18 @@ describe('resolveAppSessionTransferRoute', () => {
         });
     });
 
+    it('fails closed when the server feature snapshot is unavailable for a sized transfer', () => {
+        expect(resolveAppSessionTransferRoute({
+            machineTargetAvailable: false,
+            sessionRpcAvailable: true,
+            serverFeatures: null,
+            sessionRpcTransferSizeBytes: 5,
+        })).toEqual({
+            kind: 'unavailable',
+            reasonCode: 'transfer_policy_unavailable',
+        });
+    });
+
     it('fails closed when no direct machine target is available and the session is inactive', () => {
         expect(resolveAppSessionTransferRoute({
             machineTargetAvailable: false,
@@ -113,18 +125,6 @@ describe('resolveAppSessionTransferRoute', () => {
         });
     });
 
-    it('keeps the server-routed route available when selected server features are unavailable', () => {
-        expect(resolveAppSessionTransferRoute({
-            machineTargetAvailable: false,
-            sessionRpcAvailable: true,
-            serverFeatures: null,
-            sessionRpcTransferSizeBytes: 5,
-        })).toEqual({
-            kind: 'selected',
-            route: 'server_routed_stream',
-        });
-    });
-
     it('fails closed when server-routed transfer is explicitly disabled by server features', () => {
         expect(resolveAppSessionTransferRoute({
             machineTargetAvailable: false,
@@ -161,6 +161,49 @@ describe('resolveAppSessionTransferRoute', () => {
                             serverRouted: {
                                 enabled: true,
                             },
+                        },
+                    },
+                },
+            }),
+        })).toEqual({
+            kind: 'unavailable',
+            reasonCode: 'transfer_disabled',
+        });
+    });
+
+    it('fails closed when machines.transfer enabled bit is missing (treat missing as disabled)', () => {
+        expect(resolveAppSessionTransferRoute({
+            machineTargetAvailable: true,
+            sessionRpcAvailable: true,
+            serverFeatures: createServerFeatures({
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            serverRouted: {
+                                enabled: true,
+                            },
+                        },
+                    },
+                },
+            }),
+        })).toEqual({
+            kind: 'unavailable',
+            reasonCode: 'transfer_disabled',
+        });
+    });
+
+    it('fails closed when machines.transfer.serverRouted enabled bit is missing (treat missing as disabled)', () => {
+        expect(resolveAppSessionTransferRoute({
+            machineTargetAvailable: false,
+            sessionRpcAvailable: true,
+            serverFeatures: createServerFeatures({
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            serverRouted: {},
                         },
                     },
                 },
