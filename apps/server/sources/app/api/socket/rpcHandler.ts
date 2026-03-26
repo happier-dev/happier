@@ -8,6 +8,16 @@ import { createRpcRedisRegistryCoordinator, type RpcRedisRegistryConfig } from "
 import { resolveRpcCallTarget } from "./resolveRpcCallTarget";
 import { canRegisterSessionScopedRpcMethod } from "./sessionScopedBinding";
 
+const MAX_RPC_METHOD_NAME_LENGTH = 512;
+
+function normalizeRpcMethodName(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.length > MAX_RPC_METHOD_NAME_LENGTH) return null;
+    return trimmed;
+}
+
 async function waitForRpcTargetAvailability(params: Readonly<{
     method: string;
     initialTargetSocket: Socket | null;
@@ -94,9 +104,9 @@ export function rpcHandler(
     // RPC register - Register this socket as a listener for an RPC method
     socket.on(SOCKET_RPC_EVENTS.REGISTER, async (data: any) => {
         try {
-            const { method } = data;
+            const method = normalizeRpcMethodName(data?.method);
 
-            if (!method || typeof method !== 'string') {
+            if (!method) {
                 socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Invalid method name' });
                 return;
             }
@@ -123,9 +133,9 @@ export function rpcHandler(
     // RPC unregister - Remove this socket as a listener for an RPC method
     socket.on(SOCKET_RPC_EVENTS.UNREGISTER, async (data: any) => {
         try {
-            const { method } = data;
+            const method = normalizeRpcMethodName(data?.method);
 
-            if (!method || typeof method !== 'string') {
+            if (!method) {
                 socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'unregister', error: 'Invalid method name' });
                 return;
             }
@@ -149,13 +159,15 @@ export function rpcHandler(
     // RPC call - Call an RPC method on another socket of the same user
     socket.on(SOCKET_RPC_EVENTS.CALL, async (data: any, callback: (response: any) => void) => {
         try {
-            const { method, params: callParams, timeoutMs: requestedTimeoutMs } = data;
+            const method = normalizeRpcMethodName(data?.method);
+            const callParams = data?.params;
+            const requestedTimeoutMs = data?.timeoutMs;
 
-            if (!method || typeof method !== 'string') {
+            if (!method) {
                 if (callback) {
                     callback({
                         ok: false,
-                        error: 'Invalid parameters: method is required'
+                        error: 'Invalid parameters: method is required',
                     });
                 }
                 return;

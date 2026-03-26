@@ -134,6 +134,29 @@ describe("rpcHandler", () => {
             expect.objectContaining({ type: "register", error: "Forbidden" }),
         );
     });
+
+    it("rejects RPC registration when the method name exceeds the bounded maximum length", async () => {
+        const redisCoordinator = createRedisCoordinator();
+        createRpcRedisRegistryCoordinatorMock.mockReturnValue(redisCoordinator);
+
+        const socket = createSocket({ id: "socket-1" });
+        const userRpcListeners = new Map<string, Socket>();
+        const allRpcListeners = new Map<string, Map<string, Socket>>();
+
+        rpcHandler("user-1", socket as unknown as Socket, userRpcListeners, allRpcListeners, {
+            io: {} as Server,
+            redisRegistry: { enabled: false },
+        });
+
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "m".repeat(513) });
+
+        expect(userRpcListeners.size).toBe(0);
+        expect(redisCoordinator.registerMethod).not.toHaveBeenCalled();
+        expect(socket.emit).toHaveBeenCalledWith(
+            SOCKET_RPC_EVENTS.ERROR,
+            expect.objectContaining({ type: "register", error: "Invalid method name" }),
+        );
+    });
     it("removes only the socket mapping that failed during a forwarded RPC call", async () => {
         const redisCoordinator = createRedisCoordinator({
             enabled: true,
