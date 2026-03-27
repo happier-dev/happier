@@ -18,8 +18,8 @@ import { t } from '@/text';
 export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSettingsView() {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const channelBridgesDecision = useFeatureDecision('channelBridges');
-    const telegramDecision = useFeatureDecision('channelBridges.telegram');
+    const channelBridgesDecision = useFeatureDecision('channelBridges', { scopeKind: 'runtime' });
+    const telegramDecision = useFeatureDecision('channelBridges.telegram', { scopeKind: 'runtime' });
 
     const loading = channelBridgesDecision === null;
     const needsLocalEnablement = channelBridgesDecision?.blockedBy === 'local_policy';

@@ -10,7 +10,7 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
 const useFeatureDecisionMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: (featureId: FeatureId) => useFeatureDecisionMock(featureId),
+    useFeatureDecision: (featureId: FeatureId, scope?: unknown) => useFeatureDecisionMock(featureId, scope),
 }));
 
 installSettingsViewCommonModuleMocks({
@@ -45,6 +45,15 @@ afterEach(() => {
 });
 
 describe('ChannelBridgesSettingsView', () => {
+    it('requests runtime-scoped feature decisions', async () => {
+        useFeatureDecisionMock.mockReturnValue(null);
+        const { ChannelBridgesSettingsView } = await import('./ChannelBridgesSettingsView');
+        await renderScreen(React.createElement(ChannelBridgesSettingsView));
+
+        expect(useFeatureDecisionMock).toHaveBeenCalledWith('channelBridges', { scopeKind: 'runtime' });
+        expect(useFeatureDecisionMock).toHaveBeenCalledWith('channelBridges.telegram', { scopeKind: 'runtime' });
+    });
+
     it('shows a loading state before decisions resolve', async () => {
         useFeatureDecisionMock.mockReturnValue(null);
         const { ChannelBridgesSettingsView } = await import('./ChannelBridgesSettingsView');
