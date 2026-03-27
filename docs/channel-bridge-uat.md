@@ -39,7 +39,7 @@ happier bridge list
 ```
 
 Expected:
-- `Telegram (server KV)` shows `configured: yes`
+- `Telegram (scoped settings.json)` shows `configured: yes`
 - `Telegram (effective runtime...)` shows configured token/topic policy
 
 ## 4) Restart daemon and verify bridge worker startup
@@ -54,7 +54,7 @@ Expected:
 - No crash loop in daemon logs.
 - Final diagnosis line matches overall health:
   - `✅ Doctor diagnosis complete!` when no critical failures
-  - `❌ Doctor diagnosis complete!` when any critical failure exists (for example, Telegram bridge configured but bot token missing, or webhook enabled with missing secret/host/port)
+  - `❌ Doctor diagnosis complete!` when any critical failure exists (for example, Telegram bridge configured but bot token missing)
 
 ## 5) Session bind + bi-direction test from Telegram
 
@@ -75,6 +75,7 @@ Expected:
 Expected:
 - Same account id.
 - Existing sessions are visible/resumable (subject to agent backend credentials).
+- Bridge config + bindings are local-only in v1: configure the bridge on the second machine too (or copy scoped `settings.json`), and attach the Telegram conversation again via `/attach`.
 
 ## 7) Isolation check (optional second account)
 
@@ -95,7 +96,6 @@ Expected:
 
 ## Notes
 
-- `allowedChatIds: []` means allow all chats/topics the bot can read.
-- Runtime precedence is: `HAPPIER_* env` > `server KV` > `settings.json` > defaults.
-- Secrets (bot/API tokens) stay local-only (`settings.json`/env), never server KV.
-- For full deployment, server KV is DB-backed and shared across machines in the same account scope.
+- `allowedChatIds: []` means **DM-only** (shared chats are blocked by default unless `allowAllSharedChats=true`).
+- Runtime precedence is: `HAPPIER_* env` > `settings.json` > defaults.
+- Secrets (bot/API tokens) stay local-only (`settings.json`/env).

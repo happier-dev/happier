@@ -3,7 +3,7 @@
 This repository now includes a **built-in channel bridge core** plus a **Telegram adapter**.
 
 - Core worker: `apps/cli/src/channels/core/channelBridgeWorker.ts`
-- Telegram adapter: `apps/cli/src/channels/telegram/telegramAdapter.ts`
+- Telegram adapter: `apps/cli/src/channels/providers/telegram/telegramAdapter.ts`
 - Runtime wiring: `apps/cli/src/channels/startChannelBridgeWorker.ts`
 
 The design is intentionally modular so additional adapters (Discord, Slack, WhatsApp, etc.) can plug into the same core contract.
@@ -71,22 +71,22 @@ Backward compatibility is preserved: root-level `channelBridge.tickMs` and `chan
 Precedence is:
 
 1. `HAPPIER_*` environment variables
-2. Server KV bridge config (account-authenticated, DB-backed in full deployment, **non-secret only**)
-3. `settings.json` bridge config (local scoped fallback, includes secrets)
-4. built-in defaults
+2. `settings.json` bridge config (local, scoped by `serverId` + `accountId`, includes secrets)
+3. built-in defaults
 
 `allowedChatIds` behavior:
 
-- `[]` (empty list) = allow all chats/topics the bot can read.
-- non-empty list = allow only those chat IDs.
+- `[]` (empty list) = **DM-only** (shared chats are blocked by default).
+- non-empty list = allow only those shared chat IDs.
+- to allow *all* shared chats (unsafe), set `allowAllSharedChats=true` (CLI: `--allow-all` or `--allow-all-shared-chats true`).
 
 ## Secret Handling Policy (for all adapters)
 
-- **Never sync secrets to server KV**.
+- In v1, bridge configuration is **local-only** (settings/env).
 - Store secrets only in:
   - local scoped `settings.json` (`providers.<adapter>.secrets.*`), or
   - process env vars (`HAPPIER_*`).
-- Server KV is for non-secret shareable bridge config/state only.
+- Do not assume any server-side shared bridge config exists (even for non-secret fields).
 
 For new adapters (Discord/Slack/WhatsApp/etc), use the same model:
 
@@ -124,10 +124,9 @@ HAPPIER_CHANNEL_BRIDGE_TICK_MS=2500
 Use the bridge CLI to manage Telegram config for the active `serverId + accountId` scope:
 
 - `telegram set`
-  - writes non-secret fields to server KV
   - writes full config (including secrets) to local scoped `settings.json`
-- `telegram clear` clears server KV + local scoped `settings.json`
-- `bridge list` prints scoped local config, server KV config, and effective runtime resolution
+- `telegram clear` clears local scoped `settings.json`
+- `bridge list` prints scoped local config and effective runtime resolution
 
 ```bash
 happier bridge list
@@ -138,7 +137,7 @@ happier bridge telegram set \
   --require-topics true \
   --tick-ms 2500
 
-# optional webhook relay configuration
+# webhook relay configuration (polling is default)
 happier bridge telegram set \
   --webhook-enabled true \
   --webhook-secret <random-secret-token> \
@@ -159,7 +158,7 @@ happier daemon stop && happier daemon start
 
 ## Doctor Status Aggregation
 
-`happier doctor` now aggregates critical failures and sets the final diagnosis line accordingly:
+`happier doctor` aggregates critical failures and sets the final diagnosis line accordingly:
 
 - final line is `✅ Doctor diagnosis complete!` only when no critical failures are found
 - final line is `❌ Doctor diagnosis complete!` if any critical failure is detected
@@ -167,12 +166,7 @@ happier daemon stop && happier daemon start
 Telegram bridge example:
 
 - if Telegram bridge is configured but bot token is missing, doctor prints a red bridge error and the final line is `❌`
-- if `webhook.enabled=true` and `secrets.webhookSecret` (or `HAPPIER_TELEGRAM_WEBHOOK_SECRET`) is empty, doctor treats it as critical and final line is `❌`
-- if `webhook.enabled=true` and `webhook.host` or `webhook.port` is missing/invalid, doctor treats it as critical and final line is `❌`
-
-Generic adapter behavior:
-
-- doctor applies the same webhook-required checks to any channel adapter that configures `webhook.enabled=true`
+- if `webhook.enabled=true` and `secrets.webhookSecret` (or `HAPPIER_TELEGRAM_WEBHOOK_SECRET`) is empty, doctor prints a warning and the daemon will fall back to polling
 
 ## Webhook Setup (daemon relay mode)
 
