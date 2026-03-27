@@ -15,8 +15,22 @@ const config = getSentryExpoConfig(__dirname, {
 //
 // In CI/e2e and stack builds, prefer Metro's Node filesystem crawler (slower but deterministic).
 const isStackRun = Boolean((process.env.HAPPIER_STACK_STACK ?? '').toString().trim());
-if (process.env.CI || isStackRun) {
+const isNativeE2e = (() => {
+  const raw = String(process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS ?? '')
+    .trim()
+    .toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+})();
+
+if (process.env.CI || isStackRun || isNativeE2e) {
   config.resolver.useWatchman = false;
+  // `metro-file-map`'s watcher selection is driven by `watcher.useWatchman`, not
+  // `resolver.useWatchman`. Set both to avoid "Failed to start watch mode"
+  // timeouts in large monorepos where Watchman can be slow to initialize.
+  config.watcher = {
+    ...(config.watcher || {}),
+    useWatchman: false,
+  };
 }
 
 // Add support for .wasm files (required by Skia for all platforms)
@@ -96,6 +110,7 @@ const onnxruntimeWebStub = path.resolve(__dirname, "sources/platform/stubs/onnxr
 const kokoroJsStub = path.resolve(__dirname, "sources/platform/stubs/kokoroJsStub.ts");
 const transformersStub = path.resolve(__dirname, "sources/platform/stubs/huggingfaceTransformersStub.ts");
 const fontFaceObserverWebShim = path.resolve(__dirname, "sources/platform/shims/fontFaceObserverWebShim.ts");
+const reactNativeWebShim = path.resolve(__dirname, "sources/platform/shims/reactNativeWebShim.ts");
 const expoSystemUiWebStub = path.resolve(__dirname, "sources/platform/stubs/expoSystemUiWebStub.ts");
 const expoAsyncRequireSetupShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoAsyncRequireSetupShim.ts");
 const expoMessageSocketShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoMessageSocketShim.ts");
@@ -149,6 +164,13 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     (resolvedModuleName === "./apps/ui/index.ts" || resolvedModuleName === "apps/ui/index.ts")
   ) {
     return { type: "sourceFile", filePath: workspaceEntryPoint };
+  }
+
+  // On web, Expo aliases `react-native` to `react-native-web`, which does not export
+  // `unstable_batchedUpdates`. Some libraries (e.g. `@legendapp/list`) import it from
+  // `react-native` and crash at runtime. Use a shim that re-exports RNW + adds the missing API.
+  if (platform === "web" && resolvedModuleName === "react-native") {
+    return { type: "sourceFile", filePath: reactNativeWebShim };
   }
 
   if (
