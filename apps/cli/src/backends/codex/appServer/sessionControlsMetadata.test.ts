@@ -365,16 +365,6 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                                     { value: 'medium', name: 'Medium' },
                                 ],
                             },
-                            {
-                                id: 'service_tier',
-                                name: 'Speed',
-                                type: 'select',
-                                currentValue: 'standard',
-                                options: [
-                                    { value: 'standard', name: 'Standard' },
-                                    { value: 'fast', name: 'Fast' },
-                                ],
-                            },
                         ],
                     },
                 ],
@@ -637,34 +627,10 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                 {
                     id: 'gpt-5.4-mini',
                     name: 'GPT 5.4 Mini',
-                    modelOptions: [
-                        {
-                            id: 'service_tier',
-                            name: 'Speed',
-                            type: 'select',
-                            currentValue: 'standard',
-                            options: [
-                                { value: 'standard', name: 'Standard' },
-                                { value: 'fast', name: 'Fast' },
-                            ],
-                        },
-                    ],
                 },
                 {
                     id: 'gpt-5.3-codex',
                     name: 'GPT 5.3 Codex',
-                    modelOptions: [
-                        {
-                            id: 'service_tier',
-                            name: 'Speed',
-                            type: 'select',
-                            currentValue: 'standard',
-                            options: [
-                                { value: 'standard', name: 'Standard' },
-                                { value: 'fast', name: 'Fast' },
-                            ],
-                        },
-                    ],
                 },
             ],
         });
