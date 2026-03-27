@@ -2,9 +2,10 @@ import { z } from 'zod';
 import {
   findActionInputFieldHint,
   getActionSpecForCatalogSurface,
-  getSerializedActionSpecForSurface,
-  searchSerializedActionSpecsForSurface,
+  listActionSpecsForCatalogSurface,
+  searchSerializedActionSpecs,
   serializeActionFieldOptions,
+  serializeActionSpec,
   type ActionId,
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
@@ -77,12 +78,17 @@ type ResolveActionOptions = (args: Readonly<{
 }>) => Promise<ActionSpecDiscoveryResult<ResolveActionOptionsPayload> | null>;
 
 type SearchActionSpecsPayload = Readonly<{
-  actionSpecs: ReturnType<typeof searchSerializedActionSpecsForSurface>;
+  actionSpecs: ReturnType<typeof searchSerializedActionSpecs>;
 }>;
 
 type GetActionSpecPayload = Readonly<{
-  actionSpec: NonNullable<ReturnType<typeof getSerializedActionSpecForSurface>>;
+  actionSpec: ReturnType<typeof serializeActionSpec>;
 }>;
+
+function isActionSpecDiscoverableAsTool(spec: Readonly<{ bindings?: { mcpToolName?: string } | null }>): boolean {
+  const toolName = typeof spec.bindings?.mcpToolName === 'string' ? spec.bindings.mcpToolName.trim() : '';
+  return toolName.length > 0;
+}
 
 export async function searchActionSpecsForSurface(
   args: unknown,
@@ -92,14 +98,17 @@ export async function searchActionSpecsForSurface(
   const parsed = actionSpecSearchSchema.safeParse(args ?? {});
   if (!parsed.success) return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid params' };
 
+  const discoverableSpecs = listActionSpecsForCatalogSurface({
+    surface,
+    isActionEnabled,
+  }).filter(isActionSpecDiscoverableAsTool);
+
   return {
     ok: true,
     result: {
-      actionSpecs: searchSerializedActionSpecsForSurface({
-        surface,
+      actionSpecs: searchSerializedActionSpecs(discoverableSpecs, {
         query: parsed.data.query ?? '',
         limit: parsed.data.limit,
-        isActionEnabled,
       }),
     },
   };
@@ -114,15 +123,15 @@ export async function getActionSpecForSurface(
   if (!parsed.success) return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid params' };
 
   try {
-    const actionSpec = getSerializedActionSpecForSurface({
+    const spec = getActionSpecForCatalogSurface({
       id: parsed.data.id as ActionId,
       surface,
       isActionEnabled,
     });
-    if (!actionSpec) {
+    if (!spec || !isActionSpecDiscoverableAsTool(spec)) {
       return { ok: false, errorCode: 'action_disabled', error: 'Action is disabled' };
     }
-    return { ok: true, result: { actionSpec } };
+    return { ok: true, result: { actionSpec: serializeActionSpec(spec) } };
   } catch {
     return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Unknown action spec' };
   }
@@ -147,15 +156,6 @@ export async function resolveActionOptionsForSurface(
 
   if (actionId && fieldPath) {
     try {
-      const actionSpec = getSerializedActionSpecForSurface({
-        id: actionId,
-        surface,
-        isActionEnabled,
-      });
-      if (!actionSpec) {
-        return { ok: false, errorCode: 'action_disabled', error: 'Action is disabled' };
-      }
-
       const spec = getActionSpecForCatalogSurface({
         id: actionId,
         surface,
