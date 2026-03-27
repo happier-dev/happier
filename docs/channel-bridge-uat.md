@@ -40,7 +40,7 @@ happier bridge list
 
 Expected:
 - `Telegram (scoped settings.json)` shows `configured: yes`
-- `Telegram (effective runtime...)` shows configured token/topic policy
+- `Telegram (effective runtime: env > settings.json)` shows configured token/topic policy
 
 ## 4) Restart daemon and verify bridge worker startup
 
