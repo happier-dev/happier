@@ -90,11 +90,8 @@ const harness = vi.hoisted(() => {
     connectedServiceQuotasResume,
     connectedServiceQuotasStop,
     createDaemonShutdownController,
-<<<<<<< HEAD
-=======
     startChannelBridgeFromEnv,
     resolveChannelBridgesDaemonEnabled,
->>>>>>> ed44ae300 (feat(cli): gate channel bridge daemon startup)
     emitMachineConnectionState: (state: any) => machineConnectionStateListener?.(state),
     setAutoShutdownAfterAutomationStart: (value: boolean) => {
       autoShutdownAfterAutomationStart = value;
