@@ -11,6 +11,40 @@ afterEach(() => {
 });
 
 describe('useAllMachines', () => {
+    it('returns cached machines even when bootstrap is not fully ready (avoids empty flicker)', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: false,
+                machines: {
+                    'm-cached': {
+                        id: 'm-cached',
+                        seq: 1,
+                        createdAt: 1000,
+                        updatedAt: 1000,
+                        active: true,
+                        activeAt: 1000,
+                        metadata: { host: 'cached', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useAllMachines(), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent().map((machine) => machine.id)).toEqual(['m-cached']);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('includes offline machines and sorts online machines first', async () => {
         const previousState = storage.getState();
         try {

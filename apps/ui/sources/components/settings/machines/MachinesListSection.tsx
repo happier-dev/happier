@@ -20,10 +20,11 @@ export const MachinesListSection = React.memo(function MachinesListSection(props
     const { theme } = useUnistyles();
 
     if (!props.viewModel.hasMachines) {
+        const title = props.viewModel.isLoadingMachines ? t('common.loading') : t('newSession.noMachinesFound');
         return (
             <ItemGroup title={t('settings.machines')}>
                 <Item
-                    title={t('newSession.noMachinesFound')}
+                    title={title}
                     icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.textSecondary} />}
                     showChevron={false}
                 />

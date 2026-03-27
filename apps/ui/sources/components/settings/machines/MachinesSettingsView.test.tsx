@@ -15,6 +15,7 @@ type MachinesSettingsViewModel = {
     activeServerId: string;
     allMachines: Array<{ id: string; metadata?: { displayName?: string; host?: string } }>;
     hasMachines: boolean;
+    isLoadingMachines: boolean;
     machineRows: Array<{ id: string; title: string; subtitle?: string; serverId?: string }>;
     showMachinesGroupedByServer: boolean;
     visibleMachineGroups: Array<{
@@ -129,6 +130,7 @@ describe('MachinesSettingsView', () => {
                 },
             ],
             hasMachines: true,
+            isLoadingMachines: false,
             machineRows: [
                 {
                     id: 'machine-a1',
@@ -184,6 +186,7 @@ describe('MachinesSettingsView', () => {
             activeServerId: 'srv-a',
             allMachines: [],
             hasMachines: false,
+            isLoadingMachines: false,
             machineRows: [],
             showMachinesGroupedByServer: false,
             visibleMachineGroups: [],
@@ -197,6 +200,27 @@ describe('MachinesSettingsView', () => {
         const firstGroupItems = groups[0]!.findAllByType('Item' as any);
 
         expect(firstGroupItems.map((node: any) => node.props.title)).toContain('newSession.noMachinesFound');
+        expect(firstGroupItems[0]?.props.showChevron).toBe(false);
+    });
+
+    it('shows a loading-state row when machines are still bootstrapping', async () => {
+        viewModelState.value = {
+            activeServerId: 'srv-a',
+            allMachines: [],
+            hasMachines: false,
+            isLoadingMachines: true,
+            machineRows: [],
+            showMachinesGroupedByServer: false,
+            visibleMachineGroups: [],
+        };
+
+        const { MachinesSettingsView } = await import('./MachinesSettingsView');
+        const tree = (await renderScreen(React.createElement(MachinesSettingsView))).tree;
+
+        const groups = tree.findAllByType('Group' as any);
+        const firstGroupItems = groups[0]!.findAllByType('Item' as any);
+
+        expect(firstGroupItems.map((node: any) => node.props.title)).toContain('common.loading');
         expect(firstGroupItems[0]?.props.showChevron).toBe(false);
     });
 });

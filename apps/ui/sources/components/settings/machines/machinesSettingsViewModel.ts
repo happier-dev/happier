@@ -39,6 +39,11 @@ export function useMachinesSettingsViewModel() {
         },
     });
 
+    const isLoadingMachines = React.useMemo(() => {
+        const status = machineListStatusByServerId[activeServerSnapshot.serverId] ?? 'loading';
+        return allMachines.length === 0 && status === 'loading';
+    }, [activeServerSnapshot.serverId, allMachines.length, machineListStatusByServerId]);
+
     const machineRows = React.useMemo(() => {
         return activeSelectionMachineGroups.visibleMachineGroups.flatMap((group) =>
             group.machines.map((machine) => ({
@@ -54,6 +59,7 @@ export function useMachinesSettingsViewModel() {
         activeServerId: activeServerSnapshot.serverId,
         allMachines,
         hasMachines: activeSelectionMachineGroups.hasAnyVisibleMachines,
+        isLoadingMachines,
         machineRows,
         showMachinesGroupedByServer: activeSelectionMachineGroups.showMachinesGroupedByServer,
         visibleMachineGroups: activeSelectionMachineGroups.visibleMachineGroups,

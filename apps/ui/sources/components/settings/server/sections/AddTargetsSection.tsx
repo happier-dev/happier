@@ -238,7 +238,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                     )}
 
                     {props.error && (
-                        <Text style={styles.errorText}>
+                        <Text testID="server-settings-add-error" style={styles.errorText}>
                             {props.error}
                         </Text>
                     )}
