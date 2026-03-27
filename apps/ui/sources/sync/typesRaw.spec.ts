@@ -281,8 +281,8 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
         });
     });
 
-    describe('Rejects unknown content types with clear errors', () => {
-        it('fails validation for unknown type with clear error message', () => {
+    describe('Accepts unknown content types (forward compatibility)', () => {
+        it('keeps unknown content blocks instead of dropping the entire message', () => {
             const message = {
                 role: 'agent',
                 content: {
@@ -304,14 +304,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
 
             const result = RawRecordSchema.safeParse(message);
 
-            expect(result.success).toBe(false);
-            if (!result.success) {
-                // Verify error includes information about expected types
-                expect(result.error.issues).toBeDefined();
-                expect(result.error.issues.length).toBeGreaterThan(0);
-                // The error should be about invalid union (discriminated union mismatch)
-                const firstIssue = result.error.issues[0];
-                expect(firstIssue.code).toBe('invalid_union');
+            expect(result.success).toBe(true);
+            if (result.success) {
+                const content = result.data.content;
+                if (content.type === 'output' && content.data.type === 'assistant') {
+                    const firstItem = (content.data as any).message.content[0];
+                    expect(firstItem.type).toBe('unknown-type');
+                    expect(firstItem.data).toBe('some data');
+                }
             }
         });
     });
@@ -441,6 +441,59 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                           expect(firstItem.id).toBe('call_old');
                       }
                 }
+            }
+        });
+
+        it('accepts assistant output messages without model (backwards compatibility)', () => {
+            const oldCliMessageMissingModel = {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        message: {
+                            role: 'assistant',
+                            content: [{ type: 'text', text: 'hello' }],
+                        },
+                        uuid: 'old-uuid',
+                    },
+                },
+            };
+
+            const result = RawRecordSchema.safeParse(oldCliMessageMissingModel);
+
+            expect(result.success).toBe(true);
+        });
+
+        it('normalizeRawMessage() does not drop assistant output when uuid is missing', () => {
+            const assistantMessageMissingUuid = {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        message: {
+                            role: 'assistant',
+                            model: 'claude-3',
+                            content: [{ type: 'text', text: 'hello' }],
+                        },
+                        // NOTE: older producers (and some stream events) omit uuid; UI should still render.
+                    },
+                },
+            };
+
+            const normalized = normalizeRawMessage(
+                'server-message-id-1',
+                null,
+                1710000000000,
+                assistantMessageMissingUuid as any,
+            );
+
+            expect(normalized).not.toBeNull();
+            if (normalized && normalized.role === 'agent') {
+                const first = normalized.content[0];
+                expect(first?.type).toBe('text');
+                expect((first as any).uuid).toBe('server-message-id-1');
             }
         });
     });
@@ -642,7 +695,7 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             }
         });
 
-        it('rejects tool-call missing required callId field', () => {
+        it('keeps tool-call blocks missing callId as unknown content (forward compatibility)', () => {
             const message = {
                 role: 'agent',
                 content: {
@@ -666,16 +719,18 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
 
             const result = RawRecordSchema.safeParse(message);
 
-            // Should fail validation
-            expect(result.success).toBe(false);
-            if (!result.success) {
-                // Verify error mentions missing callId
-                const errorString = JSON.stringify(result.error.issues);
-                expect(errorString).toContain('callId');
+            expect(result.success).toBe(true);
+            if (result.success) {
+                const content = result.data.content;
+                if (content.type === 'output' && content.data.type === 'assistant') {
+                    const firstItem = (content.data as any).message.content[0];
+                    expect(firstItem.type).toBe('tool-call');
+                    expect(firstItem.callId).toBeUndefined();
+                }
             }
         });
 
-        it('rejects tool_use missing required id field', () => {
+        it('keeps tool_use blocks missing id as unknown content (forward compatibility)', () => {
             const message = {
                 role: 'agent',
                 content: {
@@ -699,11 +754,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
 
             const result = RawRecordSchema.safeParse(message);
 
-            // Should fail validation
-            expect(result.success).toBe(false);
-            if (!result.success) {
-                const errorString = JSON.stringify(result.error.issues);
-                expect(errorString).toContain('id');
+            expect(result.success).toBe(true);
+            if (result.success) {
+                const content = result.data.content;
+                if (content.type === 'output' && content.data.type === 'assistant') {
+                    const firstItem = (content.data as any).message.content[0];
+                    expect(firstItem.type).toBe('tool_use');
+                    expect(firstItem.id).toBeUndefined();
+                }
             }
         });
     });
@@ -1340,13 +1398,13 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             }
         });
 
-        it('Error messages are preserved (validation still returns clear errors)', () => {
+        it('Error messages are preserved when required discriminator fields are missing', () => {
             const invalidMessage = {
                 role: 'agent',
                 content: {
                     type: 'output',
                     data: {
-                        type: 'assistant',
+                        // Missing `type` discriminator on purpose.
                         message: {
                             role: 'assistant',
                             model: 'claude-3',
@@ -1366,9 +1424,9 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             if (!result.success) {
                 // Error should be clear and actionable
                 expect(result.error.issues.length).toBeGreaterThan(0);
-                // Should mention union validation issue
+                // Should mention discriminator / union validation issue
                 const errorJson = JSON.stringify(result.error.issues);
-                expect(errorJson).toContain('invalid_union');
+                expect(errorJson).toMatch(/(invalid_union|invalid_type|invalid_literal)/);
             }
         });
     });

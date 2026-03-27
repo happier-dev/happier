@@ -211,6 +211,20 @@ export {
   type SessionStoredMessageContent,
 } from './sessionMessages/sessionStoredMessageContent.js';
 export {
+  TranscriptRawRecordV1Schema,
+  TranscriptRawAgentContentV1Schema,
+  TranscriptRawAgentEventV1Schema,
+  TranscriptRawAgentRecordV1Schema,
+  TranscriptRawUsageDataV1Schema,
+  createTranscriptRawRecordV1Schema,
+  type TranscriptRawRecordV1,
+  type TranscriptRawAgentContentV1,
+  type TranscriptRawAgentEventV1,
+  type TranscriptRawAgentRecordV1,
+  type TranscriptRawUsageDataV1,
+} from './sessionMessages/transcriptRawRecordV1.js';
+export { coerceSessionUserPromptV1 } from './sessionMessages/coerceSessionUserPromptV1.js';
+export {
   SESSION_ATTACH_METADATA_IDENTITY_POLICIES,
   SessionAttachMetadataIdentityPolicySchema,
   type SessionAttachMetadataIdentityPolicy,

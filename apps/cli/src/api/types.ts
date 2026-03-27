@@ -268,7 +268,7 @@ export const SessionMessageSchema = z.object({
   seq: z.number(),
   sidechainId: z.string().nullable(),
   updatedAt: z.number()
-})
+}).passthrough()
 
 export type SessionMessage = z.infer<typeof SessionMessageSchema>
 
@@ -321,7 +321,7 @@ export const UserMessageSchema = z.object({
   content: z.object({
     type: z.literal('text'),
     text: z.string()
-  }),
+  }).passthrough(),
   /**
    * Server-created timestamp for this message (ms since epoch).
    *
@@ -332,7 +332,7 @@ export const UserMessageSchema = z.object({
   localId: z.string().nullish().optional(),
   localKey: z.string().optional(), // Mobile messages include this
   meta: MessageMetaSchema.optional()
-})
+}).passthrough()
 
 export type UserMessage = z.infer<typeof UserMessageSchema>
 
@@ -341,9 +341,9 @@ export const AgentMessageSchema = z.object({
   content: z.object({
     type: z.literal('output'),
     data: z.any()
-  }),
+  }).passthrough(),
   meta: MessageMetaSchema.optional()
-})
+}).passthrough()
 
 export type AgentMessage = z.infer<typeof AgentMessageSchema>
 

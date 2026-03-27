@@ -79,9 +79,11 @@ export function normalizeRawMessage(
     id: string,
     localId: string | null,
     createdAt: number,
-    raw: RawRecord,
+    raw: unknown,
     opts?: Readonly<{ seq?: number }>,
 ): NormalizedMessage | null {
+    const seq = typeof opts?.seq === 'number' && Number.isFinite(opts.seq) ? Math.trunc(opts.seq) : undefined;
+
     // Zod transform handles normalization during validation
     let parsed = rawRecordSchema.safeParse(raw);
     if (!parsed.success) {
@@ -115,11 +117,35 @@ export function normalizeRawMessage(
                 callId: typeof callId === 'string' ? callId : undefined,
             });
         }
-        return null;
+        const unsafeRole = (raw as any)?.role;
+        const role = unsafeRole === 'user' ? 'user' : 'agent';
+        const text =
+            role === 'user'
+                ? '[Unparsed user message]'
+                : '[Unparsed agent message]';
+        return role === 'user'
+            ? {
+                id,
+                ...(seq !== undefined ? { seq } : {}),
+                localId,
+                createdAt,
+                role: 'user',
+                isSidechain: false,
+                content: { type: 'text', text },
+                meta: (raw as any)?.meta,
+            }
+            : {
+                id,
+                ...(seq !== undefined ? { seq } : {}),
+                localId,
+                createdAt,
+                role: 'agent',
+                isSidechain: false,
+                content: [{ type: 'text', text, uuid: id, parentUUID: null }],
+                meta: (raw as any)?.meta,
+            };
     }
-    raw = parsed.data;
-
-    const seq = typeof opts?.seq === 'number' && Number.isFinite(opts.seq) ? Math.trunc(opts.seq) : undefined;
+    raw = parsed.data as RawRecord;
 
     const toolResultContentToText = (content: unknown): string => {
         if (content === null || content === undefined) return '';
@@ -262,7 +288,7 @@ export function normalizeRawMessage(
             return typeof content === 'string' || Array.isArray(content);
         };
 
-	        if (raw.content.type === 'output') {
+		        if (raw.content.type === 'output') {
             // Skip Meta messages
             if (raw.content.data.isMeta) {
                 return null;
@@ -278,14 +304,12 @@ export function normalizeRawMessage(
                 return null;
             }
 
-	            // Handle Assistant messages (including sidechains)
-	            if (isOutputAssistantData(raw.content.data)) {
-	                if (!raw.content.data.uuid) {
-	                    return null;
-	                }
+		            // Handle Assistant messages (including sidechains)
+		            if (isOutputAssistantData(raw.content.data)) {
+		                const outputUuid = raw.content.data.uuid ?? id;
 
-	                const isRecord = (value: unknown): value is Record<string, unknown> =>
-	                    typeof value === 'object' && value !== null;
+		                const isRecord = (value: unknown): value is Record<string, unknown> =>
+		                    typeof value === 'object' && value !== null;
 
 	                // Claude's streaming API encodes sidechains via parent_tool_use_id.
 	                // Map that to the provider-agnostic `sidechainId` so reducer sidechain linking can attach
@@ -294,54 +318,52 @@ export function normalizeRawMessage(
 	                    typeof (raw.content.data as any).parent_tool_use_id === 'string'
                         ? String((raw.content.data as any).parent_tool_use_id)
 	                        : undefined;
-	                let content: NormalizedAgentContent[] = [];
-	                for (const cRaw of raw.content.data.message.content) {
-		                    if (!isRecord(cRaw) || typeof cRaw.type !== 'string') continue;
-		                    if (cRaw.type === 'text') {
-		                        content.push({
-		                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones
-		                            uuid: raw.content.data.uuid,
-		                            parentUUID: raw.content.data.parentUuid ?? null
-		                        } as NormalizedAgentContent);
-		                    } else if (cRaw.type === 'thinking') {
-		                        content.push({
-		                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones (signature, etc.)
-		                            uuid: raw.content.data.uuid,
-		                            parentUUID: raw.content.data.parentUuid ?? null
-		                        } as NormalizedAgentContent);
-		                    } else if (cRaw.type === 'tool_use') {
-	                        let description: string | null = null;
-	                        const input = cRaw.input;
-	                        if (isRecord(input) && typeof input.description === 'string') {
-	                            description = input.description;
-		                        }
-		                        content.push({
-		                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones
-		                            type: 'tool-call',
-		                            description,
-		                            uuid: raw.content.data.uuid,
-		                            parentUUID: raw.content.data.parentUuid ?? null
-                        } as NormalizedAgentContent);
-                    }
-                }
+		                let content: NormalizedAgentContent[] = [];
+		                for (const cRaw of raw.content.data.message.content) {
+			                    if (!isRecord(cRaw) || typeof cRaw.type !== 'string') continue;
+			                    if (cRaw.type === 'text') {
+			                        content.push({
+			                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones
+			                            uuid: outputUuid,
+			                            parentUUID: raw.content.data.parentUuid ?? null
+			                        } as NormalizedAgentContent);
+			                    } else if (cRaw.type === 'thinking') {
+			                        content.push({
+			                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones (signature, etc.)
+			                            uuid: outputUuid,
+			                            parentUUID: raw.content.data.parentUuid ?? null
+			                        } as NormalizedAgentContent);
+			                    } else if (cRaw.type === 'tool_use') {
+		                        let description: string | null = null;
+		                        const input = cRaw.input;
+		                        if (isRecord(input) && typeof input.description === 'string') {
+		                            description = input.description;
+			                        }
+			                        content.push({
+			                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones
+			                            type: 'tool-call',
+			                            description,
+			                            uuid: outputUuid,
+			                            parentUUID: raw.content.data.parentUuid ?? null
+	                        } as NormalizedAgentContent);
+	                    }
+	                }
                     const sidechainId = metaSidechainId ?? getOutputSidechainId(raw.content.data) ?? claudeParentToolUseId;
                     const legacyIsSidechain = getOutputIsSidechain(raw.content.data);
-                      return {
-                        id,
-                        ...(seq !== undefined ? { seq } : {}),
-                        localId,
-                        createdAt,
-                      role: 'agent',
-                      sidechainId,
-                      isSidechain: Boolean(sidechainId) || legacyIsSidechain || metaIsSidechain,
-                      content,
-                      meta: raw.meta,
-                      usage: raw.content.data.message.usage
-                  };
-            } else if (isOutputUserData(raw.content.data)) {
-                if (!raw.content.data.uuid) {
-                    return null;
-                }
+	                  return {
+	                        id,
+	                        ...(seq !== undefined ? { seq } : {}),
+	                        localId,
+	                        createdAt,
+	                      role: 'agent',
+	                      sidechainId,
+	                      isSidechain: Boolean(sidechainId) || legacyIsSidechain || metaIsSidechain,
+	                      content,
+	                      meta: raw.meta,
+	                      usage: raw.content.data.message.usage
+	                  };
+	            } else if (isOutputUserData(raw.content.data)) {
+	                const outputUuid = raw.content.data.uuid ?? id;
 
                 const claudeParentToolUseId =
                     typeof (raw.content.data as any).parent_tool_use_id === 'string'
@@ -350,24 +372,24 @@ export function normalizeRawMessage(
                   const sidechainId = metaSidechainId ?? getOutputSidechainId(raw.content.data) ?? claudeParentToolUseId;
                 const isSidechain = Boolean(sidechainId) || getOutputIsSidechain(raw.content.data) || metaIsSidechain;
 
-                // Handle sidechain user messages
-                if (isSidechain && raw.content.data.message && typeof raw.content.data.message.content === 'string') {
-                    // Return as a special agent message with sidechain content
-                      return {
-                          id,
-                          ...(seq !== undefined ? { seq } : {}),
-                          localId,
-                          createdAt,
-                          role: 'agent',
-                          isSidechain: true,
-                          sidechainId,
-                        content: [{
-                            type: 'sidechain',
-                            uuid: raw.content.data.uuid,
-                            prompt: raw.content.data.message.content
-                        }]
-                    };
-                }
+	                // Handle sidechain user messages
+	                if (isSidechain && raw.content.data.message && typeof raw.content.data.message.content === 'string') {
+	                    // Return as a special agent message with sidechain content
+	                      return {
+	                          id,
+	                          ...(seq !== undefined ? { seq } : {}),
+	                          localId,
+	                          createdAt,
+	                          role: 'agent',
+	                          isSidechain: true,
+	                          sidechainId,
+	                        content: [{
+	                            type: 'sidechain',
+	                            uuid: outputUuid,
+	                            prompt: raw.content.data.message.content
+	                        }]
+	                    };
+	                }
 
                 // Handle regular user messages
                 if (raw.content.data.message && typeof raw.content.data.message.content === 'string') {
@@ -390,29 +412,29 @@ export function normalizeRawMessage(
                 }
 
                 // Handle tool results
-                let content: NormalizedAgentContent[] = [];
-                if (typeof raw.content.data.message.content === 'string') {
-                    content.push({
-                        type: 'text',
-                        text: raw.content.data.message.content,
-                        uuid: raw.content.data.uuid,
-                        parentUUID: raw.content.data.parentUuid ?? null
-                    });
-                } else {
-                    for (let c of raw.content.data.message.content) {
-                        if (c.type === 'tool_result') {
-                            const rawResultContent = raw.content.data.toolUseResult ?? c.content;
-                            content.push({
-                                ...c,  // WOLOG: Preserve all fields including unknown ones
-                                type: 'tool-result',
-                                content: toolResultContentToText(rawResultContent),
-                                is_error: c.is_error || false,
-                                uuid: raw.content.data.uuid,
-                                parentUUID: raw.content.data.parentUuid ?? null,
-                                permissions: c.permissions ? {
-                                    date: c.permissions.date,
-                                    result: c.permissions.result,
-                                    mode: c.permissions.mode,
+	                let content: NormalizedAgentContent[] = [];
+	                if (typeof raw.content.data.message.content === 'string') {
+	                    content.push({
+	                        type: 'text',
+	                        text: raw.content.data.message.content,
+	                        uuid: outputUuid,
+	                        parentUUID: raw.content.data.parentUuid ?? null
+	                    });
+	                } else {
+	                    for (let c of raw.content.data.message.content) {
+	                        if (c.type === 'tool_result') {
+	                            const rawResultContent = raw.content.data.toolUseResult ?? c.content;
+	                            content.push({
+	                                ...c,  // WOLOG: Preserve all fields including unknown ones
+	                                type: 'tool-result',
+	                                content: toolResultContentToText(rawResultContent),
+	                                is_error: c.is_error || false,
+	                                uuid: outputUuid,
+	                                parentUUID: raw.content.data.parentUuid ?? null,
+	                                permissions: c.permissions ? {
+	                                    date: c.permissions.date,
+	                                    result: c.permissions.result,
+	                                    mode: c.permissions.mode,
                                     allowedTools: c.permissions.allowedTools,
                                     decision: c.permissions.decision
                                 } : undefined
@@ -432,6 +454,22 @@ export function normalizeRawMessage(
                     meta: raw.meta
                 };
             }
+            // Any other output payload should be surfaced as an opaque message rather than dropped.
+            return {
+                id,
+                ...(seq !== undefined ? { seq } : {}),
+                localId,
+                createdAt,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'text',
+                    text: '[Unsupported agent output]',
+                    uuid: id,
+                    parentUUID: null,
+                }],
+                meta: raw.meta,
+            };
         }
           if (raw.content.type === 'event') {
               return {
@@ -741,5 +779,30 @@ export function normalizeRawMessage(
             // are status/metrics - skip normalization, they don't need UI rendering
         }
     }
-    return null;
+    // Default: never drop unknown/unsupported records silently. Surface an opaque placeholder instead,
+    // except for explicit status/metrics events we intentionally hide.
+    if (raw.role === 'agent') {
+        const contentType = raw.content.type;
+        if (contentType === 'codex' || contentType === 'acp') {
+            const dataType = (raw.content as any).data?.type;
+            if (dataType === 'token_count' || dataType === 'task_started' || dataType === 'task_complete' || dataType === 'turn_aborted') {
+                return null;
+            }
+        }
+    }
+    return {
+        id,
+        ...(seq !== undefined ? { seq } : {}),
+        localId,
+        createdAt,
+        role: 'agent',
+        isSidechain: false,
+        content: [{
+            type: 'text',
+            text: '[Unsupported transcript record]',
+            uuid: id,
+            parentUUID: null,
+        }],
+        meta: (raw as any)?.meta,
+    };
 }

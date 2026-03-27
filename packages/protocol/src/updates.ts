@@ -8,39 +8,43 @@ const Base64Schema = z.string();
 const VersionedNullableStringSchema = z.object({
   value: z.string().nullable(),
   version: z.number().int(),
-}).strict();
+}).passthrough();
 
 const VersionedStringSchema = z.object({
   value: z.string(),
   version: z.number().int(),
-}).strict();
+}).passthrough();
 
 export const UpdateBodySchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('new-message'),
     sid: z.string(),
-    message: z.object({
-      id: z.string(),
-      seq: z.number().int().min(0),
-      content: SessionStoredMessageContentSchema,
-      localId: z.string().nullable(),
-      sidechainId: z.string().nullable().optional(),
-      createdAt: TimestampMsSchema,
-      updatedAt: TimestampMsSchema,
-    }).strict(),
+    message: z
+      .object({
+        id: z.string(),
+        seq: z.number().int().min(0),
+        content: SessionStoredMessageContentSchema,
+        localId: z.string().nullable(),
+        sidechainId: z.string().nullable().optional(),
+        createdAt: TimestampMsSchema,
+        updatedAt: TimestampMsSchema,
+      })
+      .passthrough(),
   }).passthrough(),
   z.object({
     t: z.literal('message-updated'),
     sid: z.string(),
-    message: z.object({
-      id: z.string(),
-      seq: z.number().int().min(0),
-      content: SessionStoredMessageContentSchema,
-      localId: z.string().nullable(),
-      sidechainId: z.string().nullable().optional(),
-      createdAt: TimestampMsSchema,
-      updatedAt: TimestampMsSchema,
-    }).strict(),
+    message: z
+      .object({
+        id: z.string(),
+        seq: z.number().int().min(0),
+        content: SessionStoredMessageContentSchema,
+        localId: z.string().nullable(),
+        sidechainId: z.string().nullable().optional(),
+        createdAt: TimestampMsSchema,
+        updatedAt: TimestampMsSchema,
+      })
+      .passthrough(),
   }).passthrough(),
   z.object({
     t: z.literal('new-session'),
@@ -175,7 +179,7 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
       key: z.string(),
       value: z.string().nullable(),
       version: z.number().int(),
-    }).strict()),
+    }).passthrough()),
   }).passthrough(),
   z.object({
     t: z.literal('session-shared'),
@@ -236,7 +240,7 @@ export const UpdateContainerSchema = z.object({
   seq: z.number().int().min(0),
   createdAt: TimestampMsSchema,
   body: UpdateBodySchema,
-}).strict();
+}).passthrough();
 
 export type UpdateContainer = z.infer<typeof UpdateContainerSchema>;
 
@@ -305,7 +309,7 @@ export const SessionBroadcastContainerSchema = z.object({
   id: z.string(),
   createdAt: TimestampMsSchema,
   body: SessionBroadcastBodySchema,
-}).strict();
+}).passthrough();
 
 export type SessionBroadcastContainer = z.infer<typeof SessionBroadcastContainerSchema>;
 
@@ -325,11 +329,11 @@ export const MessageAckResponseSchema = z.union([
      */
     didWrite: z.boolean().optional(),
     didUpdate: z.boolean().optional(),
-  }).strict(),
+  }).passthrough(),
   z.object({
     ok: z.literal(false),
     error: z.string(),
-  }).strict(),
+  }).passthrough(),
 ]);
 
 export type MessageAckResponse = z.infer<typeof MessageAckResponseSchema>;
@@ -339,18 +343,18 @@ export const UpdateMetadataAckResponseSchema = z.discriminatedUnion('result', [
     result: z.literal('success'),
     version: z.number().int(),
     metadata: z.string(),
-  }).strict(),
+  }).passthrough(),
   z.object({
     result: z.literal('version-mismatch'),
     version: z.number().int(),
     metadata: z.string(),
-  }).strict(),
+  }).passthrough(),
   z.object({
     result: z.literal('forbidden'),
-  }).strict(),
+  }).passthrough(),
   z.object({
     result: z.literal('error'),
-  }).strict(),
+  }).passthrough(),
 ]);
 
 export type UpdateMetadataAckResponse = z.infer<typeof UpdateMetadataAckResponseSchema>;
@@ -360,18 +364,18 @@ export const UpdateStateAckResponseSchema = z.discriminatedUnion('result', [
     result: z.literal('success'),
     version: z.number().int(),
     agentState: z.string().nullable(),
-  }).strict(),
+  }).passthrough(),
   z.object({
     result: z.literal('version-mismatch'),
     version: z.number().int(),
     agentState: z.string().nullable(),
-  }).strict(),
+  }).passthrough(),
   z.object({
     result: z.literal('forbidden'),
-  }).strict(),
+  }).passthrough(),
   z.object({
     result: z.literal('error'),
-  }).strict(),
+  }).passthrough(),
 ]);
 
 export type UpdateStateAckResponse = z.infer<typeof UpdateStateAckResponseSchema>;

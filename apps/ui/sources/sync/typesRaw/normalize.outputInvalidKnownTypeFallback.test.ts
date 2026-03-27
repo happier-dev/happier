@@ -25,7 +25,11 @@ describe('typesRaw output schema (fail-soft)', () => {
         const parsed = RawRecordSchema.safeParse(raw);
         expect(parsed.success).toBe(true);
 
-        // Malformed known output types should not crash normalization; they are treated as unknown and dropped.
-        expect(normalizeRawMessage('msg-assistant-1', null, 1000, raw)).toBeNull();
+        // Malformed known output types should not crash normalization; they should be surfaced as an opaque message.
+        const normalized = normalizeRawMessage('msg-assistant-1', null, 1000, raw);
+        expect(normalized).not.toBeNull();
+        if (!normalized) return;
+        expect(normalized.role).toBe('agent');
+        expect(normalized.content[0]?.type).toBe('text');
     });
 });

@@ -8,6 +8,22 @@ describe('SessionStoredMessageContentSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('coerces legacy ciphertext string to encrypted envelope', () => {
+    const parsed = SessionStoredMessageContentSchema.safeParse('aGVsbG8=');
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toEqual({ t: 'encrypted', c: 'aGVsbG8=' });
+    }
+  });
+
+  it('coerces legacy ciphertext object to encrypted envelope', () => {
+    const parsed = SessionStoredMessageContentSchema.safeParse({ ciphertext: 'aGVsbG8=' });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toEqual({ t: 'encrypted', c: 'aGVsbG8=' });
+    }
+  });
+
   it('accepts plain envelope', () => {
     const parsed = SessionStoredMessageContentSchema.safeParse({ t: 'plain', v: { type: 'user', text: 'hi' } });
     expect(parsed.success).toBe(true);
@@ -18,4 +34,3 @@ describe('SessionStoredMessageContentSchema', () => {
     expect(parsed.success).toBe(false);
   });
 });
-

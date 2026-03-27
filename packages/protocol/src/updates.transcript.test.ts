@@ -43,6 +43,24 @@ describe('updates transcript vNext payloads', () => {
     expect(parsed.data.t).toBe('new-message');
   });
 
+  it('parses new-message payloads with unknown additional fields (rolling upgrade safety)', () => {
+    const parsed = UpdateBodySchema.safeParse({
+      t: 'new-message',
+      sid: 'sess_1',
+      message: {
+        id: 'm1',
+        seq: 1,
+        content: { t: 'encrypted', c: 'cipher' },
+        localId: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        extraFieldAddedInFuture: { anything: true },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   it('parses transcript-draft ephemerals', () => {
     const parsed = EphemeralUpdateSchema.safeParse({
       type: 'transcript-draft',
@@ -96,5 +114,37 @@ describe('updates transcript vNext payloads', () => {
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.ok).toBe(true);
+  });
+
+  it('parses message ack responses with forward-compatible extra fields', () => {
+    const parsed = MessageAckResponseSchema.safeParse({
+      ok: true,
+      id: 'm1',
+      seq: 1,
+      localId: 'l1',
+      didWrite: true,
+      extraFromFutureServer: { whatever: true },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('parses update-session payloads with forward-compatible versioned fields', () => {
+    const parsed = UpdateBodySchema.safeParse({
+      t: 'update-session',
+      id: 'sess_1',
+      metadata: {
+        value: 'cipher',
+        version: 1,
+        futureField: { ok: true },
+      },
+      agentState: {
+        value: null,
+        version: 2,
+        anotherFutureField: 'hello',
+      },
+    });
+
+    expect(parsed.success).toBe(true);
   });
 });

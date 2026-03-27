@@ -4,6 +4,7 @@ import type {
     UserMessage,
 } from '../types';
 import { SessionMessageContentSchema, UserMessageSchema } from '../types';
+import { coerceSessionUserPromptV1 } from '@happier-dev/protocol';
 
 export function handleSessionNewMessageUpdate(params: {
     update: Update;
@@ -153,9 +154,43 @@ export function handleSessionNewMessageUpdate(params: {
         }
         params.emit('user-message', userResult.data);
     } else {
-        // If not a user message, it might be a permission response or other message type.
-        params.debug('[SOCKET] [UPDATE] Decrypted new-message is not a UserMessage payload; forwarding generic event');
-        params.emit('message', body);
+        const coerced = coerceSessionUserPromptV1(bodyWithTransportFields);
+        if (coerced) {
+            const candidate = {
+                role: 'user' as const,
+                content: { type: 'text' as const, text: coerced.text },
+                createdAt: (bodyWithTransportFields as any).createdAt,
+                localId: (bodyWithTransportFields as any).localId,
+                localKey: (bodyWithTransportFields as any).localKey,
+                meta: (bodyWithTransportFields as any).meta,
+            };
+            const parsedCandidate = UserMessageSchema.safeParse(candidate);
+            if (parsedCandidate.success) {
+                if (params.pendingMessageCallback) {
+                    params.pendingMessageCallback(parsedCandidate.data);
+                } else {
+                    params.pendingMessages.push(parsedCandidate.data);
+                }
+                if (localId) {
+                    params.markAgentQueueEchoSuppressedLocalId(localId);
+                }
+                if (typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
+                    nextLastObservedUserMessageSeq = Math.max(nextLastObservedUserMessageSeq, msgSeq);
+                }
+                params.emit('user-message', parsedCandidate.data);
+                return {
+                    handled: true,
+                    lastObservedMessageSeq: nextLastObservedMessageSeq,
+                    lastObservedUserMessageSeq: nextLastObservedUserMessageSeq,
+                };
+            }
+        }
+
+        const rawRole = (bodyWithTransportFields as any)?.role;
+        if (rawRole === 'user') {
+            params.debug('[SOCKET] [UPDATE] Dropping user prompt delivery: unable to coerce into a UserMessage');
+        }
+        params.emit('message', bodyWithTransportFields);
     }
 
     return {
