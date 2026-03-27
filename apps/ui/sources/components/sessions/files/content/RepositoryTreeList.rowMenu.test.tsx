@@ -155,8 +155,9 @@ vi.mock('@/sync/ops', () => ({
     sessionDeletePath: (sessionId: string, path: string) => sessionDeletePathSpy(sessionId, path),
 }));
 
-vi.mock('@/components/sessions/files/useSessionFileDownloadAvailability', () => ({
-    useSessionFileDownloadAvailability: () => downloadAvailabilityState.value,
+vi.mock('@/components/sessions/files/useSessionFileTransferAvailability', () => ({
+    useSessionFileTransferAvailabilityResolver: () => (_transferSizeBytes?: number | null) => downloadAvailabilityState.value,
+    useSessionFileTransferAvailability: () => downloadAvailabilityState.value,
 }));
 
 afterEach(() => {

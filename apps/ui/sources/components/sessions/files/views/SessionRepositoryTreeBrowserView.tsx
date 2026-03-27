@@ -33,7 +33,7 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useWebFileDropZone } from '@/hooks/ui/useWebFileDropZone';
 import { readWebDroppedEntries } from '@/utils/files/webDroppedEntries';
-import { nativePickFiles } from '@/utils/files/nativePickFiles';
+import { nativePickFiles, type NativePickedFile } from '@/utils/files/nativePickFiles';
 import { applyWebDirectoryInputAttributes } from '@/utils/files/applyWebDirectoryInputAttributes';
 import { useWorkspaceFileTransfers, type WorkspaceUploadEntry } from '@/hooks/session/files/useWorkspaceFileTransfers';
 import { showUploadConflictResolutionDialog } from '@/components/sessions/files/repositoryTree/showUploadConflictResolutionDialog';
@@ -293,8 +293,9 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
 
     const startNativeUploads = React.useCallback(async () => {
         const picked = await nativePickFiles({ multiple: true });
-        if (picked.length === 0) return;
-        const entries: WorkspaceUploadEntry[] = picked.map((p) => ({
+        const nativePicked = picked.filter((p): p is Extract<NativePickedFile, { kind: 'native' }> => p.kind === 'native');
+        if (nativePicked.length === 0) return;
+        const entries: WorkspaceUploadEntry[] = nativePicked.map((p) => ({
             kind: 'native',
             uri: p.uri,
             name: p.name,
