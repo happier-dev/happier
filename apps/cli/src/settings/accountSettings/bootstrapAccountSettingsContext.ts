@@ -111,6 +111,12 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   backendTarget?: BackendTargetRefV1;
   mode?: AccountSettingsBootstrapMode;
   refresh?: AccountSettingsRefreshMode;
+  /**
+   * When false, ignore `HAPPIER_ACCOUNT_SETTINGS_MODE` (defense-in-depth for
+   * security-sensitive surfaces like external MCP, where the spawning client
+   * may control process env).
+   */
+  honorAccountSettingsModeEnv?: boolean;
   nowMs?: number;
   ttlMs?: number;
   deps?: Partial<BootstrapDeps>;
@@ -191,7 +197,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const cachePath = deps.resolveCachePath();
   const scopeKey = `${cachePath}::${tokenScopeKey(params.credentials.token)}`;
 
-  const modeFromEnv = readAccountSettingsModeFromEnv();
+  const honorModeEnv = params.honorAccountSettingsModeEnv !== false;
+  const modeFromEnv = honorModeEnv ? readAccountSettingsModeFromEnv() : 'auto';
   if (modeFromEnv === 'never') {
     const settings = accountSettingsParse({});
     const ctx: AccountSettingsContext = {
