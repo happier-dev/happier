@@ -40,8 +40,7 @@ export async function cmdMcpServersTest(
   try {
     const { machineId } = await deps.ensureMachineIdForCredentials(credentials);
     const ctx = await loadFreshMcpAccountSettingsContext(credentials, deps);
-    const accountSettings = ctx.settings as any;
-    const mcpSettings = readMcpServersSettingsFromAccountSettings(accountSettings);
+    const mcpSettings = readMcpServersSettingsFromAccountSettings(ctx.settings);
 
     const server = mcpSettings.servers.find((s) => s.id === serverRef || s.name === serverRef) ?? null;
     if (!server) throw new Error(`MCP server not found: ${serverRef}`);
@@ -55,7 +54,7 @@ export async function cmdMcpServersTest(
     if (!item) throw new Error(`MCP server not enabled for this target: ${server.name}`);
     if (item.enabled !== true) throw new Error(`MCP server disabled for this target: ${server.name}`);
 
-    const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(accountSettings);
+    const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(ctx.settings);
     const settingsSecretsKey = deriveSettingsSecretsKeyForCredentials(credentials);
     const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(credentials);
 
@@ -72,7 +71,7 @@ export async function cmdMcpServersTest(
     const config = materialized.mcpServers[server.name];
     if (!config) throw new Error('materialize_missing_config');
 
-    const tools = await deps.probeMcpStdioServerTools({ config: config as any, baseEnv: process.env });
+    const tools = await deps.probeMcpStdioServerTools({ config, baseEnv: process.env });
     const toolNames = tools.map((t) => t.name);
     const durationMs = Math.max(0, deps.nowMs() - startedAt);
 

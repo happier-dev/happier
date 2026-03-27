@@ -11,8 +11,11 @@ function emptySettings(): McpServersSettingsV1 {
   return { v: 1, strictMode: false, servers: [], bindings: [] };
 }
 
-export function readMcpServersSettingsFromAccountSettings(settings: Readonly<Record<string, unknown>>): McpServersSettingsV1 {
-  const raw = (settings as any)?.mcpServersSettingsV1;
+export function readMcpServersSettingsFromAccountSettings(settingsLike: unknown): McpServersSettingsV1 {
+  const rec = settingsLike && typeof settingsLike === 'object' && !Array.isArray(settingsLike)
+    ? (settingsLike as Record<string, unknown>)
+    : null;
+  const raw = rec?.mcpServersSettingsV1;
   if (!raw) return emptySettings();
   const parsed = McpServersSettingsV1Schema.safeParse(raw);
   return parsed.success ? parsed.data : emptySettings();

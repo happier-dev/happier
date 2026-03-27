@@ -40,7 +40,7 @@ export async function cmdMcpServersList(
   }
 
   const ctx = await loadFreshMcpAccountSettingsContext(credentials, deps);
-  const mcpSettings = readMcpServersSettingsFromAccountSettings(ctx.settings as any);
+  const mcpSettings = readMcpServersSettingsFromAccountSettings(ctx.settings);
 
   if (opts.json) {
     printJsonEnvelope({ ok: true, kind: 'mcp_servers_list', data: summarizeMcpServersForJson(mcpSettings) });

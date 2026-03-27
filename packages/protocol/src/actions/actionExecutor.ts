@@ -535,6 +535,8 @@ function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCod
       ? error.message
       : typeof error === 'string'
         ? error
+        : typeof anyErr?.message === 'string'
+          ? String(anyErr.message)
         : '';
 
   if (rawCode && SessionControlErrorCodeSchema.safeParse(rawCode).success) {
@@ -565,12 +567,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ? false
       : deps.isActionApprovalRequired?.(actionId, ctx) === true;
     const isApprovalAction = actionId === 'approval.request.create' || actionId === 'approval.request.decide';
-    const bypassSurfaceGate = actionId === 'action.spec.search';
-    if (
-      bypassSurfaceGate
-        ? !isActionEnabledByPolicy(spec, ctx)
-        : !isActionEnabled(spec, ctx)
-    ) {
+    if (!isActionEnabled(spec, ctx)) {
       return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
     }
     const parsed = (spec.inputSchema as any).safeParse(input ?? {});

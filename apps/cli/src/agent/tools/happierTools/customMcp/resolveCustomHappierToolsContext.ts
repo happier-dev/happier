@@ -21,7 +21,7 @@ export async function resolveCustomHappierToolsContext(params: Readonly<{
     machineId: params.machineId,
     directory: params.directory,
   });
-  const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(params.accountSettings as any);
+  const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(params.accountSettings);
   return await materializeMcpServerConfigRecord({
     resolved,
     savedSecretsById,

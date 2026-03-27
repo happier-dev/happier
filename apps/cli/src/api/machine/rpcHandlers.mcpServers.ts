@@ -17,6 +17,7 @@ import {
   type ResolveEffectiveServersV1Result,
 } from '@happier-dev/protocol';
 
+import type { McpServerConfig } from '@/agent';
 import { readCredentials, type Credentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
@@ -169,7 +170,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
       }).catch(() => null);
 
       const settingsObj = accountSettingsContext?.settings ?? {};
-      const accountMcpSettings = readMcpServersSettingsFromAccountSettings(settingsObj as any);
+      const accountMcpSettings = readMcpServersSettingsFromAccountSettings(settingsObj);
 
       const resolution = resolveServerForTestRequest({ request: parsed.data as DaemonMcpServersTestRequest, accountMcpSettings });
       if (!resolution.ok) {
@@ -177,11 +178,11 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
         return { ok: false, errorCode: resolution.errorCode, error: resolution.error, durationMs };
       }
 
-      const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(settingsObj as any);
+      const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(settingsObj);
       const settingsSecretsKey = deriveSettingsSecretsKeyForCredentials(credentials);
       const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(credentials);
 
-      let mcpConfig: { serverName: string; config: { command: string; args?: string[]; env?: Record<string, string> } };
+      let mcpConfig: { serverName: string; config: McpServerConfig };
       try {
         const materialized = await materializeMcpServerConfigRecord({
           resolved: resolution.resolved,
@@ -201,7 +202,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
       }
 
       try {
-        const tools = await probeMcpStdioServerToolsImpl({ config: mcpConfig.config as any, baseEnv: depsEnv });
+        const tools = await probeMcpStdioServerToolsImpl({ config: mcpConfig.config, baseEnv: depsEnv });
         const toolNames = tools.map((t) => t.name);
         const durationMs = Math.max(0, nowMs(params.deps?.nowMs) - startedAt);
         return {
@@ -270,7 +271,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
           refresh: 'force',
         });
         const settingsObj = accountSettingsContext?.settings ?? {};
-        const accountMcpSettings = readMcpServersSettingsFromAccountSettings(settingsObj as any);
+        const accountMcpSettings = readMcpServersSettingsFromAccountSettings(settingsObj);
         const detected = await detectProviderMcpServersImpl({
           directory: parsed.data.directory,
           providers: undefined,

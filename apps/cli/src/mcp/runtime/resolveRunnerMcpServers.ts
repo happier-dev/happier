@@ -42,7 +42,7 @@ export async function resolveRunnerMcpServers(params: Readonly<{
     return { happierMcpServer: builtIn.happierMcpServer, mcpServers: builtIn.mcpServers };
   }
 
-  const mcpSettings = readMcpServersSettingsFromAccountSettings(accountSettings as any);
+  const mcpSettings = readMcpServersSettingsFromAccountSettings(accountSettings);
   const resolvedSelection = resolveManagedSessionMcpSelectionForDirectory({
     settings: mcpSettings,
     machineId: params.machineId,
@@ -50,7 +50,7 @@ export async function resolveRunnerMcpServers(params: Readonly<{
     selection: readSessionMcpSelectionV1FromMetadata(params.sessionMetadata ?? null),
   });
 
-  const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(accountSettings as any);
+  const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(accountSettings);
   const settingsSecretsKey = deriveSettingsSecretsKeyForCredentials(params.credentials);
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
 

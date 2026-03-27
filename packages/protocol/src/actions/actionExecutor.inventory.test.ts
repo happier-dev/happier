@@ -657,6 +657,19 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
   });
 
+  it('rejects action.spec.search when it is not surfaced on the current surface', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('action.spec.search', { query: '', limit: 5 }, { surface: 'cli' });
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'action_disabled',
+    });
+  });
+
   it('rejects executing actions that are not surfaced on the current surface', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -667,6 +680,22 @@ describe('createActionExecutor (inventory/discovery)', () => {
       ok: false,
       errorCode: 'action_disabled',
       error: 'action_disabled',
+    });
+  });
+
+  it('preserves allowlisted thrown error codes and messages when deps throw plain objects', async () => {
+    const deps = createDeps();
+    deps.sessionSendMessage = vi.fn(async () => {
+      throw { code: 'session_not_found', message: 'Session was not found.' };
+    });
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('session.message.send', { sessionId: 's1', message: 'Hello' });
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'session_not_found',
+      error: 'Session was not found.',
     });
   });
 });
