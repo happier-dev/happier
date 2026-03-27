@@ -12,6 +12,8 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 
       - tapOn:
           id: welcome-create-account
+          retryTapIfNoChange: true
+          waitToSettleTimeoutMs: 1000
 
       # After login, the main header action for starting a new session should appear.
       - assertVisible:

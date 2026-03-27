@@ -48,29 +48,8 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     commands:
       - runFlow:
           file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
-      # If our Metro URL already appears in the discovered list, prefer tapping
-      # it directly (fast path).
       - runFlow:
-          when:
-            visible: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-          commands:
-            - tapOn: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-      # Otherwise, add the Metro URL manually (works for non-default ports and
-      # when the Dev Client's discovery list is stale).
-      - runFlow:
-          when:
-            notVisible: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-          commands:
-            - tapOn: "New development server"
-            - assertVisible: "Connect"
-            # The default input value varies by device; match by the 8081
-            # suffix rather than a hard-coded hostname.
-            - tapOn:
-                text: "http://.*:8081"
-            - eraseText
-            - inputText: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-            - tapOn:
-                text: "Connect"
+          file: connectUsingManualEntry.yaml
 
 - runFlow:
     when:
@@ -79,22 +58,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
       - runFlow:
           file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
       - runFlow:
-          when:
-            visible: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-          commands:
-            - tapOn: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-      - runFlow:
-          when:
-            notVisible: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-          commands:
-            - tapOn: "New development server"
-            - assertVisible: "Connect"
-            - tapOn:
-                text: "http://.*:8081"
-            - eraseText
-            - inputText: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-            - tapOn:
-                text: "Connect"
+          file: connectUsingManualEntry.yaml
 
 - runFlow:
     when:
@@ -102,29 +66,8 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     commands:
       - runFlow:
           file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
-      # Prefer fetching the discovered server list first (more reliable than
-      # manually editing the URL input across Dev Client versions).
       - runFlow:
-          when:
-            visible: "Fetch development servers"
-          commands:
-            - tapOn: "Fetch development servers"
-      - runFlow:
-          when:
-            visible: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-          commands:
-            - tapOn: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-      - runFlow:
-          when:
-            notVisible: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-          commands:
-            # Fallback: focus the URL input and replace it with the Metro URL.
-            - tapOn:
-                text: "http://.*:8081"
-            - eraseText
-            - inputText: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-            - tapOn:
-                text: "Connect"
+          file: connectUsingManualEntry.yaml
 
 - runFlow:
     when:
@@ -132,29 +75,23 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     commands:
       - runFlow:
           file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
-      # Prefer the deterministic "New development server" path, since discovered
-      # server list items can disappear immediately after tapping (making
-      # conditional flows hard to express reliably).
-      - tapOn: "New development server"
-      - assertVisible: "Connect"
-      - tapOn:
-          text: "http://.*:8081"
-      - eraseText
-      - inputText: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-      - tapOn:
-          text: "Connect"
+      - runFlow:
+          file: connectUsingManualEntry.yaml
 
-# After tapping "Connect", wait for either:
-# - the real Happier UI to render, or
-# - an actionable Dev Client failure surface ("Error loading app").
-#
-# Note: The Dev Client bundling progress overlay is not consistently visible to
-# Maestro (accessibility), so do not wait for "Bundling ..." text. Instead,
-# wait for our own stable `testID`-backed surfaces.
+# Wait for the app surface to appear. Avoid waiting on `testID` surfaces here:
+# the Expo Dev Client can show blocking overlays that hide those nodes from
+# Maestro. The follow-up flows dismiss overlays again and then wait on `id`
+# selectors inside the real Happier UI.
 - extendedWaitUntil:
-    visible:
-      id: welcome-hero
+    visible: "(Error loading app|This is the developer menu.*|Go home|Loading from|Bundling.*|Downloading.*|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?)"
     timeout: 480000
+
+# Dismiss dev-only overlays (not our UI).
+- runFlow:
+    file: dismissDeveloperMenuMaybe.yaml
+
+- runFlow:
+    file: dismissExpoDevMenuOverlayMaybe.yaml
 
 - runFlow:
     when:
@@ -164,54 +101,36 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
       # toast and retry once.
       - tapOn:
           point: 95%,40%
-      # If the app UI is already visible, the toast is stale/non-blocking; do
-      # not attempt to reconnect (that can steal focus and make the run flaky).
+      # Retry the connect UX (best-effort) if the app surface is still missing.
       - runFlow:
           when:
-            notVisible:
-              id: welcome-hero
+            notVisible: "(Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?)"
           commands:
             - runFlow:
                 when:
-                  visible: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
+                  visible: "DEVELOPMENT SERVERS"
                 commands:
-                  - tapOn: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
+                  - runFlow:
+                      file: connectUsingManualEntry.yaml
+            - runFlow:
+                when:
+                  visible: "Development servers"
+                commands:
+                  - runFlow:
+                      file: connectUsingManualEntry.yaml
             - runFlow:
                 when:
                   visible: "Connect"
                 commands:
                   - runFlow:
-                      when:
-                        visible: "Fetch development servers"
-                      commands:
-                        - tapOn: "Fetch development servers"
-                  - runFlow:
-                      when:
-                        visible: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-                      commands:
-                        - tapOn: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-                  - runFlow:
-                      when:
-                        notVisible: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-                      commands:
-                        - tapOn:
-                            text: "http://.*:8081"
-                        - eraseText
-                        - inputText: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
-                        - tapOn:
-                            text: "Connect"
+                      file: connectUsingManualEntry.yaml
             - extendedWaitUntil:
-                visible:
-                  id: welcome-hero
+                visible: "(Error loading app|This is the developer menu.*|Go home|Loading from|Bundling.*|Downloading.*|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?)"
                 timeout: 240000
-
-- extendedWaitUntil:
-    visible:
-      id: welcome-hero
-    timeout: 480000
-
-- runFlow:
-    file: dismissDeveloperMenuMaybe.yaml
-
-- runFlow:
-    file: dismissExpoDevMenuOverlayMaybe.yaml
+            - runFlow:
+                file: dismissDeveloperMenuMaybe.yaml
+            - runFlow:
+                file: dismissExpoDevMenuOverlayMaybe.yaml
+            - extendedWaitUntil:
+                visible: "(Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?)"
+                timeout: 240000

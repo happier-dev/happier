@@ -13,28 +13,40 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: _shared/loginCreateAccount.yaml
 
 - runFlow:
-    file: _shared/openDevMessagesDemo.yaml
+    file: _shared/gotoNewSessionComposer.yaml
 
-# Wait for the demo transcript to render before swiping.
+# Create a real session by sending a message that contains a wide table and a wide code fence.
+- tapOn:
+    id: new-session-composer-input
+- inputText: |
+    Wide markdown scroll repro:
+
+    | col_0 | col_1 | col_2 | col_3 | col_4 | col_5 | col_6 | col_7 | col_8 | col_9 | col_10 | col_11 | col_12 | col_13 | col_14 | col_15 |
+    | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+    | a | b | c | d | e | f | g | h | i | j | k | l | m | n | o | TABLE_SENTINEL_RIGHT |
+
+    ```text
+    00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 CODE_SENTINEL_RIGHT
+    ```
+
+- tapOn:
+    id: new-session-composer-send
+
+# Wait for the transcript to render the markdown content before swiping.
 - extendedWaitUntil:
-    visible:
-      id: markdown-table-scroll
+    visible: "Wide markdown scroll repro:"
     timeout: 240000
 
 # Table horizontal scroll (sentinel is offscreen to the right).
-- assertVisible:
-    id: markdown-table-scroll
 - swipe:
     direction: LEFT
     element:
       id: markdown-table-scroll
-- assertVisible: "MOBILE_E2E_TABLE_SENTINEL_RIGHT"
+- assertVisible: "TABLE_SENTINEL_RIGHT"
 
 # Code block horizontal scroll (sentinel is offscreen to the right).
-- assertVisible:
-    id: markdown-code-block-scroll
 - swipe:
     direction: LEFT
     element:
       id: markdown-code-block-scroll
-- assertVisible: "MOBILE_E2E_CODE_SENTINEL_RIGHT"
+- assertVisible: "CODE_SENTINEL_RIGHT"

@@ -46,3 +46,10 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     visible:
       id: welcome-hero
     timeout: 240000
+
+# Sanity-check that the configured server is reachable/compatible by waiting
+# for the Welcome auth actions to become available again.
+- extendedWaitUntil:
+    visible:
+      id: welcome-create-account
+    timeout: 240000

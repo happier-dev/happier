@@ -5,5 +5,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - tapOn:
     id: main-header-start-new-session
 
-- assertVisible:
-    id: new-session-composer-input
+- extendedWaitUntil:
+    visible:
+      id: new-session-composer-input
+    timeout: 60000

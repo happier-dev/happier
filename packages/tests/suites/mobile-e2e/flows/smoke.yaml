@@ -11,6 +11,8 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - runFlow:
     file: F4.modeControl.yaml
 - runFlow:
+    file: F7.markdownHorizontalScroll.yaml
+- runFlow:
     file: F8.keyboardAndNavigationSmoke.yaml
 - runFlow:
     file: F9.agentInputChipsAndPopovers.yaml

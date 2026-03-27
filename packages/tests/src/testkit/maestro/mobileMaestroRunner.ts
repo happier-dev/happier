@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { createRunDirs } from '../runDir';
 import { resolveDeviceVisibleBaseUrl } from '../mobile/resolveDeviceHost';
 import { parseMaestroArgs as defaultParseMaestroArgs } from '../../../scripts/runMaestroWithHeartbeat.shared.mjs';
+import { defaultPrimePlatformAppLaunch } from './primePlatformAppLaunch';
 
 export type StartedServerLike = Readonly<{
   baseUrl: string;
@@ -30,18 +31,32 @@ export type MobileMaestroRunResult = Readonly<{
 
 export type MobileMaestroDeps = Readonly<{
   startServerLight: (params: { testDir: string; extraEnv?: NodeJS.ProcessEnv }) => Promise<StartedServerLike>;
-  startDevClientMetro: (params: { testDir: string; extraEnv?: NodeJS.ProcessEnv }) => Promise<StartedDevClientMetroLike>;
+  startDevClientMetro: (params: {
+    testDir: string;
+    extraEnv?: NodeJS.ProcessEnv;
+    port?: number;
+  }) => Promise<StartedDevClientMetroLike>;
   runMaestro: (params: {
     cwd: string;
     env: NodeJS.ProcessEnv;
     maestroBin: string;
     args: string[];
   }) => Promise<{ exitCode: number }>;
+  isAppInstalled: (params: {
+    env: NodeJS.ProcessEnv;
+    platform: 'android' | 'ios';
+    appId: string;
+  }) => Promise<boolean>;
   adbReversePorts: (params: {
     env: NodeJS.ProcessEnv;
     platform: string;
     urls: string[];
   }) => Readonly<{ enabled: boolean; reversedPorts: number[] }>;
+  primeAppLaunch: (params: {
+    env: NodeJS.ProcessEnv;
+    platform: 'android' | 'ios';
+    appId: string;
+  }) => Promise<void>;
   resolveMaestroBin: (env: NodeJS.ProcessEnv) => string;
   parseMaestroArgs: (argv: string[]) => {
     flows: string | null;
@@ -76,6 +91,102 @@ function extractUrlPort(url: string): number | null {
   } catch {
     return null;
   }
+}
+
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/$/, '');
+}
+
+async function warmExpoDevClientBundle(params: Readonly<{
+  platform: 'android' | 'ios';
+  hostMetroUrl: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}>): Promise<void> {
+  const baseUrl = params.hostMetroUrl.replace(/\/$/, '');
+  const manifestUrl = `${baseUrl}/?platform=${params.platform}`;
+  const signal = params.signal ?? AbortSignal.timeout(params.timeoutMs);
+
+  const manifestRes = await fetch(manifestUrl, {
+    method: 'GET',
+    signal,
+  });
+  if (!manifestRes.ok) {
+    throw new Error(`Failed to warm Expo Dev Client bundle: manifest not ok (${manifestRes.status})`);
+  }
+  const manifest = await manifestRes.json().catch(() => null) as any;
+  const launchAssetUrlRaw = manifest?.launchAsset?.url;
+  if (typeof launchAssetUrlRaw !== 'string' || !launchAssetUrlRaw.trim()) return;
+
+  const hostBase = new URL(baseUrl);
+  const launchAssetUrl = new URL(launchAssetUrlRaw);
+  launchAssetUrl.protocol = hostBase.protocol;
+  launchAssetUrl.host = hostBase.host;
+
+  const bundleRes = await fetch(launchAssetUrl.toString(), {
+    method: 'GET',
+    signal,
+  });
+  if (!bundleRes.ok) {
+    throw new Error(`Failed to warm Expo Dev Client bundle: bundle not ok (${bundleRes.status})`);
+  }
+
+  await bundleRes.arrayBuffer().catch(() => {});
+}
+
+async function withHardTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  if (timeoutMs <= 0 || !Number.isFinite(timeoutMs)) return await promise;
+  return await new Promise<T>((resolve, reject) => {
+    const timeoutId = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function defaultIsAppInstalled(params: Readonly<{
+  env: NodeJS.ProcessEnv;
+  platform: 'android' | 'ios';
+  appId: string;
+}>): Promise<boolean> {
+  if (params.platform === 'ios') {
+    try {
+      const outcome = spawnSync(
+        'xcrun',
+        ['simctl', 'get_app_container', 'booted', params.appId, 'app'],
+        { stdio: 'ignore', timeout: 5000, env: params.env },
+      );
+      return outcome.status === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  if (params.platform === 'android') {
+    try {
+      const serial = String(params.env.HAPPIER_E2E_ANDROID_SERIAL ?? params.env.ANDROID_SERIAL ?? '').trim();
+      const baseArgs = serial ? ['-s', serial] : [];
+      const outcome = spawnSync(
+        adbCommand(params.env),
+        [...baseArgs, 'shell', 'pm', 'path', params.appId],
+        { encoding: 'utf8', timeout: 5000, env: params.env },
+      );
+      if (outcome.status !== 0) return false;
+      const stdout = String((outcome.stdout ?? '')).trim();
+      return stdout.includes('package:');
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function runAdbReverseIfEnabled(params: Readonly<{
@@ -146,6 +257,17 @@ export async function runMobileMaestro(
     (String(params.env.HAPPIER_E2E_MOBILE_APP_ID ?? '').trim()) ||
     'dev.happier.app.dev';
   const platform = parsed.platform ? parsed.platform.trim() : '';
+  const mobilePlatform = platform === 'android' || platform === 'ios' ? platform : null;
+
+  const isAppInstalled = deps.isAppInstalled ?? defaultIsAppInstalled;
+  if (mobilePlatform) {
+    const installed = await isAppInstalled({ env: params.env, platform: mobilePlatform, appId });
+    if (!installed) {
+      throw new Error(
+        `Mobile e2e cannot run: app "${appId}" is not installed on the target ${mobilePlatform} device/simulator. Install a development build first (see packages/tests/suites/mobile-e2e/README.md).`,
+      );
+    }
+  }
 
   const run = createRunDirs({
     runLabel: 'mobile-maestro',
@@ -157,7 +279,7 @@ export async function runMobileMaestro(
 
   const manageMetro = isTruthyEnv(params.env.HAPPIER_E2E_MOBILE_MANAGE_METRO ?? '1');
   const explicitHostMetroUrl = String(params.env.HAPPIER_E2E_DEV_CLIENT_METRO_URL ?? '').trim();
-  const hostMetroUrlFromEnv = explicitHostMetroUrl || 'http://127.0.0.1:8081';
+  const hostMetroUrlFromEnv = explicitHostMetroUrl || (manageMetro ? '' : 'http://127.0.0.1:8081');
 
   const explicitServerUrl =
     (parsed.serverUrl ? parsed.serverUrl.trim() : '') ||
@@ -171,13 +293,29 @@ export async function runMobileMaestro(
     if (!deps.startDevClientMetro) {
       throw new Error('Missing startDevClientMetro dependency.');
     }
+    const deviceHostOverride = String(params.env.HAPPIER_E2E_MOBILE_DEVICE_HOST ?? '').trim();
+    // We default to `adb reverse` on Android, so Metro is reachable on loopback.
+    // Prefer `127.0.0.1` unless the caller overrides the device host.
+    const androidPackagerHost = deviceHostOverride || '127.0.0.1';
+    const metroEnv: NodeJS.ProcessEnv = {
+      ...params.env,
+      ...(platform === 'android'
+        ? {
+            EXPO_PACKAGER_HOSTNAME: androidPackagerHost,
+            REACT_NATIVE_PACKAGER_HOSTNAME: androidPackagerHost,
+          }
+        : null),
+    };
     metro = await deps.startDevClientMetro({
       testDir: run.testDir('expo-metro'),
-      extraEnv: params.env,
+      extraEnv: metroEnv,
+      port: explicitHostMetroUrl ? extractUrlPort(hostMetroUrlFromEnv) ?? undefined : undefined,
     });
   }
 
-  const hostMetroUrl = metro?.baseUrl ? metro.baseUrl.replace(/\/$/, '') : hostMetroUrlFromEnv;
+  const hostMetroUrl = metro?.baseUrl
+    ? metro.baseUrl.replace(/\/$/, '')
+    : hostMetroUrlFromEnv || 'http://127.0.0.1:8081';
   if (explicitServerUrl) {
     server = { baseUrl: explicitServerUrl };
   } else {
@@ -207,19 +345,83 @@ export async function runMobileMaestro(
     urls: [server.baseUrl, hostMetroUrl].filter(Boolean),
   });
 
-  const mobilePlatform = platform === 'android' || platform === 'ios' ? platform : null;
-
-  const deviceServerUrl = server.baseUrl && mobilePlatform
+  const deviceServerUrlRaw = server.baseUrl && mobilePlatform
     ? resolveDeviceVisibleBaseUrl({ platform: mobilePlatform, baseUrl: server.baseUrl, env: params.env })
     : server.baseUrl;
 
-  const deviceMetroUrl = hostMetroUrl && mobilePlatform
+  const deviceMetroUrlRaw = hostMetroUrl && mobilePlatform
     ? resolveDeviceVisibleBaseUrl({ platform: mobilePlatform, baseUrl: hostMetroUrl, env: params.env })
     : hostMetroUrl;
+
+  const deviceServerUrl = (() => {
+    if (platform !== 'android' || !adbReverse.enabled) return deviceServerUrlRaw;
+    const port = deviceServerUrlRaw ? extractUrlPort(deviceServerUrlRaw) : null;
+    if (!port || !adbReverse.reversedPorts.includes(port)) return deviceServerUrlRaw;
+    try {
+      const parsed = new URL(deviceServerUrlRaw);
+      parsed.hostname = '127.0.0.1';
+      parsed.port = String(port);
+      return stripTrailingSlash(parsed.toString());
+    } catch {
+      return deviceServerUrlRaw;
+    }
+  })();
+
+  const deviceMetroUrl = (() => {
+    if (platform !== 'android' || !adbReverse.enabled) return deviceMetroUrlRaw;
+    const port = deviceMetroUrlRaw ? extractUrlPort(deviceMetroUrlRaw) : null;
+    if (!port || !adbReverse.reversedPorts.includes(port)) return deviceMetroUrlRaw;
+    try {
+      const parsed = new URL(deviceMetroUrlRaw);
+      parsed.hostname = 'localhost';
+      parsed.port = String(port);
+      return stripTrailingSlash(parsed.toString());
+    } catch {
+      return deviceMetroUrlRaw;
+    }
+  })();
 
   const maestroBin = deps.resolveMaestroBin
     ? deps.resolveMaestroBin(params.env)
     : defaultDeps.resolveMaestroBin(params.env);
+
+  const warmBundleEnabled = isTruthyEnv(params.env.HAPPIER_E2E_MOBILE_WARM_DEV_CLIENT_BUNDLE ?? '0');
+  if (warmBundleEnabled && metro && (platform === 'android' || platform === 'ios')) {
+    // eslint-disable-next-line no-console
+    console.log(`[tests] warming Expo Dev Client bundle (${platform})`);
+    const warmTimeoutMs =
+      Number.parseInt(params.env.HAPPIER_E2E_MOBILE_WARM_DEV_CLIENT_BUNDLE_TIMEOUT_MS ?? '60000', 10) || 60000;
+    const abortController = new AbortController();
+    const hardTimeoutMs = Math.max(50, warmTimeoutMs + 50);
+    const hardTimeoutId = setTimeout(() => abortController.abort(), warmTimeoutMs);
+    try {
+      await withHardTimeout(
+        warmExpoDevClientBundle({
+          platform,
+          hostMetroUrl,
+          timeoutMs: warmTimeoutMs,
+          signal: abortController.signal,
+        }),
+        hardTimeoutMs,
+      );
+    } catch (err) {
+      // Best-effort optimization only: warming reduces Dev Client flake from first-load
+      // bundling delays, but failures should not prevent the actual Maestro run.
+      // eslint-disable-next-line no-console
+      console.warn(`[tests] warm Expo Dev Client bundle failed (${platform}): ${String((err as any)?.message ?? err)}`);
+    } finally {
+      clearTimeout(hardTimeoutId);
+    }
+  }
+
+  const primeAppLaunch = deps.primeAppLaunch ?? defaultPrimePlatformAppLaunch;
+  if (mobilePlatform === 'android' && isTruthyEnv(params.env.HAPPIER_E2E_ANDROID_PRIME_APP_LAUNCH ?? '1')) {
+    await primeAppLaunch({
+      env: params.env,
+      platform: mobilePlatform,
+      appId,
+    });
+  }
 
   writeFileSync(
     manifestPath,

@@ -16,12 +16,12 @@ async function main() {
       env: process.env,
     },
     {
-      startDevClientMetro: async ({ testDir, extraEnv }) => {
+      startDevClientMetro: async ({ testDir, extraEnv, port }) => {
         const mergedEnv: NodeJS.ProcessEnv = {
           ...process.env,
           ...extraEnv,
         };
-        const started = await startUiDevClientMetro({ testDir, env: mergedEnv });
+        const started = await startUiDevClientMetro({ testDir, env: mergedEnv, port });
         return {
           baseUrl: started.baseUrl,
           port: started.port,
