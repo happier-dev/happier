@@ -44,7 +44,12 @@ function NewSessionScreenInner() {
 
 function NewSessionScreen() {
     const baseModel = useSessionGettingStartedGuidanceBaseModel();
-    const { dataId } = useLocalSearchParams<{ dataId?: string; spawnServerId?: string }>();
+    const { dataId, machineId, directory } = useLocalSearchParams<{
+        dataId?: string;
+        spawnServerId?: string;
+        machineId?: string;
+        directory?: string;
+    }>();
 
     const hasSeededDraftIntent = React.useMemo(() => {
         const persistedDraft = loadNewSessionDraft();
@@ -56,7 +61,14 @@ function NewSessionScreen() {
         });
     }, [dataId]);
 
-    if (baseModel.kind === 'connect_machine' && !hasSeededDraftIntent) {
+    const hasSeededRouteIntent = React.useMemo(() => {
+        return (
+            (typeof machineId === 'string' && machineId.trim().length > 0)
+            || (typeof directory === 'string' && directory.trim().length > 0)
+        );
+    }, [machineId, directory]);
+
+    if (baseModel.kind === 'connect_machine' && !hasSeededDraftIntent && !hasSeededRouteIntent) {
         return <SessionGettingStartedGuidance variant="newSessionBlocking" />;
     }
     return <NewSessionScreenInner />;

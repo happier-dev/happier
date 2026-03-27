@@ -92,6 +92,13 @@ export type AgentUiBehavior = Readonly<{
                 profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
                 settings: Settings;
             }) => readonly DirectBrowseSourceOption[];
+            resolveLockedSourceOption?: (ctx: {
+                agentId: AgentId;
+                sourceOptions: readonly DirectBrowseSourceOption[];
+                agentOptionState?: Record<string, unknown> | null;
+                profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
+                settings: Settings;
+            }) => DirectBrowseSourceOption | null;
             buildLinkEnsureRequestExtras?: (ctx: {
                 agentId: AgentId;
                 source: DirectSessionsSource;

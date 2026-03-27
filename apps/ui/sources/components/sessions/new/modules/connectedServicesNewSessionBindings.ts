@@ -2,9 +2,8 @@ import type { ConnectedServiceId } from '@happier-dev/agents';
 
 import type {
   ConnectedServicesProfileOption,
-  ConnectedServicesServiceBinding,
 } from '@/components/sessions/new/components/ConnectedServicesAuthModal';
-import { CONNECTED_SERVICES_BINDINGS_KEY } from '@/components/sessions/new/components/ConnectedServicesAuthModal';
+import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { filterConnectedServiceV2ProfilesForAgent } from '@/sync/domains/connectedServices/filterConnectedServiceV2ProfilesForAgent';
 import {
   resolveConnectedServiceDefaultProfileId,
@@ -65,14 +64,6 @@ export function buildConnectedServiceProfileOptionsByServiceId(params: Readonly<
   }
 
   return out;
-}
-
-export function parseConnectedServicesBindingsByServiceIdFromAgentOptionState(params: Readonly<{
-  agentOptionState: Record<string, unknown> | null;
-}>): Readonly<Record<string, ConnectedServicesServiceBinding | undefined>> {
-  const raw = params.agentOptionState?.[CONNECTED_SERVICES_BINDINGS_KEY];
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  return raw as Record<string, ConnectedServicesServiceBinding | undefined>;
 }
 
 export function buildConnectedServicesBindingsPayload(params: Readonly<{

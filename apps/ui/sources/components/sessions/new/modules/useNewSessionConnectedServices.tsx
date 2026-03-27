@@ -10,16 +10,18 @@ import type { ConnectedServiceId } from '@happier-dev/agents';
 
 import {
   ConnectedServicesAuthModal,
+} from '@/components/sessions/new/components/ConnectedServicesAuthModal';
+import {
   CONNECTED_SERVICES_BINDINGS_KEY,
   type ConnectedServicesServiceBinding,
-} from '@/components/sessions/new/components/ConnectedServicesAuthModal';
+} from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import {
   buildConnectedServiceProfileOptionsByServiceId,
   buildConnectedServicesBindingsPayload,
-  parseConnectedServicesBindingsByServiceIdFromAgentOptionState,
   resolveAgentSupportedConnectedServiceIds,
   type ConnectedServicesBindingsPayloadV1,
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
+import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 
 export type NewSessionConnectedServicesResult = Readonly<{
   connectedServicesBindingsPayload: ConnectedServicesBindingsPayloadV1 | null;

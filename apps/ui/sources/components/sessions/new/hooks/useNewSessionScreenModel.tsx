@@ -100,6 +100,9 @@ import { NewSessionMachineSelectionContent } from '@/components/sessions/new/com
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
+import { useProfile as useAccountProfile } from '@/sync/store/hooks';
+import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal';
+import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption';
 
 
 // Configuration constants
@@ -204,6 +207,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const settings = useSettings() ?? settingsDefaults;
+    const accountProfile = useAccountProfile();
     const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
     React.useEffect(() => {
         return subscribeActiveServer((snapshot) => {
@@ -910,29 +914,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         useMachinePickerSearch,
     ]);
 
-    const resumePopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
-        renderContent: ({ requestClose }) => (
-            <NewSessionResumeSelectionContent
-                value={resumeSessionId}
-                onChangeValue={setResumeSessionId}
-                onSave={(nextValue) => {
-                    setResumeSessionId(nextValue);
-                    requestClose();
-                }}
-                onClear={() => {
-                    setResumeSessionId('');
-                    requestClose();
-                }}
-                onClose={requestClose}
-                agentType={agentType}
-                maxHeight={460}
-                showInlineHeader={false}
-            />
-        ),
-        maxHeightCap: 460,
-        maxWidthCap: 460,
-    }), [agentType, resumeSessionId]);
-
     React.useEffect(() => {
         if (!selectedProfileId) return;
         const pending = pendingProfileSelectionRef.current;
@@ -1170,6 +1151,63 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         return Object.keys(merged).length > 0 ? merged : null;
     }, [agentOptionState, agentType, connectedServicesBindingsPayload]);
+
+    const resumePopover = React.useMemo<AgentInputContentPopoverConfig>(() => {
+        const browseEnabled = Boolean(selectedMachineId) && canBrowseDirectSessions(agentType);
+
+        return {
+            renderContent: ({ requestClose }) => (
+                <NewSessionResumeSelectionContent
+                    value={resumeSessionId}
+                    onChangeValue={setResumeSessionId}
+                    onSave={(nextValue) => {
+                        setResumeSessionId(nextValue);
+                        requestClose();
+                    }}
+                    onClear={() => {
+                        setResumeSessionId('');
+                        requestClose();
+                    }}
+                    onClose={requestClose}
+                    agentType={agentType}
+                    maxHeight={460}
+                    showInlineHeader={false}
+                    resumeBrowse={browseEnabled ? {
+                        enabled: true,
+                        onBrowse: async () => {
+                            if (!selectedMachineId) return null;
+                            const source = resolveDirectBrowseLockedSource({
+                                providerId: agentType as any,
+                                agentOptionState,
+                                profile: accountProfile,
+                                settings,
+                            });
+                            if (!source) return null;
+                            return await openDirectSessionsResumeIdPickerModal({
+                                lockScope: {
+                                    machineId: selectedMachineId,
+                                    serverId: targetServerId ?? null,
+                                    providerId: agentType as any,
+                                    source,
+                                },
+                                title: t('directSessions.browseTitle'),
+                            });
+                        },
+                    } : null}
+                />
+            ),
+            maxHeightCap: 460,
+            maxWidthCap: 460,
+        };
+    }, [
+        accountProfile,
+        agentOptionState,
+        agentType,
+        resumeSessionId,
+        selectedMachineId,
+        settings,
+        targetServerId,
+    ]);
 
     const {
         authoringContext: newSessionAuthoringContext,

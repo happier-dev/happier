@@ -36,6 +36,15 @@ import {
 type DirectBrowseProviderId = DirectSessionsProviderId;
 type AppTheme = typeof lightTheme;
 
+export type DirectSessionsBrowseScopeLock = Readonly<{
+    machineId: string;
+    serverId?: string | null;
+    providerId: DirectSessionsProviderId;
+    source: DirectSessionsSource;
+}>;
+
+export type DirectSessionsBrowseInteraction = 'openSession' | 'pickRemoteSessionId';
+
 type DirectBrowseCandidate = Readonly<{
     remoteSessionId: string;
     title?: string;
@@ -120,7 +129,14 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
     },
 }));
 
-export const DirectSessionsBrowseScreen = React.memo(() => {
+export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
+    interaction?: DirectSessionsBrowseInteraction;
+    lockScope?: DirectSessionsBrowseScopeLock | null;
+    onPickRemoteSessionId?: (remoteSessionId: string) => void;
+}>) => {
+    const interaction: DirectSessionsBrowseInteraction = props.interaction ?? 'openSession';
+    const lockScope = props.lockScope ?? null;
+    const locked = Boolean(lockScope);
     const router = useRouter();
     const { theme } = useUnistyles() as { theme: AppTheme };
     const itemDensity = useResolvedItemDensity(undefined);
@@ -136,19 +152,30 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
         [],
     );
     const providerIds = React.useMemo<readonly DirectBrowseProviderId[]>(() => providers.map((provider) => provider.id), [providers]);
-    const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => getPreferredMachineId(machines, null));
+    const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => (
+        lockScope?.machineId ?? getPreferredMachineId(machines, null)
+    ));
     const [selectedProviderId, setSelectedProviderId] = React.useState<DirectBrowseProviderId | null>(() => (
-        getPreferredDirectBrowseProviderId(providerIds, null)
+        lockScope?.providerId ?? getPreferredDirectBrowseProviderId(providerIds, null)
     ));
     const sourceOptions = React.useMemo(() => {
+        if (lockScope) {
+            return [{
+                key: 'locked',
+                label: t('directSessions.browseSources'),
+                source: lockScope.source,
+            }];
+        }
         if (!selectedProviderId) return [];
         return resolveDirectBrowseSourceOptions({
             providerId: selectedProviderId,
             profile,
             settings,
         });
-    }, [profile, selectedProviderId, settings]);
-    const [selectedSourceKey, setSelectedSourceKey] = React.useState<string | null>(() => sourceOptions[0]?.key ?? null);
+    }, [lockScope, profile, selectedProviderId, settings]);
+    const [selectedSourceKey, setSelectedSourceKey] = React.useState<string | null>(() => (
+        lockScope ? 'locked' : sourceOptions[0]?.key ?? null
+    ));
     const [candidates, setCandidates] = React.useState<readonly DirectBrowseCandidate[]>([]);
     const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [loading, setLoading] = React.useState(false);
@@ -161,23 +188,32 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
     const [sourceMenuOpen, setSourceMenuOpen] = React.useState(false);
     const loadGenerationRef = React.useRef(0);
     const effectiveSelectedMachineId = React.useMemo(() => {
+        if (lockScope) return lockScope.machineId;
         return getPreferredMachineId(machines, selectedMachineId);
-    }, [machines, selectedMachineId]);
+    }, [lockScope, machines, selectedMachineId]);
 
     React.useEffect(() => {
+        if (lockScope) return;
         if (effectiveSelectedMachineId && effectiveSelectedMachineId !== selectedMachineId) {
             setSelectedMachineId(effectiveSelectedMachineId);
         }
-    }, [effectiveSelectedMachineId, selectedMachineId]);
+    }, [effectiveSelectedMachineId, lockScope, selectedMachineId]);
 
     React.useEffect(() => {
+        if (lockScope) return;
         const preferredProviderId = getPreferredDirectBrowseProviderId(providerIds, selectedProviderId);
         if (preferredProviderId !== selectedProviderId) {
             setSelectedProviderId(preferredProviderId);
         }
-    }, [providerIds, selectedProviderId]);
+    }, [lockScope, providerIds, selectedProviderId]);
 
     React.useEffect(() => {
+        if (lockScope) {
+            if (selectedSourceKey !== 'locked') {
+                setSelectedSourceKey('locked');
+            }
+            return;
+        }
         const defaultKey = sourceOptions[0]?.key ?? null;
         if (!defaultKey) {
             setSelectedSourceKey(null);
@@ -187,11 +223,11 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
         if (!hasSelectedSource) {
             setSelectedSourceKey(defaultKey);
         }
-    }, [selectedSourceKey, sourceOptions]);
+    }, [lockScope, selectedSourceKey, sourceOptions]);
 
     const selectedSource = React.useMemo(
-        () => sourceOptions.find((option) => option.key === selectedSourceKey)?.source ?? sourceOptions[0]?.source ?? null,
-        [selectedSourceKey, sourceOptions],
+        () => lockScope?.source ?? sourceOptions.find((option) => option.key === selectedSourceKey)?.source ?? sourceOptions[0]?.source ?? null,
+        [lockScope, selectedSourceKey, sourceOptions],
     );
     const machineMenuItems = React.useMemo(() => machines.map((machine) => ({
         id: machine.id,
@@ -236,13 +272,16 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
         }
 
         try {
-            const result = await machineDirectSessionsCandidatesList({
+            const request = {
                 machineId: effectiveSelectedMachineId,
                 providerId: selectedProviderId,
                 source: selectedSource,
                 limit: CANDIDATES_PAGE_LIMIT,
                 ...(opts?.cursor ? { cursor: opts.cursor } : {}),
-            });
+            };
+            const result = lockScope?.serverId
+                ? await machineDirectSessionsCandidatesList(request, { serverId: lockScope.serverId })
+                : await machineDirectSessionsCandidatesList(request);
 
             if (loadGenerationRef.current !== currentGeneration) {
                 return;
@@ -287,7 +326,7 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
                 }
             }
         }
-    }, [effectiveSelectedMachineId, selectedProviderId, selectedSource]);
+    }, [effectiveSelectedMachineId, lockScope?.serverId, selectedProviderId, selectedSource]);
 
     React.useEffect(() => {
         void loadCandidates();
@@ -301,6 +340,10 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
 
     const handleOpenCandidate = React.useCallback(async (candidate: DirectBrowseCandidate) => {
         if (!effectiveSelectedMachineId || !selectedProviderId || !selectedSource) return;
+        if (interaction === 'pickRemoteSessionId') {
+            props.onPickRemoteSessionId?.(candidate.remoteSessionId);
+            return;
+        }
         setLinkingSessionId(candidate.remoteSessionId);
         try {
             const linkEnsureExtras = resolveDirectBrowseLinkEnsureRequestExtras({
@@ -314,7 +357,7 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
             const effectiveSource: DirectSessionsSource = candidateSource && shouldUseCandidateSource(selectedSource, candidateSource)
                 ? candidateSource
                 : selectedSource;
-            const result = await machineDirectSessionLinkEnsure({
+            const request = {
                 machineId: effectiveSelectedMachineId,
                 providerId: selectedProviderId,
                 remoteSessionId: candidate.remoteSessionId,
@@ -322,7 +365,10 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
                 ...(readDirectBrowseCandidatePath(candidate.details) ? { directoryHint: readDirectBrowseCandidatePath(candidate.details)! } : {}),
                 ...linkEnsureExtras,
                 source: effectiveSource,
-            });
+            };
+            const result = lockScope?.serverId
+                ? await machineDirectSessionLinkEnsure(request, { serverId: lockScope.serverId })
+                : await machineDirectSessionLinkEnsure(request);
             if (!result.ok) {
                 Modal.alert(t('common.error'), result.error);
                 return;
@@ -333,7 +379,7 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
         } finally {
             setLinkingSessionId(null);
         }
-    }, [effectiveSelectedMachineId, router, selectedProviderId, selectedSource]);
+    }, [effectiveSelectedMachineId, interaction, lockScope?.serverId, props, router, selectedProviderId, selectedSource]);
 
     const handleLoadMore = React.useCallback(async () => {
         if (!nextCursor || loadingMore) return;
@@ -342,19 +388,20 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
 
     return (
         <ItemList style={styles.list} testID="direct-sessions-browse-modal">
-            <ItemGroup
-                style={styles.filtersGroup}
-                title={t('directSessions.browseFiltersTitle')}
-                containerStyle={styles.filtersGroupContainer}
-            >
-                {machines.length === 0 ? (
-                    <Item
-                        title={t('directSessions.browseNoMachines')}
-                        mode="info"
-                    />
-                ) : (
-                    <>
-                        <DropdownMenu
+            {!locked ? (
+                <ItemGroup
+                    style={styles.filtersGroup}
+                    title={t('directSessions.browseFiltersTitle')}
+                    containerStyle={styles.filtersGroupContainer}
+                >
+                    {machines.length === 0 ? (
+                        <Item
+                            title={t('directSessions.browseNoMachines')}
+                            mode="info"
+                        />
+                    ) : (
+                        <>
+                            <DropdownMenu
                             open={machineMenuOpen}
                             onOpenChange={setMachineMenuOpen}
                             items={machineMenuItems}
@@ -378,7 +425,7 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
                                 },
                             }}
                         />
-                        <DropdownMenu
+                            <DropdownMenu
                             open={providerMenuOpen}
                             onOpenChange={setProviderMenuOpen}
                             items={providerMenuItems}
@@ -402,7 +449,7 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
                                 },
                             }}
                         />
-                        <DropdownMenu
+                            <DropdownMenu
                             open={sourceMenuOpen}
                             onOpenChange={setSourceMenuOpen}
                             items={sourceMenuItems}
@@ -426,9 +473,10 @@ export const DirectSessionsBrowseScreen = React.memo(() => {
                                 },
                             }}
                         />
-                    </>
-                )}
-            </ItemGroup>
+                        </>
+                    )}
+                </ItemGroup>
+            ) : null}
 
             <ItemGroup title={t('directSessions.browseCandidates')}>
                 <View style={styles.searchContainer}>

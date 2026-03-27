@@ -5,6 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { InputBrowseButton } from '@/components/ui/buttons/InputBrowseButton';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -21,7 +22,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     inputSection: {
         width: '100%',
     },
+    inputRow: {
+        width: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
     inputContainer: {
+        flex: 1,
         backgroundColor: theme.colors.input.background,
         borderRadius: 10,
         paddingHorizontal: 12,
@@ -109,6 +117,10 @@ export type NewSessionResumeSelectionContentProps = Readonly<{
     onClear: () => void;
     onClose: () => void;
     agentType?: AgentId | string | null;
+    resumeBrowse?: Readonly<{
+        enabled: boolean;
+        onBrowse: () => Promise<string | null> | string | null;
+    }> | null;
     maxHeight?: number;
     showInlineHeader?: boolean;
     focusMode?: FocusMode;
@@ -197,27 +209,45 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
         props.onClear();
     }, [props]);
 
+    const handleBrowse = React.useCallback(async () => {
+        if (!props.resumeBrowse?.enabled) return;
+        const selected = await props.resumeBrowse.onBrowse();
+        const trimmed = typeof selected === 'string' ? selected.trim() : '';
+        if (!trimmed) return;
+        props.onSave(trimmed);
+    }, [props]);
+
     return (
         <View style={[styles.container, props.maxHeight ? { maxHeight: props.maxHeight } : null]}>
             <View style={styles.inputSection}>
-                <View style={styles.inputContainer}>
-                    <TextInput
-                        ref={inputRef}
-                        value={props.value}
-                        onChangeText={props.onChangeValue}
-                        placeholder={t('newSession.resume.placeholder', { agent: agentLabel })}
-                        placeholderTextColor={theme.colors.input.placeholder}
-                        autoFocus={true}
-                        style={styles.textInput}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        autoComplete="off"
-                        textContentType="none"
-                        importantForAutofill="no"
-                        returnKeyType="done"
-                        blurOnSubmit={true}
-                        multiline={false}
-                    />
+                <View style={styles.inputRow}>
+                    <View style={styles.inputContainer}>
+                        <TextInput
+                            testID="resume-id-input"
+                            ref={inputRef}
+                            value={props.value}
+                            onChangeText={props.onChangeValue}
+                            placeholder={t('newSession.resume.placeholder', { agent: agentLabel })}
+                            placeholderTextColor={theme.colors.input.placeholder}
+                            autoFocus={true}
+                            style={styles.textInput}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            autoComplete="off"
+                            textContentType="none"
+                            importantForAutofill="no"
+                            returnKeyType="done"
+                            blurOnSubmit={true}
+                            multiline={false}
+                        />
+                    </View>
+                    {props.resumeBrowse?.enabled ? (
+                        <InputBrowseButton
+                            testID="resume-id-browse-trigger"
+                            accessibilityLabel={t('newSession.resume.browse')}
+                            onPress={handleBrowse}
+                        />
+                    ) : null}
                 </View>
 
                 <View style={styles.buttonRow}>

@@ -518,7 +518,7 @@ function NotAuthenticated() {
     const serverLoadingActions = (
         <View style={styles.serverLoadingBlock}>
             <ActivityIndicator />
-            <Text style={styles.serverLoadingText}>{t('common.loading')}</Text>
+            <Text testID="welcome-server-loading" style={styles.serverLoadingText}>{t('common.loading')}</Text>
         </View>
     );
 

@@ -3,6 +3,7 @@ import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
 import { resolveCodexSpawnExtrasFromSettings, resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
 import { resolveCodexBrowseSourceOptions } from '@/agents/providers/codex/directSessions/resolveCodexBrowseSourceOptions';
 import { resolveCodexLinkEnsureRequestExtras } from '@/agents/providers/codex/directSessions/resolveCodexLinkEnsureRequestExtras';
+import { resolveCodexLockedBrowseSourceOption } from '@/agents/providers/codex/directSessions/resolveCodexLockedBrowseSourceOption';
 
 import type {
     AgentResumeExperiments,
@@ -108,6 +109,9 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
         browse: {
             order: 10,
             getSourceOptions: ({ profile, settings }) => resolveCodexBrowseSourceOptions({ profile, settings }),
+            resolveLockedSourceOption: ({ sourceOptions, agentOptionState }) => (
+                resolveCodexLockedBrowseSourceOption({ sourceOptions, agentOptionState })
+            ),
             buildLinkEnsureRequestExtras: ({ candidate, source }) => (
                 source.kind === 'codexHome'
                     ? resolveCodexLinkEnsureRequestExtras({ candidate, source })

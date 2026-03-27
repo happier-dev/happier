@@ -69,6 +69,8 @@ export function useNewSessionMachinePathState(params: Readonly<{
     });
 
     const [selectedPath, setSelectedPathState] = React.useState<string>(() => {
+        const trimmedPath = normalizePathParam(params.pathParam);
+        if (trimmedPath) return trimmedPath;
         return getBestPathForMachine(selectedMachineId);
     });
     const hasUserEditedPathRef = React.useRef(false);
@@ -105,19 +107,21 @@ export function useNewSessionMachinePathState(params: Readonly<{
         if (machineId === selectedMachineId) return;
         setSelectedMachineId(machineId);
         hasUserEditedPathRef.current = false;
-        setSelectedPathState(getBestPathForMachine(machineId));
-    }, [getBestPathForMachine, hasMachine, params.machineIdParam, selectedMachineId]);
+        const trimmedPath = normalizePathParam(params.pathParam);
+        setSelectedPathState(trimmedPath || getBestPathForMachine(machineId));
+    }, [getBestPathForMachine, hasMachine, params.machineIdParam, params.pathParam, selectedMachineId]);
 
     // Ensure a machine is pre-selected once machines have loaded (wizard expects this).
     React.useEffect(() => {
         if (selectedMachineId !== null) return;
         if (params.machines.length === 0) return;
         const machineIdToUse = resolveMachineId(null);
+        const trimmedPath = normalizePathParam(params.pathParam);
 
         setSelectedMachineId(machineIdToUse);
         hasUserEditedPathRef.current = false;
-        setSelectedPathState(getBestPathForMachine(machineIdToUse));
-    }, [getBestPathForMachine, params.machines, resolveMachineId, selectedMachineId]);
+        setSelectedPathState(trimmedPath || getBestPathForMachine(machineIdToUse));
+    }, [getBestPathForMachine, params.machines, params.pathParam, resolveMachineId, selectedMachineId]);
 
     // Keep selection valid when machine snapshots change (server/account switch, revoke, reconnect).
     React.useEffect(() => {

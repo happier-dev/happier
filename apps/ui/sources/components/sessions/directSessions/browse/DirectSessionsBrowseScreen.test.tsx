@@ -550,4 +550,45 @@ describe('DirectSessionsBrowseScreen', () => {
         expect(candidateItem?.props.title).toBe('Fresh Session');
         expect(candidateItem?.props.testID).toBe('direct-session-candidate:fresh-session-1');
     });
+
+    it('can be used as a locked picker that returns a remote session id without linking', async () => {
+        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
+
+        const onPickRemoteSessionId = vi.fn();
+
+        const screen = await renderScreen(
+            <DirectSessionsBrowseScreen
+                interaction="pickRemoteSessionId"
+                lockScope={{
+                    machineId: 'machine-2',
+                    serverId: 'server-1',
+                    providerId: 'codex',
+                    source: { kind: 'codexHome', home: 'user' },
+                }}
+                onPickRemoteSessionId={onPickRemoteSessionId}
+            />,
+        );
+
+        await flushHookEffects();
+
+        expect(candidatesListSpy).toHaveBeenCalledWith({
+            machineId: 'machine-2',
+            providerId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            limit: 50,
+        }, { serverId: 'server-1' });
+
+        expect(screen.findAllByType('DropdownMenu')).toHaveLength(0);
+
+        const candidateItem = screen.findByTestId('direct-session-candidate:codex-session-1');
+        expect(candidateItem).toBeTruthy();
+
+        await act(async () => {
+            await candidateItem.props.onPress?.();
+        });
+
+        expect(onPickRemoteSessionId).toHaveBeenCalledWith('codex-session-1');
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(linkEnsureSpy).not.toHaveBeenCalled();
+    });
 });

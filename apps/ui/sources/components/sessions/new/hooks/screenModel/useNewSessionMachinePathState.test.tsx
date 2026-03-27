@@ -59,6 +59,44 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
+    it('applies the route path param immediately even before the route machine snapshot hydrates', async () => {
+        const now = Date.now();
+
+        const initialMachines = toMachines(
+            { id: 'machine-other', metadata: { homeDir: '/other' }, activeAt: now - 10_000 },
+        );
+        const hydratedMachines = toMachines(
+            { id: 'machine-other', metadata: { homeDir: '/other' }, activeAt: now - 10_000 },
+            { id: 'machine-target', metadata: { homeDir: '/target' }, activeAt: now - 10_000 },
+        );
+
+        const hook = await renderMachinePathState({
+            machines: initialMachines,
+            recentMachinePaths: [],
+            machineIdParam: 'machine-target',
+            pathParam: '/repo/desired',
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-other',
+            selectedPath: '/repo/desired',
+        });
+
+        await hook.rerender({
+            machines: hydratedMachines,
+            recentMachinePaths: [],
+            machineIdParam: 'machine-target',
+            pathParam: '/repo/desired',
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-target',
+            selectedPath: '/repo/desired',
+        });
+
+        await hook.unmount();
+    });
+
     it('applies a route machineId once it becomes available after machines hydrate', async () => {
         const now = Date.now();
         const initialMachines = toMachines(

@@ -14,6 +14,10 @@ import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/con
 
 import { useConnectedServiceQuotaBadges } from '@/hooks/server/connectedServices/useConnectedServiceQuotaBadges';
 import { ConnectedServiceQuotaBadgesView } from '@/components/settings/connectedServices/ConnectedServiceQuotaBadgesView';
+import {
+  CONNECTED_SERVICES_BINDINGS_KEY,
+  type ConnectedServicesServiceBinding,
+} from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 
 export type ConnectedServicesProfileOption = Readonly<{
   profileId: string;
@@ -21,13 +25,6 @@ export type ConnectedServicesProfileOption = Readonly<{
   providerEmail?: string | null;
   label?: string | null;
 }>;
-
-export type ConnectedServicesServiceBinding = Readonly<{
-  source: 'native' | 'connected';
-  profileId?: string;
-}>;
-
-export const CONNECTED_SERVICES_BINDINGS_KEY = 'connectedServicesBindingsByServiceId';
 
 export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesAuthModal(props: Readonly<{
   onClose: () => void;

@@ -122,4 +122,35 @@ describe('NewSessionResumeSelectionContent', () => {
 
         expect(flattenedStyle.maxHeight).toBe(460);
     });
+
+    it('renders a browse button that can fill the resume id', async () => {
+        const { NewSessionResumeSelectionContent } = await import('./NewSessionResumeSelectionContent');
+
+        const onBrowse = vi.fn(async () => 'sess-123');
+        const onChangeValue = vi.fn();
+        const onSave = vi.fn();
+
+        const screen = await renderScreen(
+            <NewSessionResumeSelectionContent
+                value=""
+                onChangeValue={onChangeValue}
+                onSave={onSave}
+                onClear={() => {}}
+                onClose={() => {}}
+                agentType="claude"
+                resumeBrowse={{
+                    enabled: true,
+                    onBrowse,
+                }}
+            />,
+        );
+
+        const browseButton = screen.findByTestId('resume-id-browse-trigger');
+        expect(browseButton).toBeTruthy();
+
+        await browseButton.props.onPress?.();
+
+        expect(onBrowse).toHaveBeenCalledTimes(1);
+        expect(onSave).toHaveBeenCalledWith('sess-123');
+    });
 });

@@ -199,6 +199,12 @@ export default function DevScreen() {
                     onPress={() => router.push('/dev/messages-demo')}
                 />
                 <Item
+                    title="Agent Input Demo"
+                    subtitle="Agent input chips and popovers"
+                    icon={<Ionicons name="flash-outline" size={28} color="#007AFF" />}
+                    onPress={() => router.push('/dev/agent-input-demo')}
+                />
+                <Item
                     title="Inverted List Test"
                     subtitle="Test inverted FlatList with keyboard"
                     icon={<Ionicons name="swap-vertical-outline" size={28} color="#007AFF" />}
