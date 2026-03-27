@@ -145,4 +145,48 @@ describe('happier bridge command (local-only v1)', () => {
       errorSpy.mockRestore();
     }
   });
+
+  it('rejects explicitly passed empty --webhook-secret values', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'set', '--webhook-secret', '   '],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(updateSettingsMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Invalid --webhook-secret value'),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('rejects explicitly passed empty --allowed-chat-ids values', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'set', '--allowed-chat-ids', '   '],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(updateSettingsMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Invalid --allowed-chat-ids value'),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });

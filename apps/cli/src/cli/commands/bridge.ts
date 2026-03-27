@@ -191,14 +191,47 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
   const hasBotTokenFlag = args.some((arg) => arg === '--bot-token' || arg.startsWith('--bot-token='));
   const botToken = rawBotToken.trim();
   const allowedChatIdsRaw = argvValue(args, '--allowed-chat-ids').trim();
+  const hasAllowedChatIdsFlag = args.some((arg) => arg === '--allowed-chat-ids' || arg.startsWith('--allowed-chat-ids='));
   const allowAllSharedChatsRaw = argvValue(args, '--allow-all-shared-chats').trim();
+  const hasAllowAllSharedChatsFlag = args.some((arg) => arg === '--allow-all-shared-chats' || arg.startsWith('--allow-all-shared-chats='));
   const allowAll = args.includes('--allow-all');
   const requireTopicsRaw = argvValue(args, '--require-topics').trim();
+  const hasRequireTopicsFlag = args.some((arg) => arg === '--require-topics' || arg.startsWith('--require-topics='));
   const tickMsRaw = argvValue(args, '--tick-ms').trim();
+  const hasTickMsFlag = args.some((arg) => arg === '--tick-ms' || arg.startsWith('--tick-ms='));
   const webhookEnabledRaw = argvValue(args, '--webhook-enabled').trim();
+  const hasWebhookEnabledFlag = args.some((arg) => arg === '--webhook-enabled' || arg.startsWith('--webhook-enabled='));
   const webhookSecret = argvValue(args, '--webhook-secret').trim();
+  const hasWebhookSecretFlag = args.some((arg) => arg === '--webhook-secret' || arg.startsWith('--webhook-secret='));
   const webhookHost = argvValue(args, '--webhook-host').trim();
+  const hasWebhookHostFlag = args.some((arg) => arg === '--webhook-host' || arg.startsWith('--webhook-host='));
   const webhookPortRaw = argvValue(args, '--webhook-port').trim();
+  const hasWebhookPortFlag = args.some((arg) => arg === '--webhook-port' || arg.startsWith('--webhook-port='));
+
+  if (hasAllowedChatIdsFlag && !allowedChatIdsRaw) {
+    throw new Error('Invalid --allowed-chat-ids value: cannot be empty');
+  }
+  if (hasAllowAllSharedChatsFlag && !allowAllSharedChatsRaw) {
+    throw new Error('Invalid --allow-all-shared-chats value: cannot be empty');
+  }
+  if (hasRequireTopicsFlag && !requireTopicsRaw) {
+    throw new Error('Invalid --require-topics value: cannot be empty');
+  }
+  if (hasTickMsFlag && !tickMsRaw) {
+    throw new Error('Invalid --tick-ms value: cannot be empty');
+  }
+  if (hasWebhookEnabledFlag && !webhookEnabledRaw) {
+    throw new Error('Invalid --webhook-enabled value: cannot be empty');
+  }
+  if (hasWebhookSecretFlag && !webhookSecret) {
+    throw new Error('Invalid --webhook-secret value: cannot be empty');
+  }
+  if (hasWebhookHostFlag && !webhookHost) {
+    throw new Error('Invalid --webhook-host value: cannot be empty');
+  }
+  if (hasWebhookPortFlag && !webhookPortRaw) {
+    throw new Error('Invalid --webhook-port value: cannot be empty');
+  }
 
   if (allowAll && allowedChatIdsRaw) {
     throw new Error('Cannot combine --allow-all with --allowed-chat-ids');
