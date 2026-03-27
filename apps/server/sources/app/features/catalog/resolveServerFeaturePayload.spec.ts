@@ -132,6 +132,30 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.features.channelBridges.telegram.enabled).toBe(true);
     });
 
+    it("disables channel bridges (and all providers) when the env toggle is off", () => {
+        const payload = resolveServerFeaturePayload(
+            {
+                HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED: "0",
+            } as NodeJS.ProcessEnv,
+            [resolveChannelBridgesFeature],
+        );
+
+        expect(payload.features.channelBridges.enabled).toBe(false);
+        expect(payload.features.channelBridges.telegram.enabled).toBe(false);
+    });
+
+    it("disables only telegram provider when the env toggle is off", () => {
+        const payload = resolveServerFeaturePayload(
+            {
+                HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED: "0",
+            } as NodeJS.ProcessEnv,
+            [resolveChannelBridgesFeature],
+        );
+
+        expect(payload.features.channelBridges.enabled).toBe(true);
+        expect(payload.features.channelBridges.telegram.enabled).toBe(false);
+    });
+
     it("disables only generic server-routed transfer when the env toggle is off", () => {
         const payload = resolveServerFeaturePayload({
             HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED: "0",
