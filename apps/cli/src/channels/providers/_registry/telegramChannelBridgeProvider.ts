@@ -1,5 +1,6 @@
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { createTelegramChannelAdapter } from '@/channels/providers/telegram/telegramAdapter';
+import { createTelegramPollingCursorStore } from '@/channels/providers/telegram/telegramPollingCursorStore';
 import {
   startTelegramWebhookRelay,
   type TelegramWebhookRelayHandle,
@@ -37,12 +38,13 @@ export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
     const webhookEnabled = config.webhookEnabled;
     const webhookSecret = config.webhookSecret;
     if (webhookEnabled && webhookSecret.length === 0) {
-      logger.warn(
-        '[channelBridge] Telegram webhook.enabled=true but webhook.secret is missing; falling back to polling mode',
+      throw new Error(
+        'Telegram webhook mode is enabled but webhook secret is missing. Set HAPPIER_TELEGRAM_WEBHOOK_SECRET (or persist secrets.webhookSecret in settings) and restart the daemon.',
       );
     }
 
-    const webhookModeRequested = webhookEnabled && webhookSecret.length > 0;
+    const webhookModeRequested = webhookEnabled;
+    const pollingCursorStore = createTelegramPollingCursorStore({ botToken });
 
     let relayHandle: TelegramWebhookRelayHandle | null = null;
     let adapter = createTelegramChannelAdapter({
@@ -51,6 +53,7 @@ export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
       allowAllSharedChats,
       requireTopics,
       webhookMode: webhookModeRequested,
+      pollingCursorStore,
     });
 
     if (webhookModeRequested) {
@@ -71,20 +74,12 @@ export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
           `[channelBridge] Telegram webhook relay listening on http://${host}:${relayHandle.port} (path redacted)`,
         );
       } catch (error) {
-        logger.warn(
-          '[channelBridge] Failed to start Telegram webhook relay; bridge will continue without webhook relay',
-          serializeAxiosErrorForLog(error),
-        );
+        logger.warn('[channelBridge] Failed to start Telegram webhook relay', serializeAxiosErrorForLog(error));
         await stopRelayBestEffort(relayHandle);
         relayHandle = null;
-        adapter = createTelegramChannelAdapter({
-          botToken,
-          allowedChatIds,
-          allowAllSharedChats,
-          requireTopics,
-          webhookMode: false,
-        });
-        logger.warn('[channelBridge] Falling back to Telegram polling mode because webhook relay failed to start');
+        throw new Error(
+          'Telegram webhook mode is enabled but the local webhook relay failed to start. Fix webhookHost/webhookPort and restart the daemon.',
+        );
       }
     }
 
@@ -100,4 +95,3 @@ export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
     return runtime;
   },
 };
-

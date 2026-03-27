@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createInMemoryChannelBindingStore,
@@ -2842,39 +2842,79 @@ describe('startChannelBridgeWorker', () => {
     }
   });
 
-  it('deduplicates inbound messages across runtime ticks', async () => {
+  it('does not start overlapping adapter pulls across ticks when the previous pull times out', async () => {
+    vi.useFakeTimers();
     const store = createInMemoryChannelBindingStore();
-    const harness = createAdapterHarness();
+    const { deps } = createDepsHarness();
+    const deferred = createDeferredPromise<ChannelBridgeInboundMessage[]>();
+    let pullCalls = 0;
 
-    await store.upsertBinding({
-      ...DEFAULT_BINDING_POLICY,
+    const adapter: ChannelBridgeAdapter = {
       providerId: 'telegram',
-      conversationId: 'dedupe-room',
-      threadId: null,
-      sessionId: 'sess-dedupe',
-      lastForwardedSeq: 0,
-    });
-
-    const { deps, sentToSession } = createDepsHarness();
-
-    harness.pushInbound({
-      providerId: 'telegram',
-      conversationId: 'dedupe-room',
-      threadId: null,
-      text: 'duplicate payload',
-      messageId: 'dedupe-id-1',
-    });
+      pullInboundMessages: async () => {
+        pullCalls += 1;
+        return deferred.promise;
+      },
+      sendMessage: async () => {},
+    };
 
     const worker = startChannelBridgeWorker({
       store,
-      adapters: [harness.adapter],
+      adapters: [adapter],
       deps,
-      tickMs: 60_000,
+      tickMs: 250,
     });
 
     try {
-      await waitFor(() => harness.pendingInboundCount() === 0 && sentToSession.length === 1);
-      expect(sentToSession).toHaveLength(1);
+      // Allow the startup tick to time out without resolving the underlying adapter pulls.
+      await vi.advanceTimersByTimeAsync(30_000);
+      await Promise.resolve();
+      expect(pullCalls).toBe(1);
+
+      worker.trigger();
+      await vi.advanceTimersByTimeAsync(30_000);
+      await Promise.resolve();
+      expect(pullCalls).toBe(1);
+    } finally {
+      deferred.resolve([]);
+      await worker.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('deduplicates inbound messages across runtime ticks', async () => {
+      const store = createInMemoryChannelBindingStore();
+      const harness = createAdapterHarness();
+
+      await store.upsertBinding({
+        ...DEFAULT_BINDING_POLICY,
+        providerId: 'telegram',
+        conversationId: 'dedupe-room',
+        threadId: null,
+        sessionId: 'sess-dedupe',
+        lastForwardedSeq: 0,
+      });
+
+      const { deps, sentToSession } = createDepsHarness();
+
+      harness.pushInbound({
+        providerId: 'telegram',
+        conversationId: 'dedupe-room',
+        threadId: null,
+        text: 'duplicate payload',
+        messageId: 'dedupe-id-1',
+      });
+
+      const worker = startChannelBridgeWorker({
+        store,
+        adapters: [harness.adapter],
+        deps,
+        tickMs: 60_000,
+      });
+
+      try {
+        await waitFor(() => harness.pendingInboundCount() === 0 && sentToSession.length === 1);
+        expect(sentToSession).toHaveLength(1);
 
       harness.pushInbound({
         providerId: 'telegram',
@@ -2887,9 +2927,9 @@ describe('startChannelBridgeWorker', () => {
 
       await waitFor(() => harness.pendingInboundCount() === 0 && sentToSession.length === 1);
       expect(sentToSession).toHaveLength(1);
-    } finally {
-      await worker.stop();
-    }
+      } finally {
+        await worker.stop();
+      }
   });
 
   it('stops idempotently and waits for in-flight tick before stopping adapters', async () => {

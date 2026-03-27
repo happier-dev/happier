@@ -1419,12 +1419,34 @@ export function startChannelBridgeWorker(params: Readonly<{
   });
   const warnedMissingAdapterBindings = new Set<string>();
   const warnedAdapterPullFailures = new Set<string>();
+  const adapterPullSingleFlightByAdapter = new WeakMap<ChannelBridgeAdapter, Promise<ChannelBridgeInboundMessage[]>>();
+  const adaptersForTick: ChannelBridgeAdapter[] = params.adapters.map((adapter) => ({
+    ...adapter,
+    pullInboundMessages: () => {
+      const existing = adapterPullSingleFlightByAdapter.get(adapter);
+      if (existing) {
+        return existing;
+      }
+
+      let inflight: Promise<ChannelBridgeInboundMessage[]>;
+      inflight = Promise.resolve()
+        .then(() => adapter.pullInboundMessages())
+        .finally(() => {
+          if (adapterPullSingleFlightByAdapter.get(adapter) === inflight) {
+            adapterPullSingleFlightByAdapter.delete(adapter);
+          }
+        });
+
+      adapterPullSingleFlightByAdapter.set(adapter, inflight);
+      return inflight;
+    },
+  }));
   let inFlightTick: Promise<void> | null = null;
 
   const runTick = async (): Promise<void> => {
     const tickRun = executeChannelBridgeTick({
       store: params.store,
-      adapters: params.adapters,
+      adapters: adaptersForTick,
       deps: params.deps,
       inboundDeduper,
       inboundForwardFailureTracker,

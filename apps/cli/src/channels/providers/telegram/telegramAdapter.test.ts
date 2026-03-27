@@ -465,6 +465,54 @@ describe('createTelegramChannelAdapter', () => {
     expect(getUpdates).toHaveBeenNthCalledWith(3, { offset: 12, limit: 100 });
   });
 
+  it('loads and persists polling offset when a cursor store is provided', async () => {
+    const getUpdates = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          update_id: 50,
+          message: {
+            message_id: 111,
+            text: 'hello',
+            chat: { id: 1234, type: 'private' },
+            from: { id: 42, is_bot: false, first_name: 'Ada' },
+          },
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const api = {
+      getMe: vi.fn(async () => ({ id: 9, username: 'happier_bot' })),
+      getUpdates,
+      sendMessage: vi.fn(async () => undefined),
+    };
+
+    const cursorStore = {
+      load: vi.fn(async () => 42),
+      save: vi.fn(async () => undefined),
+    };
+
+    const adapter = createTelegramChannelAdapter({
+      botToken: 'test-token',
+      api,
+      webhookMode: false,
+      pollingCursorStore: cursorStore,
+    });
+
+    const parsed = await adapter.pullInboundMessages();
+    expect(getUpdates).toHaveBeenNthCalledWith(1, { offset: 42, limit: 100 });
+    expect(parsed).toHaveLength(1);
+    expect(cursorStore.load).toHaveBeenCalledTimes(1);
+    expect(cursorStore.save).not.toHaveBeenCalled();
+
+    await adapter.ackInboundMessages?.(parsed);
+    expect(cursorStore.save).toHaveBeenCalledTimes(1);
+    expect(cursorStore.save).toHaveBeenCalledWith(51);
+
+    await adapter.pullInboundMessages();
+    expect(getUpdates).toHaveBeenNthCalledWith(2, { offset: 51, limit: 100 });
+  });
+
   it('includes Telegram API error descriptions when available', async () => {
     const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({
       status: 400,

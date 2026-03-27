@@ -235,6 +235,10 @@ export function createTelegramChannelAdapter(params: Readonly<{
   allowedChatIds?: ReadonlySet<string> | null;
   allowAllSharedChats?: boolean;
   requireTopics?: boolean;
+  pollingCursorStore?: Readonly<{
+    load: () => Promise<number | null>;
+    save: (offset: number) => Promise<void>;
+  }>;
 }>): ChannelBridgeAdapter & Readonly<{ enqueueWebhookUpdate: (update: unknown) => void }> {
   const api = params.api ?? createDefaultTelegramApiClient(params.botToken);
   const webhookMode = params.webhookMode === true;
@@ -268,17 +272,52 @@ export function createTelegramChannelAdapter(params: Readonly<{
   /**
    * Telegram polling cursor (`getUpdates` offset).
    *
-   * This cursor is intentionally process-local today and is not persisted across
-   * daemon restarts. Polling mode therefore provides at-least-once delivery:
-   * after restart, Telegram may replay unacknowledged updates from the retention
-   * window, and downstream dedupe is expected to absorb duplicates.
+   * If a `pollingCursorStore` is provided, the adapter loads and persists this cursor
+   * (best-effort) so polling can resume after daemon restarts without replaying the
+   * retention window. If not provided, the cursor is process-local and polling is
+   * at-least-once across restarts.
    */
   let updateOffset: number | null = null;
+  const pollingCursorStore = params.pollingCursorStore ?? null;
+  let pollingCursorLoaded = false;
+  let lastPersistedPollingOffset: number | null = null;
+  let pollingCursorSaveQueue = Promise.resolve();
   const queuedWebhookUpdates: QueuedWebhookUpdate[] = [];
   let nextQueuedWebhookId = 1;
   let droppedWebhookUpdates = 0;
   const pendingWebhookAcksByMessageKey = new Map<string, PendingWebhookAck>();
   let pendingPollingBatchAck: PendingPollingBatchAck | null = null;
+
+  async function ensurePollingCursorLoaded(): Promise<void> {
+    if (pollingCursorLoaded) return;
+    pollingCursorLoaded = true;
+    if (!pollingCursorStore) return;
+
+    try {
+      const loaded = await pollingCursorStore.load();
+      if (typeof loaded === 'number' && Number.isFinite(loaded)) {
+        const candidate = Math.max(0, Math.trunc(loaded));
+        updateOffset = updateOffset === null ? candidate : Math.max(updateOffset, candidate);
+        lastPersistedPollingOffset = candidate;
+      }
+    } catch (error) {
+      logger.warn('[channelBridge] Failed to load Telegram polling cursor; continuing with empty cursor', error);
+    }
+  }
+
+  async function persistPollingOffset(offset: number): Promise<void> {
+    if (!pollingCursorStore) return;
+    if (lastPersistedPollingOffset !== null && offset <= lastPersistedPollingOffset) return;
+    lastPersistedPollingOffset = offset;
+
+    pollingCursorSaveQueue = pollingCursorSaveQueue
+      .then(() => pollingCursorStore.save(offset))
+      .catch((error) => {
+        logger.warn('[channelBridge] Failed to persist Telegram polling cursor; continuing without persistence', error);
+      });
+
+    await pollingCursorSaveQueue;
+  }
 
   function dropPendingWebhookAckIds(ids: ReadonlySet<number>): void {
     if (ids.size === 0) return;
@@ -390,6 +429,7 @@ export function createTelegramChannelAdapter(params: Readonly<{
         return pendingPollingBatchAck.messages.map((message) => ({ ...message }));
       }
 
+      await ensurePollingCursorLoaded();
       const updates = await api.getUpdates({
         offset: updateOffset,
         limit: updateLimit,
@@ -401,6 +441,7 @@ export function createTelegramChannelAdapter(params: Readonly<{
         if (maxUpdateId !== null) {
           const nextOffset = maxUpdateId + 1;
           updateOffset = updateOffset === null ? nextOffset : Math.max(updateOffset, nextOffset);
+          await persistPollingOffset(updateOffset);
         }
         return [];
       }
@@ -439,6 +480,7 @@ export function createTelegramChannelAdapter(params: Readonly<{
         if (pendingBatch.maxUpdateId !== null) {
           const nextOffset = pendingBatch.maxUpdateId + 1;
           updateOffset = updateOffset === null ? nextOffset : Math.max(updateOffset, nextOffset);
+          await persistPollingOffset(updateOffset);
         }
 
         pendingPollingBatchAck = null;
@@ -477,6 +519,7 @@ export function createTelegramChannelAdapter(params: Readonly<{
       if (maxAckedUpdateId !== null) {
         const nextOffset = maxAckedUpdateId + 1;
         updateOffset = updateOffset === null ? nextOffset : Math.max(updateOffset, nextOffset);
+        await persistPollingOffset(updateOffset);
       }
     },
     sendMessage: async (message) => {
