@@ -3381,6 +3381,7 @@ export const it: TranslationStructure = {
         `Incolla un ID sessione ${agent} per riprendere`,
       placeholder: ({ agent }: { agent: string }) =>
         `Incolla ID sessione ${agent}…`,
+      browse: "Sfoglia sessioni",
       paste: "Incolla",
       save: "Salva",
       clearAndRemove: "Cancella",
@@ -5072,6 +5073,7 @@ export const it: TranslationStructure = {
         searchPlaceholder: "Cerca azioni",
         noResults: "Nessuna azione corrisponde alla ricerca attuale.",
         noDescription: "Nessuna descrizione ancora disponibile.",
+        requireApproval: "Richiedi approvazione",
         sections: {
             app: "Nell’app",
             voice: "Voce",
@@ -5133,6 +5135,10 @@ export const it: TranslationStructure = {
             voice_action_block: {
                 title: "Blocco azione vocale",
                 subtitle: "Mostrato dentro ai blocchi e alle affordance delle azioni vocali.",
+            },
+            session_agent: {
+                title: "Agente di sessione",
+                subtitle: "Disponibile per gli agenti nella sessione come strumento richiamabile.",
             },
             mcp: {
                 title: "MCP",

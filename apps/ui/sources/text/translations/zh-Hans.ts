@@ -2880,6 +2880,7 @@ export const zhHans: TranslationStructure = {
       subtitle: ({ agent }: { agent: string }) =>
         `粘贴 ${agent} 会话 ID 以恢复`,
       placeholder: ({ agent }: { agent: string }) => `粘贴 ${agent} 会话 ID…`,
+      browse: "浏览会话",
       paste: "粘贴",
       save: "保存",
       clearAndRemove: "清除",
@@ -4518,6 +4519,7 @@ export const zhHans: TranslationStructure = {
         searchPlaceholder: "搜索操作",
         noResults: "没有操作匹配你当前的搜索。",
         noDescription: "暂时没有可用说明。",
+        requireApproval: "需要批准",
         sections: {
             app: '应用内',
             voice: '语音',
@@ -4579,6 +4581,10 @@ export const zhHans: TranslationStructure = {
             voice_action_block: {
                 title: '语音操作块',
                 subtitle: '显示在语音操作块和交互控件中。',
+            },
+            session_agent: {
+                title: '会话代理',
+                subtitle: '可供会话内代理作为可调用工具使用。',
             },
             mcp: {
                 title: 'MCP',

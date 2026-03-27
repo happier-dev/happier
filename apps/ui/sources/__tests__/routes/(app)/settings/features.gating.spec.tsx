@@ -106,7 +106,7 @@ describe('FeaturesSettingsScreen gating', () => {
     });
 
     it('hides build-policy denied feature toggles from the list', async () => {
-        process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV = 'production';
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'execution.runs,social.friends,scm.writeOperations';
         vi.resetModules();
         const { getFeatureBuildPolicyDecision } = await import('@/sync/domains/features/featureBuildPolicy');
         expect(getFeatureBuildPolicyDecision('execution.runs')).toBe('deny');

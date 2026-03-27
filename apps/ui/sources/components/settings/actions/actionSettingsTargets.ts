@@ -16,6 +16,7 @@ export type ActionSettingsTargetCategory = 'app' | 'voice' | 'integrations';
 export type ActionSettingsTargetId =
     | ActionUiPlacement
     | 'mcp'
+    | 'session_agent'
     | 'voice_tool'
     | 'voice_action_block'
     | 'cli'
@@ -50,6 +51,7 @@ type MutableActionSettingsEntry = {
     enabledPlacements: ActionUiPlacement[];
     disabledSurfaces: Array<keyof ActionSurfaces>;
     disabledPlacements: ActionUiPlacement[];
+    approvalRequiredSurfaces: Array<keyof ActionSurfaces>;
 };
 
 const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
@@ -156,6 +158,15 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
         category: 'voice',
     },
     {
+        id: 'session_agent',
+        kind: 'surface',
+        surface: 'session_agent',
+        titleKey: 'settingsActions.targets.session_agent.title',
+        subtitleKey: 'settingsActions.targets.session_agent.subtitle',
+        icon: 'sparkles-outline',
+        category: 'integrations',
+    },
+    {
         id: 'mcp',
         kind: 'surface',
         surface: 'mcp',
@@ -195,22 +206,30 @@ function getMutableEntry(settings: ActionsSettingsV1, actionId: ActionId): Mutab
         enabledPlacements: [...(entry?.enabledPlacements ?? [])],
         disabledSurfaces: [...(entry?.disabledSurfaces ?? [])],
         disabledPlacements: [...(entry?.disabledPlacements ?? [])],
+        approvalRequiredSurfaces: [...(entry?.approvalRequiredSurfaces ?? [])],
     };
 }
 
 function normalizeEntry(entry: MutableActionSettingsEntry) {
+    const enabledPlacements = sortUnique(entry.enabledPlacements);
+    const disabledSurfaces = sortUnique(entry.disabledSurfaces);
+    const disabledPlacements = sortUnique(entry.disabledPlacements);
+    const approvalRequiredSurfaces = sortUnique(entry.approvalRequiredSurfaces);
+
     const normalized = {
-        enabled: entry.enabled === false ? false : undefined,
-        enabledPlacements: sortUnique(entry.enabledPlacements),
-        disabledSurfaces: sortUnique(entry.disabledSurfaces),
-        disabledPlacements: sortUnique(entry.disabledPlacements),
+        ...(entry.enabled === false ? { enabled: false as const } : {}),
+        enabledPlacements,
+        disabledSurfaces,
+        disabledPlacements,
+        approvalRequiredSurfaces,
     };
 
     if (
         normalized.enabled !== false
-        && normalized.enabledPlacements.length === 0
-        && normalized.disabledSurfaces.length === 0
-        && normalized.disabledPlacements.length === 0
+        && enabledPlacements.length === 0
+        && disabledSurfaces.length === 0
+        && disabledPlacements.length === 0
+        && approvalRequiredSurfaces.length === 0
     ) {
         return null;
     }
@@ -353,6 +372,46 @@ export function setActionTargetSelected(params: Readonly<{
     entry.disabledSurfaces = params.selected
         ? entry.disabledSurfaces.filter((surface) => surface !== target.surface)
         : sortUnique([...entry.disabledSurfaces, target.surface]);
+
+    return writeEntry(normalizedSettings, params.actionId, entry);
+}
+
+export function getActionTargetApprovalRequired(params: Readonly<{
+    settings: ActionsSettingsV1;
+    actionId: ActionId;
+    targetId: ActionSettingsTargetId;
+}>): boolean {
+    const normalizedSettings = normalizeActionsSettings(params.settings);
+    const entry = normalizedSettings.actions[params.actionId];
+    if (!entry) {
+        return false;
+    }
+
+    const target = getActionSettingsTargetDefinition(params.actionId, params.targetId);
+    if (target.kind !== 'surface') {
+        return false;
+    }
+
+    return entry.approvalRequiredSurfaces?.includes(target.surface) === true;
+}
+
+export function setActionTargetApprovalRequired(params: Readonly<{
+    settings: ActionsSettingsV1;
+    actionId: ActionId;
+    targetId: ActionSettingsTargetId;
+    approvalRequired: boolean;
+}>): ActionsSettingsV1 {
+    const normalizedSettings = normalizeActionsSettings(params.settings);
+    const entry = getMutableEntry(normalizedSettings, params.actionId);
+    const target = getActionSettingsTargetDefinition(params.actionId, params.targetId);
+
+    if (target.kind !== 'surface') {
+        return normalizedSettings;
+    }
+
+    entry.approvalRequiredSurfaces = params.approvalRequired
+        ? sortUnique([...entry.approvalRequiredSurfaces, target.surface])
+        : entry.approvalRequiredSurfaces.filter((surface) => surface !== target.surface);
 
     return writeEntry(normalizedSettings, params.actionId, entry);
 }

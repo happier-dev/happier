@@ -3311,6 +3311,7 @@ export const ja: TranslationStructure = {
         `再開する${agent}セッションIDを貼り付けてください`,
       placeholder: ({ agent }: { agent: string }) =>
         `${agent}セッションIDを貼り付け…`,
+      browse: "セッションを閲覧",
       paste: "貼り付け",
       save: "保存",
       clearAndRemove: "クリア",
@@ -4995,6 +4996,7 @@ export const ja: TranslationStructure = {
       searchPlaceholder: "アクションを検索",
       noResults: "現在の検索に一致するアクションはありません。",
       noDescription: "まだ説明はありません。",
+      requireApproval: "承認を必須にする",
         sections: {
             app: "アプリ内",
             voice: "音声",
@@ -5056,6 +5058,10 @@ export const ja: TranslationStructure = {
             voice_action_block: {
                 title: "音声アクションブロック",
                 subtitle: "音声アクションブロックと操作要素の中に表示されます。",
+            },
+            session_agent: {
+                title: "セッションエージェント",
+                subtitle: "セッション内のエージェントが呼び出し可能なツールとして利用できます。",
             },
             mcp: {
                 title: 'MCP',

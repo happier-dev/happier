@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { View, Platform } from 'react-native';
+import { View, Platform, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { type ActionId } from '@happier-dev/protocol';
+import { getActionSpec, type ActionId } from '@happier-dev/protocol';
 
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
@@ -22,7 +22,13 @@ import {
     type ActionSettingsTargetEntry,
 } from './buildActionSettingsEntries';
 import { buildActionSettingsDisplayModel } from './buildActionSettingsDisplayModel';
-import { setActionEnabled, setActionTargetSelected } from './actionSettingsTargets';
+import {
+    getActionSettingsTargetDefinition,
+    getActionTargetApprovalRequired,
+    setActionEnabled,
+    setActionTargetApprovalRequired,
+    setActionTargetSelected,
+} from './actionSettingsTargets';
 import { normalizeActionsSettings } from './normalizeActionsSettings';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -55,6 +61,20 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: Platform.select({ ios: 16, default: 14 }),
         paddingVertical: Platform.select({ ios: 14, default: 16 }),
         gap: 14,
+    },
+    approvalToggleRow: {
+        paddingTop: 10,
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.divider,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    approvalToggleLabel: {
+        color: theme.colors.textSecondary,
+        fontSize: Platform.select({ ios: 13, default: 13 }),
+        lineHeight: 18,
     },
 }));
 
@@ -123,6 +143,15 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
         commitSettings(nextSettings);
     }, [commitSettings, settings]);
 
+    const handleApprovalRequiredChange = React.useCallback((actionId: ActionId, targetId: ActionSettingsTargetEntry['id'], approvalRequired: boolean) => {
+        commitSettings(setActionTargetApprovalRequired({
+            settings,
+            actionId,
+            targetId,
+            approvalRequired,
+        }));
+    }, [commitSettings, settings]);
+
     const buildUnavailableTargetsSubtitle = React.useCallback((targets: readonly ActionSettingsTargetEntry[]) => {
         const targetTitles = targets.map((target) => t(target.titleKey)).join(', ');
         const reasons = Array.from(new Set(
@@ -167,10 +196,12 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
 
             {displayModel.entries.map((entry) => {
                 const actionEnabled = entry.enabled;
+                const actionTestIdPrefix = `settings-actions:action:${entry.actionId}`;
 
                 return (
                     <ItemGroup key={entry.actionId} footer={entry.actionId}>
                         <Item
+                            testID={actionTestIdPrefix}
                             title={entry.title}
                             subtitle={entry.description ?? t('settingsActions.noDescription')}
                             detail={actionEnabled ? t('common.enabled') : t('common.disabled')}
@@ -183,6 +214,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                             )}
                             rightElement={(
                                 <Switch
+                                    testID={`${actionTestIdPrefix}:enabled`}
                                     value={actionEnabled}
                                     onValueChange={(nextValue) => handleActionEnabledChange(entry.actionId, nextValue)}
                                 />
@@ -198,6 +230,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                                         <Text style={styles.sectionTitle}>{t(section.titleKey)}</Text>
                                         <SelectionTiles
                                             selectionMode="multiple"
+                                            testIdPrefix={`${actionTestIdPrefix}:target`}
                                             options={section.targets.map((target) => ({
                                                 id: target.id,
                                                 title: t(target.titleKey),
@@ -206,6 +239,48 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                                             }))}
                                             value={section.selectedIds}
                                             onChange={(nextValue) => handleSectionSelectionChange(entry, section.targets, nextValue)}
+                                            renderOptionFooter={({ option, selected }) => {
+                                                if (!selected) {
+                                                    return null;
+                                                }
+
+                                                const definition = getActionSettingsTargetDefinition(entry.actionId, option.id);
+                                                if (definition.kind !== 'surface') {
+                                                    return null;
+                                                }
+
+                                                if (getActionSpec(entry.actionId).requiresApprovalQueue !== true) {
+                                                    return null;
+                                                }
+
+                                                const approvalRequired = getActionTargetApprovalRequired({
+                                                    settings,
+                                                    actionId: entry.actionId,
+                                                    targetId: option.id,
+                                                });
+
+                                                return (
+                                                    <Pressable
+                                                        onPress={(event) => {
+                                                            if (typeof (event as any)?.stopPropagation === 'function') {
+                                                                (event as any).stopPropagation();
+                                                            }
+                                                        }}
+                                                    >
+                                                        <View style={styles.approvalToggleRow}>
+                                                            <Text style={styles.approvalToggleLabel}>
+                                                                {t('settingsActions.requireApproval')}
+                                                            </Text>
+                                                            <Switch
+                                                                compact
+                                                                testID={`${actionTestIdPrefix}:target:${option.id}:require-approval`}
+                                                                value={approvalRequired}
+                                                                onValueChange={(nextValue) => handleApprovalRequiredChange(entry.actionId, option.id, nextValue)}
+                                                            />
+                                                        </View>
+                                                    </Pressable>
+                                                );
+                                            }}
                                         />
                                     </View>
                                 ))}

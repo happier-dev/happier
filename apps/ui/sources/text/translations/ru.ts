@@ -3001,6 +3001,7 @@ export const ru: TranslationStructure = {
         `Вставьте ID сессии ${agent} для продолжения`,
       placeholder: ({ agent }: { agent: string }) =>
         `Вставьте ID сессии ${agent}…`,
+      browse: "Просмотреть сеансы",
       paste: "Вставить",
       save: "Сохранить",
       clearAndRemove: "Очистить",
@@ -4733,6 +4734,7 @@ export const ru: TranslationStructure = {
         searchPlaceholder: "Действия поиска",
         noResults: "Нет действий, соответствующих вашему текущему запросу.",
         noDescription: "Описание пока отсутствует.",
+        requireApproval: "Требовать одобрения",
         sections: {
             app: "В приложении",
             voice: "Голос",
@@ -4794,6 +4796,10 @@ export const ru: TranslationStructure = {
             voice_action_block: {
                 title: "Блок голосовых действий",
                 subtitle: "Показано внутри блоков голосовых действий и возможностей.",
+            },
+            session_agent: {
+                title: "Агент сессии",
+                subtitle: "Доступно для агентов внутри сессии как вызываемый инструмент.",
             },
             mcp: {
                 title: 'MCP',

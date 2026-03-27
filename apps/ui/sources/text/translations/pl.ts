@@ -3063,6 +3063,7 @@ export const pl: TranslationStructure = {
       subtitle: ({ agent }: { agent: string }) =>
         `Wklej ID sesji ${agent}, aby wznowić`,
       placeholder: ({ agent }: { agent: string }) => `Wklej ID sesji ${agent}…`,
+      browse: "Przeglądaj sesje",
       paste: "Wklej",
       save: "Zapisz",
       clearAndRemove: "Wyczyść",
@@ -4750,6 +4751,7 @@ export const pl: TranslationStructure = {
         searchPlaceholder: 'Wyszukaj akcje',
         noResults: 'Żadne akcje nie pasują do bieżącego wyszukiwania.',
         noDescription: 'Opis nie jest jeszcze dostępny.',
+        requireApproval: 'Wymagaj zatwierdzenia',
         sections: {
             app: 'W aplikacji',
             voice: 'Głos',
@@ -4811,6 +4813,10 @@ export const pl: TranslationStructure = {
             voice_action_block: {
                 title: 'Blok akcji głosowej',
                 subtitle: 'Wyświetlane wewnątrz bloków akcji głosowej i ich elementów.',
+            },
+            session_agent: {
+                title: 'Agent sesji',
+                subtitle: 'Dostępne dla agentów w sesji jako wywoływalne narzędzie.',
             },
             mcp: {
                 title: 'MCP',

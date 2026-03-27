@@ -2779,6 +2779,7 @@ deps: {
             pickerTitle: 'Reprendre sessió',
             subtitle: ({ agent }: { agent: string }) => `Enganxa un ID de sessió de ${agent} per reprendre`,
             placeholder: ({ agent }: { agent: string }) => `Enganxa l’ID de sessió de ${agent}…`,
+            browse: 'Explora sessions',
             paste: 'Enganxa',
             save: 'Desa',
             clearAndRemove: 'Esborra',
@@ -4319,6 +4320,7 @@ deps: {
         searchPlaceholder: 'Cerca accions',
         noResults: 'Cap acció coincideix amb la cerca actual.',
         noDescription: 'Encara no hi ha cap descripció disponible.',
+        requireApproval: 'Requereix aprovació',
         sections: {
             app: 'A l’aplicació',
             voice: 'Veu',
@@ -4380,6 +4382,10 @@ deps: {
             voice_action_block: {
                 title: 'Bloc d’acció de veu',
                 subtitle: 'Mostrat dins de blocs d’acció de veu i controls.',
+            },
+            session_agent: {
+                title: 'Agent de sessió',
+                subtitle: 'Disponible per als agents dins de la sessió com a eina invocable.',
             },
             mcp: {
                 title: 'MCP',

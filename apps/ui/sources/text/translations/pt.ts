@@ -3261,6 +3261,7 @@ export const pt: TranslationStructure = {
         `Cole um ID de sessão do ${agent} para retomar`,
       placeholder: ({ agent }: { agent: string }) =>
         `Cole o ID de sessão do ${agent}…`,
+      browse: "Explorar sessões",
       paste: "Colar",
       save: "Salvar",
       clearAndRemove: "Limpar",
@@ -4968,6 +4969,7 @@ export const pt: TranslationStructure = {
         searchPlaceholder: 'Pesquisar ações',
         noResults: 'Nenhuma ação corresponde à sua pesquisa atual.',
         noDescription: 'Ainda não há descrição disponível.',
+        requireApproval: 'Exigir aprovação',
         sections: {
             app: 'No app',
             voice: 'Voz',
@@ -5029,6 +5031,10 @@ export const pt: TranslationStructure = {
             voice_action_block: {
                 title: 'Bloco de ação de voz',
                 subtitle: 'Mostrado dentro de blocos e affordances de ação de voz.',
+            },
+            session_agent: {
+                title: 'Agente de sessão',
+                subtitle: 'Disponível para agentes na sessão como uma ferramenta chamável.',
             },
             mcp: {
                 title: 'MCP',

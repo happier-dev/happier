@@ -135,17 +135,20 @@ describe('buildAccountSettingsSnapshot', () => {
                         enabledPlacements: [],
                         disabledSurfaces: ['mcp'],
                         disabledPlacements: ['command_palette'],
+                        approvalRequiredSurfaces: [],
                     },
                     'subagents.delegate.start': {
                         enabledPlacements: ['agent_input_chips'],
                         disabledSurfaces: ['voice_tool'],
                         disabledPlacements: [],
+                        approvalRequiredSurfaces: [],
                     },
                     'subagents.plan.start': {
                         enabled: true,
                         enabledPlacements: [],
                         disabledSurfaces: [],
                         disabledPlacements: ['command_palette', 'session_header'],
+                        approvalRequiredSurfaces: [],
                     },
                 },
             },
@@ -449,4 +452,3 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__mcpServersSettingsV1__savedSecretRefCount).toBe(4);
     });
 });
-

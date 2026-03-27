@@ -397,7 +397,15 @@ describe('settings', () => {
             } as any);
             expect((parsed as any).actionsSettingsV1).toEqual({
                 v: 1,
-                actions: { 'review.start': { enabled: false, enabledPlacements: [], disabledSurfaces: [], disabledPlacements: [] } },
+                actions: {
+                    'review.start': {
+                        enabled: false,
+                        enabledPlacements: [],
+                        disabledSurfaces: [],
+                        disabledPlacements: [],
+                        approvalRequiredSurfaces: [],
+                    },
+                },
             });
         });
 
@@ -418,6 +426,7 @@ describe('settings', () => {
                         enabledPlacements: [],
                         disabledSurfaces: ['cli'],
                         disabledPlacements: [],
+                        approvalRequiredSurfaces: [],
                     },
                 },
             });

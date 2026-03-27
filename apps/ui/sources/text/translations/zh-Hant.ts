@@ -2438,6 +2438,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             pickerTitle: '恢復工作階段',
             subtitle: ({ agent }: { agent: string }) => `貼上 ${agent} 工作階段 ID 以恢復`,
             placeholder: ({ agent }: { agent: string }) => `貼上 ${agent} 工作階段 ID…`,
+            browse: '瀏覽工作階段',
             paste: '貼上',
             save: '儲存',
             clearAndRemove: '清除',
@@ -3597,6 +3598,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         searchPlaceholder: '搜尋操作',
         noResults: '沒有操作符合目前的搜尋。',
         noDescription: '尚無描述。',
+        requireApproval: '需要核准',
         sections: {
             app: '在 app 中',
             voice: '語音',
@@ -3658,6 +3660,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             voice_action_block: {
                 title: '語音操作區塊',
                 subtitle: '顯示在語音操作區塊與相關操作元件中。',
+            },
+            session_agent: {
+                title: '工作階段代理',
+                subtitle: '可供工作階段內代理作為可呼叫工具使用。',
             },
             mcp: {
                 title: 'MCP',

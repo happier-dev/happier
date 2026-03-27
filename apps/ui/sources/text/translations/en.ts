@@ -2876,6 +2876,7 @@ export const en = {
             pickerTitle: 'Resume session',
             subtitle: ({ agent }: { agent: string }) => `Paste a ${agent} session ID to resume`,
             placeholder: ({ agent }: { agent: string }) => `Paste ${agent} session ID…`,
+            browse: 'Browse sessions',
             paste: 'Paste',
             save: 'Save',
             clearAndRemove: 'Clear',
@@ -4447,6 +4448,7 @@ export const en = {
         searchPlaceholder: 'Search actions',
         noResults: 'No actions match your current search.',
         noDescription: 'No description available yet.',
+        requireApproval: 'Require approval',
         sections: {
             app: 'In the app',
             voice: 'Voice',
@@ -4508,6 +4510,10 @@ export const en = {
             voice_action_block: {
                 title: 'Voice action block',
                 subtitle: 'Shown inside voice action blocks and affordances.',
+            },
+            session_agent: {
+                title: 'Session agent',
+                subtitle: 'Available to in-session agents as a callable tool.',
             },
             mcp: {
                 title: 'MCP',

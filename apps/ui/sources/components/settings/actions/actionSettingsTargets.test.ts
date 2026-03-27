@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
 
-import { setActionEnabled, setActionTargetSelected } from './actionSettingsTargets';
+import { setActionEnabled, setActionTargetApprovalRequired, setActionTargetSelected } from './actionSettingsTargets';
 
 describe('actionSettingsTargets', () => {
     it('enables opt-in placements through enabledPlacements', () => {
@@ -17,6 +17,46 @@ describe('actionSettingsTargets', () => {
             enabledPlacements: ['agent_input_chips'],
             disabledSurfaces: [],
             disabledPlacements: [],
+            approvalRequiredSurfaces: [],
+        });
+    });
+
+    it('stores approval required surfaces through approvalRequiredSurfaces', () => {
+        const next = setActionTargetApprovalRequired({
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId: 'review.start',
+            targetId: 'mcp',
+            approvalRequired: true,
+        });
+
+        expect(next.actions['review.start']).toEqual({
+            enabledPlacements: [],
+            disabledSurfaces: [],
+            disabledPlacements: [],
+            approvalRequiredSurfaces: ['mcp'],
+        });
+    });
+
+    it('preserves approvalRequiredSurfaces when mutating other target settings', () => {
+        const seeded = setActionTargetApprovalRequired({
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId: 'review.start',
+            targetId: 'mcp',
+            approvalRequired: true,
+        });
+
+        const next = setActionTargetSelected({
+            settings: seeded,
+            actionId: 'review.start',
+            targetId: 'agent_input_chips',
+            selected: true,
+        });
+
+        expect(next.actions['review.start']).toEqual({
+            enabledPlacements: ['agent_input_chips'],
+            disabledSurfaces: [],
+            disabledPlacements: [],
+            approvalRequiredSurfaces: ['mcp'],
         });
     });
 
@@ -32,6 +72,23 @@ describe('actionSettingsTargets', () => {
             enabledPlacements: [],
             disabledSurfaces: ['mcp'],
             disabledPlacements: [],
+            approvalRequiredSurfaces: [],
+        });
+    });
+
+    it('disables the session agent surface through disabledSurfaces', () => {
+        const next = setActionTargetSelected({
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId: 'session.message.send',
+            targetId: 'session_agent',
+            selected: false,
+        });
+
+        expect(next.actions['session.message.send']).toEqual({
+            enabledPlacements: [],
+            disabledSurfaces: ['session_agent'],
+            disabledPlacements: [],
+            approvalRequiredSurfaces: [],
         });
     });
 
@@ -47,6 +104,7 @@ describe('actionSettingsTargets', () => {
             enabledPlacements: [],
             disabledSurfaces: [],
             disabledPlacements: [],
+            approvalRequiredSurfaces: [],
         });
     });
 });
