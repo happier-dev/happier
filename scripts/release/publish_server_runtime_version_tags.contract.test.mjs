@@ -37,7 +37,9 @@ test('publish-server-runtime pipeline publishes server-v* version tags alongside
   );
 
   assert.match(out, /--tag\s+server-preview\b/);
+  assert.match(out, /--tag\s+server-preview\b[^\n]*--generate-notes\s+false\b/);
   assert.match(out, /--tag\s+server-v/);
+  assert.match(out, /--tag\s+server-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
   assert.match(out, /clean artifacts dir: dist\/release-assets\/server|ensure clean artifacts dir: dist\/release-assets\/server/i);
 });
 

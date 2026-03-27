@@ -211,3 +211,29 @@ test('release-assets-e2e run.sh cleanup does not crash when docker is unavailabl
   assert.notEqual(res.status, 0);
   assert.doesNotMatch(res.stderr ?? '', /unbound variable/i);
 });
+
+test('release-assets-e2e run.sh surfaces npm pack output on failure', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'happier-release-assets-e2e-npm-pack-fail-test-'));
+  const binDir = join(tmp, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+
+  const dockerShim = join(binDir, 'docker');
+  fs.writeFileSync(dockerShim, '#!/usr/bin/env sh\nexit 0\n', { encoding: 'utf8' });
+  fs.chmodSync(dockerShim, 0o755);
+
+  const npmShim = join(binDir, 'npm');
+  fs.writeFileSync(npmShim, '#!/usr/bin/env sh\necho \"npm shim: pack failed\"\nexit 2\n', { encoding: 'utf8' });
+  fs.chmodSync(npmShim, 0o755);
+
+  const res = spawnSync(
+    'bash',
+    [runScript, '--mode=local', '--no-remote-daemon', '--no-remote-server', '--timeout-s=1', '--keep'],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` },
+    }
+  );
+
+  assert.equal(res.status, 2, res.stderr || res.stdout);
+  assert.match(`${res.stdout ?? ''}\n${res.stderr ?? ''}`, /npm shim: pack failed/);
+});

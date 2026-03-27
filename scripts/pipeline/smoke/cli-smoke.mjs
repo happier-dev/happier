@@ -5,13 +5,149 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { resolvePackedTarball } from '../npm/resolvePackedTarball.mjs';
 import { resolveInstalledBinPath } from './resolveInstalledBinPath.mjs';
 
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+function asNonEmptyString(value) {
+  const trimmed = String(value ?? '').trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readEnvPath(env) {
+  return String(env.PATH ?? env.Path ?? '');
+}
+
+function readEnvPathext(env) {
+  return String(env.PATHEXT ?? env.Pathext ?? '');
+}
+
+function normalizePathext(pathext) {
+  const raw = asNonEmptyString(pathext) ?? '.EXE;.CMD;.BAT;.COM';
+  return raw
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => (part.startsWith('.') ? part : `.${part}`));
+}
+
+function expandPathextCaseVariants(exts) {
+  const seen = new Set();
+  const variants = [];
+  for (const ext of exts) {
+    for (const candidate of [ext, ext.toLowerCase(), ext.toUpperCase()]) {
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      variants.push(candidate);
+    }
+  }
+  return variants;
+}
+
+function isCommandOnly(command) {
+  const trimmed = String(command ?? '').trim();
+  if (!trimmed) return false;
+  if (trimmed.includes('/') || trimmed.includes('\\')) return false;
+  if (trimmed.includes(':')) return false;
+  return true;
+}
+
+function isWindowsShellShimPath(pathLike) {
+  return /\.(cmd|bat)$/i.test(String(pathLike ?? '').trim());
+}
+
+const cmdMetaCharsRegExp = /([()\][%!^"`<>&|;, *?])/g;
+const nodeModulesCmdShimRegExp = /node_modules[\\/].bin[\\/][^\\/]+\.cmd$/i;
+
+function escapeCmdCommand(arg) {
+  return arg.replace(cmdMetaCharsRegExp, '^$1');
+}
+
+function escapeCmdArgument(arg, doubleEscapeMetaChars) {
+  let value = `${arg}`;
+
+  value = value.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"');
+  value = value.replace(/(?=(\\+?)?)\1$/, '$1$1');
+  value = `"${value}"`;
+  value = value.replace(cmdMetaCharsRegExp, '^$1');
+  if (doubleEscapeMetaChars) {
+    value = value.replace(cmdMetaCharsRegExp, '^$1');
+  }
+
+  return value;
+}
+
+function buildCmdExeInvocation(params) {
+  const resolvedCommand = path.normalize(params.resolvedCommand);
+  const comspec =
+    asNonEmptyString(params.comspec) ??
+    asNonEmptyString(params.env.comspec) ??
+    asNonEmptyString(params.env.ComSpec) ??
+    asNonEmptyString(params.env.COMSPEC) ??
+    'cmd.exe';
+
+  const needsDoubleEscape = nodeModulesCmdShimRegExp.test(resolvedCommand);
+  const shellCommand = [escapeCmdCommand(resolvedCommand), ...params.args.map((arg) => escapeCmdArgument(arg, needsDoubleEscape))].join(' ');
+
+  return {
+    command: comspec,
+    args: ['/d', '/s', '/c', `"${shellCommand}"`],
+    windowsVerbatimArguments: true,
+  };
+}
+
+function resolveWindowsCommandOnPath(command, env = process.env) {
+  const cmd = asNonEmptyString(command);
+  if (!cmd) return null;
+
+  const pathEnv = asNonEmptyString(readEnvPath(env));
+  if (!pathEnv) return null;
+
+  const exts = expandPathextCaseVariants(normalizePathext(readEnvPathext(env)));
+  const lowered = cmd.toLowerCase();
+  const hasKnownExt = exts.some((ext) => lowered.endsWith(ext.toLowerCase()));
+  const candidates = hasKnownExt ? [cmd] : [cmd, ...exts.map((ext) => `${cmd}${ext}`)];
+
+  for (const dir of pathEnv.split(path.delimiter)) {
+    const trimmedDir = dir.trim();
+    if (!trimmedDir) continue;
+    for (const name of candidates) {
+      const full = path.join(trimmedDir, name);
+      try {
+        if (fs.existsSync(full)) return full;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return null;
+}
+
+function resolveWindowsCommandInvocation(params) {
+  const command = String(params.command ?? '').trim();
+  const args = Array.isArray(params.args) ? params.args.map((arg) => String(arg)) : [];
+
+  if (process.platform !== 'win32') {
+    return { command, args };
+  }
+
+  const env = params.env ?? process.env;
+  const shouldResolveOnPath = params.resolveCommandOnPath !== false;
+  const resolvedCommand =
+    shouldResolveOnPath && isCommandOnly(command)
+      ? (resolveWindowsCommandOnPath(command, env) ?? command)
+      : command;
+
+  if (!isWindowsShellShimPath(resolvedCommand)) {
+    return { command: resolvedCommand, args };
+  }
+
+  return buildCmdExeInvocation({ resolvedCommand, args, env, comspec: params.comspec });
 }
 
 /**

@@ -1,39 +1,6 @@
 {
   "buildPolicy": {
-    "allow": [
-      "updates.ota",
-      "sharing.session",
-      "sharing.public",
-      "sharing.contentKeys",
-      "sharing.pendingQueueV2",
-      "auth.recovery.providerReset",
-      "auth.ui.recoveryKeyReminder",
-      "app.analytics",
-      "app.ui.storeReviewPrompts",
-      "app.ui.sessionGettingStartedGuidance",
-      "bugReports",
-      "attachments.uploads",
-      "session.typeSelector",
-      "zen.navigation",
-      "usage.reporting",
-      "messages.thinkingVisibility",
-      "codex.resume.mcp",
-      "codex.resume.acp"
-    ],
-    "deny": [
-      "automations",
-      "execution.runs",
-      "voice",
-      "voice.agent",
-      "social.friends",
-      "connectedServices",
-      "connectedServices.quotas",
-      "app.ui.changelog",
-      "scm.writeOperations",
-      "files.reviewComments",
-      "files.diffSyntaxHighlighting",
-      "files.editor",
-      "files.syntaxHighlighting.advanced"
-    ]
+    "allow": [],
+    "deny": []
   }
 }

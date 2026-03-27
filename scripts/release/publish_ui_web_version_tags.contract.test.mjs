@@ -37,7 +37,9 @@ test('publish-ui-web pipeline publishes ui-web-v* version tags alongside rolling
   );
 
   assert.match(out, /--tag\s+ui-web-preview\b/);
+  assert.match(out, /--tag\s+ui-web-preview\b[^\n]*--generate-notes\s+false\b/);
   assert.match(out, /--tag\s+ui-web-v/);
+  assert.match(out, /--tag\s+ui-web-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
   assert.doesNotMatch(out, /-preview\.0\.1\b/, 'local preview ui-web version must be non-trivial to avoid collisions');
 });
 

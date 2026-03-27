@@ -37,7 +37,9 @@ test('publish-hstack-binaries pipeline publishes stack-v* version tags alongside
   );
 
   assert.match(out, /--tag\s+stack-preview\b/);
+  assert.match(out, /--tag\s+stack-preview\b[^\n]*--generate-notes\s+false\b/);
   assert.match(out, /--tag\s+stack-v/);
+  assert.match(out, /--tag\s+stack-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
   assert.match(out, /clean artifacts dir: dist\/release-assets\/stack|ensure clean artifacts dir: dist\/release-assets\/stack/i);
 });
 
@@ -75,4 +77,3 @@ test('publish-hstack-binaries fails fast with helpful message when MINISIGN_SECR
   assert.match(stderr, /truncated|dotenv|multiline|file|path/i);
   assert.doesNotMatch(String(result.stdout ?? ''), /build-hstack-binaries\.mjs/i, 'should fail before running the heavy build');
 });
-

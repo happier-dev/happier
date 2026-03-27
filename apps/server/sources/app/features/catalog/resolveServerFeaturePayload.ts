@@ -13,7 +13,7 @@ import { resolveServerFeatureBuildPolicy } from './serverFeatureBuildPolicy';
 const DEPENDENCIES_BY_ID = new Map(FEATURE_IDS.map((featureId) => [featureId, FEATURE_CATALOG[featureId].dependencies] as const));
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function mergeDeep<T extends Record<string, unknown>>(base: T, patch: Record<string, unknown>): T {
@@ -77,7 +77,7 @@ export function resolveServerFeaturePayload(
         const dependencies = DEPENDENCIES_BY_ID.get(featureId) ?? [];
         for (const depId of dependencies) {
             const depEnabled = readServerEnabledBit(payload, depId);
-            if (depEnabled !== false) continue;
+            if (depEnabled === true) continue;
 
             tryWriteServerEnabledBitInPlace(payload, featureId, false);
             break;

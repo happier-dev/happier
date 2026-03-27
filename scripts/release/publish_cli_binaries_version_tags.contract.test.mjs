@@ -37,7 +37,9 @@ test('publish-cli-binaries pipeline publishes cli-v* version tags alongside roll
   );
 
   assert.match(out, /--tag\s+cli-preview\b/);
+  assert.match(out, /--tag\s+cli-preview\b[^\n]*--generate-notes\s+false\b/);
   assert.match(out, /--tag\s+cli-v/);
+  assert.match(out, /--tag\s+cli-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
   assert.match(out, /clean artifacts dir: dist\/release-assets\/cli|ensure clean artifacts dir: dist\/release-assets\/cli/i);
 });
 
@@ -75,4 +77,3 @@ test('publish-cli-binaries fails fast with helpful message when MINISIGN_SECRET_
   assert.match(stderr, /truncated|dotenv|multiline|file|path/i);
   assert.doesNotMatch(String(result.stdout ?? ''), /build-cli-binaries\.mjs/i, 'should fail before running the heavy build');
 });
-
