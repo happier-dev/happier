@@ -537,7 +537,7 @@ const GitSubTabSurface = React.memo((props: Readonly<{ testID?: string; isActive
                 {
                     opacity: props.isActive ? 1 : 0,
                     pointerEvents: props.isActive ? 'auto' : 'none',
-                    visibility: Platform.OS === 'web' ? (props.isActive ? 'visible' : 'hidden') : 'visible',
+                    display: Platform.OS === 'web' ? (props.isActive ? 'flex' : 'none') : 'flex',
                 },
             ]}
             testID={props.testID}
