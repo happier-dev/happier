@@ -780,8 +780,21 @@ export async function claudeRemoteAgentSdk(opts: {
 
         for await (const message of response as any) {
             if (message && typeof message === 'object' && (message as any).type === 'stream_event') {
+                const clearFinalizeGuardForNextTurnStart = () => {
+                    // Claude can emit the next turn's assistant output exclusively via stream_event
+                    // messages (no assembled assistant/user message). If we finalized the previous
+                    // turn (e.g. on a compaction init boundary), we still need to clear the
+                    // "result finalize" guard so the next `result` message can finalize and allow
+                    // queued prompts to continue flowing.
+                    if (awaitingNextTurnStart && didFinalizeTurn) {
+                        awaitingNextTurnStart = false;
+                        didFinalizeTurn = false;
+                    }
+                };
+
                 const toolUseStart = extractToolUseStartFromStreamEvent(message);
                 if (toolUseStart) {
+                    clearFinalizeGuardForNextTurnStart();
                     streamingToolUse = {
                         sessionId: typeof (message as any).session_id === 'string' ? (message as any).session_id : '',
                         id: toolUseStart.id,
@@ -794,6 +807,7 @@ export async function claudeRemoteAgentSdk(opts: {
 
                 const toolResultStart = extractToolResultStartFromStreamEvent(message);
                 if (toolResultStart) {
+                    clearFinalizeGuardForNextTurnStart();
                     streamingToolResult = {
                         sessionId: typeof (message as any).session_id === 'string' ? (message as any).session_id : '',
                         toolUseId: toolResultStart.toolUseId,
@@ -805,17 +819,19 @@ export async function claudeRemoteAgentSdk(opts: {
 
                 const toolUseInputDelta = extractToolUseInputJsonDeltaFromStreamEvent(message);
                 if (toolUseInputDelta && streamingToolUse) {
+                    clearFinalizeGuardForNextTurnStart();
                     streamingToolUse.inputJson += toolUseInputDelta;
                     continue;
                 }
 
                 const textDelta = extractTextDeltaFromStreamEvent(message);
                 if (textDelta) {
+                    clearFinalizeGuardForNextTurnStart();
                     if (streamingToolResult) {
                         streamingToolResult.content += textDelta;
                         continue;
                     }
-                        if (mode.claudeRemoteIncludePartialMessages === true) {
+                    if (mode.claudeRemoteIncludePartialMessages === true) {
                             emitMessage({
                                 type: 'assistant',
                                 happierPartial: true,

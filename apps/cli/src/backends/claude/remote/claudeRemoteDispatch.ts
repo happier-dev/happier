@@ -35,6 +35,17 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
     if (!first) return;
 
     let consumedBeyondFirst = false;
+    let didStartSession = false;
+
+    const originalOnSessionFound = (opts as any).onSessionFound as unknown;
+    const onSessionFound = (...args: any[]) => {
+        didStartSession = true;
+        if (typeof originalOnSessionFound === 'function') {
+            originalOnSessionFound(...args);
+        }
+    };
+
+    const baseOpts = { ...opts, onSessionFound };
     const createNextMessage = (): NextMessage => {
         let usedFirst = false;
         return async () => {
@@ -52,16 +63,16 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
 
     if (first.mode.claudeRemoteAgentSdkEnabled === true) {
         try {
-            await resolvedAgentSdk({ ...opts, nextMessage: createNextMessage() } as any);
+            await resolvedAgentSdk({ ...baseOpts, nextMessage: createNextMessage() } as any);
             return;
         } catch (error) {
-            if (!consumedBeyondFirst && isClaudeAgentSdkAuthenticationError(error)) {
-                await resolvedLegacy({ ...opts, nextMessage: createNextMessage() } as any);
+            if (!consumedBeyondFirst && !didStartSession && isClaudeAgentSdkAuthenticationError(error)) {
+                await resolvedLegacy({ ...baseOpts, nextMessage: createNextMessage() } as any);
                 return;
             }
             throw error;
         }
     }
 
-    await resolvedLegacy({ ...opts, nextMessage: createNextMessage() } as any);
+    await resolvedLegacy({ ...baseOpts, nextMessage: createNextMessage() } as any);
 }

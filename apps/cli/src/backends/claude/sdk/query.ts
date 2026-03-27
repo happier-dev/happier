@@ -30,6 +30,7 @@ import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScri
 import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJavaScriptRuntimeMessage'
 import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv'
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process'
+import { resolveExistingManagedJavaScriptRuntimeCommand } from '@happier-dev/cli-common/providers'
 
 /**
  * Query class manages Claude Code process interaction
@@ -345,11 +346,12 @@ export function query(config: {
     // - If it's a full path to binary → spawn(path, args)
     const isJsFile = pathToClaudeCodeExecutable.endsWith('.js') || pathToClaudeCodeExecutable.endsWith('.cjs')
     const isCommandOnly = pathToClaudeCodeExecutable === 'claude'
+    const isBunRuntime = typeof process.versions.bun === 'string'
     const resolvedExecutable =
       executable === 'node'
-        ? resolveJavaScriptRuntimeExecutable({
-            isBunRuntime: typeof process.versions.bun === 'string',
-          })
+        ? isBunRuntime
+          ? resolveExistingManagedJavaScriptRuntimeCommand(process.env)
+          : resolveJavaScriptRuntimeExecutable({ isBunRuntime })
         : executable
 
     // Validate executable path (skip for command-only mode)

@@ -53,6 +53,37 @@ describe('claudeRemoteDispatch', () => {
         expect(mockLegacy).toHaveBeenCalledTimes(1);
     });
 
+    it('does not fall back to legacy runner if Agent SDK has already started a session before failing with an authentication error', async () => {
+        const mockLegacy = vi.fn(async () => {});
+        const mockAgentSdk = vi.fn(async (params: any) => {
+            params.onSessionFound?.('sess_started');
+            throw new Error(
+                'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}',
+            );
+        });
+
+        let sent = false;
+        await expect(
+            claudeRemoteDispatch(
+                {
+                    onSessionFound: vi.fn(),
+                    nextMessage: async () => {
+                        if (sent) return null;
+                        sent = true;
+                        return {
+                            message: 'hello',
+                            mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any,
+                        };
+                    },
+                } as any,
+                { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+            ),
+        ).rejects.toThrow(/Failed to authenticate/);
+
+        expect(mockAgentSdk).toHaveBeenCalledTimes(1);
+        expect(mockLegacy).toHaveBeenCalledTimes(0);
+    });
+
     it('still routes to Agent SDK runner when enabled even if --mcp-config flags are present (runner parses and maps to mcpServers)', async () => {
         const mockLegacy = vi.fn(async () => {});
         const mockAgentSdk = vi.fn(async () => {});

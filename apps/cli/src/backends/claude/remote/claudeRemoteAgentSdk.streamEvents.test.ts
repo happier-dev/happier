@@ -777,4 +777,90 @@ describe('claudeRemoteAgentSdk stream events', () => {
             await runnerPromise.catch(() => {});
         }
     });
+
+    it('does not let stream_event-only next-turn output keep the result-finalize guard stuck after compaction (queued prompts keep flowing)', async () => {
+        const onReady = vi.fn();
+
+        let releaseStream!: () => void;
+        const streamClosed = new Promise<void>((resolve) => {
+            releaseStream = resolve;
+        });
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    // Compaction forks the session; we treat this init as a turn boundary so we can
+                    // immediately send the next queued prompt.
+                    yield {
+                        type: 'system',
+                        subtype: 'init',
+                        session_id: 'sess_compacted_2',
+                    } as any;
+
+                    // Next turn starts emitting assistant output as stream events only (no assembled
+                    // assistant message), then ends with a result message.
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_text_1',
+                        session_id: 'sess_compacted_2',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_delta',
+                            delta: { type: 'text_delta', text: 'ok' },
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+
+                    await streamClosed;
+                },
+                close: vi.fn(() => {
+                    releaseStream();
+                }),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let call = 0;
+        const nextMessage = vi.fn(async () => {
+            call++;
+            if (call === 1) {
+                return { message: '/compact', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
+            }
+            if (call === 2) {
+                return { message: 'follow-up after compaction', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
+            }
+            if (call === 3) {
+                return { message: 'third queued prompt', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
+            }
+            return null;
+        });
+
+        const runnerPromise = claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady,
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        try {
+            await vi.waitFor(() => {
+                expect(nextMessage).toHaveBeenCalledTimes(3);
+            });
+            expect(onReady).toHaveBeenCalled();
+        } finally {
+            releaseStream();
+            await runnerPromise.catch(() => {});
+        }
+    });
 });
