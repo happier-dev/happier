@@ -124,7 +124,7 @@ describe('startTelegramWebhookRelay', () => {
       expect(warnSpy).toHaveBeenCalledWith(
         '[TELEGRAM_WEBHOOK_RELAY] Failed to process inbound webhook update',
         expect.objectContaining({
-          path: relay.path,
+          path: '/telegram/webhook/*',
           tokenLength: 'secret-fail'.length,
         }),
       );

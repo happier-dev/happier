@@ -56,6 +56,7 @@ export async function startTelegramWebhookRelay(params: Readonly<{
     throw new Error('Webhook port must be between 0 and 65535');
   }
   const path = `/telegram/webhook/${secretPathToken}`;
+  const redactedPath = '/telegram/webhook/*';
 
   const app = fastify({ logger: false });
   app.post(path, async (request, reply) => {
@@ -75,7 +76,7 @@ export async function startTelegramWebhookRelay(params: Readonly<{
       return reply.send({ ok: true });
     } catch (error) {
       logger.warn('[TELEGRAM_WEBHOOK_RELAY] Failed to process inbound webhook update', {
-        path,
+        path: redactedPath,
         tokenLength: providedToken.trim().length,
         error: error instanceof Error ? error.message : String(error),
       });
