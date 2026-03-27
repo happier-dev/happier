@@ -246,6 +246,83 @@ type ChannelBridgeInboundDeduper = Readonly<{
   markSeen: (message: ChannelBridgeInboundMessage) => void;
 }>;
 
+type ChannelBridgeInboundForwardFailureTracker = Readonly<{
+  recordFailure: (message: ChannelBridgeInboundMessage) => Readonly<{ giveUp: boolean }>;
+  clear: (message: ChannelBridgeInboundMessage) => void;
+}>;
+
+export function createChannelBridgeInboundForwardFailureTracker(params: Readonly<{
+  now?: () => number;
+  maxAttempts?: number;
+  maxAgeMs?: number;
+}> = {}): ChannelBridgeInboundForwardFailureTracker {
+  const now = params.now ?? (() => Date.now());
+  const maxAttempts =
+    typeof params.maxAttempts === 'number' && Number.isFinite(params.maxAttempts)
+      ? Math.max(1, Math.trunc(params.maxAttempts))
+      : 10;
+  const maxAgeMs =
+    typeof params.maxAgeMs === 'number' && Number.isFinite(params.maxAgeMs)
+      ? Math.max(1_000, Math.trunc(params.maxAgeMs))
+      : 5 * 60_000;
+
+  type FailureEntry = Readonly<{
+    attempts: number;
+    firstFailedAtMs: number;
+    lastFailedAtMs: number;
+  }>;
+
+  const failures = new Map<string, FailureEntry>();
+  const maxEntries = 50_000;
+
+  const keyFor = (message: ChannelBridgeInboundMessage): string | null => {
+    const normalizedMessageId = String(message.messageId ?? '').trim();
+    if (!normalizedMessageId) return null;
+    return JSON.stringify([message.providerId, message.conversationId, message.threadId, normalizedMessageId]);
+  };
+
+  const pruneIfNeeded = () => {
+    if (failures.size <= maxEntries) return;
+    while (failures.size > maxEntries) {
+      const [oldest] = failures.keys();
+      if (oldest === undefined) break;
+      failures.delete(oldest);
+    }
+  };
+
+  return {
+    recordFailure: (message) => {
+      const key = keyFor(message);
+      if (!key) {
+        return { giveUp: true };
+      }
+      pruneIfNeeded();
+      const currentNow = now();
+      const previous = failures.get(key);
+      const next: FailureEntry = previous
+        ? {
+            attempts: previous.attempts + 1,
+            firstFailedAtMs: previous.firstFailedAtMs,
+            lastFailedAtMs: currentNow,
+          }
+        : {
+            attempts: 1,
+            firstFailedAtMs: currentNow,
+            lastFailedAtMs: currentNow,
+          };
+      failures.set(key, next);
+      const tooManyAttempts = next.attempts >= maxAttempts;
+      const tooOld = currentNow - next.firstFailedAtMs >= maxAgeMs;
+      return { giveUp: tooManyAttempts || tooOld };
+    },
+    clear: (message) => {
+      const key = keyFor(message);
+      if (!key) return;
+      failures.delete(key);
+    },
+  };
+}
+
 /**
  * Create an inbound deduper for channel messages.
  *
@@ -899,6 +976,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
   adapters: readonly ChannelBridgeAdapter[];
   deps: ChannelBridgeDeps;
   inboundDeduper: ChannelBridgeInboundDeduper;
+  inboundForwardFailureTracker?: ChannelBridgeInboundForwardFailureTracker;
   warnedMissingAdapterBindings?: Set<string>;
   warnedAdapterPullFailures?: Set<string>;
 }>): Promise<void> {
@@ -914,6 +992,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
   }
 
   const deduper = params.inboundDeduper;
+  const inboundForwardFailureTracker = params.inboundForwardFailureTracker;
 
   for (const adapter of activeAdapters) {
     let inbound: ChannelBridgeInboundMessage[];
@@ -1083,25 +1162,52 @@ export async function executeChannelBridgeTick(params: Readonly<{
             EXTERNAL_IO_TIMEOUT_MS,
             `sendUserMessageToSession(${binding.sessionId})`,
           );
+          inboundForwardFailureTracker?.clear(event);
+          processedSuccessfully = true;
         } catch (error) {
-          params.deps.onWarning?.(
-            `Failed to forward channel message into session ${binding.sessionId} (provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'} messageId=${event.messageId}); message will not be retried because the user is notified in-channel`,
-            error,
-          );
-          try {
-            await replyToConversation(
-              adapter,
-              ref,
-              `Failed to send message to session ${binding.sessionId}.`,
-            );
-          } catch (replyError) {
+          const giveUp = inboundForwardFailureTracker?.recordFailure(event).giveUp ?? false;
+          const failureWarnKey: ChannelBridgeInboundMessage = {
+            ...event,
+            messageId: `forward-failure-warn:${String(event.messageId ?? '').trim()}`,
+          };
+
+          if (!deduper.hasSeen(failureWarnKey)) {
             params.deps.onWarning?.(
-              `Failed to send session-forward-failure reply for provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'}`,
-              replyError,
+              `Failed to forward channel message into session ${binding.sessionId} (provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'} messageId=${event.messageId}); message will be retried until it is acknowledged by the adapter`,
+              error,
             );
+            deduper.markSeen(failureWarnKey);
+          }
+
+          const failureReplyKey: ChannelBridgeInboundMessage = {
+            ...event,
+            messageId: `forward-failure:${String(event.messageId ?? '').trim()}`,
+          };
+
+          if (!deduper.hasSeen(failureReplyKey)) {
+            try {
+              await replyToConversation(
+                adapter,
+                ref,
+                giveUp
+                  ? `Failed to send message to session ${binding.sessionId}. Giving up after repeated failures; please try again.`
+                  : `Failed to send message to session ${binding.sessionId}. Retrying…`,
+              );
+              deduper.markSeen(failureReplyKey);
+            } catch (replyError) {
+              params.deps.onWarning?.(
+                `Failed to send session-forward-failure reply for provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'}`,
+                replyError,
+              );
+            }
+          }
+
+          if (giveUp) {
+            processedSuccessfully = true;
+          } else {
+            continue;
           }
         }
-        processedSuccessfully = true;
       } catch (error) {
         params.deps.onWarning?.(`Failed to process inbound message for adapter ${adapter.providerId}`, error);
       }
@@ -1297,6 +1403,20 @@ export function startChannelBridgeWorker(params: Readonly<{
       : 2_500;
 
   const inboundDeduper = createChannelBridgeInboundDeduper();
+  const inboundForwardFailureTracker = createChannelBridgeInboundForwardFailureTracker({
+    maxAttempts: (() => {
+      const raw = (process.env.HAPPIER_CHANNEL_BRIDGE_INBOUND_FORWARD_MAX_ATTEMPTS ?? '').trim();
+      if (!raw || !/^[0-9]+$/.test(raw)) return undefined;
+      const parsed = Number.parseInt(raw, 10);
+      return Number.isSafeInteger(parsed) ? parsed : undefined;
+    })(),
+    maxAgeMs: (() => {
+      const raw = (process.env.HAPPIER_CHANNEL_BRIDGE_INBOUND_FORWARD_MAX_AGE_MS ?? '').trim();
+      if (!raw || !/^[0-9]+$/.test(raw)) return undefined;
+      const parsed = Number.parseInt(raw, 10);
+      return Number.isSafeInteger(parsed) ? parsed : undefined;
+    })(),
+  });
   const warnedMissingAdapterBindings = new Set<string>();
   const warnedAdapterPullFailures = new Set<string>();
   let inFlightTick: Promise<void> | null = null;
@@ -1307,6 +1427,7 @@ export function startChannelBridgeWorker(params: Readonly<{
       adapters: params.adapters,
       deps: params.deps,
       inboundDeduper,
+      inboundForwardFailureTracker,
       warnedMissingAdapterBindings,
       warnedAdapterPullFailures,
     });

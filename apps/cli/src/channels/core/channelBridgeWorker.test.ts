@@ -5,6 +5,7 @@ import {
   executeChannelBridgeTick,
   startChannelBridgeWorker,
   createChannelBridgeInboundDeduper,
+  createChannelBridgeInboundForwardFailureTracker,
   ChannelBridgePermanentDeliveryError,
   type ChannelBridgeAdapter,
   type ChannelBindingStore,
@@ -366,6 +367,140 @@ describe('executeChannelBridgeTick', () => {
         messageId: 'm2',
       },
     ]);
+  });
+
+  it('does not acknowledge inbound messages when forwarding to the session fails (so the adapter can retry)', async () => {
+    const store = createInMemoryChannelBindingStore();
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      sessionId: 'sess-abc123',
+      lastForwardedSeq: 0,
+      ownerSenderId: 'user-1',
+      inboundMode: 'ownerOnly',
+      allowMissingSenderId: false,
+    });
+
+    const inbound: ChannelBridgeInboundMessage = {
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      senderId: 'user-1',
+      text: 'Hello from Telegram',
+      messageId: 'm-forward-failure',
+    };
+
+    const pending: ChannelBridgeInboundMessage[] = [inbound];
+    const ackCalls: Array<readonly ChannelBridgeInboundMessage[]> = [];
+    const sent: SentConversationMessage[] = [];
+
+    const adapter: ChannelBridgeAdapter = {
+      providerId: 'telegram',
+      pullInboundMessages: async () => pending.slice(),
+      ackInboundMessages: async (messages) => {
+        ackCalls.push(messages);
+        for (const message of messages) {
+          const index = pending.findIndex((row) => row.messageId === message.messageId);
+          if (index >= 0) {
+            pending.splice(index, 1);
+          }
+        }
+      },
+      sendMessage: async (params) => {
+        sent.push({ conversationId: params.conversationId, threadId: params.threadId, text: params.text });
+      },
+    };
+
+    const sendToSessionSpy = async () => {
+      throw new Error('session forward failed');
+    };
+    const { deps } = createDepsHarness({
+      sendUserMessageToSession: sendToSessionSpy,
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(ackCalls).toEqual([]);
+    expect(pending).toHaveLength(1);
+    expect(sent.length).toBeGreaterThan(0);
+  });
+
+  it('gives up and acknowledges after repeated session-forward failures to avoid stalling adapter offsets', async () => {
+    const store = createInMemoryChannelBindingStore();
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      sessionId: 'sess-abc123',
+      lastForwardedSeq: 0,
+      ownerSenderId: 'user-1',
+      inboundMode: 'ownerOnly',
+      allowMissingSenderId: false,
+    });
+
+    const inbound: ChannelBridgeInboundMessage = {
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: null,
+      senderId: 'user-1',
+      text: 'Hello from Telegram',
+      messageId: 'm-forward-failure-give-up',
+    };
+
+    const pending: ChannelBridgeInboundMessage[] = [inbound];
+    const ackCalls: Array<readonly ChannelBridgeInboundMessage[]> = [];
+
+    const adapter: ChannelBridgeAdapter = {
+      providerId: 'telegram',
+      pullInboundMessages: async () => pending.slice(),
+      ackInboundMessages: async (messages) => {
+        ackCalls.push(messages);
+        for (const message of messages) {
+          const index = pending.findIndex((row) => row.messageId === message.messageId);
+          if (index >= 0) {
+            pending.splice(index, 1);
+          }
+        }
+      },
+      sendMessage: async () => {},
+    };
+
+    const { deps } = createDepsHarness({
+      sendUserMessageToSession: async () => {
+        throw new Error('session forward failed');
+      },
+    });
+
+    const deduper = createChannelBridgeInboundDeduper();
+    const failureTracker = createChannelBridgeInboundForwardFailureTracker({ maxAttempts: 2, maxAgeMs: 60_000 });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps,
+      inboundDeduper: deduper,
+      inboundForwardFailureTracker: failureTracker,
+    });
+
+    expect(ackCalls).toEqual([]);
+    expect(pending).toHaveLength(1);
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps,
+      inboundDeduper: deduper,
+      inboundForwardFailureTracker: failureTracker,
+    });
+
+    expect(ackCalls).toHaveLength(1);
+    expect(pending).toHaveLength(0);
   });
 
   it('denies /attach when sender identity is missing (safe-by-default)', async () => {
@@ -1788,7 +1923,7 @@ describe('executeChannelBridgeTick', () => {
     expect(harness.sent.some((row) => row.text.includes('Failed to send message to session sess-fail.'))).toBe(true);
   });
 
-  it('acks session-forward failures even when failure reply delivery throws', async () => {
+  it('retries session-forward failures and deduplicates forwarding warnings and failure replies', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();
 
@@ -1833,9 +1968,17 @@ describe('executeChannelBridgeTick', () => {
       inboundDeduper: deduper,
     });
 
+    harness.pushInbound(failedEvent);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
     expect(warnings.filter((row) => row.message.includes('Failed to forward channel message into session'))).toHaveLength(1);
     expect(warnings.filter((row) => row.message.includes('Failed to send session-forward-failure reply'))).toHaveLength(1);
-    expect(harness.sent).toHaveLength(0);
+    expect(harness.sent).toHaveLength(1);
   });
 
   it('persists cursor after successful sends when a later outbound row fails', async () => {
