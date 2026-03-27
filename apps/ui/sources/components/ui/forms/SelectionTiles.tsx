@@ -15,11 +15,18 @@ export interface SelectionTile<T extends string> {
     badge?: string;
 }
 
+export type SelectionTileFooterRenderer<T extends string> = (params: Readonly<{
+    option: SelectionTile<T>;
+    selected: boolean;
+    disabled: boolean;
+}>) => React.ReactNode;
+
 type SelectionTilesBaseProps<T extends string> = {
     options: Array<SelectionTile<T>>;
     testIdPrefix?: string;
     density?: 'regular' | 'compact';
     minimumColumns?: number;
+    renderOptionFooter?: SelectionTileFooterRenderer<T>;
 };
 
 type SingleSelectionTilesProps<T extends string> = SelectionTilesBaseProps<T> & {
@@ -143,6 +150,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
                     ? theme.colors.button.primary.background
                     : theme.colors.textSecondary;
                 const hasSubtitle = typeof option.subtitle === 'string' && option.subtitle.trim().length > 0;
+                const footer = props.renderOptionFooter?.({ option, selected, disabled });
 
                 return (
                     <Pressable
@@ -192,6 +200,11 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
                                 </View>
                             ) : null}
                         </View>
+                        {footer != null && footer !== false ? (
+                            <View style={[styles.footer, compact ? styles.footerCompact : null]}>
+                                {footer}
+                            </View>
+                        ) : null}
                     </Pressable>
                 );
             })}
@@ -230,6 +243,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     headerRowCentered: {
         alignItems: 'center',
+    },
+    footer: {
+        marginTop: 10,
+        gap: 8,
+    },
+    footerCompact: {
+        marginTop: 8,
+        gap: 6,
     },
     titleRow: {
         flexDirection: 'row',

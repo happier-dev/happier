@@ -70,6 +70,32 @@ describe('SelectionTiles', () => {
         expect(onChange).toHaveBeenCalledWith('command_palette');
     });
 
+    it('renders option footers when a renderer is provided', async () => {
+        const onChange = vi.fn();
+        const renderOptionFooter = vi.fn((params: { option: { id: string }; selected: boolean; disabled: boolean }) => {
+            if (!params.selected) {
+                return null;
+            }
+            return React.createElement('Text', { testID: `footer:${params.option.id}` }, 'Footer');
+        });
+        const { SelectionTiles } = await import('./SelectionTiles');
+
+        const screen = await renderScreen(<SelectionTiles
+            options={[
+                { id: 'a', title: 'A' },
+                { id: 'b', title: 'B' },
+            ]}
+            value={'a'}
+            onChange={onChange}
+            renderOptionFooter={renderOptionFooter}
+            testIdPrefix="footer-select"
+        />);
+
+        expect(() => screen.tree.findByProps({ testID: 'footer:a' })).not.toThrow();
+        expect(() => screen.tree.findByProps({ testID: 'footer:b' })).toThrow();
+        expect(renderOptionFooter).toHaveBeenCalled();
+    });
+
     it('supports multiple selection mode and toggles selected values', async () => {
         const onChange = vi.fn();
         const { SelectionTiles } = await import('./SelectionTiles');

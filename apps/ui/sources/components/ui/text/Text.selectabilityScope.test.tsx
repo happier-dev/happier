@@ -107,3 +107,35 @@ describe('TextInput (native E2E testID accessibility)', () => {
     }
   });
 });
+
+describe('Text (native E2E testID accessibility)', () => {
+  it('uses testID as accessibilityLabel when native E2E labels are enabled', async () => {
+    const previous = process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
+    process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = '1';
+    try {
+      const { Text } = await import('./Text');
+      const screen = await renderScreen(<Text testID="welcome-server-loading">Loading...</Text>);
+      const rnText = screen.findByType('RNText' as any);
+      expect(rnText.props.accessibilityLabel).toBe('welcome-server-loading');
+    } finally {
+      if (previous === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
+      else process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = previous;
+    }
+  });
+
+  it('keeps an explicit accessibilityLabel when native E2E labels are disabled', async () => {
+    const previous = process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
+    delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
+    try {
+      const { Text } = await import('./Text');
+      const screen = await renderScreen(
+        <Text testID="welcome-server-loading" accessibilityLabel="Server loading">Loading...</Text>,
+      );
+      const rnText = screen.findByType('RNText' as any);
+      expect(rnText.props.accessibilityLabel).toBe('Server loading');
+    } finally {
+      if (previous === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
+      else process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = previous;
+    }
+  });
+});

@@ -1,8 +1,4 @@
 export function resolveAutomationTestIdLabelEnabled(): boolean {
-    const isDev =
-        (typeof __DEV__ !== 'undefined' ? __DEV__ : false) === true ||
-        (typeof (globalThis as any).__DEV__ !== 'undefined' ? (globalThis as any).__DEV__ : false) === true;
-    if (!isDev) return false;
     const raw = String(process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS ?? '').trim().toLowerCase();
     return raw === '1' || raw === 'true' || raw === 'yes';
 }

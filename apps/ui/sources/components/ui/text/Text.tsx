@@ -50,6 +50,8 @@ export const Text = React.memo(
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
         const selectableFromScope = React.useContext(TextSelectabilityContext);
         const effectiveSelectable = selectable ?? selectableFromScope;
+        const { accessibilityLabel, testID, ...restProps } = props;
+        const resolvedAccessibilityLabel = resolveAutomationAccessibilityLabel({ testID, accessibilityLabel });
 
         const scaledStyle = React.useMemo(() => scaleTextStyle(style as any, uiFontScale), [style, uiFontScale]);
         const defaultStyle = useDefaultTypography ? Typography.default() : null;
@@ -66,7 +68,9 @@ export const Text = React.memo(
                 ref={ref}
                 style={mergedStyle}
                 selectable={effectiveSelectable}
-                {...props}
+                accessibilityLabel={resolvedAccessibilityLabel}
+                testID={testID}
+                {...restProps}
             />
         );
     })
