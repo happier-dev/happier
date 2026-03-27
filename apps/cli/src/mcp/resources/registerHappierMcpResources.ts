@@ -25,10 +25,12 @@ type ResourceRegistrar = Readonly<{
 export function registerHappierMcpResources(
   server: ResourceRegistrar,
   opts?: Readonly<{
+    surface?: Parameters<typeof isActionSpecSurfacedOn>[1];
     isActionEnabled?: (id: ActionId) => boolean;
   }>,
 ): void {
   const isActionEnabled = opts?.isActionEnabled ?? ((_id: ActionId) => true);
+  const surface = opts?.surface ?? 'session_agent';
 
   server.registerResource(
     'happier_action_specs',
@@ -45,7 +47,7 @@ export function registerHappierMcpResources(
           mimeType: 'application/json',
           text: JSON.stringify({
             actionSpecs: listActionSpecs()
-              .filter((spec) => isActionSpecSurfacedOn(spec, 'mcp') && isActionEnabled(spec.id))
+              .filter((spec) => isActionSpecSurfacedOn(spec, surface) && isActionEnabled(spec.id))
               .map(serializeActionSpec),
           }),
         },

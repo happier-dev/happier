@@ -39,4 +39,32 @@ describe('registerHappierMcpResources', () => {
     expect(parsed.actionSpecs.some((spec: { id: string }) => spec.id === 'review.start')).toBe(false);
     expect(parsed.actionSpecs.some((spec: { id: string }) => spec.id === 'subagents.plan.start')).toBe(true);
   });
+
+  it('filters the action-specs catalog by surface', async () => {
+    const readCatalog = async (surface: 'session_agent' | 'mcp') => {
+      const resources: Array<{
+        handler: () => Promise<{ contents: Array<{ uri: string; mimeType: string; text: string }> }>;
+      }> = [];
+
+      registerHappierMcpResources(
+        {
+          registerResource: (_name, _uri, _config, nextHandler) => {
+            resources.push({ handler: nextHandler });
+          },
+        },
+        { surface, isActionEnabled: () => true },
+      );
+
+      expect(resources).toHaveLength(1);
+      const res = await resources[0]!.handler();
+      const parsed = JSON.parse(res.contents[0]!.text) as { actionSpecs?: Array<{ id?: string }> };
+      return Array.isArray(parsed.actionSpecs) ? parsed.actionSpecs.map((spec) => String(spec.id ?? '')).filter(Boolean) : [];
+    };
+
+    const sessionAgentIds = await readCatalog('session_agent');
+    const mcpIds = await readCatalog('mcp');
+
+    expect(sessionAgentIds).not.toContain('session.target.primary.set');
+    expect(mcpIds).toContain('session.target.primary.set');
+  });
 });

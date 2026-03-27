@@ -5,11 +5,13 @@ import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 
 import { resolveMcpCommandDeps, type McpCommandDeps } from './mcp/deps';
+import { runMcpServeCommand } from './mcp/serve';
 import { runMcpServersSubcommand } from './mcp/servers/subcommands';
 
 function resolveCommandKind(args: readonly string[]): string {
   const group = args[0];
   const subcommand = args[1];
+  if (group === 'serve' || group === 'start') return 'mcp_serve';
   if (group !== 'servers') return 'mcp_unknown';
   const sub = String(subcommand ?? '').trim();
   if (!sub) return 'mcp_servers_unknown';
@@ -31,6 +33,11 @@ export async function handleMcpCommand(args: string[], deps?: Partial<McpCommand
   const resolvedDeps = resolveMcpCommandDeps(deps);
 
   try {
+    if (group === 'serve' || group === 'start') {
+      await runMcpServeCommand(args, resolvedDeps);
+      return;
+    }
+
     if (group !== 'servers') {
       throw new Error('Usage: happier mcp servers <command>');
     }
@@ -78,4 +85,3 @@ export async function handleMcpCliCommand(context: CommandContext): Promise<void
     process.exitCode = typeof process.exitCode === 'number' && process.exitCode > 1 ? process.exitCode : 1;
   }
 }
-

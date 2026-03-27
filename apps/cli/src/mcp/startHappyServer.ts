@@ -16,6 +16,7 @@ export type HappyMcpExecutionRunService = Readonly<{
     send: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
     stop: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
     action: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
+    wait?: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
 }>;
 
 export type HappyMcpSessionClient = {
@@ -30,7 +31,7 @@ export type HappyMcpSessionClient = {
 export async function startHappyServer(client: HappyMcpSessionClient) {
     // Do not eagerly construct an MCP server on startup; only snapshot the names.
     // Full server creation is done per request inside the handler.
-    const toolNamesSnapshot = listBuiltInHappierTools().map((tool) => tool.name);
+    const toolNamesSnapshot = listBuiltInHappierTools({ surface: 'session_agent' }).map((tool) => tool.name);
     const keepAliveIntervalMs = configuration.mcpSseKeepAliveIntervalMs;
 
     //

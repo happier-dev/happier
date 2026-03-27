@@ -188,4 +188,69 @@ describe('createHappierMcpServer', () => {
     });
     expect(res).toMatchObject({ ok: true, digest: 'sha256:deadbeef' });
   });
+
+  it('routes session control deps through the shared CLI action deps (not unsupported stubs)', async () => {
+    const captured: { deps?: any } = {};
+
+    vi.doMock('@happier-dev/protocol', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
+      return {
+        ...actual,
+        createActionExecutor: (deps: any) => {
+          captured.deps = deps;
+          return {} as any;
+        },
+      };
+    });
+
+    const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
+
+    createHappierMcpServer({
+      sessionId: 'sess_mcp_session_control_1',
+      rpcHandlerManager: { invokeLocal: async () => ({}) },
+      sendClaudeSessionMessage: () => {},
+      updateMetadata: () => {},
+    } as any);
+
+    expect(captured.deps).toBeDefined();
+    await expect(
+      captured.deps.sessionList({ limit: 1, cursor: null, activeOnly: false, archivedOnly: false, includeSystem: false, resumableOnly: false }),
+    ).resolves.toEqual({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
+  });
+
+  it('dispatches registered tools using the session_agent surface (internal MCP)', async () => {
+    const captured: { surface?: string } = {};
+    const handlers: Record<string, (args: any) => Promise<any>> = {};
+
+    vi.doMock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
+      McpServer: class FakeMcpServer {
+        registerResource() {}
+        registerTool(name: string, _meta: any, handler: any) {
+          handlers[name] = handler;
+        }
+      },
+    }));
+
+    vi.doMock('@/agent/tools/happierTools/dispatchBuiltInHappierTool', () => ({
+      dispatchBuiltInHappierTool: async (params: any) => {
+        captured.surface = params.surface;
+        return { ok: true, result: { ok: true } };
+      },
+    }));
+
+    const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
+
+    const fakeClient = {
+      sessionId: 'sess_mcp_surface_1',
+      rpcHandlerManager: { invokeLocal: async () => ({}) },
+      sendClaudeSessionMessage: () => {},
+      updateMetadata: () => {},
+    } as any;
+
+    createHappierMcpServer(fakeClient);
+
+    expect(typeof handlers.change_title).toBe('function');
+    await handlers.change_title({ title: 'Hello' });
+    expect(captured.surface).toBe('session_agent');
+  });
 });

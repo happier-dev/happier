@@ -4,8 +4,11 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { detectProviderMcpServers } from '@/mcp/providerDetection/detectProviderMcpServers';
 import { probeMcpStdioServerTools } from '@/mcp/servers/probeMcpStdioServerTools';
+import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
 import { readCredentials, type Credentials } from '@/persistence';
 import { ensureMachineIdForCredentials } from '@/ui/auth';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 export type McpCommandDeps = Readonly<{
   readCredentials: () => Promise<Credentials | null>;
@@ -16,6 +19,8 @@ export type McpCommandDeps = Readonly<{
   probeMcpStdioServerTools: typeof probeMcpStdioServerTools;
   randomUUID: () => string;
   nowMs: () => number;
+  createExternalMcpServer: typeof createExternalMcpServer;
+  connectMcpStdio: (server: Pick<McpServer, 'connect'>) => Promise<void>;
 }>;
 
 export function resolveMcpCommandDeps(overrides?: Partial<McpCommandDeps>): McpCommandDeps {
@@ -28,6 +33,10 @@ export function resolveMcpCommandDeps(overrides?: Partial<McpCommandDeps>): McpC
     probeMcpStdioServerTools: overrides?.probeMcpStdioServerTools ?? probeMcpStdioServerTools,
     randomUUID: overrides?.randomUUID ?? randomUUID,
     nowMs: overrides?.nowMs ?? (() => Date.now()),
+    createExternalMcpServer: overrides?.createExternalMcpServer ?? createExternalMcpServer,
+    connectMcpStdio: overrides?.connectMcpStdio ?? (async (server) => {
+      const transport = new StdioServerTransport();
+      await server.connect(transport);
+    }),
   };
 }
-

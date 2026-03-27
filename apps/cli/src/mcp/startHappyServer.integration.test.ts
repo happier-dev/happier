@@ -479,7 +479,7 @@ describe('startHappyServer (MCP integration)', () => {
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
       actions: {
-        'review.start': { enabled: true, disabledSurfaces: ['mcp'], disabledPlacements: [] },
+        'review.start': { enabled: true, disabledSurfaces: ['session_agent'], disabledPlacements: [] },
       },
     });
 
