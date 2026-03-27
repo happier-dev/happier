@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Text } from "@/components/ui/text/Text";
 import { t } from "@/text";
-import { resolveAutomationAccessibilityLabel } from "@/dev/automation/automationTestId";
 
 export type AgentInputSessionModeOption = Readonly<{
   id: string;
@@ -66,10 +65,7 @@ export function AgentInputSessionModeSection(
               key={option.id}
               testID={`agent-input-session-mode-option:${option.id}`}
               accessibilityRole="radio"
-              accessibilityLabel={resolveAutomationAccessibilityLabel({
-                testID: `agent-input-session-mode-option:${option.id}`,
-                accessibilityLabel: option.name,
-              })}
+              accessibilityLabel={option.name}
               accessibilityState={{ selected }}
               onPress={() => props.onSelectOption?.(option.id)}
               style={({ pressed }) => [

@@ -30,29 +30,6 @@ describe('MarkdownView (tables)', () => {
         expect(scrollViews[0]!.props.disallowInterruption).toBe(true);
     }, 60_000);
 
-    it('maps the table scroll testID into accessibilityLabel when native E2E labels are enabled', async () => {
-        const previous = process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-        process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = '1';
-        try {
-            const { MarkdownView } = await import('./MarkdownView');
-
-            const markdown = [
-                '| A | B | C |',
-                '|---|---|---|',
-                '| 1 | 2 | 3 |',
-            ].join('\n');
-
-            const screen = await renderScreen(<MarkdownView markdown={markdown} />);
-
-            const scrollViews = screen.findAllByType('GestureHandlerScrollView' as any);
-            expect(scrollViews).toHaveLength(1);
-            expect(scrollViews[0]!.props.accessibilityLabel).toBe('markdown-table-scroll');
-        } finally {
-            if (previous === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-            else process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = previous;
-        }
-    }, 60_000);
-
     it('renders table header/cell text as selectable so users can copy values from transcripts', async () => {
         const { MarkdownView } = await import('./MarkdownView');
 

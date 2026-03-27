@@ -194,23 +194,6 @@ describe('AskUserQuestionView', () => {
         expect(screen.findByProps({ testID: 'ask-user-question.submit' })).toBeTruthy();
     });
 
-    it('maps stable testIDs into accessibilityLabel when native E2E labels are enabled', async () => {
-        const previous = process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-        process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = '1';
-        try {
-            const screen = await renderView(makeTool());
-
-            const option = screen.findByProps({ testID: 'ask-user-question.option:0:0' });
-            expect(option?.props?.accessibilityLabel).toBe('ask-user-question.option:0:0');
-
-            const submit = screen.findByProps({ testID: 'ask-user-question.submit' });
-            expect(submit?.props?.accessibilityLabel).toBe('ask-user-question.submit');
-        } finally {
-            if (previous === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-            else process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = previous;
-        }
-    });
-
     it('does not allow answering when the permission id is missing', async () => {
         const screen = await renderView(makeTool({ permission: undefined }));
 

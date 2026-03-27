@@ -67,30 +67,4 @@ describe('AgentInputSelectionSimpleList', () => {
 
         expect(onSelect).toHaveBeenCalledWith('plan');
     });
-
-    it('maps option testIDs into accessibilityLabel when native E2E labels are enabled', async () => {
-        const previous = process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-        process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = '1';
-        try {
-            const { AgentInputSelectionSimpleList } = await import('./AgentInputSelectionSimpleList');
-
-            const screen = await renderScreen(
-                <AgentInputSelectionSimpleList
-                    title="Mode"
-                    options={[
-                        { id: 'build', label: 'Build' },
-                        { id: 'plan', label: 'Plan' },
-                    ]}
-                    selectedOptionId="build"
-                    onSelect={() => {}}
-                />,
-            );
-
-            const plan = screen.findByTestId('agent-input-simple-option:plan');
-            expect(plan?.props?.accessibilityLabel).toBe('agent-input-simple-option:plan');
-        } finally {
-            if (previous === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-            else process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = previous;
-        }
-    });
 });

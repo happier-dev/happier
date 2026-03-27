@@ -7,7 +7,6 @@ import { Typography } from "@/constants/Typography";
 import { Text } from "@/components/ui/text/Text";
 import { normalizeNodeForView } from "@/components/ui/rendering/normalizeNodeForView";
 import { AgentInputChipPickerTopSelector } from "./AgentInputChipPickerTopSelector";
-import { resolveAutomationAccessibilityLabel } from "@/dev/automation/automationTestId";
 
 import type {
   AgentInputChipPickerOption,
@@ -84,10 +83,6 @@ function AgentInputChipPickerOptionButton(
 ) {
   const styles = stylesheet;
   const testID = `agent-input-chip-picker.option:${props.option.id}`;
-  const accessibilityLabel = resolveAutomationAccessibilityLabel({
-    testID,
-    accessibilityLabel: props.option.label,
-  });
   const normalizedSubtitle = props.option.subtitle?.trim();
   const shouldShowSubtitle =
     !props.compact &&
@@ -98,7 +93,7 @@ function AgentInputChipPickerOptionButton(
     <Pressable
       testID={testID}
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
+      accessibilityLabel={props.option.label}
       onPress={props.onPress}
       style={({ pressed }) => [
         styles.optionRow,

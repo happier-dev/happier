@@ -9,7 +9,6 @@ import {
 
 import { Typography } from '@/constants/Typography';
 import { useLocalSetting } from '@/sync/store/hooks';
-import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 import { scaleTextStyle } from './uiFontScale';
 
@@ -51,7 +50,6 @@ export const Text = React.memo(
         const selectableFromScope = React.useContext(TextSelectabilityContext);
         const effectiveSelectable = selectable ?? selectableFromScope;
         const { accessibilityLabel, testID, ...restProps } = props;
-        const resolvedAccessibilityLabel = resolveAutomationAccessibilityLabel({ testID, accessibilityLabel });
 
         const scaledStyle = React.useMemo(() => scaleTextStyle(style as any, uiFontScale), [style, uiFontScale]);
         const defaultStyle = useDefaultTypography ? Typography.default() : null;
@@ -68,7 +66,7 @@ export const Text = React.memo(
                 ref={ref}
                 style={mergedStyle}
                 selectable={effectiveSelectable}
-                accessibilityLabel={resolvedAccessibilityLabel}
+                accessibilityLabel={accessibilityLabel}
                 testID={testID}
                 {...restProps}
             />
@@ -89,7 +87,6 @@ export const TextInput = React.memo(
         const uiFontScaleSetting = useLocalSetting('uiFontScale');
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
         const { accessibilityLabel, testID, ...restProps } = props;
-        const resolvedAccessibilityLabel = resolveAutomationAccessibilityLabel({ testID, accessibilityLabel });
 
         const scaledStyle = React.useMemo(() => scaleTextStyle(style as any, uiFontScale) as TextStyle, [style, uiFontScale]);
         const defaultStyle = useDefaultTypography ? Typography.default() : null;
@@ -105,7 +102,7 @@ export const TextInput = React.memo(
             <RNTextInput
                 ref={ref}
                 style={mergedStyle}
-                accessibilityLabel={resolvedAccessibilityLabel}
+                accessibilityLabel={accessibilityLabel}
                 testID={testID}
                 {...restProps}
             />

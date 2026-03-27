@@ -129,38 +129,6 @@ describe('/ (welcome) signup methods', () => {
         expect(screen.findAllByTestId('welcome-signup-provider').length).toBeGreaterThan(0);
     });
 
-    it('maps welcome-create-account testID into accessibilityLabel when native E2E labels are enabled', async () => {
-        vi.resetModules();
-        const previous = process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-        process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = '1';
-        try {
-            const bothEnabled = createWelcomeFeaturesResponse({
-                signupMethods: [
-                    { id: 'anonymous', enabled: true },
-                    { id: 'github', enabled: true },
-                ],
-                requiredProviders: [],
-                autoRedirectEnabled: false,
-                autoRedirectProviderId: null,
-                providerOffboardingIntervalSeconds: 600,
-            });
-            getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: bothEnabled });
-
-            const screen = await renderWelcomeScreen();
-            await waitForWelcomeTestId(screen, 'welcome-create-account');
-
-            const button = screen.findByTestId('welcome-create-account');
-            expect(button).toBeTruthy();
-            if (!button) {
-                throw new Error('Expected welcome-create-account button to be present');
-            }
-            expect(button.props.accessibilityLabel).toBe('welcome-create-account');
-        } finally {
-            if (previous === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-            else process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = previous;
-        }
-    });
-
     it('prefers auth.methods over legacy signup/login methods when present', async () => {
         vi.resetModules();
         const { t } = await import('@/text');

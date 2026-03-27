@@ -10,7 +10,6 @@ import { t } from '@/text';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { resolveAgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
-import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 
 interface QuestionOption {
@@ -450,10 +449,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                             key={oIndex}
                                             testID={testID}
                                             accessibilityRole="button"
-                                            accessibilityLabel={resolveAutomationAccessibilityLabel({
-                                                testID,
-                                                accessibilityLabel: option.label,
-                                            })}
+                                            accessibilityLabel={option.label}
                                             style={[
                                                 styles.optionButton,
                                                 isSelected && styles.optionButtonSelected,
@@ -499,10 +495,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                         <TouchableOpacity
                             testID="ask-user-question.submit"
                             accessibilityRole="button"
-                            accessibilityLabel={resolveAutomationAccessibilityLabel({
-                                testID: 'ask-user-question.submit',
-                                accessibilityLabel: t('tools.askUserQuestion.submit'),
-                            })}
+                            accessibilityLabel={t('tools.askUserQuestion.submit')}
                             style={[
                                 styles.submitButton,
                                 (!allQuestionsAnswered || isSubmitting) && styles.submitButtonDisabled,

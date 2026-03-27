@@ -54,27 +54,6 @@ describe('PrimaryCircleIconButton', () => {
         expect(pressable.props.testID).toBe('circle-button');
     });
 
-    it('maps testID into accessibilityLabel when native E2E labels are enabled', async () => {
-        const previous = process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-        process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = '1';
-        try {
-            const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
-            const screen = await renderScreen(<PrimaryCircleIconButton
-                testID="circle-button"
-                active
-                accessibilityLabel="Send"
-                onPress={() => {}}
-            >
-                <span />
-            </PrimaryCircleIconButton>);
-            const pressable = screen.findByTestId('circle-button');
-            expect(pressable?.props?.accessibilityLabel).toBe('circle-button');
-        } finally {
-            if (previous === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-            else process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = previous;
-        }
-    });
-
     it('does not emit raw text nodes under Pressable when icon children render as text on web', async () => {
         const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
         let tree!: renderer.ReactTestRenderer;

@@ -47,9 +47,6 @@ vi.mock('@/agents/catalog/permissionUiCopy', () => ({
 
 describe('PermissionFooter (codexDecision)', () => {
     it('does not repeat the request summary (the tool UI already shows it)', async () => {
-        const previous = process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-        process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = '1';
-        try {
         const { PermissionFooter } = await import('../permissions/PermissionFooter');
         const screen = await renderScreen(React.createElement(PermissionFooter, {
             permission: { id: 'p1', status: 'pending' },
@@ -69,13 +66,6 @@ describe('PermissionFooter (codexDecision)', () => {
         expect(allow).toBeTruthy();
         expect(deny).toBeTruthy();
         expect(stop).toBeTruthy();
-        expect(allow.props.accessibilityLabel).toBe('permission-footer.allow');
-        expect(deny.props.accessibilityLabel).toBe('permission-footer.deny');
-        expect(stop.props.accessibilityLabel).toBe('permission-footer.stop');
-        } finally {
-            if (previous === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS;
-            else process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS = previous;
-        }
     });
 
     it('approves execpolicy amendment using the latest proposed_execpolicy_amendment payload', async () => {

@@ -6,7 +6,6 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 export type AgentInputSelectionSimpleListProps = Readonly<{
     title: string;
@@ -28,10 +27,7 @@ export function AgentInputSelectionSimpleList(props: AgentInputSelectionSimpleLi
                         key={option.id}
                         testID={testID}
                         accessibilityRole="button"
-                        accessibilityLabel={resolveAutomationAccessibilityLabel({
-                            testID,
-                            accessibilityLabel: option.label,
-                        })}
+                        accessibilityLabel={option.label}
                         onPress={() => props.onSelect(option.id)}
                         style={({ pressed }) => [
                             styles.optionRow,

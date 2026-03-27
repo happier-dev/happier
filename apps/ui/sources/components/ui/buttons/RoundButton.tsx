@@ -4,7 +4,6 @@ import { iOSUIKit } from 'react-native-typography';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
-import { resolveAutomationAccessibilityLabel } from '@/dev/automation/automationTestId';
 
 
 export type RoundButtonSize = 'large' | 'normal' | 'small';
@@ -92,16 +91,12 @@ export const RoundButton = React.memo((props: {
 
     const size = sizes[props.size || 'large'];
     const display = displays[props.display || 'default'];
-    const resolvedAccessibilityLabel = resolveAutomationAccessibilityLabel({
-        testID: props.testID,
-        accessibilityLabel: props.accessibilityLabel,
-    });
 
     return (
         <Pressable
             testID={props.testID}
             accessibilityRole="button"
-            accessibilityLabel={resolvedAccessibilityLabel}
+            accessibilityLabel={props.accessibilityLabel}
             disabled={doLoading || props.disabled}
             hitSlop={size.hitSlop}
             style={(p) => ([

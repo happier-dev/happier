@@ -15,14 +15,8 @@ const config = getSentryExpoConfig(__dirname, {
 //
 // In CI/e2e and stack builds, prefer Metro's Node filesystem crawler (slower but deterministic).
 const isStackRun = Boolean((process.env.HAPPIER_STACK_STACK ?? '').toString().trim());
-const isNativeE2e = (() => {
-  const raw = String(process.env.EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS ?? '')
-    .trim()
-    .toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
-})();
 
-if (process.env.CI || isStackRun || isNativeE2e) {
+if (process.env.CI || isStackRun) {
   config.resolver.useWatchman = false;
   // `metro-file-map`'s watcher selection is driven by `watcher.useWatchman`, not
   // `resolver.useWatchman`. Set both to avoid "Failed to start watch mode"

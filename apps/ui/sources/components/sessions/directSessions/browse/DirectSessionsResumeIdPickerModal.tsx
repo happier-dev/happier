@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -23,7 +23,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 14,
         width: 560,
         maxWidth: '94%',
-        maxHeight: '92%',
         overflow: 'hidden',
         shadowColor: theme.colors.shadow.color,
         shadowOffset: { width: 0, height: 2 },
@@ -64,18 +63,20 @@ export const DirectSessionsResumeIdPickerModal = React.memo(function DirectSessi
     props: DirectSessionsResumeIdPickerModalProps,
 ) {
     const { theme } = useUnistyles();
+    const windowDimensions = useWindowDimensions();
     const styles = stylesheet;
 
     const handleRequestClose = React.useCallback(() => {
         props.onRequestClose?.();
-        props.onResolve(null);
         props.onClose();
     }, [props]);
 
     const title = props.title ?? t('directSessions.browseTitle');
+    const modalHeight = Math.min(Math.max(320, windowDimensions.height * 0.92), 860);
+    const modalWidth = Math.min(560, Math.max(320, windowDimensions.width * 0.94));
 
     return (
-        <View style={styles.container} testID="resume-id-browse-modal">
+        <View style={[styles.container, { height: modalHeight, width: modalWidth }]} testID="resume-id-browse-modal">
             <View style={styles.header}>
                 <Text style={styles.title}>{title}</Text>
                 <View style={styles.headerActions}>
