@@ -90,10 +90,15 @@ function isLeaseAlreadyExistsError(error: unknown): boolean {
 }
 
 function resolveDaemonPidFromOwnerId(ownerId: string): number | null {
-  if (!ownerId.startsWith('cli-daemon:')) {
+  const prefix = ownerId.startsWith('cli-daemon:')
+    ? 'cli-daemon:'
+    : ownerId.startsWith('daemon:')
+      ? 'daemon:'
+      : null;
+  if (!prefix) {
     return null;
   }
-  const rest = ownerId.slice('cli-daemon:'.length);
+  const rest = ownerId.slice(prefix.length);
   const pidStr = rest.split(':')[0] ?? '';
   const pid = Number.parseInt(pidStr, 10);
   if (!Number.isFinite(pid) || pid <= 0) {

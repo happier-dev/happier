@@ -11,6 +11,7 @@ import type {
   SessionHandoffResumePlan,
   TransferEndpointCandidate,
 } from '@happier-dev/protocol';
+import { MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createEncryptedTransferChunkEnvelope } from '../../machines/transfer/transferChunkEncryption';
@@ -891,7 +892,11 @@ function createLoopbackMachineTransferChannels() {
     });
 
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
     expect(prepare).toBeDefined();
+    expect(statusGet).toBeDefined();
+    expect(resultGet).toBeDefined();
 
     await expect(prepare!({
       handoffId: 'handoff_missing_handoff_metadata_v2',
@@ -991,29 +996,29 @@ function createLoopbackMachineTransferChannels() {
       },
     });
 
-    expect(result).toMatchObject({
-      handoffId: expect.any(String),
-      status: expect.objectContaining({
-        status: 'pending',
-        phase: 'preparing',
-      }),
-      endpointCandidates: [],
-      targetPath: '/repo-source-current',
-      handoffMetadataV2: expect.objectContaining({
-        providerBundleTransferPublication: expect.objectContaining({
-          endpointCandidates: [
+	    expect(result).toMatchObject({
+	      handoffId: expect.any(String),
+	      status: expect.objectContaining({
+	        status: 'pending',
+	        phase: 'preparing',
+	      }),
+	      targetPath: '/repo-source-current',
+	      handoffMetadataV2: expect.objectContaining({
+	        providerBundleTransferPublication: expect.objectContaining({
+	          endpointCandidates: [
             expect.objectContaining({
               kind: 'http',
               url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_back' }).url,
               expiresAt: expect.any(Number),
             }),
           ],
-        }),
-      }),
-    });
-	    expect(exportSessionBundle).toHaveBeenCalledWith(
-	      expect.objectContaining({
-	        machineId: 'machine_target',
+	        }),
+	      }),
+	    });
+	    expect(result.endpointCandidates.length).toBeGreaterThan(0);
+		    expect(exportSessionBundle).toHaveBeenCalledWith(
+		      expect.objectContaining({
+		        machineId: 'machine_target',
 	        path: '/repo-source-current',
         homeDir: '/Users/target',
         portableMetadataVersion: 'v2',
@@ -1193,8 +1198,8 @@ function createLoopbackMachineTransferChannels() {
 	    }
 	  });
 
-	  it('acknowledges workspace handoff start (pending) without waiting for workspace scan when negotiatedTransportStrategy is direct_peer and server-routed fallback is disabled', async () => {
-	    vi.resetModules();
+		  it('acknowledges workspace handoff start (pending) without waiting for workspace scan when negotiatedTransportStrategy is direct_peer and server-routed fallback is disabled', async () => {
+		    vi.resetModules();
 
 	    const registered = new Map<string, (params: unknown) => Promise<any>>();
 	    const stopSessionForHandoff = vi.fn(async () => 'already_inactive' as const);
@@ -1225,15 +1230,15 @@ function createLoopbackMachineTransferChannels() {
 	        }),
 	        exportSessionBundle,
 	        stopSessionForHandoff,
-	        directPeerTransfer: {
-	          publishTransfer,
-	          requestPayloadFile,
-	          clearPublishedTransfer: vi.fn(),
-	        },
-	      });
+		        directPeerTransfer: {
+		          publishTransfer,
+		          requestPayloadFile,
+		          clearPublishedTransfer: vi.fn(),
+		        },
+		      });
 
-		      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
-		      expect(start).toBeDefined();
+			      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+			      expect(start).toBeDefined();
 
 		      let started: any = null;
 		      start!({
@@ -1275,10 +1280,99 @@ function createLoopbackMachineTransferChannels() {
 	      if (waitError) {
 	        throw waitError;
 	      }
-	    } finally {
-	      await dispose();
-	    }
-	  });
+		    } finally {
+		      await dispose();
+		    }
+		  });
+
+		  it('acknowledges workspace handoff start (pending) with direct-peer endpoint candidates when server-routed fallback exists but max-bytes is explicitly configured', async () => {
+		    vi.resetModules();
+
+		    const previousMaxBytes = process.env[MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY];
+		    process.env[MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY] = '4096';
+
+		    const registered = new Map<string, (params: unknown) => Promise<any>>();
+		    const stopSessionForHandoff = vi.fn(async () => 'already_inactive' as const);
+		    const exportSessionBundle = vi.fn(async () => ({
+		      providerBundle: {
+		        providerId: 'claude' as const,
+		        remoteSessionId: 'claude_session_1',
+		        transcriptBase64: 'e30K',
+		      },
+		      targetPath: '/repo',
+		    }));
+		    const { publishTransfer, requestPayloadFile, dispose } = await createPublishedDirectPeerPayloadRouter();
+		    const channels = createLoopbackMachineTransferChannels();
+
+		    const rpcHandlerManager = {
+		      registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+		        registered.set(method, handler);
+		      },
+		    } as any;
+
+		    try {
+		      registerMachineSessionHandoffRpcHandlers({
+		        rpcHandlerManager,
+		        loadSessionMetadata: async () => ({
+		          machineId: 'machine_source',
+		          path: '/repo',
+		          flavor: 'claude',
+		          claudeSessionId: 'claude_session_1',
+		        }),
+		        exportSessionBundle,
+		        stopSessionForHandoff,
+		        machineTransferChannel: channels.source,
+		        directPeerTransfer: {
+		          publishTransfer,
+		          requestPayloadFile,
+		          clearPublishedTransfer: vi.fn(),
+		        },
+		      });
+
+		      const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
+		      expect(start).toBeDefined();
+
+		      let started: any = null;
+		      start!({
+		        sessionId: 'sess_direct_peer_deferred_scan_with_server_routed_max_bytes_configured',
+		        sourceMachineId: 'machine_source',
+		        targetMachineId: 'machine_target',
+		        sessionStorageMode: 'persisted',
+		        preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+		        negotiatedTransportStrategy: 'direct_peer',
+		        workspaceTransfer: {
+		          enabled: true,
+		          strategy: 'sync_changes',
+		          conflictPolicy: 'replace_existing',
+		          includeIgnoredMode: 'exclude',
+		          ignoredIncludeGlobs: [],
+		        },
+		      }).then((value) => {
+		        started = value;
+		        return value;
+		      });
+
+		      await vi.waitFor(() => {
+		        expect(started).toMatchObject({
+		          handoffId: expect.stringMatching(/^handoff_/),
+		          status: expect.objectContaining({
+		            status: 'pending',
+		            phase: 'preparing',
+		          }),
+		        });
+		        expect(started.endpointCandidates.length).toBeGreaterThan(0);
+		        expect(started.handoffMetadataV2?.providerBundleTransferPublication?.endpointCandidates?.length).toBeGreaterThan(0);
+		        expect(started.handoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates?.length).toBeGreaterThan(0);
+		      }, { timeout: 200 });
+		    } finally {
+		      await dispose();
+		      if (previousMaxBytes === undefined) {
+		        delete process.env[MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY];
+		      } else {
+		        process.env[MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY] = previousMaxBytes;
+		      }
+		    }
+		  });
 
   it('fails closed when stopping the active source session for handoff cutover fails', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
@@ -1812,6 +1906,14 @@ function createLoopbackMachineTransferChannels() {
           ignoredIncludeGlobs: [],
         },
       });
+
+      // start() can legitimately acknowledge before workspace export artifacts have been persisted.
+      // Ensure source export has finished before asserting on source_cleanup baseline persistence.
+      await vi.waitFor(async () => {
+        await access(join(activeServerDir, 'session-handoff', started.handoffId, 'provider-bundle.json'));
+        await access(join(activeServerDir, 'session-handoff', started.handoffId, 'workspace-manifest.txt'));
+        await access(join(activeServerDir, 'session-handoff', started.handoffId, 'source-export.json'));
+      }, { timeout: 10_000 });
 
       await commit!({
         handoffId: started.handoffId,
@@ -3767,15 +3869,20 @@ function createLoopbackMachineTransferChannels() {
         },
       });
 
-      vi.doMock('@/configuration', () => ({
-        configuration: {
-          activeServerDir: sourceActiveServerDir,
-          activeServerId: 'test_server_routed_source',
-          workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
-          workspaceReplicationBlobPackMaxBlobs: 64,
-          workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
-        },
-      }));
+      vi.doMock('@/configuration', async () => {
+        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+        return {
+          ...actual,
+          configuration: {
+            ...actual.configuration,
+            activeServerDir: sourceActiveServerDir,
+            activeServerId: 'test_server_routed_source',
+            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+            workspaceReplicationBlobPackMaxBlobs: 64,
+            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+          },
+        };
+      });
       const { registerMachineSessionHandoffRpcHandlers: registerSourceHandlers } = await import('./rpcHandlers.sessionHandoff');
 
       registerSourceHandlers({
@@ -3800,15 +3907,20 @@ function createLoopbackMachineTransferChannels() {
 
 	      vi.resetModules();
 	      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
-	      vi.doMock('@/configuration', () => ({
-	        configuration: {
-	          activeServerDir: targetActiveServerDir,
-	          activeServerId: 'test_server_routed_target',
-          workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
-          workspaceReplicationBlobPackMaxBlobs: 64,
-          workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
-        },
-      }));
+	      vi.doMock('@/configuration', async () => {
+	        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+	        return {
+	          ...actual,
+	          configuration: {
+	            ...actual.configuration,
+	            activeServerDir: targetActiveServerDir,
+	            activeServerId: 'test_server_routed_target',
+	            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+	            workspaceReplicationBlobPackMaxBlobs: 64,
+	            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+	          },
+	        };
+	      });
       const { registerMachineSessionHandoffRpcHandlers: registerTargetHandlers } = await import('./rpcHandlers.sessionHandoff');
 
 	      registerTargetHandlers({
@@ -3855,9 +3967,13 @@ function createLoopbackMachineTransferChannels() {
       let ready = prepared;
       if (ready.status.status !== 'ready_for_cutover') {
         await vi.waitFor(async () => {
-          ready = await resultGet!({ handoffId: started.handoffId });
+          const next = await resultGet!({ handoffId: started.handoffId });
+          if (next && typeof next === 'object' && 'ok' in next && next.ok === false) {
+            throw new Error(`prepare-target result not ready (${String((next as any).errorCode ?? 'unknown')})`);
+          }
+          ready = next;
           expect(ready.status.status).toBe('ready_for_cutover');
-        });
+        }, { timeout: 10_000 });
       }
       expect(ready.status.transportStrategy).toBe('server_routed_stream');
       expect(ready.status.workspacePreflightSummary).toEqual({
@@ -3934,10 +4050,12 @@ function createLoopbackMachineTransferChannels() {
     } finally {
       vi.doUnmock('@/configuration');
       vi.resetModules();
-      await rm(sourcePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-      await rm(sourceActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-      await rm(targetPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-      await rm(targetActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      if (process.env.HAPPIER_DEBUG_KEEP_HANDOFF_TMP !== '1') {
+        await rm(sourcePath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        await rm(sourceActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        await rm(targetPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        await rm(targetActiveServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      }
     }
   });
 
@@ -4150,16 +4268,21 @@ function createLoopbackMachineTransferChannels() {
           savedAtMs: 0,
         },
       });
-      vi.doMock('@/configuration', () => ({
-        configuration: {
-          activeServerDir: sourceActiveServerDir,
-          activeServerId: 'test_server_routed_deferred_source',
-          filesTransferSessionTtlMs: 2_000,
-          workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
-          workspaceReplicationBlobPackMaxBlobs: 64,
-          workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
-        },
-      }));
+      vi.doMock('@/configuration', async () => {
+        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+        return {
+          ...actual,
+          configuration: {
+            ...actual.configuration,
+            activeServerDir: sourceActiveServerDir,
+            activeServerId: 'test_server_routed_deferred_source',
+            filesTransferSessionTtlMs: 2_000,
+            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+            workspaceReplicationBlobPackMaxBlobs: 64,
+            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+          },
+        };
+      });
       const { registerMachineSessionHandoffRpcHandlers: registerSourceHandlers } = await import('./rpcHandlers.sessionHandoff');
 
       registerSourceHandlers({
@@ -4177,16 +4300,21 @@ function createLoopbackMachineTransferChannels() {
 
 	      vi.resetModules();
 	      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
-	      vi.doMock('@/configuration', () => ({
-	        configuration: {
-	          activeServerDir: targetActiveServerDir,
-	          activeServerId: 'test_server_routed_deferred_target',
-            filesTransferSessionTtlMs: 2_000,
-          workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
-          workspaceReplicationBlobPackMaxBlobs: 64,
-          workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
-        },
-      }));
+	      vi.doMock('@/configuration', async () => {
+	        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+	        return {
+	          ...actual,
+	          configuration: {
+	            ...actual.configuration,
+	            activeServerDir: targetActiveServerDir,
+	            activeServerId: 'test_server_routed_deferred_target',
+	            filesTransferSessionTtlMs: 2_000,
+	            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+	            workspaceReplicationBlobPackMaxBlobs: 64,
+	            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+	          },
+	        };
+	      });
       const { registerMachineSessionHandoffRpcHandlers: registerTargetHandlers } = await import('./rpcHandlers.sessionHandoff');
 
 	      registerTargetHandlers({
@@ -4309,9 +4437,11 @@ function createLoopbackMachineTransferChannels() {
       }
       vi.doUnmock('@/configuration');
       vi.resetModules();
-      await rm(sourcePath, { recursive: true, force: true });
-      await rm(sourceActiveServerDir, { recursive: true, force: true });
-      await rm(targetActiveServerDir, { recursive: true, force: true });
+      if (process.env.HAPPIER_DEBUG_KEEP_HANDOFF_TMP !== '1') {
+        await rm(sourcePath, { recursive: true, force: true });
+        await rm(sourceActiveServerDir, { recursive: true, force: true });
+        await rm(targetActiveServerDir, { recursive: true, force: true });
+      }
     }
   });
 
@@ -4392,15 +4522,20 @@ function createLoopbackMachineTransferChannels() {
         },
       });
 
-      vi.doMock('@/configuration', () => ({
-        configuration: {
-          activeServerDir: sourceActiveServerDir,
-          activeServerId: 'test_direct_peer_deferred_source',
-          workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
-          workspaceReplicationBlobPackMaxBlobs: 64,
-          workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
-        },
-      }));
+      vi.doMock('@/configuration', async () => {
+        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+        return {
+          ...actual,
+          configuration: {
+            ...actual.configuration,
+            activeServerDir: sourceActiveServerDir,
+            activeServerId: 'test_direct_peer_deferred_source',
+            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+            workspaceReplicationBlobPackMaxBlobs: 64,
+            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+          },
+        };
+      });
       const { registerMachineSessionHandoffRpcHandlers: registerSourceHandlers } = await import('./rpcHandlers.sessionHandoff');
 
       registerSourceHandlers({
@@ -4425,15 +4560,20 @@ function createLoopbackMachineTransferChannels() {
 
       vi.resetModules();
       vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
-      vi.doMock('@/configuration', () => ({
-        configuration: {
-          activeServerDir: targetActiveServerDir,
-          activeServerId: 'test_direct_peer_deferred_target',
-          workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
-          workspaceReplicationBlobPackMaxBlobs: 64,
-          workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
-        },
-      }));
+      vi.doMock('@/configuration', async () => {
+        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+        return {
+          ...actual,
+          configuration: {
+            ...actual.configuration,
+            activeServerDir: targetActiveServerDir,
+            activeServerId: 'test_direct_peer_deferred_target',
+            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+            workspaceReplicationBlobPackMaxBlobs: 64,
+            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+          },
+        };
+      });
       const { registerMachineSessionHandoffRpcHandlers: registerTargetHandlers } = await import('./rpcHandlers.sessionHandoff');
 
       registerTargetHandlers({
@@ -4539,10 +4679,12 @@ function createLoopbackMachineTransferChannels() {
     } finally {
       vi.doUnmock('@/configuration');
       vi.resetModules();
-      await rm(sourcePath, { recursive: true, force: true });
-      await rm(sourceActiveServerDir, { recursive: true, force: true });
-      await rm(targetActiveServerDir, { recursive: true, force: true });
-      await rm(targetPath, { recursive: true, force: true });
+      if (process.env.HAPPIER_DEBUG_KEEP_HANDOFF_TMP !== '1') {
+        await rm(sourcePath, { recursive: true, force: true });
+        await rm(sourceActiveServerDir, { recursive: true, force: true });
+        await rm(targetActiveServerDir, { recursive: true, force: true });
+        await rm(targetPath, { recursive: true, force: true });
+      }
     }
   });
 
@@ -5046,7 +5188,11 @@ function createLoopbackMachineTransferChannels() {
     });
 
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+    const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
     expect(prepare).toBeDefined();
+    expect(statusGet).toBeDefined();
+    expect(resultGet).toBeDefined();
 
     const handoffId = 'handoff_invalid_server_routed';
     const providerBundleTransferId = `session-handoff:${handoffId}:provider-bundle-file`;

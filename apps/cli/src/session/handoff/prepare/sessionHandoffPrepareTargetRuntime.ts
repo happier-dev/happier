@@ -344,7 +344,7 @@ export function createSessionHandoffPrepareTargetRuntime(params: PrepareTargetDe
         activeServerDir: params.activeServerDir,
     });
     const activePrepareJobs = new Map<string, Promise<void>>();
-    const prepareTargetJobLeaseOwnerId = `daemon:${process.pid}:${randomId()}`;
+    const prepareTargetJobLeaseOwnerId = `cli-daemon:${process.pid}:${randomId()}`;
     const prepareTargetJobLeaseTtlMs = resolveSessionHandoffPrepareTargetJobLeaseTtlMs();
     const prepareTargetJobRecoveryGraceMs = Math.min(prepareTargetJobLeaseTtlMs, PREPARE_TARGET_JOB_RECOVERY_GRACE_MAX_MS);
 

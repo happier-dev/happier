@@ -223,6 +223,7 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
   blobPackTargetBytes: number;
   blobPackMaxBlobs: number;
   blobPackMaxSingleBlobBytes: number;
+  serverRoutedTransferTimeoutMs?: number;
   onWorkspaceReplicationJobStarted?: (jobId: string) => Promise<void>;
   assertCanContinue?: () => Promise<void>;
 }>): Promise<Readonly<{
@@ -338,7 +339,13 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
                 t: 'workspace_replication_blob_pack_v1',
                 packId,
                 digests: [...digests],
+                ...(typeof input.serverRoutedTransferTimeoutMs === 'number'
+                  ? { timeoutMs: input.serverRoutedTransferTimeoutMs }
+                  : {}),
               },
+              ...(typeof input.serverRoutedTransferTimeoutMs === 'number'
+                ? { timeoutMs: input.serverRoutedTransferTimeoutMs }
+                : {}),
             });
             return;
           }

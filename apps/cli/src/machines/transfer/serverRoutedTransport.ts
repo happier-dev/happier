@@ -55,6 +55,8 @@ const TRANSFER_MANIFEST_HASH_HARD_MAX_CHARS = 128;
 // Request-side open envelopes must include a manifestHash field (protocol shape), but the
 // requester does not know the payload's real manifest hash yet. Use a stable, valid sentinel.
 const TRANSFER_OPEN_MANIFEST_HASH_SENTINEL = `sha256:${'0'.repeat(64)}`;
+const TRANSFER_OPEN_RETRY_INITIAL_DELAY_MS = 200;
+const TRANSFER_OPEN_RETRY_MAX_DELAY_MS = 2000;
 
 export type MachineTransferChannel = Readonly<{
   onEnvelope: (listener: (payload: MachineTransferReceiveEnvelope) => void) => () => void;
@@ -101,6 +103,7 @@ type ActiveTransferState = Readonly<{
   totalChunks: number;
   nextSequenceToSend: number;
   recipientPublicKeyBase64: string;
+  timeoutMs: number;
   timeoutNonce: number;
   timeout: NodeJS.Timeout | null;
 }>;
@@ -298,7 +301,7 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
   const chunkBytes = clampTransferChunkBytes(typeof params.chunkBytes === 'number' && params.chunkBytes > 0
     ? params.chunkBytes
     : readTransferChunkBytes());
-  const timeoutMs = readTransferTimeoutMs();
+  const defaultTimeoutMs = readTransferTimeoutMs();
   const maxActiveTransfers = readTransferMaxActiveTransfers();
   const maxBytes = resolveServerRoutedTransferMaxBytes();
   const inMemoryMaxBytes = resolveInMemoryTransferMaxBytes();
@@ -372,7 +375,7 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
           reason: 'timeout',
         },
       });
-    }, timeoutMs);
+    }, state.timeoutMs);
     return {
       ...state,
       timeoutNonce: nextNonce,
@@ -396,32 +399,28 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
 	        });
 	        return;
 	      }
-        const existing = activeTransfers.get(transferId) ?? null;
-        const hasPending = pendingOpenTransfers.has(transferId);
-        if (!existing && !hasPending) {
-          if (activeTransfers.size + pendingOpenTransfers.size >= maxActiveTransfers) {
-            params.machineTransferChannel.sendEnvelope({
-              targetMachineId: payload.sourceMachineId,
-              envelope: {
-                transferId,
-                kind: 'abort',
-                reason: 'active-transfer-limit',
-              },
-            });
-            return;
-          }
-          pendingOpenTransfers.add(transferId);
-        } else if (hasPending) {
-          params.machineTransferChannel.sendEnvelope({
-            targetMachineId: payload.sourceMachineId,
-            envelope: {
-              transferId,
-              kind: 'abort',
-              reason: 'transfer_busy',
-            },
-          });
-          return;
-        }
+	        const existing = activeTransfers.get(transferId) ?? null;
+	        if (existing) {
+	          // Idempotent open: ignore duplicate opens while the transfer is in progress.
+	          return;
+	        }
+	        if (pendingOpenTransfers.has(transferId)) {
+	          // Another open is already being processed (payload lookup / validation). Ignore retries
+	          // so requesters can safely re-send opens if the original was dropped.
+	          return;
+	        }
+	        if (activeTransfers.size + pendingOpenTransfers.size >= maxActiveTransfers) {
+	          params.machineTransferChannel.sendEnvelope({
+	            targetMachineId: payload.sourceMachineId,
+	            envelope: {
+	              transferId,
+	              kind: 'abort',
+	              reason: 'active-transfer-limit',
+	            },
+	          });
+	          return;
+	        }
+	        pendingOpenTransfers.add(transferId);
 
         try {
 	      if (envelope.openPayloadBase64 !== undefined && typeof envelope.openPayloadBase64 !== 'string') {
@@ -486,10 +485,10 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
 	        });
 	        return;
 	      }
-	      let openPayload: unknown | undefined;
-	      try {
-	        openPayload = envelope.openPayloadBase64 ? decodeOpenPayload(envelope.openPayloadBase64) : undefined;
-	      } catch (error) {
+		      let openPayload: unknown | undefined;
+		      try {
+		        openPayload = envelope.openPayloadBase64 ? decodeOpenPayload(envelope.openPayloadBase64) : undefined;
+		      } catch (error) {
 	        if (error instanceof ServerRoutedInvalidOpenRequestError) {
 	          params.machineTransferChannel.sendEnvelope({
 	            targetMachineId: payload.sourceMachineId,
@@ -503,6 +502,23 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
 	        }
 	        throw error;
 	      }
+
+        const resolveTransferTimeoutMs = (value: unknown): number => {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            return defaultTimeoutMs;
+          }
+          const raw = (value as Record<string, unknown>).timeoutMs;
+          if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+            return defaultTimeoutMs;
+          }
+          const floored = Math.floor(raw);
+          if (floored <= 0) {
+            return defaultTimeoutMs;
+          }
+          return clampTransferTimeoutMs(floored);
+        };
+
+        const transferTimeoutMs = resolveTransferTimeoutMs(openPayload);
 
         let transferPayloadSource: TransferPayloadSource | null = null;
         try {
@@ -605,6 +621,7 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
             totalChunks,
             nextSequenceToSend: 0,
             recipientPublicKeyBase64: envelope.recipientPublicKeyBase64,
+            timeoutMs: transferTimeoutMs,
             timeoutNonce: 0,
             timeout: null,
           };

@@ -57,6 +57,7 @@ export type WorkspaceReplicationTransfers = Readonly<{
     machineTransferChannel: MachineTransferChannel;
     destinationPath: string;
     openBody?: unknown;
+    timeoutMs?: number;
   }>) => Promise<TransferPayloadFileResult>;
 }>;
 
@@ -110,6 +111,7 @@ export function createWorkspaceReplicationTransfers(
         machineTransferChannel: input.machineTransferChannel,
         destinationPath: input.destinationPath,
         ...(input.openBody !== undefined ? { openBody: input.openBody } : {}),
+        ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
       }),
   };
 }

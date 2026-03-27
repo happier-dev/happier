@@ -15,6 +15,25 @@ STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 REPORT_ROOT="${WSREPL_QA_OUTPUT_DIR:-output/wsrepl-lima-matrix/$(date +"%Y%m%d-%H%M%S")-${SAFE_VM_NAME}}"
 PLAYWRIGHT_OUTDIR="${REPORT_ROOT}/playwright/attempt-01"
 mkdir -p "${REPORT_ROOT}" >/dev/null 2>&1 || true
+mkdir -p "${REPORT_ROOT}/daemon" >/dev/null 2>&1 || true
+for name in \
+  host.diag.txt \
+  guest.diag.txt \
+  lima.list.txt \
+  lima.info.txt \
+  daemon/host.daemon.start.txt \
+  daemon/host.daemon.status.txt \
+  daemon/host.daemon.log.path.txt \
+  daemon/host.daemon.log.tail.txt \
+  daemon/guest.daemon.start.txt \
+  daemon/guest.daemon.status.txt \
+  daemon/guest.daemon.log.path.txt \
+  daemon/guest.daemon.log.tail.txt \
+; do
+  if [[ ! -f "${REPORT_ROOT}/${name}" ]]; then
+    printf "%s\n" "(not collected)" > "${REPORT_ROOT}/${name}"
+  fi
+done
 
 wsrepl_early_write_summary() {
   if [[ "${FINALIZED}" == "1" ]]; then
@@ -88,6 +107,8 @@ trap 'wsrepl_early_terminate_due_to_signal 130 int' INT
 #   WSREPL_QA_TIMEOUT_MS=...  # default: 1800000 (30min) when HAPPIER_QA_TIMEOUT_MS is unset
 #   WSREPL_QA_DAEMON_START_RETRIES=...  # default: 1 (retry wrapper-managed host daemon restarts on transient failures)
 #   WSREPL_QA_DAEMON_START_RETRY_DELAY_MS=...  # default: 250 (delay between host daemon start retries)
+#   WSREPL_QA_HOST_DAEMON_START_POLL_RETRIES=...  # default: 30 (post-start health poll retries)
+#   WSREPL_QA_HOST_DAEMON_START_POLL_DELAY_MS=...  # default: 500 (post-start health poll delay)
 #   WSREPL_QA_HOST_DAEMON_WATCHDOG=1  # enable a best-effort watchdog that restarts the host daemon while Playwright runs
 #   WSREPL_QA_HOST_DAEMON_WATCHDOG_INTERVAL_MS=...  # default: 1000 (how often the watchdog probes)
 #   WSREPL_QA_MACHINE_ID_POLL_RETRIES=...  # default: 40 (poll daemon status until machineId is persisted)
@@ -478,6 +499,37 @@ read_wsrepl_daemon_log_tail_lines() {
   return 0
 }
 
+read_wsrepl_host_daemon_start_poll_retries() {
+  local raw="${WSREPL_QA_HOST_DAEMON_START_POLL_RETRIES:-}"
+  if [[ -z "${raw}" ]]; then
+    echo "30"
+    return 0
+  fi
+  if [[ "${raw}" -lt 0 ]]; then
+    echo "0"
+    return 0
+  fi
+  echo "${raw}"
+  return 0
+}
+
+read_wsrepl_host_daemon_start_poll_delay_s() {
+  local raw="${WSREPL_QA_HOST_DAEMON_START_POLL_DELAY_MS:-}"
+  if [[ -z "${raw}" ]]; then
+    raw="500"
+  fi
+  python3 - <<'PY' "${raw}" 2>/dev/null || true
+import sys
+try:
+  ms = int(sys.argv[1])
+except Exception:
+  ms = 500
+if ms < 0:
+  ms = 0
+print(f"{ms/1000.0:.3f}")
+PY
+}
+
 read_wsrepl_machine_id_poll_retries() {
   local raw="${WSREPL_QA_MACHINE_ID_POLL_RETRIES:-}"
   if [[ -z "${raw}" ]]; then
@@ -544,6 +596,61 @@ refresh_daemon_log_tail_best_effort() {
   tail_lines="$(read_wsrepl_daemon_log_tail_lines)"
   tail -n "${tail_lines}" "${log_path}" > "${log_tail_file}" 2>&1 || true
   return 0
+}
+
+refresh_host_daemon_status_best_effort() {
+  local status_file="${1:-}"
+  local server_url="${2:-}"
+  local stack_cli_root="${3:-}"
+  local stack_active_server_id="${4:-}"
+  if [[ -z "${status_file}" ]]; then
+    return 0
+  fi
+  if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+    if [[ -n "${server_url}" ]]; then
+      HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
+    else
+      HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon status >"${status_file}" 2>&1 || true
+    fi
+  else
+    if [[ -n "${server_url}" ]]; then
+      HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
+    else
+      run_host_happier daemon status >"${status_file}" 2>&1 || true
+    fi
+  fi
+  return 0
+}
+
+wait_for_host_daemon_health_after_start() {
+  local status_file="${1:-}"
+  local log_path_file="${2:-}"
+  local log_tail_file="${3:-}"
+  local server_url="${4:-}"
+  local stack_cli_root="${5:-}"
+  local stack_active_server_id="${6:-}"
+  local retries
+  retries="$(read_wsrepl_host_daemon_start_poll_retries)"
+  local delay_s
+  delay_s="$(read_wsrepl_host_daemon_start_poll_delay_s)"
+
+  local attempt=0
+  while [[ "${attempt}" -lt "${retries}" ]]; do
+    if [[ -s "${status_file}" ]] && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
+      refresh_daemon_log_tail_best_effort "${log_path_file}" "${log_tail_file}"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep "${delay_s}" || true
+    refresh_host_daemon_status_best_effort "${status_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}"
+  done
+
+  if [[ -s "${status_file}" ]] && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
+    refresh_daemon_log_tail_best_effort "${log_path_file}" "${log_tail_file}"
+    return 0
+  fi
+
+  return 1
 }
 
 refresh_post_playwright_diagnostics_best_effort() {
@@ -1146,6 +1253,10 @@ PY
     tail -n 400 "${log_path}" > "${log_tail_file}" 2>&1 || true
   else
     printf "%s\n" "(no daemon log file found)" > "${log_tail_file}"
+  fi
+
+  if wait_for_host_daemon_health_after_start "${status_file}" "${log_path_file}" "${log_tail_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}"; then
+    return 0
   fi
 
   local cli_dist_rebuild_attempted=0
