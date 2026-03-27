@@ -521,6 +521,15 @@ describe('startChannelBridgeFromEnv', () => {
       threadId: '42',
       messageId: 'msg-2',
     });
+    await capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-local-id-2',
+      text: 'same channel message into different session',
+      sentFrom: 'telegram',
+      providerId: 'telegram',
+      conversationId: '-100local',
+      threadId: '42',
+      messageId: 'msg-1',
+    });
 
     await expect(capturedDeps!.sendUserMessageToSession({
       sessionId: 'sess-local-id-1',
@@ -541,13 +550,15 @@ describe('startChannelBridgeFromEnv', () => {
       messageId: '   ',
     })).rejects.toThrow('inbound messageId is required');
 
-    expect(sendCommitted).toHaveBeenCalledTimes(3);
+    expect(sendCommitted).toHaveBeenCalledTimes(4);
     const firstLocalId = sendCommitted.mock.calls[0]?.[0]?.localId;
     const secondLocalId = sendCommitted.mock.calls[1]?.[0]?.localId;
     const thirdLocalId = sendCommitted.mock.calls[2]?.[0]?.localId;
+    const fourthLocalId = sendCommitted.mock.calls[3]?.[0]?.localId;
 
     expect(firstLocalId).toBe(secondLocalId);
     expect(thirdLocalId).not.toBe(firstLocalId);
+    expect(fourthLocalId).not.toBe(firstLocalId);
 
     await handle?.stop();
   });

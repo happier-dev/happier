@@ -85,6 +85,8 @@ function createStableBridgeLocalId(params: Readonly<{
     .update('\u0000')
     .update(params.threadId ?? '')
     .update('\u0000')
+    .update(params.sessionId)
+    .update('\u0000')
     .update(normalizedMessageId)
     .digest('hex');
   return `bridge-${digest}`;
