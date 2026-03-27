@@ -57,15 +57,15 @@ function repositoryTreePathVariants(path: string): readonly [string, string] {
 function repositoryTreeRowLocator(scope: Locator, path: string): Locator {
   const [primary, alternate] = repositoryTreePathVariants(path);
   return scope
-    .getByTestId(`repository-tree-row-${toTestIdSafeValue(primary)}`)
-    .or(scope.getByTestId(`repository-tree-row-${toTestIdSafeValue(alternate)}`));
+    .locator(`[data-testid="repository-tree-row-${toTestIdSafeValue(primary)}"]:visible`)
+    .or(scope.locator(`[data-testid="repository-tree-row-${toTestIdSafeValue(alternate)}"]:visible`));
 }
 
 function repositoryTreeRowMenuLocator(scope: Locator, path: string): Locator {
   const [primary, alternate] = repositoryTreePathVariants(path);
   return scope
-    .getByTestId(`repository-tree-row-menu-${toTestIdSafeValue(primary)}`)
-    .or(scope.getByTestId(`repository-tree-row-menu-${toTestIdSafeValue(alternate)}`));
+    .locator(`[data-testid="repository-tree-row-menu-${toTestIdSafeValue(primary)}"]:visible`)
+    .or(scope.locator(`[data-testid="repository-tree-row-menu-${toTestIdSafeValue(alternate)}"]:visible`));
 }
 
 async function maybeDismissDetectedClisModal(page: Page, timeoutMs = 5_000): Promise<void> {
@@ -153,12 +153,13 @@ async function readUploadInputState(page: Page) {
 }
 
 async function clickDropdownOptionByItemId(page: Page, itemId: string): Promise<void> {
-  const dropdownOption = page.getByTestId(`dropdown-option-${toTestIdSafeValue(itemId)}`);
+  const dropdownOption = page.locator(`[data-testid="dropdown-option-${toTestIdSafeValue(itemId)}"]:visible`).first();
   if ((await dropdownOption.count()) > 0) {
     await dropdownOption.click();
     return;
   }
-  await page.getByTestId(itemId).click();
+
+  await page.locator(`[data-testid="${itemId}"]:visible`).first().click();
 }
 
 async function expectFilesToolbarPrimaryOrOverflowAction(rightPane: Locator, actionTestId: string, timeoutMs: number) {

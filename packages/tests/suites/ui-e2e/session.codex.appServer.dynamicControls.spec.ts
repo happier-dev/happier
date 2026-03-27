@@ -174,42 +174,113 @@ async function fillAndClickComposerSend(params: Readonly<{
 }
 
 async function ensureSignedIn(page: Page, uiBaseUrl: string): Promise<void> {
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
-    await waitForInitialAppUi({ page, timeoutMs: 120_000 }).catch(() => {});
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 120_000) {
-        if ((await page.getByTestId('new-session-composer-input').count()) > 0) return;
-        if ((await page.getByTestId('session-getting-started-kind-connect_machine').count()) > 0) return;
-        if ((await page.getByTestId('sidebar-expand-button').count()) > 0) return;
+    const deadlineMs = Date.now() + 180_000;
+    const settingsSessionItem = page.getByTestId('settings-session-replay-enabled-item');
 
-        const createAccountByTestId = page.getByTestId('welcome-create-account').first();
-        if ((await createAccountByTestId.count()) > 0) {
-            await createAccountByTestId.click().catch(() => {});
-            await page.waitForTimeout(500);
-            await waitForInitialAppUi({ page, timeoutMs: 30_000 }).catch(() => {});
+    while (Date.now() < deadlineMs) {
+        // The most stable "signed in + app booted" proof we currently have in this suite is
+        // the settings session screen existing. UI can render chrome (sidebar) even while
+        // still blocked by getting-started guidance; don't treat that as signed-in.
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/session`).catch(() => {});
+        if ((await settingsSessionItem.count()) > 0) return;
+
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`).catch(() => {});
+        await waitForInitialAppUi({ page, timeoutMs: 30_000 }).catch(() => {});
+
+        const createAccountButtons = page.getByTestId('welcome-create-account')
+            .or(page.getByTestId('welcome-signup-provider'))
+            .or(page.getByRole('button', { name: 'Create account' }))
+            .first();
+        if ((await createAccountButtons.count()) > 0) {
+            await createAccountButtons.click().catch(() => {});
+            await page.waitForTimeout(750);
             continue;
         }
 
-        const createAccountButton = page.getByRole('button', { name: 'Create account' }).first();
-        if ((await createAccountButton.count()) > 0) {
-            await createAccountButton.click().catch(() => {});
-            await page.waitForTimeout(500);
-            await waitForInitialAppUi({ page, timeoutMs: 30_000 }).catch(() => {});
+        await page.waitForTimeout(750);
+    }
+
+    const debugTestIds = await page.locator('[data-testid]').evaluateAll((nodes) => {
+        return nodes
+            .map((node) => node.getAttribute('data-testid'))
+            .filter((value): value is string => typeof value === 'string' && value.length > 0)
+            .filter((value) => value.startsWith('welcome-') || value.startsWith('settings-') || value.startsWith('session-getting-started-kind-'));
+    }).catch(() => []);
+
+    throw new Error(`Timed out ensuring signed-in state on ${page.url()}. Visible testIDs: ${
+        debugTestIds.length > 0 ? debugTestIds.slice(0, 80).join(', ') : '(none)'
+    }`);
+}
+
+async function ensureOnNewSessionComposer(page: Page, uiBaseUrl: string): Promise<void> {
+    const composer = page.getByTestId('new-session-composer-input');
+    const blockingGuidance = page.locator('[data-testid^="session-getting-started-kind-"]');
+    const deadlineMs = Date.now() + 180_000;
+
+    while (Date.now() < deadlineMs) {
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`).catch(() => {});
+        await maybeDismissDetectedClisModal(page, { timeoutMs: 5_000 }).catch(() => false);
+
+        if ((await blockingGuidance.count()) > 0) {
+            await page.waitForTimeout(1_000);
             continue;
         }
 
-        const pathname = new URL(page.url()).pathname;
-        if (pathname !== '/new') {
-            await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
+        if ((await composer.count()) > 0) {
+            await expect(composer).toBeVisible({ timeout: 30_000 });
+            return;
         }
 
+        await page.waitForTimeout(750);
+    }
+
+    const debugTestIds = await page.locator('[data-testid]').evaluateAll((nodes) => {
+        return nodes
+            .map((node) => node.getAttribute('data-testid'))
+            .filter((value): value is string => typeof value === 'string' && value.length > 0)
+            .filter((value) => value.startsWith('new-session-') || value.startsWith('agent-input-') || value.startsWith('session-getting-started-kind-'));
+    }).catch(() => []);
+
+    throw new Error(`Timed out waiting for /new composer on ${page.url()}. Visible testIDs: ${
+        debugTestIds.length > 0 ? debugTestIds.slice(0, 80).join(', ') : '(none)'
+    }`);
+}
+
+async function ensureAgentChipAvailable(page: Page, uiBaseUrl: string, opts?: Readonly<{ timeoutMs?: number }>): Promise<void> {
+    const timeoutMs = opts?.timeoutMs ?? 60_000;
+    const deadlineMs = Date.now() + timeoutMs;
+    const agentChip = page.getByTestId('agent-input-agent-chip');
+    const blockingGuidance = page.locator('[data-testid^="session-getting-started-kind-"]');
+    const composer = page.getByTestId('new-session-composer-input');
+
+    while (Date.now() < deadlineMs) {
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`).catch(() => {});
+        if ((await blockingGuidance.count()) > 0) {
+            await expect(blockingGuidance).toHaveCount(0, { timeout: Math.min(10_000, Math.max(1, deadlineMs - Date.now())) }).catch(() => {});
+        }
+        await expect(composer).toHaveCount(1, { timeout: Math.min(10_000, Math.max(1, deadlineMs - Date.now())) }).catch(() => {});
+        if ((await agentChip.count()) > 0) return;
+
+        const inlineBackendOption = page.locator('[data-testid="new-session-agent:codex"]:visible').first();
+        if ((await inlineBackendOption.count()) > 0) {
+            await inlineBackendOption.click().catch(() => {});
+        }
+
+        await maybeResolveSelectAiBackendWizard(page, 'codex').catch(() => false);
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`).catch(() => {});
         await page.waitForTimeout(500);
     }
-    await expect(
-        page.getByTestId('new-session-composer-input')
-            .or(page.getByTestId('session-getting-started-kind-connect_machine'))
-            .or(page.getByTestId('sidebar-expand-button')),
-    ).toHaveCount(1, { timeout: 1_000 });
+
+    const debugTestIds = await page.locator('[data-testid]').evaluateAll((nodes) => {
+        return nodes
+            .map((node) => node.getAttribute('data-testid'))
+            .filter((value): value is string => typeof value === 'string' && value.length > 0)
+            .filter((value) => value.startsWith('agent-input-') || value.startsWith('new-session-') || value.startsWith('session-getting-started-kind-'));
+    }).catch(() => []);
+
+    throw new Error(`Expected agent-input-agent-chip to exist on ${page.url()} but it was missing. Visible testIDs: ${
+        debugTestIds.length > 0 ? debugTestIds.slice(0, 80).join(', ') : '(none)'
+    }`);
 }
 
 async function setCodexBackendModeToAppServer(page: Page, uiBaseUrl: string): Promise<void> {
@@ -309,7 +380,60 @@ async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
     await setSessionReplayEnabled(params.page, params.uiBaseUrl, false);
 
     const machineId = await readDaemonMachineIdFromHappyHomeDir({ happyHomeDir: resolve(join(params.testDir, 'cli-home')) });
+    await waitForDaemonMachineToAppearInUi({ page: params.page, uiBaseUrl: params.uiBaseUrl, machineId });
     return { daemon, requestLogPath, machineId };
+}
+
+async function waitForDaemonMachineToAppearInUi(params: Readonly<{ page: Page; uiBaseUrl: string; machineId: string }>): Promise<void> {
+    const deadlineMs = Date.now() + 180_000;
+    const composer = params.page.getByTestId('new-session-composer-input');
+    const guidance = params.page.locator('[data-testid^="session-getting-started-kind-"]');
+    const machineChip = params.page.getByTestId('agent-input-machine-chip');
+
+    while (Date.now() < deadlineMs) {
+        await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new`).catch(() => {});
+        await maybeDismissDetectedClisModal(params.page, { timeoutMs: 5_000 }).catch(() => false);
+
+        // If we're still blocked by getting-started guidance, the machine list is not ready yet.
+        if ((await guidance.count()) > 0) {
+            await params.page.waitForTimeout(1_000);
+            continue;
+        }
+
+        if ((await composer.count()) === 0) {
+            await params.page.waitForTimeout(750);
+            continue;
+        }
+
+        if ((await machineChip.count()) === 0) {
+            await params.page.waitForTimeout(750);
+            continue;
+        }
+
+        try {
+            await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
+            const machineOption = params.page.locator(`[data-testid="new-session-machine:${params.machineId}"]:visible`).first();
+            if ((await machineOption.count()) > 0) {
+                await params.page.keyboard.press('Escape').catch(() => {});
+                return;
+            }
+        } catch {
+            // keep polling
+        }
+
+        await params.page.waitForTimeout(1_000);
+    }
+
+    const debugTestIds = await params.page.locator('[data-testid]').evaluateAll((nodes) => {
+        return nodes
+            .map((node) => node.getAttribute('data-testid'))
+            .filter((value): value is string => typeof value === 'string' && value.length > 0)
+            .filter((value) => value.startsWith('session-getting-started-kind-') || value.startsWith('agent-input-') || value.startsWith('new-session-'));
+    }).catch(() => []);
+
+    throw new Error(`Timed out waiting for machine ${params.machineId} to appear in the /new machine picker on ${params.page.url()}. Visible testIDs: ${
+        debugTestIds.length > 0 ? debugTestIds.slice(0, 80).join(', ') : '(none)'
+    }`);
 }
 
 async function maybeResolveSelectAiBackendWizard(page: Page, backendId: string): Promise<boolean> {
@@ -729,7 +853,9 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         const prepared = await connectDaemonWithFakeCodexAppServer({ page, suiteDir, testDir, server, uiBaseUrl });
         daemon = prepared.daemon;
 
+        await ensureOnNewSessionComposer(page, uiBaseUrl);
         await selectCodexAgentAndMachine({ page, uiBaseUrl, machineId: prepared.machineId });
+        await ensureOnNewSessionComposer(page, uiBaseUrl);
         await ensureSessionMode(page, 'plan');
 
         await expect(page.locator('[data-testid^="session-getting-started-kind-"]')).toHaveCount(0, { timeout: 60_000 });
@@ -742,7 +868,8 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         }
 
         await maybeResolveSelectAiBackendWizard(page, 'codex').catch(() => false);
-        await openAgentActionMenu(page);
+        await ensureAgentChipAvailable(page, uiBaseUrl, { timeoutMs: 60_000 });
+        await page.getByTestId('agent-input-agent-chip').click();
         await clickModelSelectionOption(page, 'gpt-5.4-mini');
         await clickSelectedModelControlOption(page, 'reasoning_effort', 'high');
 

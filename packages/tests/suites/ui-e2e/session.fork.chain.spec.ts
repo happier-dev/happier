@@ -65,6 +65,63 @@ async function createSessionFromComposer(params: {
   return createSessionFromNewSessionComposer(params);
 }
 
+type TranscriptMessageMatch = Readonly<{
+  testId: string;
+  messageId: string;
+}>;
+
+async function collectCommittedTranscriptMessageMatches(params: {
+  page: Page;
+  text: string;
+}): Promise<TranscriptMessageMatch[]> {
+  return await params.page.locator('[data-testid^="transcript-message-"]').evaluateAll((nodes, text) => {
+    const targetText = String(text);
+    return nodes.flatMap((node) => {
+      const testId = node.getAttribute('data-testid') ?? '';
+      if (!testId.startsWith('transcript-message-')) return [];
+      if (testId.includes(':')) return [];
+      if (!(node.textContent ?? '').includes(targetText)) return [];
+      return [{
+        testId,
+        messageId: testId.replace(/^transcript-message-/, ''),
+      }];
+    });
+  }, params.text);
+}
+
+async function waitForCommittedTranscriptMessageMatches(params: {
+  page: Page;
+  text: string;
+  expectedCount: number;
+  timeoutMs?: number;
+}): Promise<TranscriptMessageMatch[]> {
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  let matches: TranscriptMessageMatch[] = [];
+  await expect.poll(async () => {
+    matches = await collectCommittedTranscriptMessageMatches({ page: params.page, text: params.text });
+    return matches.length;
+  }, { timeout: timeoutMs }).toBe(params.expectedCount);
+  return matches;
+}
+
+async function waitForCommittedTranscriptMessageMatch(params: {
+  page: Page;
+  text: string;
+  timeoutMs?: number;
+}): Promise<TranscriptMessageMatch> {
+  const matches = await waitForCommittedTranscriptMessageMatches({
+    page: params.page,
+    text: params.text,
+    expectedCount: 1,
+    timeoutMs: params.timeoutMs,
+  });
+  const match = matches[0];
+  if (!match) {
+    throw new Error(`failed to locate committed transcript message matching text: ${params.text}`);
+  }
+  return match;
+}
+
 async function ensureReplayForkEnabled(params: { page: Page; uiBaseUrl: string; sessionId: string }): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const targetWrapper = params.page.locator('[data-testid^="transcript-message-"]').filter({ hasText: 'FAKE_CLAUDE_OK_1' }).first();
@@ -96,26 +153,25 @@ async function ensureReplayForkEnabled(params: { page: Page; uiBaseUrl: string; 
   }
 }
 
-async function forkFromFirstMessageMatching(params: { page: Page; containsText: string; currentSessionId: string }): Promise<string> {
-  const wrapper = params.page.locator('[data-testid^="transcript-message-"]').filter({ hasText: params.containsText }).first();
-  await expect(wrapper).toHaveCount(1, { timeout: 60_000 });
-  await wrapper.hover();
-  const wrapperTestId = await wrapper.getAttribute('data-testid');
-  if (!wrapperTestId) throw new Error('missing wrapper test id');
-  const messageId = wrapperTestId.replace(/^transcript-message-/, '');
-  await expect(params.page.getByTestId(`transcript-message-fork:${messageId}`)).toHaveCount(1, { timeout: 120_000 });
-  await params.page.getByTestId(`transcript-message-fork:${messageId}`).click();
-  const deadlineMs = Date.now() + 180_000;
-  while (Date.now() < deadlineMs) {
-    try {
-      const next = parseSessionIdFromUrl(params.page.url());
-      if (next !== params.currentSessionId) return next;
-    } catch {
-      // ignore - router may briefly navigate through non-session routes
-    }
-    await new Promise((r) => setTimeout(r, 150));
-  }
-  throw new Error(`Timed out waiting for fork navigation (url=${params.page.url()})`);
+async function forkFromTranscriptMessage(params: {
+  page: Page;
+  messageId: string;
+  currentSessionId: string;
+}): Promise<string> {
+  const forkButton = params.page.getByTestId(`transcript-message-fork:${params.messageId}`);
+  await expect(forkButton).toHaveCount(1, { timeout: 120_000 });
+  await forkButton.click();
+  await params.page.waitForURL(
+    (url) => {
+      try {
+        return parseSessionIdFromUrl(url.toString()) !== params.currentSessionId;
+      } catch {
+        return false;
+      }
+    },
+    { timeout: 180_000 },
+  );
+  return parseSessionIdFromUrl(params.page.url());
 }
 
 test.describe('ui e2e: multi-level session fork chain', () => {
@@ -225,53 +281,69 @@ test.describe('ui e2e: multi-level session fork chain', () => {
 
     await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 180_000 });
+    const parentOk1Match = await waitForCommittedTranscriptMessageMatch({
+      page,
+      text: 'FAKE_CLAUDE_OK_1',
+      timeoutMs: 180_000,
+    });
+    await expect(page.getByTestId(parentOk1Match.testId)).toBeVisible({ timeout: 180_000 });
 
     const parentPrompt2 = `fork-chain-parent-2 ${run.runId}`;
     await page.locator('textarea[data-testid="session-composer-input"]:visible').fill(parentPrompt2);
     await page.locator('textarea[data-testid="session-composer-input"]:visible').press('Enter');
-    await expect(page.getByText('FAKE_CLAUDE_OK_2').first()).toBeVisible({ timeout: 180_000 });
+    const parentOk2Match = await waitForCommittedTranscriptMessageMatch({
+      page,
+      text: 'FAKE_CLAUDE_OK_2',
+      timeoutMs: 180_000,
+    });
+    await expect(page.getByTestId(parentOk2Match.testId)).toBeVisible({ timeout: 180_000 });
 
     await ensureReplayForkEnabled({ page, uiBaseUrl, sessionId: parentSessionId });
 
-    const sessionBId = await forkFromFirstMessageMatching({ page, containsText: 'FAKE_CLAUDE_OK_1', currentSessionId: parentSessionId });
+    const sessionBId = await forkFromTranscriptMessage({
+      page,
+      messageId: parentOk1Match.messageId,
+      currentSessionId: parentSessionId,
+    });
     {
       const transcript = page.locator('[data-testid="transcript-chat-list"]:visible').first();
       await expect(transcript.locator(`[data-testid="transcript-fork-divider:${parentSessionId}:${sessionBId}"]`)).toHaveCount(1, { timeout: 120_000 });
     }
-
-    await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toHaveCount(1, { timeout: 120_000 });
 
     const childPrompt = `fork-chain-child-1 ${run.runId}`;
     await page.locator('textarea[data-testid="session-composer-input"]:visible').fill(childPrompt);
     await page.locator('textarea[data-testid="session-composer-input"]:visible').press('Enter');
     // Child session B starts a new vendor session; expect a new FAKE_CLAUDE_OK_1 while also showing
     // the read-only ancestor FAKE_CLAUDE_OK_1 from session A.
-    await page.waitForFunction(
-      ({ okText }) => {
-        const wrappers = Array.from(document.querySelectorAll('[data-testid^="transcript-message-"]')).filter((n) => {
-          const tid = n.getAttribute('data-testid') ?? '';
-          if (!tid.startsWith('transcript-message-')) return false;
-          if (tid.includes(':')) return false;
-          return String(n.textContent ?? '').includes(String(okText));
-        });
-        const unique = new Set(wrappers.map((n) => n.getAttribute('data-testid') ?? ''));
-        return unique.size >= 2;
-      },
-      { okText: 'FAKE_CLAUDE_OK_1' },
-      { timeout: 180_000 },
-    );
+    const childViewOk1Matches = await waitForCommittedTranscriptMessageMatches({
+      page,
+      text: 'FAKE_CLAUDE_OK_1',
+      expectedCount: 2,
+      timeoutMs: 180_000,
+    });
+    expect(childViewOk1Matches.map((match) => match.testId)).toHaveLength(2);
 
-    // Fork from the committed user message (unique text) to avoid ambiguity between ancestor vs new vendor responses.
-    const sessionCId = await forkFromFirstMessageMatching({ page, containsText: childPrompt, currentSessionId: sessionBId });
+    const childPromptMatch = await waitForCommittedTranscriptMessageMatch({
+      page,
+      text: childPrompt,
+      timeoutMs: 120_000,
+    });
+
+    // Fork from the committed user message (stable test id) to avoid ambiguity between ancestor vs new vendor responses.
+    const sessionCId = await forkFromTranscriptMessage({
+      page,
+      messageId: childPromptMatch.messageId,
+      currentSessionId: sessionBId,
+    });
     {
       const transcript = page.locator('[data-testid="transcript-chat-list"]:visible').first();
       await expect(transcript.locator(`[data-testid="transcript-fork-divider:${parentSessionId}:${sessionBId}"]`)).toHaveCount(1, { timeout: 120_000 });
       await expect(transcript.locator(`[data-testid="transcript-fork-divider:${sessionBId}:${sessionCId}"]`)).toHaveCount(1, { timeout: 120_000 });
     }
-
-    await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByText(childPrompt).first()).toHaveCount(1, { timeout: 120_000 });
+    for (const match of childViewOk1Matches) {
+      await expect(page.getByTestId(match.testId)).toBeVisible({ timeout: 120_000 });
+    }
+    await expect(page.getByTestId(`transcript-message-${childPromptMatch.messageId}`)).toBeVisible({ timeout: 120_000 });
 
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
@@ -281,17 +353,25 @@ test.describe('ui e2e: multi-level session fork chain', () => {
       await expect(transcript.locator(`[data-testid="transcript-fork-divider:${parentSessionId}:${sessionBId}"]`)).toHaveCount(1, { timeout: 120_000 });
       await expect(transcript.locator(`[data-testid="transcript-fork-divider:${sessionBId}:${sessionCId}"]`)).toHaveCount(1, { timeout: 120_000 });
     }
-    await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByText(childPrompt).first()).toHaveCount(1, { timeout: 120_000 });
-
-    await page.getByTestId('transcript-chat-list').evaluate((el) => {
-      try {
-        (el as any).scrollTop = 0;
-        el.dispatchEvent?.(new Event('scroll', { bubbles: true }));
-      } catch {
-        // best-effort; visibility assertions below will fail if scrolling is broken
-      }
+    const reloadedOk1Matches = await waitForCommittedTranscriptMessageMatches({
+      page,
+      text: 'FAKE_CLAUDE_OK_1',
+      expectedCount: 2,
+      timeoutMs: 120_000,
     });
-    await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 120_000 });
+    expect(reloadedOk1Matches.map((match) => match.testId)).toHaveLength(2);
+    expect(reloadedOk1Matches.map((match) => match.testId).sort()).toEqual(childViewOk1Matches.map((match) => match.testId).sort());
+    for (const match of reloadedOk1Matches) {
+      await expect(page.getByTestId(match.testId)).toBeVisible({ timeout: 120_000 });
+    }
+    await expect(page.getByTestId(`transcript-message-${childPromptMatch.messageId}`)).toBeVisible({ timeout: 120_000 });
+
+    const transcript = page.getByTestId('transcript-chat-list');
+    await transcript.hover({ timeout: 60_000 });
+    await transcript.click({ timeout: 60_000 });
+    await page.mouse.wheel(0, -100_000);
+    await page.mouse.wheel(0, 300);
+    await page.mouse.wheel(0, -300);
+    await expect(page.getByTestId(reloadedOk1Matches[0]!.testId)).toBeVisible({ timeout: 120_000 });
   });
 });

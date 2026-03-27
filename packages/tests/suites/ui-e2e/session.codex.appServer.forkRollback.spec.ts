@@ -222,6 +222,7 @@ async function createCodexSessionFromComposer(params: {
   await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
   await maybeDismissDetectedClisModal(page).catch(() => false);
   await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
+  await expect(page.getByTestId('new-session-composer-input')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 60_000 });
   await openNewSessionMachineSelection({ page, uiBaseUrl });
   await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
@@ -229,6 +230,8 @@ async function createCodexSessionFromComposer(params: {
 
   await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
   await maybeDismissDetectedClisModal(page, { timeoutMs: 30_000 }).catch(() => false);
+  await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
+  await expect(page.getByTestId('new-session-composer-input')).toBeVisible({ timeout: 60_000 });
 
   // Agent options can depend on the selected machine (CLI availability), so pick machine first.
   // After the machine is selected, open the agent picker and select Codex.
@@ -236,11 +239,8 @@ async function createCodexSessionFromComposer(params: {
   await page.getByTestId('agent-input-agent-chip').click();
   await maybeDismissDetectedClisModal(page, { timeoutMs: 30_000 }).catch(() => false);
 
-  const openDialogs = page.locator('[role="dialog"][data-state="open"]');
-  const topDialog = openDialogs.last();
-  const dialogOption = topDialog.locator('[data-testid="new-session-agent:codex"]:visible').first();
-  const inlineOption = page.locator('[data-testid="new-session-agent:codex"]:visible').first();
-  const codexAgentRow = (await dialogOption.count()) > 0 ? dialogOption : inlineOption;
+  const codexAgentRow = page.getByTestId('new-session-agent:codex').first();
+  await expect(codexAgentRow).toBeVisible({ timeout: 60_000 });
   await expect(codexAgentRow).toBeEnabled({ timeout: 60_000 });
   await codexAgentRow.scrollIntoViewIfNeeded().catch(() => {});
   await codexAgentRow.click();

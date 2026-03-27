@@ -8,7 +8,6 @@ import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/te
 import { readCliAccessKey } from '../../src/testkit/cliAccessKey';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
@@ -177,6 +176,7 @@ async function connectTerminalForHome(params: {
       CI: '1',
       HAPPIER_DISABLE_CAFFEINATE: '1',
       HAPPIER_VARIANT: 'dev',
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     },
   });
 
@@ -247,17 +247,13 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS ?? '15000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     };
     test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(sourceCliHomeDir, { recursive: true });
     await mkdir(targetCliHomeDir, { recursive: true });
     await writeFile(resolve(join(sourceCliHomeDir, 'AGENTS.md')), '# UI e2e source fixture\n', 'utf8');
     await writeFile(resolve(join(targetCliHomeDir, 'AGENTS.md')), '# UI e2e target fixture\n', 'utf8');
-
-    await ensureCliDistBuilt(
-      { testDir: suiteDir, env: uiWebEnv },
-      { buildTimeoutMs: 600_000 },
-    );
 
     server = await startServerLight({
       testDir: suiteDir,
@@ -325,6 +321,7 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
         HAPPIER_WEBAPP_URL: uiBaseUrl,
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: resolve(join(sourceDir, 'fake-claude-source.jsonl')),
         HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-source-${run.runId}`,
@@ -371,6 +368,7 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
         HAPPIER_WEBAPP_URL: uiBaseUrl,
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: targetFakeClaudeLogPath,
         HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-target-${run.runId}`,
@@ -449,14 +447,13 @@ test.describe('ui e2e: session handoff from header action menu via forced server
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS ?? '15000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     };
     test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(sourceCliHomeDir, { recursive: true });
     await mkdir(targetCliHomeDir, { recursive: true });
     await writeFile(resolve(join(sourceCliHomeDir, 'AGENTS.md')), '# UI e2e source fixture\n', 'utf8');
     await writeFile(resolve(join(targetCliHomeDir, 'AGENTS.md')), '# UI e2e target fixture\n', 'utf8');
-
-    await ensureCliDistBuilt({ testDir: suiteDir, env: uiWebEnv }, { buildTimeoutMs: 600_000 });
 
     server = await startServerLight({
       testDir: suiteDir,
@@ -524,6 +521,7 @@ test.describe('ui e2e: session handoff from header action menu via forced server
         HAPPIER_WEBAPP_URL: uiBaseUrl,
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: resolve(join(sourceDir, 'fake-claude-source.jsonl')),
         HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-source-${run.runId}-server-routed`,
@@ -568,6 +566,7 @@ test.describe('ui e2e: session handoff from header action menu via forced server
         HAPPIER_WEBAPP_URL: uiBaseUrl,
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: targetFakeClaudeLogPath,
         HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-target-${run.runId}-server-routed`,
@@ -644,14 +643,13 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS:
         process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS ?? '15000',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     };
     test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(sourceCliHomeDir, { recursive: true });
     await mkdir(targetCliHomeDir, { recursive: true });
     await writeFile(resolve(join(sourceCliHomeDir, 'AGENTS.md')), '# UI e2e source fixture\n', 'utf8');
     await writeFile(resolve(join(targetCliHomeDir, 'AGENTS.md')), '# UI e2e target fixture\n', 'utf8');
-
-    await ensureCliDistBuilt({ testDir: suiteDir, env: uiWebEnv }, { buildTimeoutMs: 600_000 });
 
     server = await startServerLight({
       testDir: suiteDir,
@@ -718,6 +716,7 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
         HAPPIER_WEBAPP_URL: uiBaseUrl,
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: resolve(join(sourceDir, 'fake-claude-source.jsonl')),
         HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-source-${run.runId}-recovery`,
