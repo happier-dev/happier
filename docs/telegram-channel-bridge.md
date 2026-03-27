@@ -72,7 +72,9 @@ Precedence is:
 
 1. `HAPPIER_*` environment variables
 2. `settings.json` bridge config (local, scoped by `serverId` + `accountId`, includes secrets)
-3. built-in defaults
+3. `settings.json` bridge config (local, scoped by `serverId`)
+4. `settings.json` bridge config (local, global defaults)
+5. built-in defaults
 
 `allowedChatIds` behavior:
 
@@ -103,6 +105,16 @@ For new adapters (Discord/Slack/WhatsApp/etc), use the same model:
   }
 }
 ```
+
+## Feature gating (experimental)
+
+Channel bridges are gated in three places:
+
+- Server feature gates: `channelBridges` and `channelBridges.telegram` must be enabled in `/v1/features` (server env/build policy can hard-disable them).
+- Local experimental opt-in: users must enable the `Channel bridges` experimental toggle in Settings → Features → Experimental options.
+- Daemon runtime: the daemon starts the worker only when both the server gates are enabled and the local toggle is enabled.
+
+Note: `happier bridge telegram set ...` automatically enables the local experimental toggle (`channelBridges`).
 
 ## Environment Variables (`.env.local`)
 
@@ -181,17 +193,12 @@ HAPPIER_TELEGRAM_WEBHOOK_HOST=127.0.0.1
 HAPPIER_TELEGRAM_WEBHOOK_PORT=8787
 ```
 
-`HAPPIER_TELEGRAM_WEBHOOK_SECRET` is currently used for both:
+`HAPPIER_TELEGRAM_WEBHOOK_SECRET` is used for Telegram `secret_token` header validation (`X-Telegram-Bot-Api-Secret-Token`).
 
-- Telegram `secret_token` header validation
+The webhook endpoint path is fixed (`POST /telegram/webhook`) and does not include any secrets.
 
-This is an implementation limitation today (single configured secret). The webhook endpoint path does not include any secrets.
-
-Important:
-
-- `HAPPIER_SERVER_URL` is the Telegram callback target only when server-relay mode exists and is enabled (planned, not currently implemented).
-- In the currently implemented daemon-relay mode, Telegram must call a public URL that forwards to daemon host/port/path.
-- If you do not have inbound public endpoint/tunnel to daemon, use polling mode (`getUpdates`).
+In daemon-relay mode, Telegram must call a public URL that forwards to the daemon relay (loopback-only).
+If you do not have an inbound public endpoint/tunnel to the daemon, use polling mode (`getUpdates`).
 
 Expose/proxy this daemon endpoint publicly:
 
@@ -219,8 +226,6 @@ If you switch back to polling mode, clear webhook first:
 ```bash
 curl "https://api.telegram.org/bot<token>/deleteWebhook"
 ```
-
-For server-relay and standalone-relay planning details, see [docs/channel-bridge.md](./channel-bridge.md).
 
 ## Telegram Commands (inside DM/topic)
 

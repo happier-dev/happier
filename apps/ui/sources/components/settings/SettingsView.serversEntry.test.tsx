@@ -223,7 +223,18 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: () => null,
+    useFeatureDecision: (featureId: string) => {
+        if (featureId !== 'channelBridges') return null;
+        return {
+            featureId: 'channelBridges',
+            state: 'enabled',
+            blockedBy: null,
+            blockerCode: 'none',
+            diagnostics: [],
+            evaluatedAt: 0,
+            scope: { scopeKind: 'runtime' },
+        };
+    },
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -294,6 +305,47 @@ describe('SettingsView', () => {
         expect(shared.deferOnWebSpy).toHaveBeenCalledTimes(1);
         expect(shared.navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
+    });
+
+    it('blurs the active element before routing to Channel Bridges on web', async () => {
+        const previousBuildAllows = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW;
+        const previousBuildDenies = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        const previousEmbeddedPolicyEnv = process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW = 'channelBridges';
+        delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        delete process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV;
+
+        try {
+            vi.resetModules();
+            const { SettingsView } = await import('./SettingsView');
+            const screen = await renderSettingsView(React.createElement(SettingsView));
+
+            expect(screen.findRowByTitle('settings.channelBridges')).toBeTruthy();
+
+            await act(async () => {
+                screen.pressRowByTitle('settings.channelBridges');
+            });
+
+            expect(shared.deferOnWebSpy).toHaveBeenCalled();
+            expect(shared.navigateWithBlurOnWebSpy).toHaveBeenCalled();
+            expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/channel-bridges');
+        } finally {
+            if (typeof previousBuildAllows === 'string') {
+                process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW = previousBuildAllows;
+            } else {
+                delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW;
+            }
+            if (typeof previousBuildDenies === 'string') {
+                process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousBuildDenies;
+            } else {
+                delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+            }
+            if (typeof previousEmbeddedPolicyEnv === 'string') {
+                process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV = previousEmbeddedPolicyEnv;
+            } else {
+                delete process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV;
+            }
+        }
     });
 
     it('routes to the in-app bug report composer by default when Report issue is pressed', async () => {

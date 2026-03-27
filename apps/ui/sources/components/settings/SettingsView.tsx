@@ -415,7 +415,7 @@ export const SettingsView = React.memo(function SettingsView() {
                             ? t('settingsFeatures.expChannelBridgesSubtitle')
                             : t('settings.channelBridgesSubtitle')}
                         icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.orange} />}
-                        onPress={() => router.push(channelBridgesNeedLocalEnablement ? '/(app)/settings/features' : '/(app)/settings/channel-bridges')}
+                        onPress={() => pushRoute(channelBridgesNeedLocalEnablement ? '/(app)/settings/features' : '/(app)/settings/channel-bridges')}
                     />
                 ) : null}
                 {mcpServersEnabled && (

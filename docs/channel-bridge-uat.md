@@ -91,7 +91,7 @@ Expected:
 - Set `allowedChatIds` to a different chat and verify current chat is blocked.
 - Revert to `--allow-all` and verify chat works again.
 - If using webhook mode, verify secret mismatch returns a non-200 response:
-  - `404` when URL path token is wrong (route mismatch)
+  - `404` when the URL path is wrong (route mismatch)
   - `401` when `X-Telegram-Bot-Api-Secret-Token` is missing/invalid
 
 ## Notes
