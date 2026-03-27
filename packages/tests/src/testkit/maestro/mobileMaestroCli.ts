@@ -1,5 +1,6 @@
 import { runManagedChildCommand, resolveSignalExitCode } from '../../../scripts/managedChildLifecycle.mjs';
 import { startServerLight } from '../process/serverLight';
+import { startUiDevClientMetro } from '../process/uiDevClientMetro';
 
 import { runMobileMaestro } from './mobileMaestroRunner';
 
@@ -15,6 +16,18 @@ async function main() {
       env: process.env,
     },
     {
+      startDevClientMetro: async ({ testDir, extraEnv }) => {
+        const mergedEnv: NodeJS.ProcessEnv = {
+          ...process.env,
+          ...extraEnv,
+        };
+        const started = await startUiDevClientMetro({ testDir, env: mergedEnv });
+        return {
+          baseUrl: started.baseUrl,
+          port: started.port,
+          stop: started.stop,
+        };
+      },
       startServerLight: async ({ testDir, extraEnv }) => {
         const started = await startServerLight({ testDir, extraEnv });
         return {

@@ -12,22 +12,35 @@ export type StartedServerLike = Readonly<{
   stop?: () => Promise<void>;
 }>;
 
+export type StartedDevClientMetroLike = Readonly<{
+  baseUrl: string;
+  port?: number;
+  stop?: () => Promise<void>;
+}>;
+
 export type MobileMaestroRunResult = Readonly<{
   exitCode: number;
   runDir: string;
   manifestPath: string;
   debugOutputDir: string;
   server: StartedServerLike | null;
+  metro: StartedDevClientMetroLike | null;
 }>;
 
 export type MobileMaestroDeps = Readonly<{
   startServerLight: (params: { testDir: string; extraEnv?: NodeJS.ProcessEnv }) => Promise<StartedServerLike>;
+  startDevClientMetro: (params: { testDir: string; extraEnv?: NodeJS.ProcessEnv }) => Promise<StartedDevClientMetroLike>;
   runMaestro: (params: {
     cwd: string;
     env: NodeJS.ProcessEnv;
     maestroBin: string;
     args: string[];
   }) => Promise<{ exitCode: number }>;
+  adbReversePorts: (params: {
+    env: NodeJS.ProcessEnv;
+    platform: string;
+    urls: string[];
+  }) => Readonly<{ enabled: boolean; reversedPorts: number[] }>;
   resolveMaestroBin: (env: NodeJS.ProcessEnv) => string;
   parseMaestroArgs: (argv: string[]) => {
     flows: string | null;
@@ -51,6 +64,17 @@ function isTruthyEnv(value: unknown): boolean {
     .trim()
     .toLowerCase();
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function extractUrlPort(url: string): number | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const port = Number(parsed.port);
+    return Number.isFinite(port) && port > 0 ? port : null;
+  } catch {
+    return null;
+  }
 }
 
 function resolveDeviceVisibleBaseUrl(params: Readonly<{
@@ -83,44 +107,47 @@ function resolveDeviceVisibleBaseUrl(params: Readonly<{
 function runAdbReverseIfEnabled(params: Readonly<{
   env: NodeJS.ProcessEnv;
   platform: string;
-  hostMetroUrl: string;
-  hostServerUrl: string;
-}>): Readonly<{ enabled: boolean }> {
-  if (params.platform !== 'android') return { enabled: false };
+  urls: string[];
+}>): Readonly<{ enabled: boolean; reversedPorts: number[] }> {
+  if (params.platform !== 'android') return { enabled: false, reversedPorts: [] };
 
   const deviceHostOverride = String(params.env.HAPPIER_E2E_MOBILE_DEVICE_HOST ?? '').trim();
-  if (deviceHostOverride) return { enabled: false };
+  if (deviceHostOverride) return { enabled: false, reversedPorts: [] };
 
-  if (!isTruthyEnv(params.env.HAPPIER_E2E_ANDROID_ADB_REVERSE ?? '')) return { enabled: false };
+  // Default to `adb reverse` on Android for local reliability.
+  //
+  // Expo's dev server typically binds to localhost, which is not reachable from
+  // the emulator via `10.0.2.2` unless the host is listening on all
+  // interfaces. `adb reverse` avoids relying on host network configuration.
+  //
+  // Allow explicit opt-out with `HAPPIER_E2E_ANDROID_ADB_REVERSE=0`.
+  const adbReverseSetting = params.env.HAPPIER_E2E_ANDROID_ADB_REVERSE;
+  if (adbReverseSetting !== undefined && !isTruthyEnv(adbReverseSetting)) return { enabled: false, reversedPorts: [] };
 
   const serial = String(params.env.HAPPIER_E2E_ANDROID_SERIAL ?? params.env.ANDROID_SERIAL ?? '').trim();
   const baseArgs = serial ? ['-s', serial] : [];
 
   const ports = new Set<number>();
-  for (const url of [params.hostMetroUrl, params.hostServerUrl]) {
-    if (!url) continue;
-    try {
-      const parsed = new URL(url);
-      const port = Number(parsed.port);
-      if (Number.isFinite(port) && port > 0) ports.add(port);
-    } catch {
-      // Ignore invalid URLs; Maestro will fail later in a more actionable way.
-    }
+  for (const url of params.urls) {
+    const port = extractUrlPort(url);
+    if (port) ports.add(port);
   }
 
+  const reversedPorts: number[] = [];
   for (const port of ports) {
     try {
-      spawnSync(adbCommand(params.env), [...baseArgs, 'reverse', `tcp:${port}`, `tcp:${port}`], {
+      const outcome = spawnSync(adbCommand(params.env), [...baseArgs, 'reverse', `tcp:${port}`, `tcp:${port}`], {
         stdio: 'ignore',
         timeout: 5000,
         env: params.env,
       });
+      if (outcome.status === 0) reversedPorts.push(port);
     } catch {
       // Best-effort: keep going and fall back to non-reverse networking.
     }
   }
 
-  return { enabled: true };
+  return { enabled: reversedPorts.length > 0, reversedPorts };
 }
 
 const defaultDeps: Pick<MobileMaestroDeps, 'resolveMaestroBin' | 'parseMaestroArgs'> = {
@@ -154,7 +181,9 @@ export async function runMobileMaestro(
   const manifestPath = resolvePath(run.runDir, 'manifest.json');
   const debugOutputDir = resolvePath(run.runDir, 'maestro-debug');
 
-  const hostMetroUrl = String(params.env.HAPPIER_E2E_DEV_CLIENT_METRO_URL ?? '').trim() || 'http://127.0.0.1:8081';
+  const manageMetro = isTruthyEnv(params.env.HAPPIER_E2E_MOBILE_MANAGE_METRO ?? '1');
+  const explicitHostMetroUrl = String(params.env.HAPPIER_E2E_DEV_CLIENT_METRO_URL ?? '').trim();
+  const hostMetroUrlFromEnv = explicitHostMetroUrl || 'http://127.0.0.1:8081';
 
   const explicitServerUrl =
     (parsed.serverUrl ? parsed.serverUrl.trim() : '') ||
@@ -162,6 +191,19 @@ export async function runMobileMaestro(
     '';
 
   let server: StartedServerLike | null = null;
+  let metro: StartedDevClientMetroLike | null = null;
+
+  if (manageMetro && !explicitHostMetroUrl) {
+    if (!deps.startDevClientMetro) {
+      throw new Error('Missing startDevClientMetro dependency.');
+    }
+    metro = await deps.startDevClientMetro({
+      testDir: run.testDir('expo-metro'),
+      extraEnv: params.env,
+    });
+  }
+
+  const hostMetroUrl = metro?.baseUrl ? metro.baseUrl.replace(/\/$/, '') : hostMetroUrlFromEnv;
   if (explicitServerUrl) {
     server = { baseUrl: explicitServerUrl };
   } else {
@@ -180,11 +222,15 @@ export async function runMobileMaestro(
     });
   }
 
-  const adbReverse = runAdbReverseIfEnabled({
+  const adbReversePorts =
+    deps.adbReversePorts
+      ? deps.adbReversePorts
+      : (reverseParams) => runAdbReverseIfEnabled(reverseParams);
+
+  const adbReverse = adbReversePorts({
     env: params.env,
     platform,
-    hostMetroUrl,
-    hostServerUrl: server.baseUrl,
+    urls: [server.baseUrl, hostMetroUrl].filter(Boolean),
   });
 
   const deviceServerUrl =
@@ -229,6 +275,8 @@ export async function runMobileMaestro(
         env: {
           APP_ENV: params.env.APP_ENV ?? null,
           androidAdbReverse: adbReverse.enabled,
+          androidAdbReversePorts: adbReverse.reversedPorts,
+          manageMetro: manageMetro,
         },
       },
       null,
@@ -252,6 +300,10 @@ export async function runMobileMaestro(
   };
 
   const childArgs = [
+    // Force Maestro to select the intended device platform. Without this,
+    // Maestro may pick an iOS Simulator even when an Android Emulator is
+    // available (or vice-versa), which makes runs flaky and non-deterministic.
+    ...(platform ? ['-p', platform] : []),
     'test',
     flows,
     '--debug-output',
@@ -279,6 +331,9 @@ export async function runMobileMaestro(
     if (server?.stop) {
       await server.stop();
     }
+    if (metro?.stop) {
+      await metro.stop();
+    }
   }
 
   return {
@@ -287,5 +342,6 @@ export async function runMobileMaestro(
     manifestPath,
     debugOutputDir,
     server,
+    metro,
   };
 }
