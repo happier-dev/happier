@@ -2431,7 +2431,6 @@ export const ca: TranslationStructure = {
         description: 'Channel bridges let you attach external chats (Telegram) to sessions and forward messages to the agent.',
         telegramTitle: 'Telegram',
         telegramFooter: 'Configure Telegram via CLI, then manage bindings in Telegram with /sessions, /attach, /detach, /help.',
-        diagnosticsTitle: 'Diagnostics',
     },
 
     settingsFeatures: {

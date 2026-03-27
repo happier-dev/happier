@@ -2231,15 +2231,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
     },
 
-    settingsChannelBridges: {
-        unsupported: '此環境不支援頻道橋接。',
-        enableInFeatures: '啟用頻道橋接',
-        enableInFeaturesSubtitle: '頻道橋接為實驗功能，預設關閉。',
-        description: '頻道橋接可將外部聊天（Telegram）附加到工作階段，並將訊息轉發給代理。',
-        telegramTitle: 'Telegram',
-        telegramFooter: '請透過 CLI 設定 Telegram，然後在 Telegram 中使用 /sessions、/attach、/detach、/help 管理綁定。',
-        diagnosticsTitle: '診斷',
-    },
+	    settingsChannelBridges: {
+	        unsupported: '此環境不支援頻道橋接。',
+	        enableInFeatures: '啟用頻道橋接',
+	        enableInFeaturesSubtitle: '頻道橋接為實驗功能，預設關閉。',
+	        description: '頻道橋接可將外部聊天（Telegram）附加到工作階段，並將訊息轉發給代理。',
+	        telegramTitle: 'Telegram',
+	        telegramFooter: '請透過 CLI 設定 Telegram，然後在 Telegram 中使用 /sessions、/attach、/detach、/help 管理綁定。',
+	    },
 
     settingsFeatures: {
         // Features settings screen

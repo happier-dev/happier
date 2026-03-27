@@ -2473,15 +2473,14 @@ export const zhHans: TranslationStructure = {
     },
   },
 
-  settingsChannelBridges: {
-    unsupported: "此环境不支持频道桥接。",
-    enableInFeatures: "启用频道桥接",
-    enableInFeaturesSubtitle: "频道桥接为实验功能，默认关闭。",
-    description: "频道桥接可将外部聊天（Telegram）附加到会话，并将消息转发给代理。",
-    telegramTitle: "Telegram",
-    telegramFooter: "请通过 CLI 配置 Telegram，然后在 Telegram 中使用 /sessions、/attach、/detach、/help 管理绑定。",
-    diagnosticsTitle: "诊断",
-  },
+	  settingsChannelBridges: {
+	    unsupported: "此环境不支持频道桥接。",
+	    enableInFeatures: "启用频道桥接",
+	    enableInFeaturesSubtitle: "频道桥接为实验功能，默认关闭。",
+	    description: "频道桥接可将外部聊天（Telegram）附加到会话，并将消息转发给代理。",
+	    telegramTitle: "Telegram",
+	    telegramFooter: "请通过 CLI 配置 Telegram，然后在 Telegram 中使用 /sessions、/attach、/detach、/help 管理绑定。",
+	  },
 
   settingsFeatures: {
     // Features settings screen
