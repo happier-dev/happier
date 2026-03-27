@@ -13,7 +13,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: _shared/loginCreateAccount.yaml
 
 - runFlow:
-    file: _shared/gotoNewSessionComposer.yaml
+    file: _shared/openDevAgentInputDemo.yaml
 
 # Profile (model/effort presets) popover should open and be dismissible.
 - assertVisible: agent-input-profile-chip

@@ -15,6 +15,10 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - runFlow:
     file: _shared/openDevTools2.yaml
 
+- extendedWaitUntil:
+    visible: 'dev-tools2-filter:ask-user-question'
+    timeout: 240000
+
 - tapOn: 'dev-tools2-filter:ask-user-question'
 
 # AskUserQuestion should render as a user-action card (not a permission approval footer).

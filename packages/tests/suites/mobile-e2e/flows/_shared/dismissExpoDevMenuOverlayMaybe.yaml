@@ -1,0 +1,15 @@
+# Best-effort dismissal of Expo Dev Menu overlay (not our UI).
+#
+# This overlay can appear after acknowledging the onboarding sheet and it
+# blocks the app UI. We close it by using the "Go home" action.
+#
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    when:
+      visible: "Go home"
+    commands:
+      # The overlay has a top-right "X" which is exposed via accessibility as
+      # "Close". Prefer closing (returns to the app) over "Go home" (which
+      # returns to the Dev Client home screen).
+      - tapOn: "Close"

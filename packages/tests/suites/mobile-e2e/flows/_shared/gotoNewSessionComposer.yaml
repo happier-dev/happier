@@ -1,6 +1,8 @@
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
-- assertVisible: home-header-start-new-session
-- tapOn: home-header-start-new-session
+- assertVisible:
+    id: main-header-start-new-session
+- tapOn:
+    id: main-header-start-new-session
 
 - assertVisible: new-session-composer-input

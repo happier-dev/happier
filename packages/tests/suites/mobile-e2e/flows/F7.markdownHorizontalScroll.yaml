@@ -15,6 +15,11 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - runFlow:
     file: _shared/openDevMessagesDemo.yaml
 
+# Wait for the demo transcript to render before swiping.
+- extendedWaitUntil:
+    visible: markdown-table-scroll
+    timeout: 240000
+
 # Table horizontal scroll (sentinel is offscreen to the right).
 - assertVisible: markdown-table-scroll
 - swipe:

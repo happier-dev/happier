@@ -3,9 +3,14 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # Create an anonymous account (no OAuth) from the Welcome screen.
 
 - runFlow:
-    file: waitForWelcomeCreateAccount.yaml
+    when:
+      visible: welcome-create-account
+    commands:
+      - runFlow:
+          file: waitForWelcomeCreateAccount.yaml
 
-- tapOn: welcome-create-account
+      - tapOn: welcome-create-account
 
-# After login, the Home header action for starting a new session should appear.
-- assertVisible: home-header-start-new-session
+      # After login, the main header action for starting a new session should appear.
+      - assertVisible:
+          id: main-header-start-new-session

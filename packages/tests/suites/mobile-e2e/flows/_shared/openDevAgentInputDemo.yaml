@@ -1,4 +1,4 @@
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
 # Requires the Expo Router scheme configured in `apps/ui/app.config.js` (default: `happier`).
-- openLink: happier:///dev/messages-demo
+- openLink: happier:///dev/agent-input-demo

@@ -5,23 +5,53 @@
 #
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
+# Configure the server as early as possible so the Welcome screen doesn't get
+# stuck in a perpetual loading state while trying to reach the default server.
+#
+# Note: We do this even when we're already inside the authenticated app shell.
+# Mobile E2E uses an ephemeral server-light per run, so the previously selected
+# server (from a prior run) can be stale and unreachable.
+#
+# We don't wait for `welcome-create-account` here because it is intentionally
+# gated on server availability (and may never appear until the server URL is
+# updated).
 - runFlow:
-    file: waitForWelcomeCreateAccount.yaml
+    file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+- runFlow:
+    file: dismissDeveloperMenuMaybe.yaml
+- runFlow:
+    file: dismissExpoDevMenuOverlayMaybe.yaml
 
-- openLink: happier://server
+# Wait until *any* known Happier surface is visible (the welcome hero can be
+# present even while the server is still "Loading...").
+- extendedWaitUntil:
+    visible: "(main-header-start-new-session|welcome-server-loading|welcome-create-account|Loading from|Bundling.*|Downloading.*)"
+    timeout: 240000
+
+- openLink: happier:///server?auto=1&url=${HAPPIER_E2E_SERVER_URL}
+
+# Re-dismiss dev-only overlays in case the deep-link triggered them.
+- runFlow:
+    file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+- runFlow:
+    file: dismissDeveloperMenuMaybe.yaml
+- runFlow:
+    file: dismissExpoDevMenuOverlayMaybe.yaml
 
 - extendedWaitUntil:
-    visible: server-settings-add-server-toggle
-    timeout: 60000
+    visible: "(welcome-create-account|server-settings-add-server-toggle|Loading from|Bundling.*|Downloading.*)"
+    timeout: 240000
 
-- assertVisible: server-settings-add-server-toggle
-- tapOn: server-settings-add-server-toggle
+# In `auto=1` mode, server auto-add happens in a background effect.
+# Expand the server form so any validation errors become visible to Maestro.
+- runFlow:
+    when:
+      visible: server-settings-add-server-toggle
+    commands:
+      - tapOn: server-settings-add-server-toggle
 
-- assertVisible: server-settings-add-url-input
-- tapOn: server-settings-add-url-input
-- inputText: ${HAPPIER_E2E_SERVER_URL}
+- extendedWaitUntil:
+    visible: "(welcome-create-account|server-settings-add-error)"
+    timeout: 240000
 
-- tapOn: server-settings-add-confirm
-
-# Return to welcome screen.
-- openLink: happier://
+- assertNotVisible: server-settings-add-error

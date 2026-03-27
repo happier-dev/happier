@@ -6,9 +6,9 @@
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
 - runFlow:
-    optional: true
+    # Avoid failing/warning when no ANR dialog is present; only dismiss when we
+    # can see the stable button label.
+    when:
+      visible: "Close app"
     commands:
-      - extendedWaitUntil:
-          visible: "isn't responding"
-          timeout: 1000
       - tapOn: "Wait"

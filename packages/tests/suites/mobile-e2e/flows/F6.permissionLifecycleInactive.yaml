@@ -15,6 +15,10 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - runFlow:
     file: _shared/openDevTools2.yaml
 
+- extendedWaitUntil:
+    visible: 'dev-tools2-filter:permissions.pending'
+    timeout: 240000
+
 # Active session: a pending tool should show permission controls.
 - tapOn: 'dev-tools2-filter:permissions.pending'
 - assertVisible: permission-footer.allow

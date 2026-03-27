@@ -6,10 +6,10 @@
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
 - runFlow:
-    optional: true
+    # Avoid failing/warning when the onboarding sheet isn't present; only
+    # dismiss when we can see its stable body copy (the dev menu itself also
+    # contains "Runtime version:", so the header is not a reliable discriminator).
+    when:
+      visible: "This is the developer menu\\..*"
     commands:
-      - extendedWaitUntil:
-          visible: "Runtime version:"
-          timeout: 2000
       - tapOn: "Continue"
-      - assertNotVisible: "Runtime version:"
