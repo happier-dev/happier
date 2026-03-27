@@ -888,6 +888,11 @@ async function handleCommand(params: Readonly<{
  *   warnings are emitted per binding on each call.
  * - Pass a stable `Set<string>` across calls to dedupe warning spam in
  *   long-running loops (as `startChannelBridgeWorker` does).
+ *
+ * Adapter pull failure warning deduplication:
+ * - `warnedAdapterPullFailures` is optional. When provided, pull failures for
+ *   a given adapter providerId are warned only on the transition to failing.
+ * - Once an adapter successfully pulls again, future failures will warn again.
  */
 export async function executeChannelBridgeTick(params: Readonly<{
   store: ChannelBindingStore;
@@ -895,6 +900,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
   deps: ChannelBridgeDeps;
   inboundDeduper: ChannelBridgeInboundDeduper;
   warnedMissingAdapterBindings?: Set<string>;
+  warnedAdapterPullFailures?: Set<string>;
 }>): Promise<void> {
   const activeAdapters: ChannelBridgeAdapter[] = [];
   const adapterByProvider = new Map<string, ChannelBridgeAdapter>();
@@ -917,8 +923,13 @@ export async function executeChannelBridgeTick(params: Readonly<{
         EXTERNAL_IO_TIMEOUT_MS,
         `pullInboundMessages(${adapter.providerId})`,
       );
+      params.warnedAdapterPullFailures?.delete(adapter.providerId);
     } catch (error) {
-      params.deps.onWarning?.(`Failed to pull inbound messages for adapter ${adapter.providerId}`, error);
+      const warnedPullFailures = params.warnedAdapterPullFailures;
+      if (!warnedPullFailures || !warnedPullFailures.has(adapter.providerId)) {
+        params.deps.onWarning?.(`Failed to pull inbound messages for adapter ${adapter.providerId}`, error);
+        warnedPullFailures?.add(adapter.providerId);
+      }
       continue;
     }
 
@@ -1287,6 +1298,7 @@ export function startChannelBridgeWorker(params: Readonly<{
 
   const inboundDeduper = createChannelBridgeInboundDeduper();
   const warnedMissingAdapterBindings = new Set<string>();
+  const warnedAdapterPullFailures = new Set<string>();
   let inFlightTick: Promise<void> | null = null;
 
   const runTick = async (): Promise<void> => {
@@ -1296,6 +1308,7 @@ export function startChannelBridgeWorker(params: Readonly<{
       deps: params.deps,
       inboundDeduper,
       warnedMissingAdapterBindings,
+      warnedAdapterPullFailures,
     });
     inFlightTick = tickRun;
     try {

@@ -1657,6 +1657,56 @@ describe('executeChannelBridgeTick', () => {
     expect(warnings.some((row) => row.message.includes('Failed to pull inbound messages for adapter telegram'))).toBe(true);
   });
 
+  it('deduplicates adapter pull failure warnings until the adapter recovers when warnedAdapterPullFailures is provided', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const failing = createAdapterHarness('telegram');
+
+    const { deps, warnings } = createDepsHarness();
+    const inboundDeduper = createChannelBridgeInboundDeduper();
+    const warnedAdapterPullFailures = new Set<string>();
+
+    const warningCount = () =>
+      warnings.filter((row) => row.message.includes('Failed to pull inbound messages for adapter telegram')).length;
+
+    failing.failPullOnce(new Error('telegram pull failed'));
+    await executeChannelBridgeTick({
+      store,
+      adapters: [failing.adapter],
+      deps,
+      inboundDeduper,
+      warnedAdapterPullFailures,
+    });
+    expect(warningCount()).toBe(1);
+
+    failing.failPullOnce(new Error('telegram pull failed again'));
+    await executeChannelBridgeTick({
+      store,
+      adapters: [failing.adapter],
+      deps,
+      inboundDeduper,
+      warnedAdapterPullFailures,
+    });
+    expect(warningCount()).toBe(1);
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [failing.adapter],
+      deps,
+      inboundDeduper,
+      warnedAdapterPullFailures,
+    });
+
+    failing.failPullOnce(new Error('telegram pull failed after recovery'));
+    await executeChannelBridgeTick({
+      store,
+      adapters: [failing.adapter],
+      deps,
+      inboundDeduper,
+      warnedAdapterPullFailures,
+    });
+    expect(warningCount()).toBe(2);
+  });
+
   it('warns and ignores duplicate adapter provider ids', async () => {
     const store = createInMemoryChannelBindingStore();
     const first = createAdapterHarness('telegram');
