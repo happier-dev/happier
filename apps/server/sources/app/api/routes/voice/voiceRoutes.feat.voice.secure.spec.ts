@@ -92,8 +92,7 @@ describe("voiceRoutes (secure)", () => {
         resetVoiceEnv({
             NODE_ENV: "production",
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
-            HAPPIER_FEATURE_POLICY_ENV: "preview",
-            HAPPIER_EMBEDDED_POLICY_ENV: "preview",
+            HAPPIER_BUILD_FEATURES_DENY: "voice,voice.happierVoice",
             ELEVENLABS_API_KEY: undefined,
             ELEVENLABS_AGENT_ID_PROD: undefined,
             REVENUECAT_SECRET_KEY: "rc_secret",
