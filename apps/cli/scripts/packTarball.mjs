@@ -14,6 +14,15 @@ const MAX_CAPTURED_OUTPUT_CHARS = 4000;
 function resolveNpmInvocation(npmExecpath = process.env.npm_execpath) {
   const npmExecpathValue = String(npmExecpath ?? '').trim();
   if (npmExecpathValue) {
+    // Yarn classic sets `npm_execpath` to its own CLI entrypoint. That breaks `npm pack --json`
+    // parsing and can cause the CLI smoke lane to fail by "packing" with yarn instead of npm.
+    // Only respect `npm_execpath` when it points at npm's canonical JS entrypoint.
+    if (path.basename(npmExecpathValue).toLowerCase() !== 'npm-cli.js') {
+      return {
+        command: 'npm',
+        args: [],
+      };
+    }
     return {
       command: process.execPath,
       args: [npmExecpathValue],
@@ -35,7 +44,23 @@ function parseTarballName(stdout) {
     const entry = Array.isArray(parsed) ? parsed.at(-1) : parsed;
     return String(entry?.filename ?? '').trim();
   } catch {
-    return raw.split('\n').map((line) => line.trim()).filter(Boolean).at(-1) ?? '';
+    // `npm pack --json` can still emit prepack script output to stdout. When that happens,
+    // the overall output is no longer valid JSON even though it still contains the filename.
+    // Prefer extracting the last `"filename": "<...>.tgz"` occurrence.
+    const filenameMatches = Array.from(raw.matchAll(/"filename"\s*:\s*"([^"]+?\.tgz)"/g));
+    const lastFilename = filenameMatches.at(-1)?.[1];
+    if (lastFilename) return String(lastFilename).trim();
+
+    // Fall back to scanning lines for a .tgz token (supports both npm and yarn variants).
+    const lines = raw.split('\n').map((line) => line.trim()).filter(Boolean);
+    const tgzLine = lines.slice().reverse().find((line) => line.includes('.tgz'));
+    if (tgzLine) {
+      const parts = tgzLine.split(/\s+/).filter(Boolean);
+      const tgzToken = parts.slice().reverse().find((part) => part.endsWith('.tgz') || part.includes('.tgz'));
+      if (tgzToken) return tgzToken.replaceAll('"', '').replaceAll("'", '').trim();
+    }
+
+    return lines.at(-1) ?? '';
   }
 }
 

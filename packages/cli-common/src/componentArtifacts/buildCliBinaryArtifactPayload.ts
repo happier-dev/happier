@@ -11,6 +11,7 @@ import {
   vendorBundledPackageRuntimeDependencies,
 } from '../workspaces/index.js';
 import { withCliDistBuildLock } from './withCliDistBuildLock.js';
+import { ensureBundledWorkspacePackagesBuilt } from './ensureBundledWorkspacePackagesBuilt.js';
 
 const CLI_RUNTIME_SIDECAR_ENTRIES = [
   ['childProcessOptions.cjs'],
@@ -48,12 +49,28 @@ async function copyCliRuntimeSidecars(repoRoot: string, payloadDir: string): Pro
   }
 }
 
-async function copyCliNodeRuntimePayload(repoRoot: string, payloadDir: string, distDir: string): Promise<void> {
+async function copyCliNodeRuntimePayload(
+  repoRoot: string,
+  payloadDir: string,
+  distDir: string,
+  params: Readonly<{
+    yarn: Readonly<{ cmd: string; args: string[] }>;
+    runCommand: RunCommand;
+  }>,
+): Promise<void> {
   const cliDir = join(repoRoot, 'apps', 'cli');
   const workspaceBundles = resolveWorkspaceBundlesFromPackageJson({
     repoRoot,
     hostPackageDir: cliDir,
   });
+
+  await ensureBundledWorkspacePackagesBuilt({
+    repoRoot,
+    bundles: workspaceBundles.map(({ packageName, srcDir }) => ({ packageName, srcDir })),
+    yarn: params.yarn,
+    runCommand: params.runCommand,
+  });
+
   await cp(distDir, join(payloadDir, 'package-dist'), { recursive: true });
   vendorBundledPackageRuntimeDependencies({
     srcPackageJsonPath: join(cliDir, 'package.json'),
@@ -168,7 +185,7 @@ export async function buildCliBinaryArtifactPayload({
       runCommand,
     });
     await rm(join(payloadDir, 'node_modules'), { recursive: true, force: true });
-    await copyCliNodeRuntimePayload(repoRoot, payloadDir, snapshotDistDir);
+    await copyCliNodeRuntimePayload(repoRoot, payloadDir, snapshotDistDir, { yarn, runCommand });
     await copyCliRuntimeSidecars(repoRoot, payloadDir);
 
     return {

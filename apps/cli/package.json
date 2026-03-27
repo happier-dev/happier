@@ -89,6 +89,7 @@
     "typecheck": "tsc --noEmit",
     "build": "node scripts/rmDist.mjs && tsc --noEmit && node scripts/runPkgrollBuild.mjs && node scripts/syncPackageDist.mjs",
     "test": "$npm_execpath run test:unit",
+    "vitest": "$npm_execpath run -s build:shared && vitest",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:integration": "node scripts/runVitestShards.mjs --config vitest.integration.config.ts",
     "test:slow": "vitest run --config vitest.slow.config.ts",
@@ -124,7 +125,8 @@
     "// ==== Development Linking ====": "",
     "link:dev": "node scripts/link-dev.cjs",
     "unlink:dev": "node scripts/link-dev.cjs unlink",
-    "prepack": "yarn -s build && node scripts/bundleWorkspaceDeps.mjs"
+    "prepack": "yarn -s build && node scripts/bundleWorkspaceDeps.mjs",
+    "postpack": "node scripts/postpack/patchPackedTarballForBun.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",

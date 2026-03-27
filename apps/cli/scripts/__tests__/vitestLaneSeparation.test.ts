@@ -39,6 +39,10 @@ describe('Vitest lane separation', () => {
         expect(packageJson.scripts?.['test:integration']).toBe(
             'node scripts/runVitestShards.mjs --config vitest.integration.config.ts',
         );
+
+        // `yarn vitest ...` (without going through `yarn test:unit`) should still build internal
+        // workspaces first so protocol/agents dist artifacts are never stale/missing.
+        expect(packageJson.scripts?.vitest).toBe('$npm_execpath run -s build:shared && vitest');
     });
 
     it('keeps build-output dist verification out of the unit lane', () => {

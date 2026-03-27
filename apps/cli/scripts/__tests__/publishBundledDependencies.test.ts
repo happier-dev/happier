@@ -52,6 +52,7 @@ describe('apps/cli package publish contract', () => {
     expect(cliPackageJson.dependencies?.['tweetnacl']).toBeTruthy();
     expect(cliPackageJson.dependencies?.['base64-js']).toBeFalsy();
     expect(cliPackageJson.dependencies?.['@noble/hashes']).toBeFalsy();
+
   });
 
   it('explicitly includes generated dist outputs in npm publish inputs', () => {
