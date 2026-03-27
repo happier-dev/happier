@@ -2,7 +2,9 @@ import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { setSessionModel } from '@/session/services/setSessionModel';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 function normalizeModelIdOrThrow(raw: string): string {
   const trimmed = raw.trim();
@@ -37,29 +39,38 @@ export async function cmdSessionSetModel(
     process.exit(1);
   }
 
-  const updatedAt = Date.now();
-  const result = await setSessionModel({
-    credentials,
-    idOrPrefix,
-    modelId,
-    updatedAt,
-  });
-  if (!result.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.model.set',
+    { sessionId: idOrPrefix, modelId },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_set_model',
-        error: { code: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) },
+        error: {
+          code: normalized.errorCode,
+          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
+          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
+        },
       });
       return;
     }
-    throw new Error(result.code);
+    throw new Error(normalized.errorCode);
   }
 
-  if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_set_model', data: { sessionId: result.sessionId, modelId, updatedAt } });
+  const result = normalized.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_model', json, result })) {
     return;
   }
 
-  console.log(chalk.green('✓'), `model set for ${result.sessionId}: ${modelId}`);
+  if (json) {
+    printJsonEnvelope({ ok: true, kind: 'session_set_model', data: { sessionId: result.sessionId, modelId: result.modelId ?? modelId, updatedAt: result.updatedAt ?? null } });
+    return;
+  }
+
+  console.log(chalk.green('✓'), `model set for ${result.sessionId}: ${result.modelId ?? modelId}`);
 }

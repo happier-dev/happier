@@ -6,7 +6,8 @@ import type { PermissionIntent } from '@happier-dev/agents';
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { hasFlag, readIntFlagValue, readFlagValue } from '@/cli/commands/shared/argvFlags';
-import { sendSessionMessage } from '@/session/services/sendSessionMessage';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
   const parsed = parsePermissionIntentAlias(raw);
@@ -63,29 +64,53 @@ export async function cmdSessionSend(
         })()
       : undefined;
 
-  const result = await sendSessionMessage({
-    credentials,
-    idOrPrefix,
-    message,
-    wait,
-    timeoutMs: timeoutSeconds * 1000,
-    ...(permissionModeOverride ? { permissionModeOverride } : {}),
-    ...(modelOverride !== undefined ? { modelOverride } : {}),
-  });
-  if (!result.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.message.send',
+    {
+      sessionId: idOrPrefix,
+      message,
+      ...(permissionModeOverride ? { permissionModeOverride } : {}),
+      ...(modelOverride !== undefined ? { modelOverride } : {}),
+      ...(wait ? { wait: true } : {}),
+      ...(timeoutSeconds ? { timeoutSeconds } : {}),
+    },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  if (!actionRes.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_send',
         error: {
-          code: result.code,
-          ...(result.candidates ? { candidates: result.candidates } : {}),
-          ...(result.message ? { message: result.message } : {}),
+          code: actionRes.errorCode,
+          ...(actionRes.error ? { message: actionRes.error } : {}),
         },
       });
       return;
     }
-    throw new Error(result.code);
+    throw new Error(actionRes.errorCode);
+  }
+
+  const result = (actionRes as any).result as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_send', json, result })) {
+    return;
+  }
+  if (result && typeof result === 'object' && result.ok === false) {
+    const code = typeof result.errorCode === 'string' ? result.errorCode : typeof result.code === 'string' ? result.code : 'action_failed';
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_send',
+        error: {
+          code,
+          ...(Array.isArray(result.candidates) ? { candidates: result.candidates } : {}),
+          ...(typeof result.message === 'string' && result.message.trim().length > 0 ? { message: result.message } : {}),
+        },
+      });
+      return;
+    }
+    throw new Error(code);
   }
 
   if (json) {

@@ -6,7 +6,9 @@ import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import type { Credentials } from '@/persistence';
-import { createSpawnedSession } from '@/session/services/createSpawnedSession';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 
 export async function cmdSessionCreate(
   argv: string[],
@@ -34,28 +36,26 @@ export async function cmdSessionCreate(
     process.exit(1);
   }
 
-  const backendTarget = (() => {
-    if (!backendRaw) {
-      return { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID } as const;
-    }
-    return parseSingleBackendTargetFromFlag(backendRaw);
-  })();
-  if (!backendTarget) {
+  if (backendRaw && !parseSingleBackendTargetFromFlag(backendRaw)) {
     throw new Error(
       'Usage: happier session create [--path <path>] [--backend <backend-target>] [--title <text>] [--tag <tag>] [--prompt <text>|--message <text>] [--json]',
     );
   }
 
-  let created: Awaited<ReturnType<typeof createSpawnedSession>>;
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  let actionRes;
   try {
-    created = await createSpawnedSession({
-      credentials,
-      directory: path,
-      backendTarget,
-      ...(title ? { title } : {}),
-      ...(tag ? { tag } : {}),
-      ...(initialPrompt ? { initialMessage: initialPrompt } : {}),
-    });
+    actionRes = await executor.execute(
+      'session.spawn_new',
+      {
+        path,
+        ...(backendRaw ? { backendTargetKey: backendRaw } : { agentId: DEFAULT_CATALOG_AGENT_ID }),
+        ...(title ? { title } : {}),
+        ...(tag ? { tag } : {}),
+        ...(initialPrompt ? { initialMessage: initialPrompt } : {}),
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
   } catch (error) {
     const mapped = mapUnknownErrorToControlError(error);
     if (json) {
@@ -73,6 +73,46 @@ export async function cmdSessionCreate(
     throw Object.assign(new Error(mapped.message ?? (error instanceof Error ? error.message : 'Failed to create session')), {
       code: mapped.code,
     });
+  }
+
+  const result = normalizeActionExecuteResult(actionRes);
+  if (!result.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_create',
+        error: {
+          code: result.errorCode,
+          ...(result.errorMessage ? { message: result.errorMessage } : {}),
+          ...(result.candidates ? { candidates: result.candidates } : {}),
+        },
+      });
+      return;
+    }
+    throw Object.assign(new Error(result.errorMessage ?? result.errorCode), { code: result.errorCode });
+  }
+  const created = result.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_create', json, result: created })) {
+    return;
+  }
+  if (!created || typeof created !== 'object') {
+    throw new Error('session_create_failed');
+  }
+  if (created.type === 'error') {
+    const code = typeof created.errorCode === 'string' ? created.errorCode : 'session_create_failed';
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_create',
+        error: {
+          code,
+          ...(typeof created.errorMessage === 'string' && created.errorMessage.trim().length > 0 ? { message: created.errorMessage } : {}),
+          ...(typeof created.host === 'string' && created.host.trim().length > 0 ? { host: created.host } : {}),
+        },
+      });
+      return;
+    }
+    throw Object.assign(new Error(code), { code });
   }
 
   if (json) {

@@ -4,7 +4,9 @@ import { parsePermissionIntentAlias, type PermissionIntent } from '@happier-dev/
 
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { setSessionPermissionMode } from '@/session/services/setSessionPermissionMode';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 function parseIntentOrThrow(raw: string): PermissionIntent {
   const parsed = parsePermissionIntentAlias(raw);
@@ -39,29 +41,42 @@ export async function cmdSessionSetPermissionMode(
     process.exit(1);
   }
 
-  const updatedAt = Date.now();
-  const result = await setSessionPermissionMode({
-    credentials,
-    idOrPrefix,
-    permissionMode: intent,
-    updatedAt,
-  });
-  if (!result.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.permission_mode.set',
+    { sessionId: idOrPrefix, permissionMode: intent },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_set_permission_mode',
-        error: { code: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) },
+        error: {
+          code: normalized.errorCode,
+          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
+          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
+        },
       });
       return;
     }
-    throw new Error(result.code);
+    throw new Error(normalized.errorCode);
   }
 
-  if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_set_permission_mode', data: { sessionId: result.sessionId, permissionMode: intent, updatedAt } });
+  const result = normalized.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_permission_mode', json, result })) {
     return;
   }
 
-  console.log(chalk.green('✓'), `permission mode set for ${result.sessionId}: ${intent}`);
+  if (json) {
+    printJsonEnvelope({
+      ok: true,
+      kind: 'session_set_permission_mode',
+      data: { sessionId: result.sessionId, permissionMode: result.permissionMode ?? intent, updatedAt: result.updatedAt ?? null },
+    });
+    return;
+  }
+
+  console.log(chalk.green('✓'), `permission mode set for ${result.sessionId}: ${result.permissionMode ?? intent}`);
 }

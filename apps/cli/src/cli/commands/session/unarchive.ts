@@ -2,7 +2,9 @@ import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 export async function cmdSessionUnarchive(
   argv: string[],
@@ -24,21 +26,32 @@ export async function cmdSessionUnarchive(
     process.exit(1);
   }
 
-  const result = await setSessionArchivedState({
-    credentials,
-    idOrPrefix,
-    archived: false,
-  });
-  if (!result.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.unarchive',
+    { sessionId: idOrPrefix },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_unarchive',
-        error: { code: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) },
+        error: {
+          code: normalized.errorCode,
+          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
+          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
+        },
       });
       return;
     }
-    throw new Error(result.code);
+    throw new Error(normalized.errorCode);
+  }
+
+  const result = normalized.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_unarchive', json, result })) {
+    return;
   }
 
   if (json) {

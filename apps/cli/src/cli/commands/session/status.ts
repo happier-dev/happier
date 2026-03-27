@@ -3,7 +3,9 @@ import chalk from 'chalk';
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
-import { getSessionStatus } from '@/session/services/getSessionStatus';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 export async function cmdSessionStatus(
   argv: string[],
@@ -26,21 +28,32 @@ export async function cmdSessionStatus(
     process.exit(1);
   }
 
-  const result = await getSessionStatus({
-    credentials,
-    idOrPrefix,
-    live,
-  });
-  if (!result.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.status.get',
+    { sessionId: idOrPrefix, ...(live ? { live: true } : {}) },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_status',
-        error: { code: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) },
+        error: {
+          code: normalized.errorCode,
+          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
+          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
+        },
       });
       return;
     }
-    throw new Error(result.code);
+    throw new Error(normalized.errorCode);
+  }
+
+  const result = normalized.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_status', json, result })) {
+    return;
   }
 
   if (json) {

@@ -1,6 +1,7 @@
 import {
   ActionsSettingsV1Schema,
   isActionEnabledByActionsSettings,
+  isApprovalRequiredByActionsSettings,
   listActionSpecs,
   type ActionId,
   type ActionSurfaces,
@@ -34,6 +35,15 @@ export function isActionEnabledByEnv(
   });
 }
 
+export function isActionApprovalRequiredByEnv(
+  actionId: ActionId,
+  ctx?: Readonly<{ surface?: keyof ActionSurfaces | null }>,
+): boolean {
+  return isApprovalRequiredByActionsSettings(actionId, readActionsSettingsFromEnv() as any, {
+    surface: ctx?.surface ?? null,
+  });
+}
+
 export function listDisabledActionIdsForSurfaceFromEnv(surface: keyof ActionSurfaces): readonly ActionId[] {
   const settings = readActionsSettingsFromEnv();
   const disabled: ActionId[] = [];
@@ -45,4 +55,3 @@ export function listDisabledActionIdsForSurfaceFromEnv(surface: keyof ActionSurf
   disabled.sort((a, b) => String(a).localeCompare(String(b)));
   return disabled;
 }
-

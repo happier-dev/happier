@@ -2,7 +2,9 @@ import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { requestSessionStop } from '@/session/services/requestSessionStop';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 export async function cmdSessionStop(
   argv: string[],
@@ -24,19 +26,29 @@ export async function cmdSessionStop(
     process.exit(1);
   }
 
-  const result = await requestSessionStop({ credentials, idOrPrefix });
-  if (!result.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.stop',
+    { sessionId: idOrPrefix },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_stop',
-        error: { code: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) },
+        error: { code: normalized.errorCode, ...(normalized.candidates ? { candidates: normalized.candidates } : {}), ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(result.code);
+    throw new Error(normalized.errorCode);
   }
 
+  const result = normalized.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_stop', json, result })) {
+    return;
+  }
   if (json) {
     printJsonEnvelope({ ok: true, kind: 'session_stop', data: { sessionId: result.sessionId, stopped: result.stopped } });
     return;

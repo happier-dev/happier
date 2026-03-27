@@ -784,6 +784,7 @@ export async function acquireDaemonLock(
   delayIncrementMs: number = 200
 ): Promise<FileHandle | null> {
   const { findHappyProcessByPid } = await import('@/daemon/doctor');
+  await mkdir(dirname(configuration.daemonLockFile), { recursive: true });
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {

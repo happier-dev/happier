@@ -4,8 +4,8 @@ import type { Credentials } from '@/persistence';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readIntFlagValue } from '@/cli/commands/shared/argvFlags';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { waitForExecutionRun } from '@/session/services/executionRuns';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 export async function cmdSessionRunWait(
   argv: string[],
@@ -24,10 +24,6 @@ export async function cmdSessionRunWait(
       ? Math.min(3600, timeoutSecondsRaw)
       : 300;
 
-  const pollIntervalRaw = (process.env.HAPPIER_SESSION_RUN_WAIT_POLL_INTERVAL_MS ?? '').trim();
-  const pollIntervalParsed = pollIntervalRaw ? Number.parseInt(pollIntervalRaw, 10) : NaN;
-  const pollIntervalMs = Number.isFinite(pollIntervalParsed) && pollIntervalParsed > 0 ? Math.min(60_000, pollIntervalParsed) : 1_000;
-
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
     if (json) {
@@ -38,44 +34,34 @@ export async function cmdSessionRunWait(
     process.exit(1);
   }
 
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
-  if (!sessionTarget.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'execution.run.wait',
+    { sessionId: idOrPrefix, runId, ...(timeoutSeconds ? { timeoutSeconds } : {}) },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_wait',
-        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
+        error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(sessionTarget.code);
+    throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
-  const { sessionId, ctx, mode } = sessionTarget;
-  const result = await waitForExecutionRun({
-    token: credentials.token,
-    sessionId,
-    mode,
-    ctx,
-    runId,
-    timeoutMs: timeoutSeconds * 1000,
-    pollIntervalMs,
-  });
 
-  if (!result.ok) {
-    if (json) {
-      printJsonEnvelope({
-        ok: false,
-        kind: 'session_run_wait',
-        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
-      });
-      return;
-    }
-    throw new Error(result.message ?? result.code);
+  const result = normalized.data as any;
+  const status = result && typeof result === 'object' ? String(result.status ?? '') : '';
+  if (!status) {
+    throw new Error('execution_run_wait_failed');
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_wait', data: { sessionId, runId, status: result.status } });
+    printJsonEnvelope({ ok: true, kind: 'session_run_wait', data: { sessionId: idOrPrefix, runId, status } });
     return;
   }
-  console.log(chalk.green('✓'), `run finished: ${result.status}`);
+  console.log(chalk.green('✓'), `run finished: ${status}`);
 }

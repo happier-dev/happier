@@ -5,8 +5,8 @@ import { ExecutionRunGetRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
-import { getExecutionRun } from '@/session/services/executionRuns';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 export async function cmdSessionRunGet(
   argv: string[],
@@ -31,48 +31,38 @@ export async function cmdSessionRunGet(
     process.exit(1);
   }
 
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
-  if (!sessionTarget.ok) {
-    if (json) {
-      printJsonEnvelope({
-        ok: false,
-        kind: 'session_run_get',
-        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
-      });
-      return;
-    }
-    throw new Error(sessionTarget.code);
-  }
-  const { sessionId, ctx, mode } = sessionTarget;
   const request = ExecutionRunGetRequestSchema.parse({
     runId,
     ...(includeStructured ? { includeStructured: true } : {}),
   });
-  const result = await getExecutionRun({
-    token: credentials.token,
-    sessionId,
-    mode,
-    ctx,
-    request,
-  });
 
-  if (!result.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'execution.run.get',
+    { sessionId: idOrPrefix, ...request },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_get',
-        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+        error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(result.message ?? result.code);
+    throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
 
+  const result = normalized.data as any;
+  const runPayload = result && typeof result === 'object' && result.ok === true ? result.data : null;
+
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_get', data: { sessionId, ...(result.data as any) } });
+    printJsonEnvelope({ ok: true, kind: 'session_run_get', data: { sessionId: idOrPrefix, ...(runPayload as any) } });
     return;
   }
 
   console.log(chalk.green('✓'), 'execution run fetched');
-  console.log(JSON.stringify(result.data, null, 2));
+  console.log(JSON.stringify(runPayload, null, 2));
 }

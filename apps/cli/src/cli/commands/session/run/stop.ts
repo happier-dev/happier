@@ -4,8 +4,8 @@ import type { Credentials } from '@/persistence';
 import { ExecutionRunStopRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { stopExecutionRun } from '@/session/services/executionRuns';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 export async function cmdSessionRunStop(
   argv: string[],
@@ -29,36 +29,29 @@ export async function cmdSessionRunStop(
     process.exit(1);
   }
 
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
-  if (!sessionTarget.ok) {
-    if (json) {
-      printJsonEnvelope({
-        ok: false,
-        kind: 'session_run_stop',
-        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
-      });
-      return;
-    }
-    throw new Error(sessionTarget.code);
-  }
-  const { sessionId, ctx, mode } = sessionTarget;
   const request = ExecutionRunStopRequestSchema.parse({ runId });
-  const result = await stopExecutionRun({ token: credentials.token, sessionId, mode, ctx, request });
 
-  if (!result.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'execution.run.stop',
+    { sessionId: idOrPrefix, ...request },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_stop',
-        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+        error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(result.message ?? result.code);
+    throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_stop', data: { sessionId, runId, stopped: true } });
+    printJsonEnvelope({ ok: true, kind: 'session_run_stop', data: { sessionId: idOrPrefix, runId, stopped: true } });
     return;
   }
 

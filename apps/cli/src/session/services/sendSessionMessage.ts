@@ -140,6 +140,14 @@ export async function sendSessionMessage(params: Readonly<{
         },
       });
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+      if (errorMessage === 'RPC call timeout') {
+        return {
+          ok: false,
+          code: 'timeout',
+          message: errorMessage,
+        };
+      }
       if (!isFallbackSafeRuntimeRpcError(error)) {
         throw error;
       }

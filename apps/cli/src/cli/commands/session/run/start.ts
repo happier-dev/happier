@@ -1,21 +1,24 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import {
-  type ExecutionRunIntent,
-  ExecutionRunStartRequestSchema,
-} from '@happier-dev/protocol';
+import { type ExecutionRunIntent, ExecutionRunStartRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readFlagValue } from '@/cli/commands/shared/argvFlags';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import {
   defaultIoModeForExecutionRunIntent,
   defaultPermissionModeForExecutionRunIntent,
   defaultRunClassForExecutionRunIntent,
 } from '@/session/services/executionRunStartDefaults';
-import { startExecutionRun } from '@/session/services/executionRuns';
 import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/parseSingleBackendTargetFromFlag';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import {
+  resolveSessionEncryptionContextFromCredentials,
+  resolveSessionStoredContentEncryptionMode,
+} from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 
 export async function cmdSessionRunStart(
   argv: string[],
@@ -50,19 +53,29 @@ export async function cmdSessionRunStart(
     process.exit(1);
   }
 
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
-  if (!sessionTarget.ok) {
+  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
+  if (!resolved.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_start',
-        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
+        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
       });
       return;
     }
-    throw new Error(sessionTarget.code);
+    throw new Error(resolved.code);
   }
-  const { sessionId, ctx, mode } = sessionTarget;
+  const sessionId = resolved.sessionId;
+
+  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
+  if (!rawSession) {
+    if (json) {
+      printJsonEnvelope({ ok: false, kind: 'session_run_start', error: { code: 'session_not_found', sessionId } });
+      return;
+    }
+    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
+    process.exit(1);
+  }
 
   const permissionMode = (readFlagValue(argv, '--permission-mode') ?? '').trim() || defaultPermissionModeForExecutionRunIntent(intent);
   const retentionPolicy = (readFlagValue(argv, '--retention') ?? '').trim() || 'ephemeral';
@@ -79,36 +92,36 @@ export async function cmdSessionRunStart(
     ioMode,
   });
 
-  const result = await startExecutionRun({
-    token: credentials.token,
-    sessionId,
-    mode,
-    ctx,
-    request,
-  });
-
-  if (!result.ok) {
+  const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
+  const executor = createCliActionExecutor({ token: credentials.token, credentials, sessionId, ctx, mode });
+  const actionRes = await executor.execute(
+    'execution.run.start',
+    { sessionId, ...request },
+    { surface: 'cli', defaultSessionId: sessionId },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_start',
-        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+        error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(result.message ?? result.code);
+    throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
+
+  const result = normalized.data as any;
+  const runPayload = result && typeof result === 'object' && result.ok === true ? result.data : null;
 
   if (json) {
     const backendId = backendTarget.kind === 'builtInAgent' ? backendTarget.agentId : backendTarget.backendId;
-    printJsonEnvelope({
-      ok: true,
-      kind: 'session_run_start',
-      data: { sessionId, ...(result.data as any), intent, backendId, backendTarget },
-    });
+    printJsonEnvelope({ ok: true, kind: 'session_run_start', data: { sessionId, ...(runPayload as any), intent, backendId, backendTarget } });
     return;
   }
 
   console.log(chalk.green('✓'), 'execution run started');
-  console.log(JSON.stringify(result.data, null, 2));
+  console.log(JSON.stringify(runPayload, null, 2));
 }

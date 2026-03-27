@@ -2,7 +2,9 @@ import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { setSessionTitle } from '@/session/services/setSessionTitle';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 export async function cmdSessionSetTitle(
   argv: string[],
@@ -25,19 +27,29 @@ export async function cmdSessionSetTitle(
     process.exit(1);
   }
 
-  const result = await setSessionTitle({ credentials, idOrPrefix, title });
-  if (!result.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.title.set',
+    { sessionId: idOrPrefix, title },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_set_title',
-        error: { code: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) },
+        error: { code: normalized.errorCode, ...(normalized.candidates ? { candidates: normalized.candidates } : {}), ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(result.code);
+    throw new Error(normalized.errorCode);
   }
 
+  const result = normalized.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_title', json, result })) {
+    return;
+  }
   if (json) {
     printJsonEnvelope({ ok: true, kind: 'session_set_title', data: { sessionId: result.sessionId, title } });
     return;

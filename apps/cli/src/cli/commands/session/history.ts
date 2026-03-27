@@ -3,7 +3,9 @@ import chalk from 'chalk';
 import type { Credentials } from '@/persistence';
 import { readIntFlagValue, readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { getSessionHistory } from '@/session/services/getSessionHistory';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 export async function cmdSessionHistory(
   argv: string[],
@@ -33,24 +35,38 @@ export async function cmdSessionHistory(
   }
 
   const normalizedFormat = format === 'raw' ? 'raw' : 'compact';
-  const result = await getSessionHistory({
-    credentials,
-    idOrPrefix,
-    limit,
-    format: normalizedFormat,
-    includeMeta,
-    includeStructuredPayload,
-  });
-  if (!result.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const actionRes = await executor.execute(
+    'session.history.get',
+    {
+      sessionId: idOrPrefix,
+      limit,
+      format: normalizedFormat,
+      ...(includeMeta ? { includeMeta: true } : {}),
+      ...(includeStructuredPayload ? { includeStructuredPayload: true } : {}),
+    },
+    { surface: 'cli', defaultSessionId: null },
+  );
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_history',
-        error: { code: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) },
+        error: {
+          code: normalized.errorCode,
+          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
+          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
+        },
       });
       return;
     }
-    throw new Error(result.code);
+    throw new Error(normalized.errorCode);
+  }
+
+  const result = normalized.data as any;
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_history', json, result })) {
+    return;
   }
 
   if (json) {
