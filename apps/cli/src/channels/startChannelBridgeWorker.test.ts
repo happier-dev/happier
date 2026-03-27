@@ -877,12 +877,15 @@ describe('startChannelBridgeFromEnv', () => {
       } as NodeJS.ProcessEnv,
     });
 
-    expect(handle).not.toBeNull();
+    expect(handle).toBeNull();
     expect(warnSpy).toHaveBeenCalledWith(
-      '[channelBridge] Telegram webhook.enabled=true but webhook.secret is missing; falling back to polling mode',
+      '[channelBridge] Failed to start provider runtime (provider=telegram); skipping provider',
+      expect.objectContaining({
+        message: expect.stringMatching(/webhook.*secret/i),
+      }),
     );
     expect(startRelay).not.toHaveBeenCalled();
-    expect(createTelegramChannelAdapter).toHaveBeenCalledWith(expect.objectContaining({ webhookMode: false }));
+    expect(createTelegramChannelAdapter).not.toHaveBeenCalled();
 
     await handle?.stop();
   });

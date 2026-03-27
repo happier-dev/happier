@@ -7,6 +7,8 @@ import type {
 import { startChannelBridgeWorker } from '@/channels/core/channelBridgeWorker';
 import type { ChannelBridgeRuntimeConfig } from '@/channels/channelBridgeConfig';
 import { listChannelBridgeProviderIds, resolveChannelBridgeProviderDefinition } from '@/channels/providers/_registry/channelBridgeProviderRegistry';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
+import { logger } from '@/ui/logger';
 
 export type ChannelBridgeRuntimeHandle = ChannelBridgeWorkerHandle;
 
@@ -19,7 +21,16 @@ async function startProviderRuntimes(params: Readonly<{
   for (const providerId of listChannelBridgeProviderIds()) {
     const provider = resolveChannelBridgeProviderDefinition(providerId);
     const providerConfig = provider.readConfig(params.runtimeConfig);
-    const runtime = await provider.createRuntime({ config: providerConfig });
+    let runtime: Awaited<ReturnType<typeof provider.createRuntime>> | null;
+    try {
+      runtime = await provider.createRuntime({ config: providerConfig });
+    } catch (error) {
+      logger.warn(
+        `[channelBridge] Failed to start provider runtime (provider=${providerId}); skipping provider`,
+        serializeAxiosErrorForLog(error),
+      );
+      continue;
+    }
     if (!runtime) continue;
     adapters.push(...runtime.adapters);
     stopFns.push(runtime.stop);
