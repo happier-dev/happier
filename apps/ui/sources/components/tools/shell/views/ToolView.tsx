@@ -425,6 +425,10 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
     },
     secondaryAction: {
+        width: 34,
+        height: 34,
+        alignItems: 'center',
+        justifyContent: 'center',
         marginLeft: 0,
     },
     iconContainer: {

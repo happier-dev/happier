@@ -122,4 +122,30 @@ describe('AgentInputPermissionRequests', () => {
         expect(capturedPermissionPromptCardProps).toHaveLength(0);
     });
 
+    it('does not render permission requests when the session is inactive even if canApprovePermissions is incorrectly true', async () => {
+        const { AgentInputPermissionRequests } = await import('./AgentInputPermissionRequests');
+        capturedPermissionPromptCardProps.length = 0;
+        capturedUserActionPromptCardProps.length = 0;
+
+        const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, {
+            sessionId: 's1',
+            permissionRequests: [
+                { id: 'p1', kind: 'permission', tool: 'mcp__playwright__browser_close', arguments: {}, createdAt: null },
+            ],
+            userActionRequests: [],
+            permissionLocationsById: new Map(),
+            metadata: null,
+            canApprovePermissions: true,
+            disabledReason: 'inactive',
+            maxHeightPx: 200,
+            clampedHeightPx: 200,
+            onContentSizeChange: () => {},
+            onLayout: () => {},
+            onScroll: () => {},
+            fadeVisibility: { top: false, bottom: false },
+        } satisfies React.ComponentProps<typeof AgentInputPermissionRequestsComponent>));
+
+        expect(screen.findByTestId('agentInput.permissionRequests.chrome')).toBeNull();
+        expect(capturedPermissionPromptCardProps).toHaveLength(0);
+    });
 });

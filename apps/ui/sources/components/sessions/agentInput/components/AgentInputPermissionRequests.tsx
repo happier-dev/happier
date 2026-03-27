@@ -58,16 +58,14 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
     const styles = stylesheet;
     const { theme } = useUnistyles();
 
-    if (props.canApprovePermissions === false && props.disabledReason === 'inactive') {
-        return null;
-    }
+    const permissionRequests = props.disabledReason === 'inactive' ? [] : props.permissionRequests;
 
-    if (props.permissionRequests.length === 0 && props.userActionRequests.length === 0) {
+    if (permissionRequests.length === 0 && props.userActionRequests.length === 0) {
         return null;
     }
 
     const rows = [
-        ...props.permissionRequests.map((req) => ({ kind: 'permission' as const, req })),
+        ...permissionRequests.map((req) => ({ kind: 'permission' as const, req })),
         ...props.userActionRequests.map((req) => ({ kind: 'userAction' as const, req })),
     ];
 
