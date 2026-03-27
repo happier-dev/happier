@@ -1,16 +1,9 @@
 import type { NativePickedFile } from './nativePickFiles';
-
-function sanitizePickedName(raw: unknown): string {
-    const value = typeof raw === 'string' ? raw : '';
-    const trimmed = value.trim();
-    if (!trimmed) return 'image';
-    const base = trimmed.split(/[/\\]/g).pop() ?? 'image';
-    return base.trim() || 'image';
-}
+import { isBrowserFile, sanitizePickedName } from './pickedFileNormalization';
 
 function sanitizePickedNameFromAsset(asset: unknown): string {
     const anyAsset = asset as any;
-    return sanitizePickedName(anyAsset?.fileName ?? anyAsset?.name ?? anyAsset?.uri);
+    return sanitizePickedName(anyAsset?.fileName ?? anyAsset?.name ?? anyAsset?.uri, 'image');
 }
 
 export async function nativePickImages(params?: Readonly<{ multiple?: boolean }>): Promise<NativePickedFile[]> {
@@ -35,15 +28,21 @@ export async function nativePickImages(params?: Readonly<{ multiple?: boolean }>
 
     const assets = Array.isArray(result.assets) ? result.assets : [];
     const mapped: NativePickedFile[] = assets
-        .map((asset: any) => ({
-            kind: 'native' as const,
-            uri: typeof asset?.uri === 'string' ? asset.uri : '',
-            name: sanitizePickedNameFromAsset(asset),
-            sizeBytes: typeof asset?.fileSize === 'number' ? asset.fileSize : null,
-            mimeType: typeof asset?.mimeType === 'string' ? asset.mimeType : null,
-        }))
-        .filter((entry: NativePickedFile) => entry.uri.length > 0);
+        .map((asset: any) => {
+            const file = asset?.file;
+            if (isBrowserFile(file)) {
+                return { kind: 'web' as const, file };
+            }
+
+            return {
+                kind: 'native' as const,
+                uri: typeof asset?.uri === 'string' ? asset.uri : '',
+                name: sanitizePickedNameFromAsset(asset),
+                sizeBytes: typeof asset?.fileSize === 'number' ? asset.fileSize : null,
+                mimeType: typeof asset?.mimeType === 'string' ? asset.mimeType : null,
+            };
+        })
+        .filter((entry: NativePickedFile) => entry.kind === 'web' || entry.uri.length > 0);
 
     return mapped;
 }
-
