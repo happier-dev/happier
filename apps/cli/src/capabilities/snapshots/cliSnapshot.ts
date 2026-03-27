@@ -9,7 +9,7 @@ import { AGENTS, type CatalogAgentId, type CliDetectSpec } from '@/backends/cata
 import { resolveCliAuthHomeDir } from '@/capabilities/cliAuth/shared';
 import type { CliAuthSpec, CliAuthStatus } from '@/backends/types';
 import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
-import { ensureJavaScriptRuntimeExecutable } from '@/runtime/js/ensureJavaScriptRuntimeExecutable';
+import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
 import { isProviderCliPathRunnable, providerCliPathRequiresJavaScriptRuntime } from '@happier-dev/cli-common/providers';
@@ -287,10 +287,33 @@ function quoteShellArgument(value: string): string {
 }
 
 async function isCliPathRunnable(resolvedPath: string): Promise<boolean> {
-    return isProviderCliPathRunnable(resolvedPath, process.env, {
-        isBunRuntime: typeof process.versions.bun === 'string',
+    const isBunRuntime = typeof process.versions.bun === 'string';
+    const runnable = isProviderCliPathRunnable(resolvedPath, process.env, {
+        isBunRuntime,
         currentExecPath: process.execPath,
     });
+    if (runnable) return true;
+
+    if (!providerCliPathRequiresJavaScriptRuntime(resolvedPath)) {
+        return false;
+    }
+
+    const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : null;
+    const nodePath = await resolveCommandOnPath('node', pathEnv);
+    return Boolean(nodePath);
+}
+
+async function resolveJavaScriptRuntimeExecutableForCliSnapshot(): Promise<string | null> {
+    const isBunRuntime = typeof process.versions.bun === 'string';
+    const resolved = resolveJavaScriptRuntimeExecutable({
+        isBunRuntime,
+        processEnv: process.env,
+        currentExecPath: process.execPath,
+    });
+    if (resolved) return resolved;
+
+    const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : null;
+    return await resolveCommandOnPath('node', pathEnv);
 }
 
 async function resolveCliLaunchCommand(params: { resolvedPath: string }): Promise<string> {
@@ -298,9 +321,7 @@ async function resolveCliLaunchCommand(params: { resolvedPath: string }): Promis
         return quoteShellArgument(params.resolvedPath);
     }
 
-    const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
-        isBunRuntime: typeof process.versions.bun === 'string',
-    });
+    const runtimeExecutable = await resolveJavaScriptRuntimeExecutableForCliSnapshot();
     if (!runtimeExecutable) return quoteShellArgument(params.resolvedPath);
     return `${quoteShellArgument(runtimeExecutable)} ${quoteShellArgument(params.resolvedPath)}`;
 }
@@ -436,9 +457,7 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
 	        };
 
         if (needsJavaScriptRuntime) {
-            const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
-                isBunRuntime: typeof process.versions.bun === 'string',
-            });
+            const runtimeExecutable = await resolveJavaScriptRuntimeExecutableForCliSnapshot();
             if (!runtimeExecutable) return null;
             for (const args of argsToTry) {
                 const semver = await probeSemverWithRetry(runtimeExecutable, [params.resolvedPath, ...args], {
