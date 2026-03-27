@@ -9,9 +9,15 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const capture = vi.hoisted(() => ({
+    actionId: 'review.start',
+    targetId: 'mcp',
+    targetSelected: true,
     setRawSettings: vi.fn<(next: unknown) => void>(),
     switchProps: [] as Array<Record<string, unknown>>,
     reset() {
+        this.actionId = 'review.start';
+        this.targetId = 'mcp';
+        this.targetSelected = true;
         this.setRawSettings = vi.fn<(next: unknown) => void>();
         this.switchProps = [];
     },
@@ -31,6 +37,12 @@ installSettingsViewCommonModuleMocks({
                     v: 1,
                     actions: {
                         'review.start': {
+                            enabledPlacements: [],
+                            disabledSurfaces: [],
+                            disabledPlacements: [],
+                            approvalRequiredSurfaces: [],
+                        },
+                        'session.title.set': {
                             enabledPlacements: [],
                             disabledSurfaces: [],
                             disabledPlacements: [],
@@ -93,19 +105,23 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('./buildActionSettingsEntries', () => ({
     buildActionSettingsEntries: () => [{
-        actionId: 'review.start',
+        actionId: capture.actionId,
         title: 'Review',
         description: 'Start review',
         enabled: true,
         targets: [
             {
-                id: 'mcp',
-                titleKey: 'settingsActions.targets.mcp.title',
-                subtitleKey: 'settingsActions.targets.mcp.subtitle',
+                id: capture.targetId,
+                titleKey: capture.targetId === 'cli'
+                    ? 'settingsActions.targets.cli.title'
+                    : 'settingsActions.targets.mcp.title',
+                subtitleKey: capture.targetId === 'cli'
+                    ? 'settingsActions.targets.cli.subtitle'
+                    : 'settingsActions.targets.mcp.subtitle',
                 icon: 'cube-outline',
                 category: 'integrations',
                 state: 'on',
-                selected: true,
+                selected: capture.targetSelected,
             },
         ],
     }],
@@ -118,6 +134,7 @@ vi.mock('./buildActionSettingsEntries', () => ({
 describe('ActionsSettingsView approvals required surfaces', () => {
     it('persists approvalRequiredSurfaces for selected surface targets', async () => {
         capture.reset();
+        capture.actionId = 'review.start';
         const { ActionsSettingsView } = await import('./ActionsSettingsView');
 
         await renderScreen(<ActionsSettingsView />);
@@ -139,7 +156,105 @@ describe('ActionsSettingsView approvals required surfaces', () => {
                     disabledPlacements: [],
                     approvalRequiredSurfaces: ['mcp'],
                 },
+                'session.title.set': {
+                    enabledPlacements: [],
+                    disabledSurfaces: [],
+                    disabledPlacements: [],
+                    approvalRequiredSurfaces: [],
+                },
             },
         });
+    });
+
+    it('shows approvalRequiredSurfaces toggle for session.title.set', async () => {
+        capture.reset();
+        capture.actionId = 'session.title.set';
+        const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+        await renderScreen(<ActionsSettingsView />);
+
+        expect(capture.switchProps).toHaveLength(1);
+        const onValueChange = capture.switchProps[0]?.onValueChange as undefined | ((next: boolean) => void);
+        expect(typeof onValueChange).toBe('function');
+
+        await act(async () => {
+            onValueChange?.(true);
+        });
+
+        expect(capture.setRawSettings).toHaveBeenCalledWith({
+            v: 1,
+            actions: {
+                'review.start': {
+                    enabledPlacements: [],
+                    disabledSurfaces: [],
+                    disabledPlacements: [],
+                    approvalRequiredSurfaces: [],
+                },
+                'session.title.set': {
+                    enabledPlacements: [],
+                    disabledSurfaces: [],
+                    disabledPlacements: [],
+                    approvalRequiredSurfaces: ['mcp'],
+                },
+            },
+        });
+    });
+
+    it('shows approvalRequiredSurfaces toggle for actions without explicit approval metadata', async () => {
+        capture.reset();
+        capture.actionId = 'agents.backends.list';
+        const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+        await renderScreen(<ActionsSettingsView />);
+
+        expect(capture.switchProps).toHaveLength(1);
+    });
+
+    it('persists approvalRequiredSurfaces for cli surface targets', async () => {
+        capture.reset();
+        capture.actionId = 'review.start';
+        capture.targetId = 'cli';
+        const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+        await renderScreen(<ActionsSettingsView />);
+
+        expect(capture.switchProps).toHaveLength(1);
+        expect(capture.switchProps[0]?.testID).toBe('settings-actions:action:review.start:target:cli:require-approval');
+
+        const onValueChange = capture.switchProps[0]?.onValueChange as undefined | ((next: boolean) => void);
+        expect(typeof onValueChange).toBe('function');
+
+        await act(async () => {
+            onValueChange?.(true);
+        });
+
+        expect(capture.setRawSettings).toHaveBeenCalledWith({
+            v: 1,
+            actions: {
+                'review.start': {
+                    enabledPlacements: [],
+                    disabledSurfaces: [],
+                    disabledPlacements: [],
+                    approvalRequiredSurfaces: ['cli'],
+                },
+                'session.title.set': {
+                    enabledPlacements: [],
+                    disabledSurfaces: [],
+                    disabledPlacements: [],
+                    approvalRequiredSurfaces: [],
+                },
+            },
+        });
+    });
+
+    it('does not show the approvalRequiredSurfaces toggle when the target tile is not selected', async () => {
+        capture.reset();
+        capture.actionId = 'session.title.set';
+        capture.targetSelected = false;
+        const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+        await renderScreen(<ActionsSettingsView />);
+
+        expect(capture.switchProps).toHaveLength(0);
     });
 });

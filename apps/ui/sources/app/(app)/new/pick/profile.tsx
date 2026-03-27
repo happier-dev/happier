@@ -197,8 +197,8 @@ export default React.memo(function ProfilePickerScreen() {
                 onChangeSecrets: setSecrets,
                 allowSessionOnly: true,
                 onResolve: handleResolve,
-                onRequestClose: () => handleResolve({ action: 'cancel' }),
             },
+            onRequestClose: () => handleResolve({ action: 'cancel' }),
             closeOnBackdrop: true,
         });
     }, [machineId, router, secretBindingsByProfileId, secrets, setParamsOnPreviousAndClose, setSecretBindingsByProfileId, setSecrets, spawnServerId]);

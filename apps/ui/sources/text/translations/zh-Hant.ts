@@ -2018,10 +2018,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                             }
                         }
                     },
-                    claudeRemoteIncludePartialMessages: {
-                        title: "部分串流更新",
-                        subtitle: "當 Claude 仍在回應時顯示助理的部分輸出。"
-                    },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "實驗性：本機權限橋接",
                         subtitle: "將 Claude 本機模式的權限請求轉送到 Happier，讓你可以在介面中核准或拒絕。"
@@ -3433,15 +3429,16 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
         },
         commitRevertUnavailable: '此提交無法回退。',
-        commitMessageEditor: {
-            placeholder: '提交訊息',
-            generate: '產生',
-            generating: '正在產生…',
-            applySuggestion: '套用建議',
-            commit: '提交',
-            generateFailed: '產生提交訊息失敗',
-            generatorDisabled: '提交訊息產生器已停用',
-        },
+	        commitMessageEditor: {
+	            placeholder: '提交訊息',
+	            generate: '產生',
+	            generating: '正在產生…',
+	            applySuggestion: '套用建議',
+	            suggestionReady: '建議已準備好。要套用嗎？',
+	            commit: '提交',
+	            generateFailed: '產生提交訊息失敗',
+	            generatorDisabled: '提交訊息產生器已停用',
+	        },
         loadingFile: ({ fileName }: { fileName: string }) => `正在載入 ${fileName}...`,
         binaryFile: '二進位檔案',
         imagePreviewTooLarge: '圖片預覽太大，無法顯示',
@@ -4039,10 +4036,21 @@ settingsSession: {
             scopeSession: '會話',
             scopeSessionSubtitle: '在啟動語音的會話中進行控制',
         },
-            byo: {
-                title: '使用我的 ElevenLabs',
-                configured: '已設定。語音使用量將記入您的 ElevenLabs 帳戶。',
-                notConfigured: '輸入您的 ElevenLabs API 金鑰與代理 ID，即可在無訂閱的情況下使用語音。',
+	            byo: {
+	                title: '使用我的 ElevenLabs',
+	                agentReuseDialog: {
+	                    title: 'Happier 代理已存在',
+	                    messageWithId: ({ name, id }: { name: string; id: string }) =>
+	                        `我們找到一個既有的 ElevenLabs 代理（「${name}」，id：${id}）。\n\n要更新它還是建立新的？`,
+	                    messageNoId: ({ name }: { name: string }) =>
+	                        `我們找到一個既有的 ElevenLabs 代理（「${name}」）。\n\n要更新它還是建立新的？`,
+	                    actions: {
+	                        createNew: '新增',
+	                        updateExisting: '更新既有',
+	                    },
+	                },
+	                configured: '已設定。語音使用量將記入您的 ElevenLabs 帳戶。',
+	                notConfigured: '輸入您的 ElevenLabs API 金鑰與代理 ID，即可在無訂閱的情況下使用語音。',
                 createAccount: '建立 ElevenLabs 帳號',
                 createAccountSubtitle: '建立 API Key 前請先註冊（或登入）',
                 openApiKeys: '開啟 ElevenLabs API 金鑰',

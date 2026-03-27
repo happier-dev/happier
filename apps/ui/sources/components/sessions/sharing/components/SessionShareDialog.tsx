@@ -8,8 +8,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 import { SessionShare, ShareAccessLevel } from '@/sync/domains/social/sharingTypes';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { BaseModal } from '@/modal/components/BaseModal';
-import { ModalCardFrame } from '@/modal/components/card';
+import type { CustomModalInjectedProps } from '@/modal';
 
 
 /**
@@ -32,8 +31,6 @@ interface SessionShareDialogProps {
     onRemoveShare: (shareId: string) => void;
     /** Callback when user wants to create/manage public link */
     onManagePublicLink: () => void;
-    /** Callback to close the dialog */
-    onClose: () => void;
 }
 
 /**
@@ -47,7 +44,7 @@ interface SessionShareDialogProps {
  * - Link to public share management
  */
 export const SessionShareDialog = memo(function SessionShareDialog({
-    sessionId,
+    sessionId: _sessionId,
     shares,
     canManage,
     canManagePermissionDelegation,
@@ -55,8 +52,8 @@ export const SessionShareDialog = memo(function SessionShareDialog({
     onUpdateShare,
     onRemoveShare,
     onManagePublicLink,
-    onClose
-}: SessionShareDialogProps) {
+    onClose,
+}: SessionShareDialogProps & CustomModalInjectedProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [selectedShareId, setSelectedShareId] = useState<string | null>(null);
@@ -86,116 +83,113 @@ export const SessionShareDialog = memo(function SessionShareDialog({
     }, [onRemoveShare]);
 
     return (
-        <BaseModal visible={true} onClose={onClose}>
-            <ModalCardFrame
-                title={t('session.sharing.title')}
-                onClose={onClose}
-                layout="fill"
-                dimensions={{ width: 560, maxHeightRatio: 0.85, size: 'md' }}
-            >
-                <View style={styles.body}>
-                    <ItemList keyboardShouldPersistTaps="handled">
-                        {canManage ? (
-                            <ItemGroup>
-                                <Item
-                                    title={t('session.sharing.shareWith')}
-                                    icon={<Ionicons name="person-add-outline" size={29} color={theme.colors.accent.blue} />}
-                                    onPress={onAddShare}
-                                />
-                                <Item
-                                    title={t('session.sharing.publicLink')}
-                                    icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.blue} />}
-                                    onPress={onManagePublicLink}
-                                    showDivider={false}
-                                />
-                            </ItemGroup>
-                        ) : null}
+        <View style={styles.body}>
+            <ItemList keyboardShouldPersistTaps="handled">
+                {canManage ? (
+                    <ItemGroup>
+                        <Item
+                            title={t('session.sharing.shareWith')}
+                            icon={<Ionicons name="person-add-outline" size={29} color={theme.colors.accent.blue} />}
+                            onPress={() => {
+                                onClose();
+                                onAddShare();
+                            }}
+                        />
+                        <Item
+                            title={t('session.sharing.publicLink')}
+                            icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.blue} />}
+                            onPress={() => {
+                                onClose();
+                                onManagePublicLink();
+                            }}
+                            showDivider={false}
+                        />
+                    </ItemGroup>
+                ) : null}
 
-                        <ItemGroup title={t('session.sharing.sharedWith')}>
-                            {shares.length > 0 ? (
-                                shares.map((share) => {
-                                    const accessLevelLabel = getAccessLevelLabel(share.accessLevel);
-                                    const userName = share.sharedWithUser.username || [share.sharedWithUser.firstName, share.sharedWithUser.lastName]
-                                        .filter(Boolean)
-                                        .join(' ');
-                                    const subtitle = share.canApprovePermissions && share.accessLevel !== 'view'
-                                        ? `${accessLevelLabel} • ${t('session.sharing.permissionApprovals')}`
-                                        : accessLevelLabel;
+                <ItemGroup title={t('session.sharing.sharedWith')}>
+                    {shares.length > 0 ? (
+                        shares.map((share) => {
+                            const accessLevelLabel = getAccessLevelLabel(share.accessLevel);
+                            const userName = share.sharedWithUser.username || [share.sharedWithUser.firstName, share.sharedWithUser.lastName]
+                                .filter(Boolean)
+                                .join(' ');
+                            const subtitle = share.canApprovePermissions && share.accessLevel !== 'view'
+                                ? `${accessLevelLabel} • ${t('session.sharing.permissionApprovals')}`
+                                : accessLevelLabel;
 
-                                    return (
-                                        <React.Fragment key={share.id}>
+                            return (
+                                <React.Fragment key={share.id}>
+                                    <Item
+                                        title={userName}
+                                        subtitle={subtitle}
+                                        icon={
+                                            <Avatar
+                                                id={share.sharedWithUser.id}
+                                                imageUrl={share.sharedWithUser.avatar}
+                                                size={32}
+                                            />
+                                        }
+                                        onPress={canManage ? () => handleSharePress(share.id) : undefined}
+                                        showChevron={canManage}
+                                    />
+
+                                    {selectedShareId === share.id && canManage ? (
+                                        <View style={styles.options}>
                                             <Item
-                                                title={userName}
-                                                subtitle={subtitle}
-                                                icon={
-                                                    <Avatar
-                                                        id={share.sharedWithUser.id}
-                                                        imageUrl={share.sharedWithUser.avatar}
-                                                        size={32}
-                                                    />
-                                                }
-                                                onPress={canManage ? () => handleSharePress(share.id) : undefined}
-                                                showChevron={canManage}
+                                                title={t('session.sharing.viewOnly')}
+                                                subtitle={t('session.sharing.viewOnlyDescription')}
+                                                onPress={() => handleAccessLevelChange(share.id, 'view')}
+                                                selected={share.accessLevel === 'view'}
+                                            />
+                                            <Item
+                                                title={t('session.sharing.canEdit')}
+                                                subtitle={t('session.sharing.canEditDescription')}
+                                                onPress={() => handleAccessLevelChange(share.id, 'edit')}
+                                                selected={share.accessLevel === 'edit'}
+                                            />
+                                            <Item
+                                                title={t('session.sharing.canManage')}
+                                                subtitle={t('session.sharing.canManageDescription')}
+                                                onPress={() => handleAccessLevelChange(share.id, 'admin')}
+                                                selected={share.accessLevel === 'admin'}
                                             />
 
-                                            {selectedShareId === share.id && canManage ? (
-                                                <View style={styles.options}>
-                                                    <Item
-                                                        title={t('session.sharing.viewOnly')}
-                                                        subtitle={t('session.sharing.viewOnlyDescription')}
-                                                        onPress={() => handleAccessLevelChange(share.id, 'view')}
-                                                        selected={share.accessLevel === 'view'}
-                                                    />
-                                                    <Item
-                                                        title={t('session.sharing.canEdit')}
-                                                        subtitle={t('session.sharing.canEditDescription')}
-                                                        onPress={() => handleAccessLevelChange(share.id, 'edit')}
-                                                        selected={share.accessLevel === 'edit'}
-                                                    />
-                                                    <Item
-                                                        title={t('session.sharing.canManage')}
-                                                        subtitle={t('session.sharing.canManageDescription')}
-                                                        onPress={() => handleAccessLevelChange(share.id, 'admin')}
-                                                        selected={share.accessLevel === 'admin'}
-                                                    />
-
-                                                    {canManagePermissionDelegation && share.accessLevel !== 'view' ? (
-                                                        <Item
-                                                            title={t('session.sharing.allowPermissionApprovals')}
-                                                            subtitle={t('session.sharing.allowPermissionApprovalsDescription')}
-                                                            rightElement={
-                                                                <Switch
-                                                                    value={share.canApprovePermissions}
-                                                                    onValueChange={(value) => handlePermissionApprovalChange(share.id, value)}
-                                                                />
-                                                            }
-                                                            showChevron={false}
+                                            {canManagePermissionDelegation && share.accessLevel !== 'view' ? (
+                                                <Item
+                                                    title={t('session.sharing.allowPermissionApprovals')}
+                                                    subtitle={t('session.sharing.allowPermissionApprovalsDescription')}
+                                                    rightElement={
+                                                        <Switch
+                                                            value={share.canApprovePermissions}
+                                                            onValueChange={(value) => handlePermissionApprovalChange(share.id, value)}
                                                         />
-                                                    ) : null}
-                                                    <Item
-                                                        title={t('session.sharing.stopSharing')}
-                                                        onPress={() => handleRemoveShare(share.id)}
-                                                        destructive
-                                                        showDivider={false}
-                                                    />
-                                                </View>
+                                                    }
+                                                    showChevron={false}
+                                                />
                                             ) : null}
-                                        </React.Fragment>
-                                    );
-                                })
-                            ) : (
-                                <Item
-                                    title={t('session.sharing.noShares')}
-                                    icon={<Ionicons name="people-outline" size={29} color={theme.colors.textSecondary} />}
-                                    showChevron={false}
-                                    showDivider={false}
-                                />
-                            )}
-                        </ItemGroup>
-                    </ItemList>
-                </View>
-            </ModalCardFrame>
-        </BaseModal>
+                                            <Item
+                                                title={t('session.sharing.stopSharing')}
+                                                onPress={() => handleRemoveShare(share.id)}
+                                                destructive
+                                                showDivider={false}
+                                            />
+                                        </View>
+                                    ) : null}
+                                </React.Fragment>
+                            );
+                        })
+                    ) : (
+                        <Item
+                            title={t('session.sharing.noShares')}
+                            icon={<Ionicons name="people-outline" size={29} color={theme.colors.textSecondary} />}
+                            showChevron={false}
+                            showDivider={false}
+                        />
+                    )}
+                </ItemGroup>
+            </ItemList>
+        </View>
     );
 });
 

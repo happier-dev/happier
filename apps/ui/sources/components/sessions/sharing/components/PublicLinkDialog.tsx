@@ -7,8 +7,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Modal } from '@/modal';
-import { BaseModal } from '@/modal/components/BaseModal';
-import { ModalCardFrame } from '@/modal/components/card';
+import type { CustomModalInjectedProps } from '@/modal';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -27,15 +26,14 @@ export interface PublicLinkDialogProps {
         isConsentRequired: boolean;
     }) => Promise<void> | void;
     onDelete: () => Promise<void> | void;
-    onCancel: () => void;
 }
 
 export const PublicLinkDialog = memo(function PublicLinkDialog({
     publicShare,
     onCreate,
     onDelete,
-    onCancel
-}: PublicLinkDialogProps) {
+    onClose: _onClose,
+}: PublicLinkDialogProps & CustomModalInjectedProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
@@ -104,6 +102,7 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
     const handleDelete = async () => {
         try {
             await Promise.resolve(onDelete());
+            _onClose();
         } catch (e) {
             const message =
                 e instanceof HappyError ? e.message :
@@ -145,27 +144,20 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
     );
 
     return (
-        <BaseModal visible={true} onClose={onCancel}>
-            <ModalCardFrame
-                title={t('session.sharing.publicLink')}
-                onClose={onCancel}
-                layout="fill"
-                dimensions={{ width: 560, maxHeightRatio: 0.85, size: 'md' }}
+        <View
+            style={styles.body}
+            {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
+        >
+            <ScrollView
+                ref={scrollRef}
+                style={styles.scroll}
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                onScroll={wheelScrollHandlers.onScroll}
+                scrollEventThrottle={16}
             >
-                <View
-                    style={styles.body}
-                    {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
-                >
-                    <ScrollView
-                        ref={scrollRef}
-                        style={styles.scroll}
-                        contentContainerStyle={styles.scrollContent}
-                        showsVerticalScrollIndicator
-                        nestedScrollEnabled
-                        keyboardShouldPersistTaps="handled"
-                        onScroll={wheelScrollHandlers.onScroll}
-                        scrollEventThrottle={16}
-                    >
                         {!publicShare || isConfiguring ? (
                             <>
                                 <View style={styles.section}>
@@ -337,9 +329,8 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                             </ItemGroup>
                         </>
                     )}
-                </ScrollView>
-            </View>
-        </BaseModal>
+            </ScrollView>
+        </View>
     );
 });
 

@@ -49,6 +49,43 @@ function areChromeConfigsEqual(
     return false;
 }
 
+function mergeChromeConfig(
+    base: CustomModalChromeConfig | null | undefined,
+    override: CustomModalChromeConfig | null | undefined,
+): CustomModalChromeConfig | null {
+    if (override === undefined) return base ?? null;
+    if (override === null) return null;
+    if (!base) return override;
+
+    if (base.kind === 'card' && override.kind === 'card') {
+        const mergedDimensions = (() => {
+            if (override.dimensions === undefined) return base.dimensions;
+            if (base.dimensions == null) return override.dimensions;
+            return {
+                ...base.dimensions,
+                ...override.dimensions,
+            };
+        })();
+
+        return {
+            kind: 'card',
+            leading: override.leading !== undefined ? override.leading : base.leading,
+            title: override.title !== undefined ? override.title : base.title,
+            subtitle: override.subtitle !== undefined ? override.subtitle : base.subtitle,
+            actions: override.actions !== undefined ? override.actions : base.actions,
+            footer: override.footer !== undefined ? override.footer : base.footer,
+            testID: override.testID !== undefined ? override.testID : base.testID,
+            titleTestID: override.titleTestID !== undefined ? override.titleTestID : base.titleTestID,
+            subtitleTestID: override.subtitleTestID !== undefined ? override.subtitleTestID : base.subtitleTestID,
+            closeButtonTestID: override.closeButtonTestID !== undefined ? override.closeButtonTestID : base.closeButtonTestID,
+            layout: override.layout !== undefined ? override.layout : base.layout,
+            dimensions: mergedDimensions,
+        };
+    }
+
+    return override;
+}
+
 export function CustomModal({ config, onClose, showBackdrop = true, zIndexBase }: CustomModalProps) {
     const Component = config.component;
     const [chromeOverride, setChromeOverride] = React.useState<CustomModalChromeConfig | null | undefined>(undefined);
@@ -61,24 +98,19 @@ export function CustomModal({ config, onClose, showBackdrop = true, zIndexBase }
         } catch {
             // ignore
         }
-
-        try {
-            const maybeRequestClose = config.props != null && typeof config.props === 'object'
-                ? (config.props as Record<string, unknown>).onRequestClose
-                : undefined;
-
-            if (typeof maybeRequestClose === 'function') {
-                maybeRequestClose();
-            }
-        } catch {
-            // ignore
-        }
         onClose();
-    }, [config.onRequestClose, config.props, onClose]);
+    }, [config.onRequestClose, onClose]);
 
     const setChrome = React.useCallback((nextChrome: CustomModalChromeConfig | null) => {
-        setChromeOverride((prev) => (areChromeConfigsEqual(prev, nextChrome) ? prev : nextChrome));
-    }, []);
+        setChromeOverride((prevOverride) => {
+            const prevEffective = prevOverride === undefined ? (config.chrome ?? null) : prevOverride;
+            const nextEffective = mergeChromeConfig(prevEffective, nextChrome);
+            if (areChromeConfigsEqual(prevEffective, nextEffective)) {
+                return prevOverride;
+            }
+            return nextEffective;
+        });
+    }, [config.chrome]);
 
     return (
         <BaseModal

@@ -95,7 +95,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
             return;
         }
         // Only mark the param "applied" once we've actually applied it. This prevents the initial
-        // render from consuming the param before machine snapshots hydrate (critical for QA/e2e).
+        // render from consuming the param before machine snapshots hydrate.
         if (machineId === lastAppliedMachineParamRef.current) {
             return;
         }

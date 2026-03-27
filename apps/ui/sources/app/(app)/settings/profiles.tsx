@@ -73,8 +73,8 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 onChangeSecrets: setSecrets,
                 allowSessionOnly: false,
                 onResolve: handleResolve,
-                onRequestClose: () => handleResolve({ action: 'cancel' } as SecretRequirementModalResult),
             },
+            onRequestClose: () => handleResolve({ action: 'cancel' } as SecretRequirementModalResult),
             closeOnBackdrop: true,
         });
     }, [secrets, secretBindingsByProfileId, setSecretBindingsByProfileId]);

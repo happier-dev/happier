@@ -2628,10 +2628,6 @@ export const ja: TranslationStructure = {
                             }
                         }
                     },
-                    claudeRemoteIncludePartialMessages: {
-                        title: "部分的なストリーミング更新",
-                        subtitle: "Claude がまだ応答中でも、アシスタントの部分出力を表示します。"
-                    },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "実験的: ローカル権限ブリッジ",
                         subtitle: "Claude のローカルモード権限プロンプトを Happier に転送し、UI から承認または拒否できるようにします。"
@@ -4796,15 +4792,16 @@ export const ja: TranslationStructure = {
           },
         },
         commitRevertUnavailable: "このコミットではリバートできません。",
-        commitMessageEditor: {
-          placeholder: "コミットメッセージ",
-          generate: "生成",
-          generating: "生成中…",
-          applySuggestion: "提案を適用",
-          commit: "コミット",
-          generateFailed: "コミットメッセージを生成できませんでした",
-          generatorDisabled: "コミットメッセージ生成が無効です",
-        },
+	        commitMessageEditor: {
+	          placeholder: "コミットメッセージ",
+	          generate: "生成",
+	          generating: "生成中…",
+	          applySuggestion: "提案を適用",
+	          suggestionReady: "提案が準備できました。適用しますか？",
+	          commit: "コミット",
+	          generateFailed: "コミットメッセージを生成できませんでした",
+	          generatorDisabled: "コミットメッセージ生成が無効です",
+	        },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `${fileName}を読み込み中...`,
         binaryFile: "バイナリファイル",
@@ -5532,13 +5529,17 @@ settingsSession: {
     },
     byo: {
       title: "自分のElevenLabsを使用",
-      agentReuseDialog: {
-        title: "Happier エージェントは既に存在します",
-        messageWithId: ({ name, id }: { name: string; id: string }) =>
-          `既存の ElevenLabs エージェント（「${name}」、id: ${id}）が見つかりました。\n\n更新しますか？それとも新しく作成しますか？`,
-        messageNoId: ({ name }: { name: string }) =>
-          `既存の ElevenLabs エージェント（「${name}」）が見つかりました。\n\n更新しますか？それとも新しく作成しますか？`,
-      },
+	      agentReuseDialog: {
+	        title: "Happier エージェントは既に存在します",
+	        messageWithId: ({ name, id }: { name: string; id: string }) =>
+	          `既存の ElevenLabs エージェント（「${name}」、id: ${id}）が見つかりました。\n\n更新しますか？それとも新しく作成しますか？`,
+	        messageNoId: ({ name }: { name: string }) =>
+	          `既存の ElevenLabs エージェント（「${name}」）が見つかりました。\n\n更新しますか？それとも新しく作成しますか？`,
+	        actions: {
+	          createNew: "新規作成",
+	          updateExisting: "既存を更新",
+	        },
+	      },
       configured: "設定済み。音声使用量はElevenLabsアカウントに請求されます。",
       notConfigured:
         "サブスクリプションなしで音声を使用するには、ElevenLabsのAPIキーとエージェントIDを入力してください。",

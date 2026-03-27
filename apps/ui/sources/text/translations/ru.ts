@@ -2323,10 +2323,6 @@ export const ru: TranslationStructure = {
                             }
                         }
                     },
-                    claudeRemoteIncludePartialMessages: {
-                        title: "Частичные потоковые обновления",
-                        subtitle: "Показывает частичный ответ ассистента, пока Claude еще отвечает."
-                    },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Экспериментально: локальный мост разрешений",
                         subtitle: "Перенаправляет запросы разрешений Claude в локальном режиме в Happier, чтобы вы могли одобрять или отклонять их из интерфейса."
@@ -4534,15 +4530,16 @@ export const ru: TranslationStructure = {
           },
         },
         commitRevertUnavailable: "Откат недоступен для этого коммита.",
-        commitMessageEditor: {
-          placeholder: "Сообщение коммита",
-          generate: "Сгенерировать",
-          generating: "Генерация…",
-          applySuggestion: "Применить предложение",
-          commit: "Сделать коммит",
-          generateFailed: "Не удалось сгенерировать сообщение коммита",
-          generatorDisabled: "Генератор сообщений коммита отключён",
-        },
+	        commitMessageEditor: {
+	          placeholder: "Сообщение коммита",
+	          generate: "Сгенерировать",
+	          generating: "Генерация…",
+	          applySuggestion: "Применить предложение",
+	          suggestionReady: "Готова подсказка. Применить?",
+	          commit: "Сделать коммит",
+	          generateFailed: "Не удалось сгенерировать сообщение коммита",
+	          generatorDisabled: "Генератор сообщений коммита отключён",
+	        },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Загрузка ${fileName}...`,
         binaryFile: "Бинарный файл",
@@ -5273,13 +5270,17 @@ settingsSession: {
     },
     byo: {
       title: "Свой ElevenLabs",
-      agentReuseDialog: {
-        title: "Агент Happier уже существует",
-        messageWithId: ({ name, id }: { name: string; id: string }) =>
-          `Мы нашли существующего агента ElevenLabs («${name}», id: ${id}).\n\nХотите обновить его или создать нового?`,
-        messageNoId: ({ name }: { name: string }) =>
-          `Мы нашли существующего агента ElevenLabs («${name}»).\n\nХотите обновить его или создать нового?`,
-      },
+	      agentReuseDialog: {
+	        title: "Агент Happier уже существует",
+	        messageWithId: ({ name, id }: { name: string; id: string }) =>
+	          `Мы нашли существующего агента ElevenLabs («${name}», id: ${id}).\n\nХотите обновить его или создать нового?`,
+	        messageNoId: ({ name }: { name: string }) =>
+	          `Мы нашли существующего агента ElevenLabs («${name}»).\n\nХотите обновить его или создать нового?`,
+	        actions: {
+	          createNew: "Создать новый",
+	          updateExisting: "Обновить существующий",
+	        },
+	      },
       configured:
         "Настроено. Использование голоса будет списываться с вашего аккаунта ElevenLabs.",
       notConfigured:

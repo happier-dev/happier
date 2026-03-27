@@ -72,9 +72,11 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
 describe('ConnectedServicesAuthModal', () => {
   it('renders connected profiles immediately when switching a service to connected mode', async () => {
     const setBindingForService = vi.fn();
+    const setChrome = vi.fn();
 
     const screen = await renderScreen(<ConnectedServicesAuthModal
           onClose={() => {}}
+          setChrome={setChrome}
           supportedServiceIds={['anthropic']}
           profileOptionsByServiceId={{
             anthropic: [{ profileId: 'work', status: 'connected', providerEmail: null }],
@@ -84,6 +86,7 @@ describe('ConnectedServicesAuthModal', () => {
           onOpenSettings={() => {}}
         />);
 
+    expect(setChrome).toHaveBeenCalledWith(expect.objectContaining({ kind: 'card' }));
     expect(screen.findAllByProps({ title: 'work' })).toHaveLength(0);
 
     const connectItem = screen.findByProps({ title: 'Use connected services' });

@@ -52,8 +52,7 @@ describe('BugReportDiagnosticsPreviewModal', () => {
         ];
 
         await renderScreen(
-            // @ts-expect-error - test intentionally supplies modal injected props
-            <BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} setChrome={setChrome} />,
+            <BugReportDiagnosticsPreviewModal artifacts={artifacts} onClose={onClose} setChrome={setChrome} />,
         );
 
         expect(setChrome).toHaveBeenCalledWith(
@@ -80,8 +79,7 @@ describe('BugReportDiagnosticsPreviewModal', () => {
         ];
 
         const screen = await renderScreen(
-            // @ts-expect-error - test intentionally supplies modal injected props
-            <BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} setChrome={setChrome} />,
+            <BugReportDiagnosticsPreviewModal artifacts={artifacts} onClose={onClose} setChrome={setChrome} />,
         );
 
         const artifactButton = screen.find((node) => (

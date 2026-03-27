@@ -2566,10 +2566,6 @@ export const pt: TranslationStructure = {
                             }
                         }
                     },
-                    claudeRemoteIncludePartialMessages: {
-                        title: "Atualizacoes parciais de streaming",
-                        subtitle: "Mostra a saida parcial do assistente enquanto o Claude ainda esta respondendo."
-                    },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Experimental: ponte local de permissoes",
                         subtitle: "Encaminha pedidos de permissao do modo local do Claude para o Happier, para que voce possa aprovar ou negar pela interface."
@@ -4769,15 +4765,16 @@ export const pt: TranslationStructure = {
           },
         },
         commitRevertUnavailable: "Reverter não está disponível para este commit.",
-        commitMessageEditor: {
-          placeholder: "Mensagem de commit",
-          generate: "Gerar",
-          generating: "Gerando…",
-          applySuggestion: "Aplicar sugestão",
-          commit: "Fazer commit",
-          generateFailed: "Falha ao gerar mensagem de commit",
-          generatorDisabled: "O gerador de mensagens de commit está desativado",
-        },
+	        commitMessageEditor: {
+	          placeholder: "Mensagem de commit",
+	          generate: "Gerar",
+	          generating: "Gerando…",
+	          applySuggestion: "Aplicar sugestão",
+	          suggestionReady: "Uma sugestão está pronta. Aplicar?",
+	          commit: "Fazer commit",
+	          generateFailed: "Falha ao gerar mensagem de commit",
+	          generatorDisabled: "O gerador de mensagens de commit está desativado",
+	        },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Carregando ${fileName}...`,
         binaryFile: "Arquivo binário",
@@ -5510,13 +5507,17 @@ settingsSession: {
     },
     byo: {
       title: "Usar meu ElevenLabs",
-      agentReuseDialog: {
-        title: "O agente do Happier já existe",
-        messageWithId: ({ name, id }: { name: string; id: string }) =>
-          `Encontramos um agente existente do ElevenLabs (“${name}”, id: ${id}).\n\nVocê quer atualizá-lo ou criar um novo?`,
-        messageNoId: ({ name }: { name: string }) =>
-          `Encontramos um agente existente do ElevenLabs (“${name}”).\n\nVocê quer atualizá-lo ou criar um novo?`,
-      },
+	      agentReuseDialog: {
+	        title: "O agente do Happier já existe",
+	        messageWithId: ({ name, id }: { name: string; id: string }) =>
+	          `Encontramos um agente existente do ElevenLabs (“${name}”, id: ${id}).\n\nVocê quer atualizá-lo ou criar um novo?`,
+	        messageNoId: ({ name }: { name: string }) =>
+	          `Encontramos um agente existente do ElevenLabs (“${name}”).\n\nVocê quer atualizá-lo ou criar um novo?`,
+	        actions: {
+	          createNew: "Criar novo",
+	          updateExisting: "Atualizar existente",
+	        },
+	      },
       configured:
         "Configurado. A utilização de voz será cobrada na sua conta ElevenLabs.",
       notConfigured:

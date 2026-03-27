@@ -6,6 +6,8 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
+import type { CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 
 export type DirectSessionTakeoverDialogAction = 'direct' | 'persisted';
@@ -15,43 +17,15 @@ export type DirectSessionTakeoverDialogResult = Readonly<{
     forceStop: boolean;
 }>;
 
-type DirectSessionTakeoverDialogProps = Readonly<{
+type DirectSessionTakeoverDialogProps = CustomModalInjectedProps & Readonly<{
     canTakeOverDirect: boolean;
     canTakeOverPersist: boolean;
     canForceStop: boolean;
     onResolve: (result: DirectSessionTakeoverDialogResult) => void;
-    onClose: () => void;
+    onRequestClose?: () => void;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        width: '100%',
-        maxWidth: 560,
-        backgroundColor: theme.colors.surface,
-        borderRadius: 16,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-    },
-    header: {
-        paddingHorizontal: 18,
-        paddingTop: 18,
-        paddingBottom: 14,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-    },
-    title: {
-        ...Typography.default('semiBold'),
-        fontSize: 17,
-        color: theme.colors.text,
-    },
-    subtitle: {
-        marginTop: 8,
-        ...Typography.default(),
-        fontSize: 13,
-        lineHeight: 19,
-        color: theme.colors.textSecondary,
-    },
     body: {
         paddingHorizontal: 16,
         paddingVertical: 14,
@@ -124,59 +98,53 @@ export function DirectSessionTakeoverDialog(props: DirectSessionTakeoverDialogPr
     const resolve = React.useCallback((result: DirectSessionTakeoverDialogResult) => {
         props.onResolve(result);
         props.onClose();
-    }, [props]);
+    }, [props.onClose, props.onResolve]);
 
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.title}>{t('chatFooter.directTakeoverDialogTitle')}</Text>
-                <Text style={styles.subtitle}>{t('chatFooter.directTakeoverDialogBody')}</Text>
-            </View>
-            <View style={styles.body}>
-                {props.canTakeOverDirect ? (
-                    <Pressable
-                        testID="direct-session-takeover-dialog-direct"
-                        onPress={() => resolve({ action: 'direct', forceStop: props.canForceStop ? forceStop : false })}
-                        style={({ pressed }) => [styles.optionButton, { opacity: pressed ? 0.85 : 1 }]}
-                    >
-                        <Text style={styles.optionTitle}>{t('chatFooter.directTakeoverDialogDirectTitle')}</Text>
-                        <Text style={styles.optionSubtitle}>{t('chatFooter.directTakeoverDialogDirectBody')}</Text>
-                    </Pressable>
-                ) : null}
-
-                {props.canTakeOverPersist ? (
-                    <Pressable
-                        testID="direct-session-takeover-dialog-persist"
-                        onPress={() => resolve({ action: 'persisted', forceStop: props.canForceStop ? forceStop : false })}
-                        style={({ pressed }) => [styles.optionButton, { opacity: pressed ? 0.85 : 1 }]}
-                    >
-                        <Text style={styles.optionTitle}>{t('chatFooter.directTakeoverDialogPersistTitle')}</Text>
-                        <Text style={styles.optionSubtitle}>{t('chatFooter.directTakeoverDialogPersistBody')}</Text>
-                    </Pressable>
-                ) : null}
-
-                {props.canForceStop ? (
-                    <View style={styles.forceStopCard}>
-                        <View style={styles.forceStopHeader}>
-                            <Text style={styles.forceStopTitle}>{t('chatFooter.directTakeoverDialogForceStopTitle')}</Text>
-                            <Switch
-                                testID="direct-session-takeover-dialog-force-stop"
-                                value={forceStop}
-                                onValueChange={setForceStop}
-                            />
-                        </View>
-                        <Text style={styles.forceStopBody}>{t('chatFooter.directTakeoverDialogForceStopBody')}</Text>
-                    </View>
-                ) : null}
-
+        <View style={styles.body}>
+            {props.canTakeOverDirect ? (
                 <Pressable
-                    testID="direct-session-takeover-dialog-cancel"
-                    onPress={() => resolve({ action: null, forceStop: false })}
-                    style={({ pressed }) => [styles.cancelButton, { opacity: pressed ? 0.7 : 1 }]}
+                    testID="direct-session-takeover-dialog-direct"
+                    onPress={() => resolve({ action: 'direct', forceStop: props.canForceStop ? forceStop : false })}
+                    style={({ pressed }) => [styles.optionButton, { opacity: pressed ? 0.85 : 1 }]}
                 >
-                    <Text style={styles.cancelText}>{t('common.cancel')}</Text>
+                    <Text style={styles.optionTitle}>{t('chatFooter.directTakeoverDialogDirectTitle')}</Text>
+                    <Text style={styles.optionSubtitle}>{t('chatFooter.directTakeoverDialogDirectBody')}</Text>
                 </Pressable>
-            </View>
+            ) : null}
+
+            {props.canTakeOverPersist ? (
+                <Pressable
+                    testID="direct-session-takeover-dialog-persist"
+                    onPress={() => resolve({ action: 'persisted', forceStop: props.canForceStop ? forceStop : false })}
+                    style={({ pressed }) => [styles.optionButton, { opacity: pressed ? 0.85 : 1 }]}
+                >
+                    <Text style={styles.optionTitle}>{t('chatFooter.directTakeoverDialogPersistTitle')}</Text>
+                    <Text style={styles.optionSubtitle}>{t('chatFooter.directTakeoverDialogPersistBody')}</Text>
+                </Pressable>
+            ) : null}
+
+            {props.canForceStop ? (
+                <View style={styles.forceStopCard}>
+                    <View style={styles.forceStopHeader}>
+                        <Text style={styles.forceStopTitle}>{t('chatFooter.directTakeoverDialogForceStopTitle')}</Text>
+                        <Switch
+                            testID="direct-session-takeover-dialog-force-stop"
+                            value={forceStop}
+                            onValueChange={setForceStop}
+                        />
+                    </View>
+                    <Text style={styles.forceStopBody}>{t('chatFooter.directTakeoverDialogForceStopBody')}</Text>
+                </View>
+            ) : null}
+
+            <Pressable
+                testID="direct-session-takeover-dialog-cancel"
+                onPress={() => resolve({ action: null, forceStop: false })}
+                style={({ pressed }) => [styles.cancelButton, { opacity: pressed ? 0.7 : 1 }]}
+            >
+                <Text style={styles.cancelText}>{t('common.cancel')}</Text>
+            </Pressable>
         </View>
     );
 }
@@ -186,30 +154,24 @@ export async function showDirectSessionTakeoverDialog(params: Readonly<{
     canTakeOverPersist: boolean;
     canForceStop: boolean;
 }>): Promise<DirectSessionTakeoverDialogResult> {
-    return await new Promise<DirectSessionTakeoverDialogResult>((resolve) => {
-        const onResolve = (result: DirectSessionTakeoverDialogResult) => resolve(result);
-
-        type WrapperProps = Readonly<{
-            onRequestClose?: () => void;
-            onClose: () => void;
-        }>;
-
-        const Wrapper: React.FC<WrapperProps> = ({ onClose }) => (
-            <DirectSessionTakeoverDialog
-                canTakeOverDirect={params.canTakeOverDirect}
-                canTakeOverPersist={params.canTakeOverPersist}
-                canForceStop={params.canForceStop}
-                onResolve={onResolve}
-                onClose={onClose}
-            />
-        );
-
-        Modal.show({
-            component: Wrapper,
-            props: {
-                onRequestClose: () => onResolve({ action: null, forceStop: false }),
-            },
-            closeOnBackdrop: true,
-        });
+    const deferred = createDeferredOnce<DirectSessionTakeoverDialogResult>();
+    Modal.show({
+        component: DirectSessionTakeoverDialog,
+        props: {
+            canTakeOverDirect: params.canTakeOverDirect,
+            canTakeOverPersist: params.canTakeOverPersist,
+            canForceStop: params.canForceStop,
+            onResolve: deferred.resolve,
+        },
+        onRequestClose: () => deferred.resolve({ action: null, forceStop: false }),
+        chrome: {
+            kind: 'card',
+            title: t('chatFooter.directTakeoverDialogTitle'),
+            subtitle: t('chatFooter.directTakeoverDialogBody'),
+            testID: 'direct-session-takeover-dialog',
+            dimensions: { width: 560, maxHeightRatio: 0.85, size: 'md' },
+        },
+        closeOnBackdrop: true,
     });
+    return await deferred.promise;
 }

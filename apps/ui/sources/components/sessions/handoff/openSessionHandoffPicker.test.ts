@@ -118,7 +118,7 @@ describe('openSessionHandoffPicker', () => {
                 ignoredIncludeGlobs: [],
             },
         });
-        capturedConfig.props.onRequestClose();
+        capturedConfig.onRequestClose();
 
         await expect(promise).resolves.toEqual({
             targetMachineId: 'machine_target',

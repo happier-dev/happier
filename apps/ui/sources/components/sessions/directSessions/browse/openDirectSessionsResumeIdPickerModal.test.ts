@@ -15,8 +15,15 @@ type CapturedConfig = Readonly<{
             size?: string;
         }>;
     }>;
+    onRequestClose?: () => void;
     closeOnBackdrop?: boolean;
     props: Readonly<{
+        lockScope: Readonly<{
+            machineId: string;
+            serverId?: string | null;
+            providerId: string;
+            source: unknown;
+        }>;
         onResolve: (value: string | null) => void;
     }>;
 }>;
@@ -88,6 +95,12 @@ describe('openDirectSessionsResumeIdPickerModal', () => {
             size: 'md',
         });
         expect(config.closeOnBackdrop).toBe(true);
+        expect(config.props.lockScope).toEqual({
+            machineId: 'machine_1',
+            serverId: 'server_1',
+            providerId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+        });
 
         config.props.onResolve('session_123');
 

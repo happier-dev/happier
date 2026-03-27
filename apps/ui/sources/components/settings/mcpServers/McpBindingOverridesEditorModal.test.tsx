@@ -7,7 +7,7 @@ describe('McpBindingOverridesEditorModal chrome', () => {
         expect(getBindingOverridesValueRefEditorChrome('env')).toEqual(
             expect.objectContaining({
                 kind: 'card',
-                preset: 'lg',
+                dimensions: { size: 'lg' },
                 title: expect.any(String),
             }),
         );
@@ -15,7 +15,7 @@ describe('McpBindingOverridesEditorModal chrome', () => {
         expect(getBindingOverridesValueRefEditorChrome('header')).toEqual(
             expect.objectContaining({
                 kind: 'card',
-                preset: 'lg',
+                dimensions: { size: 'lg' },
                 title: expect.any(String),
             }),
         );

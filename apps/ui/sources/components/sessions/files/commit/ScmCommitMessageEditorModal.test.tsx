@@ -84,7 +84,6 @@ describe('ScmCommitMessageEditorModal', () => {
         const onResolve = vi.fn();
 
         const screen = await renderScmCommitMessageEditorModal(ScmCommitMessageEditorModal, {
-            title: 'Create commit',
             initialMessage: '',
             canGenerate: true,
             onGenerate: async () => ({ ok: true, message: 'feat: generated' }),
@@ -105,7 +104,6 @@ describe('ScmCommitMessageEditorModal', () => {
         const { ScmCommitMessageEditorModal } = await import('./ScmCommitMessageEditorModal');
 
         const screen = await renderScmCommitMessageEditorModal(ScmCommitMessageEditorModal, {
-            title: 'Create commit',
             initialMessage: 'chore: typed',
             canGenerate: true,
             onGenerate: async () => ({ ok: false, error: 'nope' }),
@@ -134,7 +132,6 @@ describe('ScmCommitMessageEditorModal', () => {
         );
 
         const screen = await renderScmCommitMessageEditorModal(ScmCommitMessageEditorModal, {
-            title: 'Create commit',
             initialMessage: 'chore: start',
             canGenerate: true,
             onGenerate,

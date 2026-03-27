@@ -3,6 +3,7 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Modal } from '@/modal';
+import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import type { CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
@@ -78,8 +79,6 @@ function PathConflictOption(props: Readonly<{
 }
 
 type PathConflictResolutionDialogProps = CustomModalInjectedProps & Readonly<{
-    title: string;
-    body: string;
     allowSkip: boolean;
     primaryStrategy?: Exclude<PathConflictResolutionStrategy, 'cancel'> | null;
     testIdPrefix: string;
@@ -149,34 +148,24 @@ export async function showPathConflictResolutionDialog(params: Readonly<{
     primaryStrategy?: Exclude<PathConflictResolutionStrategy, 'cancel'> | null;
     testIdPrefix?: string;
 }>): Promise<PathConflictResolutionStrategy> {
-    return await new Promise<PathConflictResolutionStrategy>((resolve) => {
-        let settled = false;
-
-        const resolveOnce = (strategy: PathConflictResolutionStrategy) => {
-            if (settled) return;
-            settled = true;
-            resolve(strategy);
-        };
-
-        Modal.show({
-            component: PathConflictResolutionDialog,
-            props: {
-                title: params.title,
-                body: params.body,
-                allowSkip: params.allowSkip,
-                primaryStrategy: params.primaryStrategy ?? null,
-                testIdPrefix: params.testIdPrefix ?? 'path-conflicts',
-                onResolve: resolveOnce,
-            },
-            onRequestClose: () => resolveOnce('cancel'),
-            chrome: {
-                kind: 'card',
-                title: params.title,
-                subtitle: params.body,
-                testID: `${params.testIdPrefix ?? 'path-conflicts'}-modal`,
-                dimensions: { width: 420, maxHeightRatio: 0.85, size: 'md' },
-            },
-            closeOnBackdrop: true,
-        });
+    const deferred = createDeferredOnce<PathConflictResolutionStrategy>();
+    Modal.show({
+        component: PathConflictResolutionDialog,
+        props: {
+            allowSkip: params.allowSkip,
+            primaryStrategy: params.primaryStrategy ?? null,
+            testIdPrefix: params.testIdPrefix ?? 'path-conflicts',
+            onResolve: deferred.resolve,
+        },
+        onRequestClose: () => deferred.resolve('cancel'),
+        chrome: {
+            kind: 'card',
+            title: params.title,
+            subtitle: params.body,
+            testID: `${params.testIdPrefix ?? 'path-conflicts'}-modal`,
+            dimensions: { width: 420, maxHeightRatio: 0.85, size: 'md' },
+        },
+        closeOnBackdrop: true,
     });
+    return await deferred.promise;
 }

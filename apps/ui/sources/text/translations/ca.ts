@@ -2194,10 +2194,6 @@ export const ca: TranslationStructure = {
                             }
                         }
                     },
-                    claudeRemoteIncludePartialMessages: {
-                        title: "Actualitzacions parcials en streaming",
-                        subtitle: "Mostra la sortida parcial de l’assistent mentre Claude encara està responent."
-                    },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Experimental: pont local de permisos",
                         subtitle: "Reenvia les sol·licituds de permisos del mode local de Claude a Happier perquè les puguis aprovar o rebutjar des de la interfície."
@@ -4154,15 +4150,16 @@ deps: {
                 },
             },
             commitRevertUnavailable: 'La reversió no està disponible per a aquest commit.',
-            commitMessageEditor: {
-                placeholder: 'Missatge de commit',
-                generate: 'Genera',
-                generating: 'Generant…',
-                applySuggestion: 'Aplica el suggeriment',
-                commit: 'Fes commit',
-                generateFailed: "No s'ha pogut generar el missatge de commit",
-                generatorDisabled: 'El generador de missatges de commit està desactivat',
-            },
+	            commitMessageEditor: {
+	                placeholder: 'Missatge de commit',
+	                generate: 'Genera',
+	                generating: 'Generant…',
+	                applySuggestion: 'Aplica el suggeriment',
+	                suggestionReady: 'Hi ha un suggeriment llest. Vols aplicar-lo?',
+	                commit: 'Fes commit',
+	                generateFailed: "No s'ha pogut generar el missatge de commit",
+	                generatorDisabled: 'El generador de missatges de commit està desactivat',
+	            },
             loadingFile: ({ fileName }: { fileName: string }) => `Carregant ${fileName}...`,
             binaryFile: 'Fitxer binari',
             imagePreviewTooLarge: "La previsualització de la imatge és massa gran per mostrar-la",
@@ -4806,13 +4803,17 @@ settingsSession: {
         },
         byo: {
             title: 'Fes servir el meu ElevenLabs',
-            agentReuseDialog: {
-                title: 'Ja existeix un agent de Happier',
-                messageWithId: ({ name, id }: { name: string; id: string }) =>
-                    `Hem trobat un agent d’ElevenLabs existent (“${name}”, id: ${id}).\n\nVols actualitzar-lo o crear-ne un de nou?`,
-                messageNoId: ({ name }: { name: string }) =>
-                    `Hem trobat un agent d’ElevenLabs existent (“${name}”).\n\nVols actualitzar-lo o crear-ne un de nou?`,
-            },
+	            agentReuseDialog: {
+	                title: 'Ja existeix un agent de Happier',
+	                messageWithId: ({ name, id }: { name: string; id: string }) =>
+	                    `Hem trobat un agent d’ElevenLabs existent (“${name}”, id: ${id}).\n\nVols actualitzar-lo o crear-ne un de nou?`,
+	                messageNoId: ({ name }: { name: string }) =>
+	                    `Hem trobat un agent d’ElevenLabs existent (“${name}”).\n\nVols actualitzar-lo o crear-ne un de nou?`,
+	                actions: {
+	                    createNew: "Crea'n un de nou",
+	                    updateExisting: "Actualitza l'existent",
+	                },
+	            },
             configured: 'Configurat. L’ús de veu es facturarà al teu compte d’ElevenLabs.',
             notConfigured:
                 'Configura la teva clau API d’ElevenLabs i després toca "Crea un agent Happier" per aprovisionar automàticament (omplirà l’ID de l’agent).',

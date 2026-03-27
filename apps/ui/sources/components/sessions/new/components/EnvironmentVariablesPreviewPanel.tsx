@@ -11,6 +11,7 @@ import { useEnvironmentVariables } from '@/hooks/server/useEnvironmentVariables'
 import { t } from '@/text';
 import { formatEnvVarTemplate, parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
 import { Text } from '@/components/ui/text/Text';
+import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 
 export interface EnvironmentVariablesPreviewPanelProps {
     environmentVariables: Record<string, string>;
@@ -105,24 +106,11 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
     const styles = stylesheet;
     const { height: windowHeight } = useWindowDimensions();
     const scrollRef = React.useRef<ScrollView>(null);
-    const scrollYRef = React.useRef(0);
     const surfaceVariant = props.surfaceVariant ?? 'modal';
 
-    const handleScroll = React.useCallback((e: any) => {
-        scrollYRef.current = e?.nativeEvent?.contentOffset?.y ?? 0;
-    }, []);
-
-    const handleWheel = React.useCallback((e: any) => {
-        if (Platform.OS !== 'web') return;
-        const deltaY = e?.deltaY;
-        if (typeof deltaY !== 'number' || Number.isNaN(deltaY)) return;
-
-        if (e?.cancelable) {
-            e?.preventDefault?.();
-        }
-        e?.stopPropagation?.();
-        scrollRef.current?.scrollTo({ y: Math.max(0, scrollYRef.current + deltaY), animated: false });
-    }, []);
+    const wheelScrollHandlers = useScrollViewWheelScrollTo(scrollRef, {
+        enabled: surfaceVariant === 'popover' ? true : undefined,
+    });
 
     const envVarEntries = React.useMemo(() => {
         return Object.entries(props.environmentVariables)
@@ -173,7 +161,7 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
                 surfaceVariant === 'modal' ? styles.modalContainer : styles.popoverContainer,
                 { height: maxHeight, maxHeight },
             ]}
-            {...(Platform.OS === 'web' ? ({ onWheel: handleWheel } as any) : {})}
+            {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
         >
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>
@@ -196,7 +184,7 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
                 showsVerticalScrollIndicator
                 nestedScrollEnabled
                 keyboardShouldPersistTaps="handled"
-                onScroll={handleScroll}
+                onScroll={wheelScrollHandlers.onScroll}
                 scrollEventThrottle={16}
             >
                 <View style={styles.section}>

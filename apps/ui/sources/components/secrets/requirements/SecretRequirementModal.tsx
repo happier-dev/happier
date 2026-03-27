@@ -1,12 +1,13 @@
-import React from 'react';
-import { View, Pressable, Platform, ScrollView, useWindowDimensions } from 'react-native';
+import * as React from 'react';
+import { Pressable, Platform, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { Typography } from '@/constants/Typography';
+import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
@@ -21,6 +22,7 @@ import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 
 
 const secretRequirementSelectionMemory = new Map<string, 'machine' | 'saved' | 'once'>();
@@ -33,7 +35,7 @@ export type SecretRequirementModalResult =
 
 export type SecretRequirementModalVariant = 'requirement' | 'defaultForProfile';
 
-export interface SecretRequirementModalProps {
+export type SecretRequirementModalProps = CustomModalInjectedProps & Readonly<{
     profile: AIBackendProfile;
     /**
      * The specific secret environment variable name this modal is resolving (e.g. OPENAI_API_KEY).
@@ -70,12 +72,6 @@ export interface SecretRequirementModalProps {
     titleOverride?: string;
     onChangeSecrets?: (next: SavedSecret[]) => void;
     onResolve: (result: SecretRequirementModalResult) => void;
-    onClose: () => void;
-    /**
-     * Optional hook invoked when the modal is dismissed (e.g. backdrop tap).
-     * Used by the modal host to route dismiss -> cancel.
-     */
-    onRequestClose?: () => void;
     allowSessionOnly?: boolean;
     /**
      * Layout variant:
@@ -83,31 +79,14 @@ export interface SecretRequirementModalProps {
      * - `screen`: full-width/full-height screen content (native route screens)
      */
     layoutVariant?: 'modal' | 'screen';
-}
+}>;
 
 export function SecretRequirementModal(props: SecretRequirementModalProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const insets = useSafeAreaInsets();
-    const { height: windowHeight } = useWindowDimensions();
 
     const layoutVariant: 'modal' | 'screen' = props.layoutVariant ?? 'modal';
-
-    // Dynamic sizing: content-sized until we hit a max height, then scroll internally.
-    const maxHeight = React.useMemo(() => {
-        if (layoutVariant === 'screen') {
-            return Math.max(260, windowHeight);
-        }
-        // Keep some breathing room from the screen edges.
-        const margin = 24;
-        // NOTE: `useWindowDimensions().height` is already affected by navigation presentation on iOS.
-        // Subtracting safe-area again can over-shrink and cause awkward cropping.
-        return Math.max(260, windowHeight - margin * 2);
-    }, [layoutVariant, windowHeight]);
-
-    const [headerHeight, setHeaderHeight] = React.useState(0);
-    const scrollMaxHeight = Math.max(0, maxHeight - headerHeight);
-    const popoverBoundaryRef = React.useRef<View>(null);
+    const useCardChrome = layoutVariant === 'modal';
     // IMPORTANT:
     // The secret requirement modal can be intentionally small (content-sized). If we use the modal's
     // internal scroll container as the Popover boundary, dropdown menus get their maxHeight clipped
@@ -115,10 +94,33 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
     // full window bounds while still anchoring to the trigger.
     const screenPopoverBoundaryRef = React.useMemo(() => ({ current: null } as React.RefObject<any>), []);
 
+    const modalTitle = props.titleOverride ?? t('profiles.requirements.modalTitle');
+    const modalSubtitle = props.profile?.name ?? '';
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        title: modalTitle,
+        subtitle: modalSubtitle,
+        testID: 'secret-requirement:modal',
+        closeButtonTestID: 'secret-requirement:close',
+        layout: 'fill' as const,
+        dimensions: {
+            width: 560,
+            maxHeightRatio: 0.92,
+            size: 'lg' as const,
+        },
+    }), [modalSubtitle, modalTitle]);
+
+    useModalCardChrome(props.setChrome, useCardChrome ? chrome : null);
+
     const fades = useScrollEdgeFades({
         enabledEdges: { top: true, bottom: true },
         overflowThreshold: 1,
         edgeThreshold: 1,
+    });
+
+    const scrollRef = React.useRef<ScrollView>(null);
+    const wheelScrollHandlers = useScrollViewWheelScrollTo(scrollRef, {
+        onScroll: fades.onScroll,
     });
 
     const normalizedSecretEnvVarName = React.useMemo(() => props.secretEnvVarName.trim().toUpperCase(), [props.secretEnvVarName]);
@@ -331,43 +333,42 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
     ]);
 
     return (
-        <View style={[layoutVariant === 'screen' ? styles.containerScreen : styles.container, { maxHeight }]}>
-            <View
-                style={styles.header}
-                onLayout={(e) => {
-                    const next = e?.nativeEvent?.layout?.height ?? 0;
-                    if (typeof next === 'number' && next > 0 && next !== headerHeight) {
-                        setHeaderHeight(next);
-                    }
-                }}
-            >
-                <View style={{ flex: 1 }}>
-                    <Text style={styles.headerTitle}>
-                        {props.titleOverride ?? t('profiles.requirements.modalTitle')}
-                    </Text>
-                    <Text style={styles.headerSubtitle} numberOfLines={1}>
-                        {props.profile.name}
-                    </Text>
+        <View style={layoutVariant === 'screen' ? styles.containerScreen : styles.containerChrome}>
+            {layoutVariant === 'screen' ? (
+                <View style={styles.header}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={styles.headerTitle}>
+                            {props.titleOverride ?? t('profiles.requirements.modalTitle')}
+                        </Text>
+                        <Text style={styles.headerSubtitle} numberOfLines={1}>
+                            {props.profile.name}
+                        </Text>
+                    </View>
+                    <Pressable
+                        onPress={props.onClose}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                    >
+                        <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
+                    </Pressable>
                 </View>
-                <Pressable
-                    onPress={props.onClose}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
-                >
-                    <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
-                </Pressable>
-            </View>
+            ) : null}
 
-            <View ref={popoverBoundaryRef} style={[styles.scrollWrap, { maxHeight: scrollMaxHeight }]}>
+            <View style={styles.scrollWrap}>
                 <ScrollView
-                    style={[styles.scroll, { maxHeight: scrollMaxHeight }]}
-                    contentContainerStyle={styles.scrollContent}
+                    ref={scrollRef}
+                    style={styles.scroll}
+                    contentContainerStyle={[
+                        styles.scrollContent,
+                        layoutVariant === 'modal' ? styles.scrollContentModal : null,
+                    ]}
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={true}
                     scrollEventThrottle={32}
                     onLayout={fades.onViewportLayout}
                     onContentSizeChange={fades.onContentSizeChange}
-                    onScroll={fades.onScroll}
+                    onScroll={wheelScrollHandlers.onScroll}
+                    {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
                 >
                 {variant === 'requirement' ? (
                     <View style={styles.helpContainer}>
@@ -730,16 +731,12 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        width: '92%',
-        maxWidth: 560,
+    containerChrome: {
+        flex: 1,
+        minHeight: 0,
+        width: '100%',
         backgroundColor: theme.colors.groupped.background,
-        borderRadius: 16,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        flexShrink: 1,
-        alignSelf: 'center',
+        alignSelf: 'stretch',
     },
     containerScreen: {
         flex: 1,
@@ -748,7 +745,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 0,
         overflow: 'hidden',
         borderWidth: 0,
-        borderColor: 'transparent',
         alignSelf: 'stretch',
     },
     header: {
@@ -775,10 +771,18 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     scrollWrap: {
         position: 'relative',
+        flex: 1,
+        minHeight: 0,
     },
-    scroll: {},
+    scroll: {
+        flex: 1,
+        minHeight: 0,
+    },
     scrollContent: {
         paddingBottom: 18,
+    },
+    scrollContentModal: {
+        paddingTop: 12,
     },
     helpContainer: {
         width: '100%',

@@ -159,6 +159,12 @@ export function ProfileEditForm({
         Modal.show({
             component: MachinePreviewModalWrapper,
             props: {},
+            chrome: {
+                kind: 'card',
+                title: t('profiles.previewMachine.title'),
+                layout: 'fill',
+                dimensions: { width: 560, maxHeightRatio: 0.85, size: 'md' as const },
+            },
         });
     }, [MachinePreviewModalWrapper, previewMachineId, router]);
 
@@ -395,8 +401,8 @@ export function ProfileEditForm({
                 onChangeSecrets: setSecrets,
                 allowSessionOnly: false,
                 onResolve: handleResolve,
-                onRequestClose: () => handleResolve({ action: 'cancel' } as SecretRequirementModalResult),
             },
+            onRequestClose: () => handleResolve({ action: 'cancel' } as SecretRequirementModalResult),
             closeOnBackdrop: true,
         });
     }, [derivedEnvVarRequirements, name, profile, secretBindingsByProfileId, secrets, setSecretBindingsByProfileId, setSecrets]);

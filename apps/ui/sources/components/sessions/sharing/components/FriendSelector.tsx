@@ -1,4 +1,4 @@
-import React, { memo, useMemo, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import { View, FlatList, ScrollView, Platform, Switch } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -7,8 +7,8 @@ import { ShareAccessLevel } from '@/sync/domains/social/sharingTypes';
 import { UserCard } from '@/components/ui/cards/UserCard';
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
-import { BaseModal } from '@/modal/components/BaseModal';
-import { ModalCardFrame } from '@/modal/components/card';
+import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Modal } from '@/modal';
@@ -27,8 +27,6 @@ export interface FriendSelectorProps {
     excludedUserIds: string[];
     /** Callback when a friend is selected */
     onSelect: (userId: string, accessLevel: ShareAccessLevel, canApprovePermissions?: boolean) => Promise<void> | void;
-    /** Close without selecting */
-    onCancel: () => void;
     /** Whether the current user can grant permission approvals to recipients */
     canManagePermissionDelegation?: boolean;
     /** Currently selected user ID (optional) */
@@ -49,11 +47,12 @@ export const FriendSelector = memo(function FriendSelector({
     friends,
     excludedUserIds,
     onSelect,
-    onCancel,
+    onClose,
+    setChrome,
     canManagePermissionDelegation = false,
     selectedUserId: initialSelectedUserId = null,
     selectedAccessLevel: initialSelectedAccessLevel = 'view',
-}: FriendSelectorProps) {
+}: FriendSelectorProps & CustomModalInjectedProps) {
     useUnistyles();
     const styles = stylesheet;
 
@@ -85,7 +84,7 @@ export const FriendSelector = memo(function FriendSelector({
     const scrollRef = React.useRef<ScrollView>(null);
     const wheelScrollHandlers = useScrollViewWheelScrollTo(scrollRef);
 
-    const handleConfirm = async () => {
+    const handleConfirm = useCallback(async () => {
         if (!selectedUserId) return;
         if (isSubmitting) return;
         setIsSubmitting(true);
@@ -95,6 +94,7 @@ export const FriendSelector = memo(function FriendSelector({
                 selectedAccessLevel,
                 canManagePermissionDelegation ? canApprovePermissions : undefined,
             ));
+            onClose();
         } catch (e) {
             const message =
                 e instanceof HappyError ? e.message :
@@ -104,39 +104,46 @@ export const FriendSelector = memo(function FriendSelector({
         } finally {
             setIsSubmitting(false);
         }
-    };
+    }, [
+        canApprovePermissions,
+        canManagePermissionDelegation,
+        isSubmitting,
+        onClose,
+        onSelect,
+        selectedAccessLevel,
+        selectedUserId,
+    ]);
+
+    const footer = useMemo(() => (
+        <View style={styles.footer}>
+            <RoundButton
+                title={t('session.sharing.addShare')}
+                onPress={handleConfirm}
+                disabled={!selectedUserId || isSubmitting}
+                size="large"
+                style={{ width: '100%', maxWidth: 420, alignSelf: 'center' }}
+            />
+        </View>
+    ), [handleConfirm, isSubmitting, selectedUserId, styles.footer]);
+
+    useModalCardChrome(setChrome, useMemo(() => ({
+        kind: 'card' as const,
+        footer,
+    }), [footer]));
 
     return (
-        <BaseModal visible={true} onClose={onCancel}>
-            <ModalCardFrame
-                title={t('session.sharing.addShare')}
-                onClose={onCancel}
-                layout="fill"
-                dimensions={{ width: 560, maxHeightRatio: 0.85, size: 'md' }}
-                footer={(
-                    <View style={styles.footer}>
-                        <RoundButton
-                            title={t('session.sharing.addShare')}
-                            onPress={handleConfirm}
-                            disabled={!selectedUserId || isSubmitting}
-                            size="large"
-                            style={{ width: '100%', maxWidth: 420, alignSelf: 'center' }}
-                        />
-                    </View>
-                )}
+        <View
+            style={styles.body}
+            {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
+        >
+            <ScrollView
+                ref={scrollRef}
+                style={styles.scroll}
+                contentContainerStyle={styles.scrollContent}
+                keyboardShouldPersistTaps="handled"
+                onScroll={wheelScrollHandlers.onScroll}
+                scrollEventThrottle={16}
             >
-                <View
-                    style={styles.body}
-                    {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
-                >
-                    <ScrollView
-                        ref={scrollRef}
-                        style={styles.scroll}
-                        contentContainerStyle={styles.scrollContent}
-                        keyboardShouldPersistTaps="handled"
-                        onScroll={wheelScrollHandlers.onScroll}
-                        scrollEventThrottle={16}
-                    >
                     <TextInput
                         style={styles.searchInput}
                         placeholder={t('friends.searchPlaceholder')}
@@ -242,10 +249,8 @@ export const FriendSelector = memo(function FriendSelector({
                             ) : null}
                         </View>
                     ) : null}
-                    </ScrollView>
-                </View>
-            </ModalCardFrame>
-        </BaseModal>
+            </ScrollView>
+        </View>
     );
 });
 

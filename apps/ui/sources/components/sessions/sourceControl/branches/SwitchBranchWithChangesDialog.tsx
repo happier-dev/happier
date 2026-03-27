@@ -5,8 +5,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
+import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import type { CustomModalInjectedProps } from '@/modal';
-import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
 
 export type SwitchBranchWithChangesDialogResolution = 'stash_on_current_branch' | 'bring_changes' | 'cancel';
@@ -15,7 +15,6 @@ export type SwitchBranchWithChangesDialogProps = CustomModalInjectedProps & Read
     currentBranch: string;
     targetBranch: string;
     onResolve: (resolution: SwitchBranchWithChangesDialogResolution) => void;
-    onRequestClose?: () => void;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -50,9 +49,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 10,
         paddingHorizontal: 14,
         borderRadius: 12,
-        borderWidth: 1,
-        borderColor: 'transparent',
-        backgroundColor: 'transparent',
     },
     cancelText: {
         ...Typography.default('semiBold'),
@@ -64,18 +60,6 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function SwitchBranchWithChangesDialog(props: SwitchBranchWithChangesDialogProps) {
     useUnistyles();
     const styles = stylesheet;
-
-    const title = t('files.branchSwitchDialog.title');
-    const subtitle = t('files.branchSwitchDialog.body');
-    const chrome = React.useMemo(() => ({
-        kind: 'card' as const,
-        title,
-        subtitle,
-        testID: 'switch-branch-with-changes-dialog',
-        dimensions: { width: 520, maxHeightRatio: 0.85, size: 'md' as const },
-    }), [subtitle, title]);
-
-    useModalCardChrome(props.setChrome, chrome);
 
     const resolve = React.useCallback(
         (resolution: SwitchBranchWithChangesDialogResolution) => {
@@ -124,24 +108,23 @@ export async function showSwitchBranchWithChangesDialog(params: Readonly<{
     currentBranch: string;
     targetBranch: string;
 }>): Promise<SwitchBranchWithChangesDialogResolution> {
-    return await new Promise<SwitchBranchWithChangesDialogResolution>((resolve) => {
-        const onResolve = (resolution: SwitchBranchWithChangesDialogResolution) => resolve(resolution);
-        Modal.show({
-            component: SwitchBranchWithChangesDialog,
-            props: {
-                currentBranch: params.currentBranch,
-                targetBranch: params.targetBranch,
-                onResolve,
-                onRequestClose: () => onResolve('cancel'),
-            },
-            chrome: {
-                kind: 'card',
-                title: t('files.branchSwitchDialog.title'),
-                subtitle: t('files.branchSwitchDialog.body'),
-                testID: 'switch-branch-with-changes-dialog',
-                dimensions: { width: 520, maxHeightRatio: 0.85, size: 'md' },
-            },
-            closeOnBackdrop: true,
-        });
+    const deferred = createDeferredOnce<SwitchBranchWithChangesDialogResolution>();
+    Modal.show({
+        component: SwitchBranchWithChangesDialog,
+        props: {
+            currentBranch: params.currentBranch,
+            targetBranch: params.targetBranch,
+            onResolve: deferred.resolve,
+        },
+        onRequestClose: () => deferred.resolve('cancel'),
+        chrome: {
+            kind: 'card',
+            title: t('files.branchSwitchDialog.title'),
+            subtitle: t('files.branchSwitchDialog.body'),
+            testID: 'switch-branch-with-changes-dialog',
+            dimensions: { width: 520, maxHeightRatio: 0.85, size: 'md' },
+        },
+        closeOnBackdrop: true,
     });
+    return await deferred.promise;
 }

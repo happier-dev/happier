@@ -97,9 +97,7 @@ export function BugReportDiagnosticsPreviewModal(props: Readonly<{
     leading,
     title: chromeTitle,
     subtitle: chromeSubtitle,
-    testID: 'bug-report-diagnostics-preview-modal',
     layout: 'fill' as const,
-    dimensions: { size: 'md' as const, width: 560, maxHeightRatio: 0.92 },
   }), [chromeSubtitle, chromeTitle, leading]);
 
   useModalCardChrome(props.setChrome, chrome);

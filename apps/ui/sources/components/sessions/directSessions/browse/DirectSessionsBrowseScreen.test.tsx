@@ -578,7 +578,9 @@ describe('DirectSessionsBrowseScreen', () => {
             limit: 50,
         }, { serverId: 'server-1' });
 
-        expect(screen.findAllByType('DropdownMenu')).toHaveLength(0);
+        expect(findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger')).toBeUndefined();
+        expect(findDropdownMenuByTriggerTestId(screen, 'direct-session-provider-picker-trigger')).toBeUndefined();
+        expect(findDropdownMenuByTriggerTestId(screen, 'direct-session-source-picker-trigger')).toBeUndefined();
 
         const candidateItem = screen.findByTestId('direct-session-candidate:codex-session-1');
         expect(candidateItem).toBeTruthy();

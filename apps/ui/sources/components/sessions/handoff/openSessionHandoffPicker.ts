@@ -50,8 +50,8 @@ export async function openSessionHandoffPicker(params: Readonly<{
                 sourceMachineId: params.sourceMachineId ?? null,
                 serverId: params.serverId,
                 onResolve: resolveOnce,
-                onRequestClose: () => resolveOnce(null),
             },
+            onRequestClose: () => resolveOnce(null),
             closeOnBackdrop: true,
         });
         if (hideAfterShow) {

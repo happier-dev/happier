@@ -153,7 +153,7 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
   const chrome = React.useMemo(() => ({
     kind: 'card' as const,
     title: t('newSession.title'),
-    dimensions: { width: 520, maxHeightRatio: 0.92, size: 'md' },
+    dimensions: { width: 520, maxHeightRatio: 0.92, size: 'md' as const },
     layout: 'fill' as const,
     footer,
   }), [footer]);

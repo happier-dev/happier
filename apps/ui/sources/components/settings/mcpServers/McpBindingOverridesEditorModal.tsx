@@ -86,7 +86,7 @@ export function getBindingOverridesValueRefEditorChrome(kind: 'env' | 'header') 
     return {
         kind: 'card',
         title: getValueRefEditorModalTitle(kind),
-        preset: 'lg',
+        dimensions: { size: 'lg' },
     } as const;
 }
 

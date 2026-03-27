@@ -45,24 +45,25 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
     onResolve: (value: SubAgentGuidanceRuleEditorResult | null) => void;
 }> & CustomModalInjectedProps) {
     const { theme } = useUnistyles();
+    const { entry, mode, onClose, onResolve } = props;
     const enabledAgentIds = useEnabledAgentIds();
     const popoverBoundaryRef = React.useRef<View>(null);
     const [openPicker, setOpenPicker] = React.useState<null | 'backend' | 'model' | 'intent'>(null);
 
-    const [enabled, setEnabled] = React.useState(props.entry.enabled !== false);
-    const [title, setTitle] = React.useState<string>(normalizeText(props.entry.title));
-    const [description, setDescription] = React.useState<string>(normalizeText(props.entry.description));
-    const [intent, setIntent] = React.useState<Intent | undefined>(toIntent(props.entry.suggestedIntent));
+    const [enabled, setEnabled] = React.useState(entry.enabled !== false);
+    const [title, setTitle] = React.useState<string>(normalizeText(entry.title));
+    const [description, setDescription] = React.useState<string>(normalizeText(entry.description));
+    const [intent, setIntent] = React.useState<Intent | undefined>(toIntent(entry.suggestedIntent));
     const [backendTarget, setBackendTarget] = React.useState<BackendTargetRefV1 | undefined>(() => {
-        const raw = props.entry.suggestedBackendTarget;
+        const raw = entry.suggestedBackendTarget;
         return raw ?? undefined;
     });
     const [modelId, setModelId] = React.useState<ModelMode | undefined>(() => {
-        const raw = props.entry.suggestedModelId;
+        const raw = entry.suggestedModelId;
         return typeof raw === 'string' && raw.trim().length > 0 ? (raw.trim() as ModelMode) : undefined;
     });
     const [exampleToolCalls, setExampleToolCalls] = React.useState<string>(
-        Array.isArray(props.entry.exampleToolCalls) ? props.entry.exampleToolCalls.join('\n') : '',
+        Array.isArray(entry.exampleToolCalls) ? entry.exampleToolCalls.join('\n') : '',
     );
 
     const canSave = description.trim().length > 0;
@@ -99,7 +100,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
     const save = React.useCallback(() => {
         if (!canSave) return;
         const next: ExecutionRunsGuidanceEntry = {
-            id: props.entry.id,
+            id: entry.id,
             description: description.trim(),
             ...(enabled ? {} : { enabled: false }),
             ...(title.trim().length > 0 ? { title: title.trim() } : {}),
@@ -110,9 +111,9 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                 ? { exampleToolCalls: exampleToolCalls.split('\n').map((l) => l.trim()).filter(Boolean) }
                 : {}),
         };
-        props.onResolve({ kind: 'save', entry: next });
-        props.onClose();
-    }, [backendTarget, canSave, description, enabled, exampleToolCalls, intent, modelId, props, title]);
+        onResolve({ kind: 'save', entry: next });
+        onClose();
+    }, [backendTarget, canSave, description, enabled, entry.id, exampleToolCalls, intent, modelId, onClose, onResolve, title]);
 
     const fieldInputStyle = {
         borderWidth: 1,
@@ -173,37 +174,37 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                     display="inverted"
                     title={t('common.cancel')}
                     onPress={() => {
-                        props.onResolve(null);
-                        props.onClose();
+                        onResolve(null);
+                        onClose();
                     }}
                 />
-                {props.mode === 'edit' ? (
+                {mode === 'edit' ? (
                     <RoundButton
                         size="normal"
                         display="inverted"
                         title={t('common.delete')}
                         textStyle={{ color: theme.colors.textDestructive }}
                         onPress={() => {
-                            props.onResolve({ kind: 'delete' });
-                            props.onClose();
+                            onResolve({ kind: 'delete' });
+                            onClose();
                         }}
                     />
                 ) : null}
             </View>
             <RoundButton size="normal" title={t('common.save')} disabled={!canSave} onPress={save} />
         </View>
-    ), [canSave, props, save, theme.colors.textDestructive]);
+    ), [canSave, mode, onClose, onResolve, save, theme.colors.textDestructive]);
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
-        title: props.mode === 'create'
+        title: mode === 'create'
             ? t('subAgentGuidance.ruleEditor.header.newRule')
             : t('subAgentGuidance.ruleEditor.header.editRule'),
         testID: 'sub-agent-guidance-rule-editor-modal',
         layout: 'fill' as const,
         dimensions: { width: 640, maxHeightRatio: 0.92, size: 'lg' as const },
         footer,
-    }), [footer, props.mode]);
+    }), [footer, mode]);
 
     useModalCardChrome(props.setChrome, chrome);
 

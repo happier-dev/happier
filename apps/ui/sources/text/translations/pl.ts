@@ -2376,10 +2376,6 @@ export const pl: TranslationStructure = {
                             }
                         }
                     },
-                    claudeRemoteIncludePartialMessages: {
-                        title: "Częściowe aktualizacje strumieniowe",
-                        subtitle: "Pokazuje częściową odpowiedź asystenta, gdy Claude nadal odpowiada."
-                    },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Eksperymentalne: lokalny most uprawnień",
                         subtitle: "Przekazuje prośby o uprawnienia z lokalnego trybu Claude do Happier, aby można było je zatwierdzać lub odrzucać z interfejsu."
@@ -4552,15 +4548,16 @@ export const pl: TranslationStructure = {
           },
         },
         commitRevertUnavailable: "Cofnięcie jest niedostępne dla tego commitu.",
-        commitMessageEditor: {
-          placeholder: "Wiadomość commita",
-          generate: "Wygeneruj",
-          generating: "Generowanie…",
-          applySuggestion: "Zastosuj sugestię",
-          commit: "Wykonaj commit",
-          generateFailed: "Nie udało się wygenerować wiadomości commitu",
-          generatorDisabled: "Generator wiadomości commitu jest wyłączony",
-        },
+	        commitMessageEditor: {
+	          placeholder: "Wiadomość commita",
+	          generate: "Wygeneruj",
+	          generating: "Generowanie…",
+	          applySuggestion: "Zastosuj sugestię",
+	          suggestionReady: "Sugestia jest gotowa. Zastosować ją?",
+	          commit: "Wykonaj commit",
+	          generateFailed: "Nie udało się wygenerować wiadomości commitu",
+	          generatorDisabled: "Generator wiadomości commitu jest wyłączony",
+	        },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Ładowanie ${fileName}...`,
         binaryFile: "Plik binarny",
@@ -5295,13 +5292,17 @@ settingsSession: {
     },
     byo: {
       title: "Użyj mojego ElevenLabs",
-      agentReuseDialog: {
-        title: "Agent Happier już istnieje",
-        messageWithId: ({ name, id }: { name: string; id: string }) =>
-          `Znaleźliśmy istniejącego agenta ElevenLabs („${name}”, id: ${id}).\n\nCzy chcesz go zaktualizować, czy utworzyć nowego?`,
-        messageNoId: ({ name }: { name: string }) =>
-          `Znaleźliśmy istniejącego agenta ElevenLabs („${name}”).\n\nCzy chcesz go zaktualizować, czy utworzyć nowego?`,
-      },
+	      agentReuseDialog: {
+	        title: "Agent Happier już istnieje",
+	        messageWithId: ({ name, id }: { name: string; id: string }) =>
+	          `Znaleźliśmy istniejącego agenta ElevenLabs („${name}”, id: ${id}).\n\nCzy chcesz go zaktualizować, czy utworzyć nowego?`,
+	        messageNoId: ({ name }: { name: string }) =>
+	          `Znaleźliśmy istniejącego agenta ElevenLabs („${name}”).\n\nCzy chcesz go zaktualizować, czy utworzyć nowego?`,
+	        actions: {
+	          createNew: "Utwórz nowy",
+	          updateExisting: "Zaktualizuj istniejący",
+	        },
+	      },
       configured:
         "Skonfigurowano. Użycie głosu będzie rozliczane na Twoim koncie ElevenLabs.",
       notConfigured:

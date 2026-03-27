@@ -67,7 +67,7 @@ export function ModalCardHeader(props: ModalCardHeaderProps) {
     const hasVisibleTitle = props.title != null || props.subtitle != null;
     const showClose = typeof props.onClose === 'function';
 
-    if (!hasVisibleTitle && !props.actions && !showClose) {
+    if (!hasVisibleTitle && !props.leading && !props.actions && !showClose) {
         return null;
     }
 

@@ -226,7 +226,7 @@ describe('value ref saved secrets live updates', () => {
             chrome: {
                 kind: 'card',
                 title: 'settings.mcpServersPickSecretTitle',
-                preset: 'lg',
+                dimensions: { size: 'lg' },
             },
             closeOnBackdrop: true,
         });

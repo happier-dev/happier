@@ -190,8 +190,8 @@ export function useSecretRequirementFlow(params: Readonly<{
                 onChangeSecrets: params.setSecrets,
                 allowSessionOnly: true,
                 onResolve: handleResolve,
-                onRequestClose: () => handleResolve({ action: 'cancel' }),
             },
+            onRequestClose: () => handleResolve({ action: 'cancel' }),
             closeOnBackdrop: true,
         });
     }, [

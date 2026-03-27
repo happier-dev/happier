@@ -4,6 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -11,136 +13,126 @@ import { t } from '@/text';
 export type ElevenLabsAgentReuseDecision = 'create_new' | 'update_existing' | 'cancel';
 
 const stylesheet = StyleSheet.create((theme) => ({
-  container: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 14,
-    width: 300,
-    overflow: 'hidden',
-    shadowColor: theme.colors.shadow.color,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 16,
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 17,
-    textAlign: 'center',
-    color: theme.colors.text,
-    marginBottom: 4,
-  },
-  message: {
-    fontSize: 13,
-    textAlign: 'center',
-    color: theme.colors.text,
-    marginTop: 4,
-    lineHeight: 18,
-  },
-  buttonContainer: {
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.divider,
-  },
-  buttonRow: {
-    flexDirection: 'row',
-  },
-  button: {
-    flex: 1,
-    paddingVertical: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buttonPressed: {
-    backgroundColor: theme.colors.divider,
-  },
-  separatorVertical: {
-    width: 1,
-    backgroundColor: theme.colors.divider,
-  },
-  separatorHorizontal: {
-    height: 1,
-    backgroundColor: theme.colors.divider,
-  },
-  buttonText: {
-    fontSize: 17,
-    color: theme.colors.textLink,
-  },
-  primaryText: {
-    color: theme.colors.text,
-  },
-  cancelText: {
-    fontWeight: '400',
-  },
+    container: {
+        flex: 1,
+        minHeight: 0,
+        paddingHorizontal: 16,
+        paddingTop: 14,
+        paddingBottom: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    message: {
+        fontSize: 13,
+        textAlign: 'center',
+        color: theme.colors.text,
+        lineHeight: 18,
+    },
+    footer: {
+        paddingVertical: 2,
+    },
+    footerButton: {
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    footerButtonPressed: {
+        backgroundColor: theme.colors.divider,
+    },
+    footerSeparator: {
+        height: 1,
+        backgroundColor: theme.colors.divider,
+    },
+    footerButtonText: {
+        fontSize: 15,
+        color: theme.colors.textLink,
+    },
+    footerButtonTextPrimary: {
+        color: theme.colors.text,
+    },
 }));
 
-type DialogProps = Readonly<{
-  title: string;
-  message: string;
-  onResolve: (decision: ElevenLabsAgentReuseDecision) => void;
-  onClose: () => void;
+type DialogProps = CustomModalInjectedProps & Readonly<{
+    message: string;
+    onResolve: (decision: ElevenLabsAgentReuseDecision) => void;
+    onRequestClose?: () => void;
 }>;
 
-const ElevenLabsAgentReuseDialog: React.FC<DialogProps> = ({ title, message, onResolve, onClose }) => {
-  useUnistyles();
-  const styles = stylesheet;
+const ElevenLabsAgentReuseDialog: React.FC<DialogProps> = (props) => {
+    useUnistyles();
+    const styles = stylesheet;
+    const { onClose, onResolve } = props;
+    const resolve = React.useCallback((decision: ElevenLabsAgentReuseDecision) => {
+        onResolve(decision);
+        onClose();
+    }, [onClose, onResolve]);
 
-  const press = (decision: ElevenLabsAgentReuseDecision) => {
-    onResolve(decision);
-    onClose();
-  };
+    const footer = React.useMemo(() => {
+        const FooterButton = (p: Readonly<{
+            label: string;
+            primary?: boolean;
+            testID: string;
+            onPress: () => void;
+        }>) => (
+            <Pressable
+                testID={p.testID}
+                accessibilityRole="button"
+                accessibilityLabel={p.label}
+                onPress={p.onPress}
+                style={({ pressed }) => [
+                    styles.footerButton,
+                    pressed ? styles.footerButtonPressed : null,
+                ]}
+            >
+                <Text
+                    style={[
+                        styles.footerButtonText,
+                        Typography.default('semiBold'),
+                        p.primary ? styles.footerButtonTextPrimary : null,
+                    ]}
+                >
+                    {p.label}
+                </Text>
+            </Pressable>
+        );
 
-  // Layout matches the native/web alert modal behavior: for 3 buttons, button[1] is the primary bottom action.
-  const buttons: ReadonlyArray<{ text: string; decision: ElevenLabsAgentReuseDecision; style: 'default' | 'cancel' }> = [
-    { text: 'Create new', decision: 'create_new', style: 'default' },
-    { text: 'Update existing', decision: 'update_existing', style: 'default' },
-    { text: 'Cancel', decision: 'cancel', style: 'cancel' },
-  ];
+        return (
+            <View style={styles.footer}>
+                <FooterButton
+                    testID="elevenlabs-agent-reuse-create"
+                    label={t('common.create')}
+                    onPress={() => resolve('create_new')}
+                />
+                <View style={styles.footerSeparator} />
+                <FooterButton
+                    testID="elevenlabs-agent-reuse-update"
+                    label={t('common.update')}
+                    primary={true}
+                    onPress={() => resolve('update_existing')}
+                />
+                <View style={styles.footerSeparator} />
+                <FooterButton
+                    testID="elevenlabs-agent-reuse-cancel"
+                    label={t('common.cancel')}
+                    onPress={() => resolve('cancel')}
+                />
+            </View>
+        );
+    }, [resolve, styles.footer, styles.footerButton, styles.footerButtonPressed, styles.footerButtonText, styles.footerButtonTextPrimary, styles.footerSeparator]);
 
-  const Button = (props: { index: number }) => {
-    const button = buttons[props.index];
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        footer,
+    }), [footer]);
+
+    useModalCardChrome(props.setChrome, chrome);
+
     return (
-      <Pressable
-        style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-        accessibilityRole="button"
-        accessibilityLabel={button.text}
-        onPress={() => press(button.decision)}
-      >
-        <Text
-          style={[
-            styles.buttonText,
-            props.index === 1 && styles.primaryText,
-            button.style === 'cancel' && styles.cancelText,
-            Typography.default(button.style === 'cancel' ? undefined : 'semiBold'),
-          ]}
-        >
-          {button.text}
-        </Text>
-      </Pressable>
-    );
-  };
-
-  return (
-    <View style={styles.container}>
-      <View style={styles.content}>
-        <Text style={[styles.title, Typography.default('semiBold')]}>{title}</Text>
-        <Text style={[styles.message, Typography.default()]}>{message}</Text>
-      </View>
-
-      <View style={styles.buttonContainer}>
-        <View style={styles.buttonRow}>
-          <Button index={0} />
-          <View style={styles.separatorVertical} />
-          <Button index={2} />
+        <View style={styles.container}>
+            <Text style={[styles.message, Typography.default()]}>{props.message}</Text>
         </View>
-        <View style={styles.separatorHorizontal} />
-        <Button index={1} />
-      </View>
-    </View>
-  );
+    );
 };
 
 export async function showElevenLabsAgentReuseDialog(params: Readonly<{
@@ -150,34 +142,31 @@ export async function showElevenLabsAgentReuseDialog(params: Readonly<{
   const existingAgentId = String(params.existingAgentId ?? '').trim();
   const existingAgentName = String(params.existingAgentName ?? '').trim();
 
-  return await new Promise<ElevenLabsAgentReuseDecision>((resolve) => {
-    let resolved = false;
-    const resolveOnce = (decision: ElevenLabsAgentReuseDecision) => {
-      if (resolved) return;
+    return await new Promise<ElevenLabsAgentReuseDecision>((resolve) => {
+        let resolved = false;
+        const resolveOnce = (decision: ElevenLabsAgentReuseDecision) => {
+            if (resolved) return;
       resolved = true;
-      resolve(decision);
-    };
+            resolve(decision);
+        };
 
-    type WrapperProps = Readonly<{ onClose: () => void; onRequestClose?: () => void }>;
-    const Wrapper: React.FC<WrapperProps> = ({ onClose }) => (
-      <ElevenLabsAgentReuseDialog
-        title={t('settingsVoice.byo.agentReuseDialog.title')}
-        message={
-          existingAgentId
-            ? t('settingsVoice.byo.agentReuseDialog.messageWithId', { name: existingAgentName, id: existingAgentId })
-            : t('settingsVoice.byo.agentReuseDialog.messageNoId', { name: existingAgentName })
-        }
-        onResolve={resolveOnce}
-        onClose={onClose}
-      />
-    );
-
-    Modal.show({
-      component: Wrapper,
-      props: {
-        onRequestClose: () => resolveOnce('cancel'),
-      },
-      closeOnBackdrop: true,
+        Modal.show({
+            component: ElevenLabsAgentReuseDialog,
+            props: {
+                message: existingAgentId
+                    ? t('settingsVoice.byo.agentReuseDialog.messageWithId', { name: existingAgentName, id: existingAgentId })
+                    : t('settingsVoice.byo.agentReuseDialog.messageNoId', { name: existingAgentName }),
+                onResolve: resolveOnce,
+            },
+            onRequestClose: () => resolveOnce('cancel'),
+            chrome: {
+                kind: 'card',
+                title: t('settingsVoice.byo.agentReuseDialog.title'),
+                testID: 'elevenlabs-agent-reuse-dialog',
+                layout: 'fit',
+                dimensions: { width: 320, maxHeightRatio: 0.6, size: 'dialog' },
+            },
+            closeOnBackdrop: true,
+        });
     });
-  });
 }

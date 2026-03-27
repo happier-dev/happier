@@ -2242,10 +2242,6 @@ export const zhHans: TranslationStructure = {
                             }
                         }
                     },
-                    claudeRemoteIncludePartialMessages: {
-                        title: "部分流式更新",
-                        subtitle: "当 Claude 仍在回复时显示助手的部分输出。"
-                    },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "实验性：本地权限桥接",
                         subtitle: "将 Claude 本地模式的权限请求转发到 Happier，以便你可以在界面中批准或拒绝。"
@@ -4326,15 +4322,16 @@ export const zhHans: TranslationStructure = {
           },
         },
         commitRevertUnavailable: "此提交无法回滚。",
-        commitMessageEditor: {
-          placeholder: "提交信息",
-          generate: "生成",
-          generating: "正在生成…",
-          applySuggestion: "应用建议",
-          commit: "提交",
-          generateFailed: "生成提交信息失败",
-          generatorDisabled: "提交信息生成器已禁用",
-        },
+	        commitMessageEditor: {
+	          placeholder: "提交信息",
+	          generate: "生成",
+	          generating: "正在生成…",
+	          applySuggestion: "应用建议",
+	          suggestionReady: "建议已准备好。要应用吗？",
+	          commit: "提交",
+	          generateFailed: "生成提交信息失败",
+	          generatorDisabled: "提交信息生成器已禁用",
+	        },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `正在加载 ${fileName}...`,
         binaryFile: "二进制文件",
@@ -5024,13 +5021,17 @@ settingsSession: {
     },
     byo: {
       title: "使用我的 ElevenLabs",
-      agentReuseDialog: {
-        title: "已存在 Happier 代理",
-        messageWithId: ({ name, id }: { name: string; id: string }) =>
-          `我们发现已有一个 ElevenLabs 代理（“${name}”，id: ${id}）。\n\n你想更新它还是创建一个新的？`,
-        messageNoId: ({ name }: { name: string }) =>
-          `我们发现已有一个 ElevenLabs 代理（“${name}”）。\n\n你想更新它还是创建一个新的？`,
-      },
+	      agentReuseDialog: {
+	        title: "已存在 Happier 代理",
+	        messageWithId: ({ name, id }: { name: string; id: string }) =>
+	          `我们发现已有一个 ElevenLabs 代理（“${name}”，id: ${id}）。\n\n你想更新它还是创建一个新的？`,
+	        messageNoId: ({ name }: { name: string }) =>
+	          `我们发现已有一个 ElevenLabs 代理（“${name}”）。\n\n你想更新它还是创建一个新的？`,
+	        actions: {
+	          createNew: "新建",
+	          updateExisting: "更新现有",
+	        },
+	      },
       configured: "已配置。语音使用量将计入您的 ElevenLabs 账号。",
       notConfigured:
         "输入您的 ElevenLabs API 密钥和代理 ID，即可在无需订阅的情况下使用语音。",

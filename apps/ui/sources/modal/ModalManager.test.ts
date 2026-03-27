@@ -173,7 +173,6 @@ describe('Modal.prompt', () => {
             props: {
                 label: 'browse',
             },
-            onRequestClose: vi.fn(),
             chrome: {
                 kind: 'card',
                 title: 'Browse provider sessions',

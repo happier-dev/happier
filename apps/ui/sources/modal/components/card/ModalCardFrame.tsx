@@ -38,6 +38,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         shadowRadius: 4,
         elevation: 5,
         alignSelf: 'center',
+        flexDirection: 'column',
+        minHeight: 0,
     },
     footer: {
         borderTopWidth: 1,

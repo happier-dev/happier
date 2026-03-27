@@ -160,7 +160,6 @@ export default React.memo(function SecretRequirementPickerScreen() {
                     onChangeSecrets={setSecrets}
                     allowSessionOnly={true}
                     onResolve={sendResultToNewSession}
-                    onRequestClose={handleCancel}
                     onClose={handleCancel}
                 />
             </>

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
 
@@ -117,7 +118,6 @@ function SubAgentGuidanceRuleEditorModalHarness(
     }>,
 ) {
     const [chrome, setChrome] = React.useState<any>(null);
-    const { ModalCardFrame } = require('@/modal/components/card/ModalCardFrame') as typeof import('@/modal/components/card/ModalCardFrame');
     const card = chrome && chrome.kind === 'card' ? chrome : null;
 
     return (
@@ -129,12 +129,11 @@ function SubAgentGuidanceRuleEditorModalHarness(
             footer={card?.footer}
             layout={card?.layout ?? 'fit'}
             dimensions={card?.dimensions}
-        >
-            {/* @ts-expect-error - test harness passes through dynamic chrome setter */}
-            <props.component {...props} setChrome={setChrome} />
-        </ModalCardFrame>
-    );
-}
+	        >
+	            <props.component {...props} setChrome={setChrome} />
+	        </ModalCardFrame>
+	    );
+	}
 
 describe('SubAgentGuidanceRuleEditorModal', () => {
     it('disables Save when description is empty', async () => {

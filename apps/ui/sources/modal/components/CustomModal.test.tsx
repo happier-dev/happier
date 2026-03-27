@@ -52,32 +52,20 @@ function SelfChromeModal(props: CustomModalInjectedProps & Readonly<{ label: str
     return React.createElement('SelfChromeModal', props);
 }
 
-function DeepEqualChromeModal(props: CustomModalInjectedProps) {
-    const renderCountRef = React.useRef(0);
-    renderCountRef.current += 1;
-
-    const [step, setStep] = React.useState(0);
-
-    React.useEffect(() => {
-        if (step !== 0) return;
+function PatchChromeModal(props: CustomModalInjectedProps & Readonly<{ label: string }>) {
+    React.useLayoutEffect(() => {
         props.setChrome?.({
             kind: 'card',
-            title: 'Deep equal chrome',
-            dimensions: { size: 'md', width: 560, maxHeightRatio: 0.9 },
+            footer: React.createElement('PatchedFooter'),
         });
-        setStep(1);
-    }, [props.setChrome, step]);
+    }, [props.setChrome]);
+    return React.createElement('PatchChromeModal', props);
+}
 
-    React.useEffect(() => {
-        if (step !== 1) return;
-        props.setChrome?.({
-            kind: 'card',
-            title: 'Deep equal chrome',
-            dimensions: { size: 'md', width: 560, maxHeightRatio: 0.9 },
-        });
-    }, [props.setChrome, step]);
-
-    return React.createElement('DeepEqualChromeModal', { renderCount: renderCountRef.current });
+function LegacyOnRequestCloseModal(
+    props: CustomModalInjectedProps & Readonly<{ label: string; onRequestClose: () => void }>,
+) {
+    return React.createElement('LegacyOnRequestCloseModal', props);
 }
 
 async function renderCustomModal(config: Omit<CustomModalConfig<any>, 'id'>, onClose = vi.fn()) {
@@ -101,6 +89,7 @@ describe('CustomModal', () => {
     it('wraps chrome-backed modals in ModalCardFrame and closes through the shared handler', async () => {
         const onClose = vi.fn();
         const onRequestClose = vi.fn();
+        const chromeLeading = React.createElement('ChromeLeading');
         const chromeActions = React.createElement('ChromeActions');
         const chromeFooter = React.createElement('ChromeFooter');
 
@@ -113,6 +102,7 @@ describe('CustomModal', () => {
             onRequestClose,
             chrome: {
                 kind: 'card',
+                leading: chromeLeading,
                 title: 'Browse provider sessions',
                 subtitle: 'Pick a session to resume',
                 actions: chromeActions,
@@ -127,6 +117,7 @@ describe('CustomModal', () => {
 
         const modalCardFrame = screen.findByType(ModalCardFrame);
 
+        expect(modalCardFrame.props.leading).toBe(chromeLeading);
         expect(modalCardFrame.props.title).toBe('Browse provider sessions');
         expect(modalCardFrame.props.subtitle).toBe('Pick a session to resume');
         expect(modalCardFrame.props.actions).toBe(chromeActions);
@@ -156,16 +147,51 @@ describe('CustomModal', () => {
         expect(screen.findByType(SelfChromeModal).props.label).toBe('self');
     });
 
-    it('dedupes repeated setChrome calls that are deep-equal (avoids extra rerenders)', async () => {
+    it('merges card chrome updates with existing chrome by default', async () => {
         const screen = await renderCustomModal({
             type: 'custom',
-            component: DeepEqualChromeModal,
-            props: {},
+            component: PatchChromeModal,
+            props: { label: 'patch' },
+            chrome: {
+                kind: 'card',
+                title: 'Base title',
+                subtitle: 'Base subtitle',
+                actions: React.createElement('BaseActions'),
+                testID: 'base-test',
+                layout: 'fill',
+                dimensions: { size: 'lg' },
+            },
         });
 
-        await act(async () => {});
+        const modalCardFrame = screen.findByType(ModalCardFrame);
+        expect(modalCardFrame.props.title).toBe('Base title');
+        expect(modalCardFrame.props.subtitle).toBe('Base subtitle');
+        expect(modalCardFrame.props.actions?.type).toBe('BaseActions');
+        expect(modalCardFrame.props.layout).toBe('fill');
+        expect(modalCardFrame.props.footer?.type).toBe('PatchedFooter');
+    });
 
-        const modal = screen.findByType('DeepEqualChromeModal' as any);
-        expect(modal.props.renderCount).toBe(2);
+    it('does not invoke legacy `props.onRequestClose` when dismissing', async () => {
+        const onClose = vi.fn();
+        const onRequestClose = vi.fn();
+        const legacyOnRequestClose = vi.fn();
+
+        const screen = await renderCustomModal({
+            type: 'custom',
+            component: LegacyOnRequestCloseModal,
+            props: {
+                label: 'legacy',
+                onRequestClose: legacyOnRequestClose,
+            },
+            onRequestClose,
+        }, onClose);
+
+        act(() => {
+            screen.findByType('BaseModal' as any).props.onClose();
+        });
+
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
+        expect(legacyOnRequestClose).toHaveBeenCalledTimes(0);
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });

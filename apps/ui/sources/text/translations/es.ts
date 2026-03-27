@@ -2342,10 +2342,6 @@ export const es: TranslationStructure = {
                             }
                         }
                     },
-                    claudeRemoteIncludePartialMessages: {
-                        title: "Actualizaciones parciales de streaming",
-                        subtitle: "Muestra salida parcial del asistente mientras Claude sigue respondiendo."
-                    },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Experimental: puente de permisos local",
                         subtitle: "Reenvía las solicitudes de permiso del modo local de Claude a Happier para que puedas aprobarlas o denegarlas desde la interfaz."
@@ -4538,15 +4534,16 @@ export const es: TranslationStructure = {
           },
         },
         commitRevertUnavailable: "Revertir no está disponible para este commit.",
-        commitMessageEditor: {
-          placeholder: "Mensaje de commit",
-          generate: "Generar",
-          generating: "Generando…",
-          applySuggestion: "Aplicar sugerencia",
-          commit: "Hacer commit",
-          generateFailed: "No se pudo generar el mensaje de commit",
-          generatorDisabled: "El generador de mensajes de commit está deshabilitado",
-        },
+	        commitMessageEditor: {
+	          placeholder: "Mensaje de commit",
+	          generate: "Generar",
+	          generating: "Generando…",
+	          applySuggestion: "Aplicar sugerencia",
+	          suggestionReady: "Hay una sugerencia lista. ¿Aplicarla?",
+	          commit: "Hacer commit",
+	          generateFailed: "No se pudo generar el mensaje de commit",
+	          generatorDisabled: "El generador de mensajes de commit está deshabilitado",
+	        },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Cargando ${fileName}...`,
         binaryFile: "Archivo binario",
@@ -5279,13 +5276,17 @@ settingsSession: {
     },
     byo: {
       title: "Usar mi ElevenLabs",
-      agentReuseDialog: {
-        title: "El agente de Happier ya existe",
-        messageWithId: ({ name, id }: { name: string; id: string }) =>
-          `Encontramos un agente de ElevenLabs existente (“${name}”, id: ${id}).\n\n¿Quieres actualizarlo o crear uno nuevo?`,
-        messageNoId: ({ name }: { name: string }) =>
-          `Encontramos un agente de ElevenLabs existente (“${name}”).\n\n¿Quieres actualizarlo o crear uno nuevo?`,
-      },
+	      agentReuseDialog: {
+	        title: "El agente de Happier ya existe",
+	        messageWithId: ({ name, id }: { name: string; id: string }) =>
+	          `Encontramos un agente de ElevenLabs existente (“${name}”, id: ${id}).\n\n¿Quieres actualizarlo o crear uno nuevo?`,
+	        messageNoId: ({ name }: { name: string }) =>
+	          `Encontramos un agente de ElevenLabs existente (“${name}”).\n\n¿Quieres actualizarlo o crear uno nuevo?`,
+	        actions: {
+	          createNew: "Crear nuevo",
+	          updateExisting: "Actualizar existente",
+	        },
+	      },
       configured:
         "Configurado. El uso de voz se facturará a tu cuenta de ElevenLabs.",
       notConfigured:

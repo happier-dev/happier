@@ -2279,10 +2279,6 @@ export const en = {
                             }
                         }
                     },
-                    claudeRemoteIncludePartialMessages: {
-                        title: "Partial streaming updates",
-                        subtitle: "Show partial assistant output while Claude is still responding."
-                    },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Experimental: local permission bridge",
                         subtitle: "Forward Claude local-mode permission prompts to Happier so you can approve or deny from the app UI."
@@ -4284,6 +4280,7 @@ export const en = {
                 generate: 'Generate',
                 generating: 'Generating…',
                 applySuggestion: 'Apply suggestion',
+                suggestionReady: 'A suggestion is ready. Apply it?',
                 commit: 'Commit',
                 generateFailed: 'Failed to generate commit message',
                 generatorDisabled: 'Commit message generator is disabled',
@@ -4982,13 +4979,17 @@ settingsSession: {
         },
         byo: {
             title: 'Use My ElevenLabs',
-            agentReuseDialog: {
-                title: 'Happier agent already exists',
-                messageWithId: ({ name, id }: { name: string; id: string }) =>
-                    `We found an existing ElevenLabs agent (“${name}”, id: ${id}).\n\nDo you want to update it, or create a new one?`,
-                messageNoId: ({ name }: { name: string }) =>
-                    `We found an existing ElevenLabs agent (“${name}”).\n\nDo you want to update it, or create a new one?`,
-            },
+	            agentReuseDialog: {
+	                title: 'Happier agent already exists',
+	                messageWithId: ({ name, id }: { name: string; id: string }) =>
+	                    `We found an existing ElevenLabs agent (“${name}”, id: ${id}).\n\nDo you want to update it, or create a new one?`,
+	                messageNoId: ({ name }: { name: string }) =>
+	                    `We found an existing ElevenLabs agent (“${name}”).\n\nDo you want to update it, or create a new one?`,
+	                actions: {
+	                    createNew: 'Create new',
+	                    updateExisting: 'Update existing',
+	                },
+	            },
             configured: 'Configured. Voice usage will be billed to your ElevenLabs account.',
             notConfigured:
                 'Setup (2 minutes):\n' +

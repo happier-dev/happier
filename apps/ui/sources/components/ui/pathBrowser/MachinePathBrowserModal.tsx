@@ -52,7 +52,6 @@ export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     includeFiles?: boolean;
     selectionMode?: 'directory' | 'file';
     onResolve: (path: string | null) => void;
-    onRequestClose?: () => void;
 }>;
 
 export type MachinePathBrowserViewProps = Readonly<{
@@ -966,7 +965,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         actions: chromeActions,
         footer: chromeFooter,
         layout: 'fill' as const,
-        dimensions: { width: 560, maxHeightRatio: 0.92, size: 'md' },
+        dimensions: { width: 560, maxHeightRatio: 0.92, size: 'md' as const },
     }), [chromeActions, chromeFooter, props.title, selectedPath]);
 
     useModalCardChrome(chromeSetter, chrome);
@@ -1390,7 +1389,6 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
                 props.onClose();
             }}
             onRequestClose={() => {
-                props.onRequestClose?.();
                 props.onResolve(null);
                 props.onClose();
             }}

@@ -4,6 +4,8 @@ import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
+import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -26,19 +28,30 @@ export type ConnectedServicesProfileOption = Readonly<{
   label?: string | null;
 }>;
 
-export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesAuthModal(props: Readonly<{
-  onClose: () => void;
+export type ConnectedServicesAuthModalProps = CustomModalInjectedProps & Readonly<{
   supportedServiceIds: ReadonlyArray<string>;
   profileOptionsByServiceId: Readonly<Record<string, ReadonlyArray<ConnectedServicesProfileOption>>>;
   bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
   setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
   defaultProfileIdByServiceId?: Readonly<Record<string, string | undefined>>;
   onOpenSettings?: () => void;
-}>) {
+}>;
+
+export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesAuthModal(props: ConnectedServicesAuthModalProps) {
   const { theme } = useUnistyles();
   const [bindingsByServiceId, setBindingsByServiceId] = React.useState<Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>>(
     props.bindingsByServiceId,
   );
+
+  const chrome = React.useMemo(() => ({
+    kind: 'card' as const,
+    title: t('connectedServices.title'),
+    testID: 'connected-services:auth-modal',
+    closeButtonTestID: 'connected-services:auth-modal:close',
+    layout: 'fill' as const,
+    dimensions: { width: 560, maxHeightRatio: 0.92, size: 'md' as const },
+  }), []);
+  useModalCardChrome(props.setChrome, chrome);
 
   React.useEffect(() => {
     setBindingsByServiceId(props.bindingsByServiceId);
@@ -66,7 +79,7 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
   }, [props.setBindingForService]);
 
   return (
-    <ItemList>
+    <ItemList keyboardShouldPersistTaps="handled">
       {props.supportedServiceIds.map((serviceId) => {
         const options = props.profileOptionsByServiceId[serviceId] ?? [];
         const connected = options.filter((o) => o.status === 'connected');
@@ -149,14 +162,6 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
         );
       })}
 
-      <ItemGroup>
-        <Item
-          title={t('common.close')}
-          icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
-          onPress={props.onClose}
-          showChevron={false}
-        />
-      </ItemGroup>
     </ItemList>
   );
 });

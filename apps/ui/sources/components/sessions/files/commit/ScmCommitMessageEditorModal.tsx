@@ -8,21 +8,77 @@ import { t } from '@/text';
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 
+const stylesheet = StyleSheet.create((theme) => ({
+    content: {
+        paddingHorizontal: 16,
+        paddingTop: 12,
+        paddingBottom: 12,
+        gap: 10,
+    },
+    input: {
+        minHeight: 140,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        textAlignVertical: 'top' as any,
+        color: theme.colors.text,
+        backgroundColor: theme.colors.input.background,
+    },
+    error: {
+        fontSize: 12,
+        color: theme.colors.textDestructive,
+    },
+    footer: {
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+    },
+    button: {
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
+        opacity: 1,
+    },
+    buttonDisabled: {
+        opacity: 0.55,
+    },
+    primaryButton: {
+        borderColor: theme.colors.textLink,
+    },
+    buttonText: {
+        fontSize: 13,
+        color: theme.colors.text,
+    },
+    buttonTextPrimary: {
+        color: theme.colors.textLink,
+    },
+}));
+
 
 export type ScmCommitMessageGenerateResult =
     | { ok: true; message: string }
     | { ok: false; error: string };
 
 export type ScmCommitMessageEditorModalProps = CustomModalInjectedProps & Readonly<{
-    title: string;
     initialMessage: string;
     canGenerate: boolean;
     onGenerate: () => Promise<ScmCommitMessageGenerateResult>;
     onResolve: (value: { kind: 'cancel' } | { kind: 'commit'; message: string }) => void;
+    onRequestClose?: () => void;
 }>;
 
 export function ScmCommitMessageEditorModal(props: ScmCommitMessageEditorModalProps) {
     const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const { onClose, onResolve } = props;
     const [message, setMessage] = React.useState(props.initialMessage);
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
@@ -38,14 +94,14 @@ export function ScmCommitMessageEditorModal(props: ScmCommitMessageEditorModalPr
     }, [message]);
 
     const closeCancel = React.useCallback(() => {
-        props.onResolve({ kind: 'cancel' });
-        props.onClose();
-    }, [props]);
+        onResolve({ kind: 'cancel' });
+        onClose();
+    }, [onClose, onResolve]);
 
     const commit = React.useCallback(() => {
-        props.onResolve({ kind: 'commit', message });
-        props.onClose();
-    }, [message, props]);
+        onResolve({ kind: 'commit', message });
+        onClose();
+    }, [message, onClose, onResolve]);
 
     const applySuggestion = React.useCallback(() => {
         if (!pendingSuggestion) return;
@@ -75,65 +131,11 @@ export function ScmCommitMessageEditorModal(props: ScmCommitMessageEditorModalPr
                 return;
             }
             setPendingSuggestion(res.message);
-            setError('A suggestion is ready. Apply it?');
+            setError(t('files.commitMessageEditor.suggestionReady'));
         } finally {
             setBusy(false);
         }
     }, [busy, props.canGenerate, props.onGenerate]);
-
-    const styles = StyleSheet.create({
-        content: {
-            paddingHorizontal: 16,
-            paddingTop: 12,
-            paddingBottom: 12,
-            gap: 10,
-        },
-        input: {
-            minHeight: 140,
-            borderWidth: 1,
-            borderColor: theme.colors.divider,
-            borderRadius: 10,
-            paddingHorizontal: 12,
-            paddingVertical: 10,
-            textAlignVertical: 'top' as const,
-            color: theme.colors.text,
-            backgroundColor: theme.colors.input.background,
-        },
-        error: {
-            fontSize: 12,
-            color: theme.colors.textDestructive,
-        },
-        footer: {
-            paddingHorizontal: 12,
-            paddingVertical: 10,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-        },
-        button: {
-            paddingHorizontal: 12,
-            paddingVertical: 10,
-            borderRadius: 10,
-            borderWidth: 1,
-            borderColor: theme.colors.divider,
-            backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
-            opacity: 1,
-        },
-        buttonDisabled: {
-            opacity: 0.55,
-        },
-        primaryButton: {
-            borderColor: theme.colors.textLink,
-        },
-        buttonText: {
-            fontSize: 13,
-            color: theme.colors.text,
-        },
-        buttonTextPrimary: {
-            color: theme.colors.textLink,
-        },
-    });
 
     const Button = (p: { label: string; onPress: () => void; disabled?: boolean; primary?: boolean }) => (
         <Pressable
@@ -180,12 +182,8 @@ export function ScmCommitMessageEditorModal(props: ScmCommitMessageEditorModalPr
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
-        title: props.title,
-        testID: 'scm-commit-message-editor-modal',
-        layout: 'fill' as const,
-        dimensions: { width: 520, maxHeightRatio: 0.92, size: 'md' as const },
         footer,
-    }), [footer, props.title]);
+    }), [footer]);
 
     useModalCardChrome(props.setChrome, chrome);
 
