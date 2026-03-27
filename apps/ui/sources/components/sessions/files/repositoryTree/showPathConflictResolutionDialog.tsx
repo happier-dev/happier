@@ -3,6 +3,7 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Modal } from '@/modal';
+import type { CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
@@ -10,34 +11,12 @@ import { Text } from '@/components/ui/text/Text';
 export type PathConflictResolutionStrategy = 'keep_both' | 'replace' | 'skip' | 'cancel';
 
 const stylesheet = StyleSheet.create((theme) => ({
-    card: {
-        width: 420,
-        maxWidth: '92%',
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
-        overflow: 'hidden',
-    },
-    header: {
-        paddingHorizontal: 18,
-        paddingTop: 16,
-        paddingBottom: 12,
-        gap: 8,
-    },
-    title: {
-        fontSize: 16,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
-    },
-    body: {
-        fontSize: 13,
-        color: theme.colors.textSecondary,
-        ...Typography.default(),
-    },
     options: {
+        flex: 1,
+        minHeight: 0,
         paddingHorizontal: 12,
-        paddingBottom: 12,
+        paddingTop: 14,
+        paddingBottom: 14,
         gap: 10,
     },
     optionButton: {
@@ -61,6 +40,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     optionPrimaryBorder: {
         borderColor: theme.colors.textLink,
+    },
+    cancelRow: {
+        paddingVertical: 10,
+        alignItems: 'center',
+    },
+    cancelText: {
+        fontSize: 13,
+        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
     },
 }));
 
@@ -89,65 +77,67 @@ function PathConflictOption(props: Readonly<{
     );
 }
 
-type PathConflictResolutionDialogProps = Readonly<{
+type PathConflictResolutionDialogProps = CustomModalInjectedProps & Readonly<{
     title: string;
     body: string;
     allowSkip: boolean;
     primaryStrategy?: Exclude<PathConflictResolutionStrategy, 'cancel'> | null;
     testIdPrefix: string;
-    onResolve: (strategy: Exclude<PathConflictResolutionStrategy, 'cancel'>) => void;
-    onClose: () => void;
+    onResolve: (strategy: PathConflictResolutionStrategy) => void;
 }>;
 
 const PathConflictResolutionDialog: React.FC<PathConflictResolutionDialogProps> = (props) => {
     const styles = stylesheet;
-    const { theme } = useUnistyles();
+    useUnistyles();
 
     return (
-        <View style={styles.card}>
-            <View style={styles.header}>
-                <Text style={styles.title}>{props.title}</Text>
-                <Text style={styles.body}>{props.body}</Text>
-            </View>
-            <View style={styles.options}>
+        <View style={styles.options}>
+            <PathConflictOption
+                testID={`${props.testIdPrefix}-keep-both`}
+                title={t('files.upload.conflicts.keepBoth.title')}
+                subtitle={t('files.upload.conflicts.keepBoth.subtitle')}
+                primary={props.primaryStrategy === 'keep_both'}
+                onPress={() => {
+                    props.onResolve('keep_both');
+                    props.onClose();
+                }}
+            />
+            <PathConflictOption
+                testID={`${props.testIdPrefix}-replace`}
+                title={t('files.upload.conflicts.replace.title')}
+                subtitle={t('files.upload.conflicts.replace.subtitle')}
+                primary={props.primaryStrategy === 'replace'}
+                onPress={() => {
+                    props.onResolve('replace');
+                    props.onClose();
+                }}
+            />
+            {props.allowSkip ? (
                 <PathConflictOption
-                    testID={`${props.testIdPrefix}-keep-both`}
-                    title={t('files.upload.conflicts.keepBoth.title')}
-                    subtitle={t('files.upload.conflicts.keepBoth.subtitle')}
-                    primary={props.primaryStrategy === 'keep_both'}
-                    onPress={() => props.onResolve('keep_both')}
+                    testID={`${props.testIdPrefix}-skip`}
+                    title={t('files.upload.conflicts.skip.title')}
+                    subtitle={t('files.upload.conflicts.skip.subtitle')}
+                    primary={props.primaryStrategy === 'skip'}
+                    onPress={() => {
+                        props.onResolve('skip');
+                        props.onClose();
+                    }}
                 />
-                <PathConflictOption
-                    testID={`${props.testIdPrefix}-replace`}
-                    title={t('files.upload.conflicts.replace.title')}
-                    subtitle={t('files.upload.conflicts.replace.subtitle')}
-                    primary={props.primaryStrategy === 'replace'}
-                    onPress={() => props.onResolve('replace')}
-                />
-                {props.allowSkip ? (
-                    <PathConflictOption
-                        testID={`${props.testIdPrefix}-skip`}
-                        title={t('files.upload.conflicts.skip.title')}
-                        subtitle={t('files.upload.conflicts.skip.subtitle')}
-                        primary={props.primaryStrategy === 'skip'}
-                        onPress={() => props.onResolve('skip')}
-                    />
-                ) : null}
-                <Pressable
-                    testID={`${props.testIdPrefix}-cancel`}
-                    accessibilityRole="button"
-                    onPress={props.onClose}
-                    style={({ pressed }) => ({
-                        paddingVertical: 10,
-                        alignItems: 'center',
-                        opacity: pressed ? 0.85 : 1,
-                    })}
-                >
-                    <Text style={{ fontSize: 13, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
-                        {t('common.cancel')}
-                    </Text>
-                </Pressable>
-            </View>
+            ) : null}
+            <Pressable
+                testID={`${props.testIdPrefix}-cancel`}
+                accessibilityRole="button"
+                onPress={() => {
+                    props.onResolve('cancel');
+                    props.onClose();
+                }}
+                style={({ pressed }) => [
+                    styles.cancelRow,
+                    pressed ? { opacity: 0.85 } : null,
+                ]}
+            >
+                <Text style={styles.cancelText}>{t('common.cancel')}</Text>
+            </Pressable>
         </View>
     );
 };
@@ -160,7 +150,6 @@ export async function showPathConflictResolutionDialog(params: Readonly<{
     testIdPrefix?: string;
 }>): Promise<PathConflictResolutionStrategy> {
     return await new Promise<PathConflictResolutionStrategy>((resolve) => {
-        let modalId = '';
         let settled = false;
 
         const resolveOnce = (strategy: PathConflictResolutionStrategy) => {
@@ -169,28 +158,23 @@ export async function showPathConflictResolutionDialog(params: Readonly<{
             resolve(strategy);
         };
 
-        type WrapperProps = Readonly<{ onRequestClose?: () => void; onClose: () => void }>;
-        const Wrapper: React.FC<WrapperProps> = ({ onClose }) => (
-            <PathConflictResolutionDialog
-                title={params.title}
-                body={params.body}
-                allowSkip={params.allowSkip}
-                primaryStrategy={params.primaryStrategy ?? null}
-                testIdPrefix={params.testIdPrefix ?? 'path-conflicts'}
-                onResolve={(strategy) => {
-                    resolveOnce(strategy);
-                    if (modalId) {
-                        Modal.hide(modalId);
-                    }
-                }}
-                onClose={onClose}
-            />
-        );
-
-        modalId = Modal.show({
-            component: Wrapper,
+        Modal.show({
+            component: PathConflictResolutionDialog,
             props: {
-                onRequestClose: () => resolveOnce('cancel'),
+                title: params.title,
+                body: params.body,
+                allowSkip: params.allowSkip,
+                primaryStrategy: params.primaryStrategy ?? null,
+                testIdPrefix: params.testIdPrefix ?? 'path-conflicts',
+                onResolve: resolveOnce,
+            },
+            onRequestClose: () => resolveOnce('cancel'),
+            chrome: {
+                kind: 'card',
+                title: params.title,
+                subtitle: params.body,
+                testID: `${params.testIdPrefix ?? 'path-conflicts'}-modal`,
+                dimensions: { width: 420, maxHeightRatio: 0.85, size: 'md' },
             },
             closeOnBackdrop: true,
         });

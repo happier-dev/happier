@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { pressTestInstance, renderScreen } from '@/dev/testkit';
-import { t } from '@/text';
 import { installBugReportComponentCommonModuleMocks } from './bugReportComponentTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,19 +35,12 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 20, bottom: 20, left: 0, right: 0 }),
 }));
 
-function findStyleValue(style: any, key: string) {
-  const list = Array.isArray(style) ? style : [style];
-  for (const entry of list) {
-    if (entry && typeof entry === 'object' && key in entry) return (entry as any)[key];
-  }
-  return undefined;
-}
-
 describe('BugReportDiagnosticsPreviewModal', () => {
-    it('sets an explicit height so the scroll body can measure on native', async () => {
+    it('sets card chrome to use a fixed-height layout so the scroll body can measure', async () => {
         const { BugReportDiagnosticsPreviewModal } = await import('./BugReportDiagnosticsPreviewModal');
 
         const onClose = vi.fn();
+        const setChrome = vi.fn();
         const artifacts = [
             {
                 filename: 'app-context.json',
@@ -59,22 +51,24 @@ describe('BugReportDiagnosticsPreviewModal', () => {
             },
         ];
 
-        const screen = await renderScreen(<BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} />);
+        await renderScreen(
+            // @ts-expect-error - test intentionally supplies modal injected props
+            <BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} setChrome={setChrome} />,
+        );
 
-        // window.height=700, insets top+bottom=40, extra padding=96 => 564
-        const expected = 564;
-        const rootView = screen.find((node) => {
-            const style = node.props?.style;
-            return findStyleValue(style, 'height') === expected && findStyleValue(style, 'maxHeight') === expected;
-        });
-        expect(findStyleValue(rootView.props.style, 'height')).toBe(expected);
-        expect(findStyleValue(rootView.props.style, 'maxHeight')).toBe(expected);
+        expect(setChrome).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'card',
+                layout: 'fill',
+            }),
+        );
     });
 
     it('drills into an artifact and shows its content', async () => {
         const { BugReportDiagnosticsPreviewModal } = await import('./BugReportDiagnosticsPreviewModal');
 
         const onClose = vi.fn();
+        const setChrome = vi.fn();
         const artifacts = [
             {
                 filename: 'app-context.json',
@@ -85,7 +79,10 @@ describe('BugReportDiagnosticsPreviewModal', () => {
             },
         ];
 
-        const screen = await renderScreen(<BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} />);
+        const screen = await renderScreen(
+            // @ts-expect-error - test intentionally supplies modal injected props
+            <BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} setChrome={setChrome} />,
+        );
 
         const artifactButton = screen.find((node) => (
             node.props?.accessibilityRole === 'button'
@@ -97,8 +94,14 @@ describe('BugReportDiagnosticsPreviewModal', () => {
         });
 
         const textContent = screen.getTextContent();
-        expect(screen.findByProps({ accessibilityLabel: t('common.back') })).toBeTruthy();
-        expect(textContent).toContain('app-context.json');
         expect(textContent).toContain('{"hello":"world"}');
+
+        const nextChrome = setChrome.mock.calls.at(-1)?.[0];
+        expect(nextChrome).toEqual(
+            expect.objectContaining({
+                kind: 'card',
+                title: 'app-context.json',
+            }),
+        );
     });
 });

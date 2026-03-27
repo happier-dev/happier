@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
@@ -18,31 +18,10 @@ type Props = CustomModalInjectedProps & Readonly<{
     details?: string;
     recovery: SessionHandoffRecoveryPlan;
     onResolve: (value: RecoveryAction | null) => void;
+    onRequestClose?: () => void;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: 14,
-        width: 440,
-        maxWidth: '92%',
-        overflow: 'hidden',
-    },
-    header: {
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-    },
-    title: {
-        fontSize: 17,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
-    },
     body: {
         paddingHorizontal: 16,
         paddingVertical: 18,
@@ -67,8 +46,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export function SessionHandoffFailureRecoveryModal({ onClose, title, message, details, recovery, onResolve }: Props) {
-    const { theme } = useUnistyles();
+export function SessionHandoffFailureRecoveryModal({ onClose, setChrome, title, message, details, recovery, onResolve }: Props) {
     const styles = stylesheet;
     const canRestart = recovery.actions.includes('restart_on_source');
 
@@ -77,39 +55,39 @@ export function SessionHandoffFailureRecoveryModal({ onClose, title, message, de
         onClose();
     }, [onClose, onResolve]);
 
-    return (
-        <View testID="session-handoff-recovery-modal" style={styles.container}>
-            <View style={styles.header}>
-                <Text testID="session-handoff-recovery-title" style={styles.title}>{title}</Text>
-                <Pressable
-                    testID="session-handoff-recovery-close"
-                    onPress={() => handleResolve(null)}
-                    hitSlop={10}
-                    style={({ pressed }) => ({ padding: 2, opacity: pressed ? 0.7 : 1 })}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.close')}
-                >
-                    <Octicons name="x" size={18} color={theme.colors.header.tint} />
-                </Pressable>
-            </View>
-            <View style={styles.body}>
-                <Text testID="session-handoff-recovery-message" style={styles.message}>{message}</Text>
-                {details ? <Text testID="session-handoff-recovery-details" style={styles.details}>{details}</Text> : null}
-            </View>
-            <View style={styles.footer}>
+    const footer = React.useMemo(() => (
+        <View style={styles.footer}>
+            <RoundButton
+                testID="session-handoff-recovery-keep-stopped"
+                title={t('sessionHandoff.recovery.keepStopped')}
+                onPress={() => handleResolve('keep_stopped')}
+            />
+            {canRestart ? (
                 <RoundButton
-                    testID="session-handoff-recovery-keep-stopped"
-                    title={t('sessionHandoff.recovery.keepStopped')}
-                    onPress={() => handleResolve('keep_stopped')}
+                    testID="session-handoff-recovery-restart-on-source"
+                    title={t('sessionHandoff.recovery.restartOnSource')}
+                    onPress={() => handleResolve('restart_on_source')}
                 />
-                {canRestart ? (
-                    <RoundButton
-                        testID="session-handoff-recovery-restart-on-source"
-                        title={t('sessionHandoff.recovery.restartOnSource')}
-                        onPress={() => handleResolve('restart_on_source')}
-                    />
-                ) : null}
-            </View>
+            ) : null}
+        </View>
+    ), [canRestart, handleResolve, styles.footer]);
+
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        title,
+        testID: 'session-handoff-recovery-modal',
+        titleTestID: 'session-handoff-recovery-title',
+        closeButtonTestID: 'session-handoff-recovery-close',
+        dimensions: { width: 440, maxHeightRatio: 0.92 },
+        footer,
+    }), [footer, title]);
+
+    useModalCardChrome(setChrome, chrome);
+
+    return (
+        <View style={styles.body}>
+            <Text testID="session-handoff-recovery-message" style={styles.message}>{message}</Text>
+            {details ? <Text testID="session-handoff-recovery-details" style={styles.details}>{details}</Text> : null}
         </View>
     );
 }

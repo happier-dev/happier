@@ -12,9 +12,19 @@ export async function openDirectSessionsResumeIdPickerModal(params: Readonly<{
             component: DirectSessionsResumeIdPickerModal,
             props: {
                 lockScope: params.lockScope,
-                title: params.title,
                 onResolve: (value: string | null) => resolve(value),
-                onRequestClose: () => resolve(null),
+            },
+            onRequestClose: () => resolve(null),
+            chrome: {
+                kind: 'card',
+                title: params.title,
+                testID: 'resume-id-browse-modal',
+                layout: 'fill',
+                dimensions: {
+                    width: 560,
+                    maxHeightRatio: 0.92,
+                    size: 'md',
+                },
             },
             closeOnBackdrop: true,
         });

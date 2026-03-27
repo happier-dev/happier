@@ -23,10 +23,6 @@ class ModalManagerClass implements IModal {
         this.updateCustomModalPropsFn = updateCustomModalProps;
     }
 
-    private generateId(): string {
-        return Date.now().toString(36) + Math.random().toString(36).substr(2);
-    }
-
     alert(title: string, message?: string, buttons?: AlertButton[]): void {
         if (Platform.OS === 'web') {
             // Show custom web modal
@@ -141,24 +137,18 @@ class ModalManagerClass implements IModal {
         }
     }
 
-    show<P extends CustomModalInjectedProps>(config: {
-        component: CustomModalConfig<P>['component'];
-        props?: CustomModalConfig<P>['props'];
-        closeOnBackdrop?: boolean;
-    }): string {
+    show<P extends CustomModalInjectedProps>(config: Omit<CustomModalConfig<P>, 'id' | 'type'>): string {
         if (!this.showModalFn) {
             console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');
             return '';
         }
 
-        const modalConfig: Omit<CustomModalConfig, 'id'> = {
+        const modalConfig: Omit<CustomModalConfig<P>, 'id'> = {
             type: 'custom',
-            component: config.component as unknown as CustomModalConfig['component'],
-            props: config.props as unknown as CustomModalConfig['props'],
-            closeOnBackdrop: config.closeOnBackdrop,
+            ...config,
         };
 
-        return this.showModalFn(modalConfig);
+        return this.showModalFn(modalConfig as Omit<ModalConfig, 'id'>);
     }
 
     update<P extends CustomModalInjectedProps>(

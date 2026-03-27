@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -27,29 +27,6 @@ const ENV_KEY_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 const HEADER_KEY_REGEX = /^[A-Za-z0-9-]+$/;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        width: '100%',
-        maxWidth: 720,
-        maxHeight: 720,
-        backgroundColor: theme.colors.groupped.background,
-        borderRadius: 14,
-        overflow: 'hidden',
-    },
-    header: {
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 8,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-    },
-    headerText: {
-        ...Typography.default('semiBold'),
-        fontSize: 16,
-        color: theme.colors.text,
-    },
     groupContent: {
         padding: 16,
         gap: 12,
@@ -84,7 +61,7 @@ function validateKey(kind: ValueRefKind, key: string): boolean {
     return HEADER_KEY_REGEX.test(key);
 }
 
-function titleForKind(kind: ValueRefKind): string {
+export function getValueRefEditorModalTitle(kind: ValueRefKind): string {
     if (kind === 'env') return t('settings.mcpServersEnvEditorTitle');
     return t('settings.mcpServersHeadersEditorTitle');
 }
@@ -147,6 +124,11 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                 selectedId: secretId,
                 onSelectId: (id) => setSecretId(id),
             },
+            chrome: {
+                kind: 'card',
+                title: t('settings.mcpServersPickSecretTitle'),
+                dimensions: { size: 'lg' },
+            },
             closeOnBackdrop: true,
         });
     }, [secretId]);
@@ -170,117 +152,100 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
     const deleteAllowed = typeof props.onDelete === 'function';
 
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.headerText}>{titleForKind(props.kind)}</Text>
-                <Pressable
-                    onPress={props.onClose}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
-                >
-                    <Ionicons
-                        name="close"
-                        size={22}
-                        color={theme.colors.textSecondary}
+        <ItemList keyboardShouldPersistTaps="handled">
+            <ItemGroup>
+                <View style={styles.groupContent}>
+                    <Text style={styles.fieldLabel}>{props.kind === 'env' ? t('settings.mcpServersEnvKeyLabel') : t('settings.mcpServersHeaderKeyLabel')}</Text>
+                    <TextInput
+                        style={styles.textInput}
+                        value={keyText}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        onChangeText={setKeyText}
+                        placeholder={props.kind === 'env' ? t('settings.mcpServersEnvKeyPlaceholder') : t('settings.mcpServersHeaderKeyPlaceholder')}
+                        placeholderTextColor={theme.colors.input.placeholder}
+                        testID="mcp.valueRefEditor.key"
                     />
-                </Pressable>
-            </View>
 
-            <ItemList keyboardShouldPersistTaps="handled">
-                <ItemGroup>
-                    <View style={styles.groupContent}>
-                        <Text style={styles.fieldLabel}>{props.kind === 'env' ? t('settings.mcpServersEnvKeyLabel') : t('settings.mcpServersHeaderKeyLabel')}</Text>
-                        <TextInput
-                            style={styles.textInput}
-                            value={keyText}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            onChangeText={setKeyText}
-                            placeholder={props.kind === 'env' ? t('settings.mcpServersEnvKeyPlaceholder') : t('settings.mcpServersHeaderKeyPlaceholder')}
-                            placeholderTextColor={theme.colors.input.placeholder}
-                            testID="mcp.valueRefEditor.key"
-                        />
+                    <DropdownMenu
+                        open={sourceMenuOpen}
+                        onOpenChange={setSourceMenuOpen}
+                        items={sourceItems}
+                        selectedId={source}
+                        onSelect={(id) => {
+                            const next = id as ValueRefSource;
+                            setSource(next);
+                            if (next === 'literal') return;
+                            if (!secretId) {
+                                pickSecret();
+                            }
+                        }}
+                        itemTrigger={{
+                            title: t('settings.mcpServersValueSourceTitle'),
+                            subtitle: source === 'literal' ? t('settings.mcpServersValueSourceLiteral') : t('settings.mcpServersValueSourceSavedSecret'),
+                            icon: <Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.purple} />,
+                        }}
+                        rowKind="item"
+                        connectToTrigger
+                        variant="default"
+                    />
+                </View>
+            </ItemGroup>
 
-                        <DropdownMenu
-                            open={sourceMenuOpen}
-                            onOpenChange={setSourceMenuOpen}
-                            items={sourceItems}
-                            selectedId={source}
-                            onSelect={(id) => {
-                                const next = id as ValueRefSource;
-                                setSource(next);
-                                if (next === 'literal') return;
-                                if (!secretId) {
-                                    pickSecret();
-                                }
-                            }}
-                            itemTrigger={{
-                                title: t('settings.mcpServersValueSourceTitle'),
-                                subtitle: source === 'literal' ? t('settings.mcpServersValueSourceLiteral') : t('settings.mcpServersValueSourceSavedSecret'),
-                                icon: <Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.purple} />,
-                            }}
-                            rowKind="item"
-                            connectToTrigger
-                            variant="default"
-                        />
-                    </View>
-                </ItemGroup>
+            <ItemGroup>
+                <View style={styles.groupContent}>
+                    {source === 'literal' ? (
+                        <>
+                            <Text style={styles.fieldLabel}>{t('settings.mcpServersValueLiteralLabel')}</Text>
+                            <TextInput
+                                style={styles.textInput}
+                                value={literalValue}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                multiline
+                                onChangeText={setLiteralValue}
+                                placeholder={t('settings.mcpServersValueLiteralPlaceholder')}
+                                placeholderTextColor={theme.colors.input.placeholder}
+                                testID="mcp.valueRefEditor.literal"
+                            />
+                        </>
+                    ) : (
+                        <>
+                            <Text style={styles.fieldLabel}>{t('settings.mcpServersValueSecretLabel')}</Text>
+                            <Item
+                                testID="mcp.valueRefEditor.secret"
+                                title={secretName ?? t('settings.mcpServersValueSecretSelect')}
+                                subtitle={secretId ? secretId : t('settings.mcpServersValueSecretSelectSubtitle')}
+                                icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.indigo} />}
+                                onPress={pickSecret}
+                            />
+                        </>
+                    )}
+                </View>
+            </ItemGroup>
 
-                <ItemGroup>
-                    <View style={styles.groupContent}>
-                        {source === 'literal' ? (
-                            <>
-                                <Text style={styles.fieldLabel}>{t('settings.mcpServersValueLiteralLabel')}</Text>
-                                <TextInput
-                                    style={styles.textInput}
-                                    value={literalValue}
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
-                                    multiline
-                                    onChangeText={setLiteralValue}
-                                    placeholder={t('settings.mcpServersValueLiteralPlaceholder')}
-                                    placeholderTextColor={theme.colors.input.placeholder}
-                                    testID="mcp.valueRefEditor.literal"
-                                />
-                            </>
-                        ) : (
-                            <>
-                                <Text style={styles.fieldLabel}>{t('settings.mcpServersValueSecretLabel')}</Text>
-                                <Item
-                                    testID="mcp.valueRefEditor.secret"
-                                    title={secretName ?? t('settings.mcpServersValueSecretSelect')}
-                                    subtitle={secretId ? secretId : t('settings.mcpServersValueSecretSelectSubtitle')}
-                                    icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.indigo} />}
-                                    onPress={pickSecret}
-                                />
-                            </>
-                        )}
-                    </View>
-                </ItemGroup>
+            <ItemGroup title={t('common.actions')}>
+                <Item
+                    testID="mcp.valueRefEditor.save"
+                    title={t('common.save')}
+                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.success} />}
+                    onPress={onSave}
+                    disabled={!canSave}
+                />
 
-                <ItemGroup title={t('common.actions')}>
+                {deleteAllowed ? (
                     <Item
-                        testID="mcp.valueRefEditor.save"
-                        title={t('common.save')}
-                        icon={<Ionicons name="save-outline" size={29} color={theme.colors.success} />}
-                        onPress={onSave}
-                        disabled={!canSave}
+                        testID="mcp.valueRefEditor.delete"
+                        title={t('common.delete')}
+                        icon={<Ionicons name="trash-outline" size={29} color={theme.colors.textDestructive} />}
+                        onPress={() => {
+                            props.onDelete?.();
+                            props.onClose();
+                        }}
+                        destructive
                     />
-
-                    {deleteAllowed ? (
-                        <Item
-                            testID="mcp.valueRefEditor.delete"
-                            title={t('common.delete')}
-                            icon={<Ionicons name="trash-outline" size={29} color={theme.colors.textDestructive} />}
-                            onPress={() => {
-                                props.onDelete?.();
-                                props.onClose();
-                            }}
-                            destructive
-                        />
-                    ) : null}
-                </ItemGroup>
-            </ItemList>
-        </View>
+                ) : null}
+            </ItemGroup>
+        </ItemList>
     );
 }

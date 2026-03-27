@@ -16,6 +16,7 @@ export async function openSessionHandoffFailureRecoveryModal(params: Readonly<{
             props: {
                 ...params,
                 onResolve: resolve,
+                onRequestClose: () => resolve(null),
             },
         });
     });

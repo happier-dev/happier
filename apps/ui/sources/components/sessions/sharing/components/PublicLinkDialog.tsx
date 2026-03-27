@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useState } from 'react';
-import { View, Switch, Platform, Linking, useWindowDimensions, ScrollView, Pressable } from 'react-native';
+import { View, Switch, Platform, Linking, ScrollView } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -8,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { BaseModal } from '@/modal/components/BaseModal';
+import { ModalCardFrame } from '@/modal/components/card';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -15,6 +16,7 @@ import { PublicSessionShare } from '@/sync/domains/social/sharingTypes';
 import { HappyError } from '@/utils/errors/errors';
 import { QRCode } from '@/components/qr';
 import { Text } from '@/components/ui/text/Text';
+import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 
 
 export interface PublicLinkDialogProps {
@@ -36,7 +38,6 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
 }: PublicLinkDialogProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const { height: windowHeight } = useWindowDimensions();
 
     const [shareUrl, setShareUrl] = useState<string | null>(null);
     const [isConfiguring, setIsConfiguring] = useState(false);
@@ -45,11 +46,7 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
     const [isConsentRequired, setIsConsentRequired] = useState(true);
 
     const scrollRef = React.useRef<ScrollView>(null);
-    const scrollYRef = React.useRef(0);
-
-    const maxHeight = React.useMemo(() => {
-        return Math.min(720, Math.max(360, Math.floor(windowHeight * 0.85)));
-    }, [windowHeight]);
+    const wheelScrollHandlers = useScrollViewWheelScrollTo(scrollRef);
 
     const buildPublicShareUrl = React.useCallback((token: string): string => {
         const path = `/share/${token}`;
@@ -65,24 +62,6 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
         const configuredWebAppUrl = (process.env.EXPO_PUBLIC_HAPPY_WEBAPP_URL || '').trim();
         const webAppUrl = configuredWebAppUrl || 'https://app.happier.dev';
         return `${webAppUrl}${path}`;
-    }, []);
-
-    const handleScroll = React.useCallback((e: any) => {
-        scrollYRef.current = e?.nativeEvent?.contentOffset?.y ?? 0;
-    }, []);
-
-    // On web, RN ScrollView inside a modal doesn't reliably respond to mouse wheel / trackpad scroll.
-    // Manually translate wheel deltas into scrollTo.
-    const handleWheel = React.useCallback((e: any) => {
-        if (Platform.OS !== 'web') return;
-        const deltaY = e?.deltaY;
-        if (typeof deltaY !== 'number' || Number.isNaN(deltaY)) return;
-
-        if (e?.cancelable) {
-            e?.preventDefault?.();
-        }
-        e?.stopPropagation?.();
-        scrollRef.current?.scrollTo({ y: Math.max(0, scrollYRef.current + deltaY), animated: false });
     }, []);
 
     useEffect(() => {
@@ -167,88 +146,83 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
 
     return (
         <BaseModal visible={true} onClose={onCancel}>
-            <View
-                style={[styles.container, { height: maxHeight, maxHeight }]}
-                {...(Platform.OS === 'web' ? ({ onWheel: handleWheel } as any) : {})}
+            <ModalCardFrame
+                title={t('session.sharing.publicLink')}
+                onClose={onCancel}
+                layout="fill"
+                dimensions={{ width: 560, maxHeightRatio: 0.85, size: 'md' }}
             >
-                <View style={styles.header}>
-                    <Text style={styles.headerTitle}>{t('session.sharing.publicLink')}</Text>
-                    <Pressable
-                        onPress={onCancel}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
-                    >
-                        <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
-                    </Pressable>
-                </View>
-
-                <ScrollView
-                    ref={scrollRef}
-                    style={styles.scroll}
-                    contentContainerStyle={styles.scrollContent}
-                    showsVerticalScrollIndicator
-                    nestedScrollEnabled
-                    keyboardShouldPersistTaps="handled"
-                    onScroll={handleScroll}
-                    scrollEventThrottle={16}
+                <View
+                    style={styles.body}
+                    {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
                 >
-                    {!publicShare || isConfiguring ? (
-                        <>
-                            <View style={styles.section}>
-                                <Text style={styles.descriptionText}>
-                                    {t('session.sharing.publicLinkDescription')}
-                                </Text>
-                            </View>
+                    <ScrollView
+                        ref={scrollRef}
+                        style={styles.scroll}
+                        contentContainerStyle={styles.scrollContent}
+                        showsVerticalScrollIndicator
+                        nestedScrollEnabled
+                        keyboardShouldPersistTaps="handled"
+                        onScroll={wheelScrollHandlers.onScroll}
+                        scrollEventThrottle={16}
+                    >
+                        {!publicShare || isConfiguring ? (
+                            <>
+                                <View style={styles.section}>
+                                    <Text style={styles.descriptionText}>
+                                        {t('session.sharing.publicLinkDescription')}
+                                    </Text>
+                                </View>
 
-                            <ItemGroup title={t('session.sharing.expiresIn')}>
-                                <Item
-                                    title={t('session.sharing.days7')}
-                                    leftElement={<Radio selected={expiresInDays === 7} />}
-                                    selected={expiresInDays === 7}
-                                    onPress={() => setExpiresInDays(7)}
-                                    showChevron={false}
-                                />
-                                <Item
-                                    title={t('session.sharing.days30')}
-                                    leftElement={<Radio selected={expiresInDays === 30} />}
-                                    selected={expiresInDays === 30}
-                                    onPress={() => setExpiresInDays(30)}
-                                    showChevron={false}
-                                />
-                                <Item
-                                    title={t('session.sharing.never')}
-                                    leftElement={<Radio selected={expiresInDays === undefined} />}
-                                    selected={expiresInDays === undefined}
-                                    onPress={() => setExpiresInDays(undefined)}
-                                    showChevron={false}
-                                    showDivider={false}
-                                />
-                            </ItemGroup>
+                                <ItemGroup title={t('session.sharing.expiresIn')}>
+                                    <Item
+                                        title={t('session.sharing.days7')}
+                                        leftElement={<Radio selected={expiresInDays === 7} />}
+                                        selected={expiresInDays === 7}
+                                        onPress={() => setExpiresInDays(7)}
+                                        showChevron={false}
+                                    />
+                                    <Item
+                                        title={t('session.sharing.days30')}
+                                        leftElement={<Radio selected={expiresInDays === 30} />}
+                                        selected={expiresInDays === 30}
+                                        onPress={() => setExpiresInDays(30)}
+                                        showChevron={false}
+                                    />
+                                    <Item
+                                        title={t('session.sharing.never')}
+                                        leftElement={<Radio selected={expiresInDays === undefined} />}
+                                        selected={expiresInDays === undefined}
+                                        onPress={() => setExpiresInDays(undefined)}
+                                        showChevron={false}
+                                        showDivider={false}
+                                    />
+                                </ItemGroup>
 
-                            <ItemGroup title={t('session.sharing.maxUsesLabel')}>
-                                <Item
-                                    title={t('session.sharing.unlimited')}
-                                    leftElement={<Radio selected={maxUses === undefined} />}
-                                    selected={maxUses === undefined}
-                                    onPress={() => setMaxUses(undefined)}
-                                    showChevron={false}
-                                />
-                                <Item
-                                    title={t('session.sharing.uses10')}
-                                    leftElement={<Radio selected={maxUses === 10} />}
-                                    selected={maxUses === 10}
-                                    onPress={() => setMaxUses(10)}
-                                    showChevron={false}
-                                />
-                                <Item
-                                    title={t('session.sharing.uses50')}
-                                    leftElement={<Radio selected={maxUses === 50} />}
-                                    selected={maxUses === 50}
-                                    onPress={() => setMaxUses(50)}
-                                    showChevron={false}
-                                    showDivider={false}
-                                />
-                            </ItemGroup>
+                                <ItemGroup title={t('session.sharing.maxUsesLabel')}>
+                                    <Item
+                                        title={t('session.sharing.unlimited')}
+                                        leftElement={<Radio selected={maxUses === undefined} />}
+                                        selected={maxUses === undefined}
+                                        onPress={() => setMaxUses(undefined)}
+                                        showChevron={false}
+                                    />
+                                    <Item
+                                        title={t('session.sharing.uses10')}
+                                        leftElement={<Radio selected={maxUses === 10} />}
+                                        selected={maxUses === 10}
+                                        onPress={() => setMaxUses(10)}
+                                        showChevron={false}
+                                    />
+                                    <Item
+                                        title={t('session.sharing.uses50')}
+                                        leftElement={<Radio selected={maxUses === 50} />}
+                                        selected={maxUses === 50}
+                                        onPress={() => setMaxUses(50)}
+                                        showChevron={false}
+                                        showDivider={false}
+                                    />
+                                </ItemGroup>
 
                             <ItemGroup>
                                 <Item
@@ -370,29 +344,9 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        width: '92%',
-        maxWidth: 560,
-        backgroundColor: theme.colors.groupped.background,
-        borderRadius: 16,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        flexShrink: 1,
-    },
-    header: {
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-    },
-    headerTitle: {
-        fontSize: 17,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
+    body: {
+        flex: 1,
+        minHeight: 0,
     },
     scroll: {
         flex: 1,

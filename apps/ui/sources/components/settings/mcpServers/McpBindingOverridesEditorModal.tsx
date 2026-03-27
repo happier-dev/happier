@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -22,38 +22,13 @@ import { Typography } from '@/constants/Typography';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { t } from '@/text';
 
-import { ValueRefEditorModal } from '@/components/ui/forms/valueRefs/ValueRefEditorModal';
+import { ValueRefEditorModal, getValueRefEditorModalTitle } from '@/components/ui/forms/valueRefs/ValueRefEditorModal';
 import { McpBindingOverridesValuePatchGroup } from '@/components/settings/mcpServers/bindingOverrides/McpBindingOverridesValuePatchGroup';
 
 const ENV_KEY_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 const HEADER_KEY_REGEX = /^[A-Za-z0-9-]+$/;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        width: '92%',
-        maxWidth: 720,
-        maxHeight: 720,
-        backgroundColor: theme.colors.groupped.background,
-        borderRadius: 16,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        flexShrink: 1,
-    },
-    header: {
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-    },
-    headerText: {
-        fontSize: 17,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
-    },
     fieldLabel: {
         ...Typography.default('semiBold'),
         fontSize: 13,
@@ -107,6 +82,14 @@ export type McpBindingOverridesEditorModalProps = CustomModalInjectedProps & Rea
     onSubmit: (next: McpServerBindingV1) => void;
 }>;
 
+export function getBindingOverridesValueRefEditorChrome(kind: 'env' | 'header') {
+    return {
+        kind: 'card',
+        title: getValueRefEditorModalTitle(kind),
+        preset: 'lg',
+    } as const;
+}
+
 export function McpBindingOverridesEditorModal(props: McpBindingOverridesEditorModalProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -151,6 +134,7 @@ export function McpBindingOverridesEditorModal(props: McpBindingOverridesEditorM
                     return true;
                 },
             },
+            chrome: getBindingOverridesValueRefEditorChrome(params.kind),
             closeOnBackdrop: true,
         });
     }, [props.onChangeSecrets, props.secrets]);
@@ -236,122 +220,109 @@ export function McpBindingOverridesEditorModal(props: McpBindingOverridesEditorM
     ]);
 
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.headerText}>{t('settings.mcpServersBindingOverridesTitle')}</Text>
-                <Pressable
-                    onPress={props.onClose}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
-                >
-                    <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
-                </Pressable>
-            </View>
-
-            <ItemList style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled">
-                {props.serverTransport === 'stdio' ? (
-                    <ItemGroup title={t('settings.mcpServersOverridesStdioTitle')}>
-                        <Item
-                            title={t('settings.mcpServersOverridesCommandTitle')}
-                            subtitle={t('settings.mcpServersOverridesCommandSubtitle')}
-                            icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.purple} />}
-                            rightElement={<Switch value={commandOverrideEnabled} onValueChange={setCommandOverrideEnabled} />}
-                            onPress={() => setCommandOverrideEnabled((v) => !v)}
-                            showChevron={false}
-                        />
-                        {commandOverrideEnabled ? (
-                            <View style={styles.padded}>
-                                <Text style={styles.fieldLabel}>{t('settings.mcpServersFieldCommand')}</Text>
-                                <TextInput
-                                    style={styles.textInput}
-                                    value={commandOverride}
-                                    onChangeText={setCommandOverride}
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
-                                    placeholder="node"
-                                    placeholderTextColor={theme.colors.input.placeholder}
-                                />
-                            </View>
-                        ) : null}
-
-                        <Item
-                            title={t('settings.mcpServersOverridesArgsTitle')}
-                            subtitle={t('settings.mcpServersOverridesArgsSubtitle')}
-                            icon={<Ionicons name="list-outline" size={29} color={theme.colors.accent.blue} />}
-                            rightElement={<Switch value={argsOverrideEnabled} onValueChange={setArgsOverrideEnabled} />}
-                            onPress={() => setArgsOverrideEnabled((v) => !v)}
-                            showChevron={false}
-                        />
-                        {argsOverrideEnabled ? (
-                            <View style={styles.padded}>
-                                <Text style={styles.fieldLabel}>{t('settings.mcpServersFieldArgs')}</Text>
-                                <TextInput
-                                    style={styles.textInput}
-                                    value={argsOverrideText}
-                                    onChangeText={setArgsOverrideText}
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
-                                    multiline
-                                    placeholder={t('settings.mcpServersArgsPlaceholder')}
-                                    placeholderTextColor={theme.colors.input.placeholder}
-                                />
-                            </View>
-                        ) : null}
-                    </ItemGroup>
-                ) : (
-                    <ItemGroup title={t('settings.mcpServersOverridesRemoteTitle')}>
-                        <Item
-                            title={t('settings.mcpServersOverridesUrlTitle')}
-                            subtitle={t('settings.mcpServersOverridesUrlSubtitle')}
-                            icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.purple} />}
-                            rightElement={<Switch value={urlOverrideEnabled} onValueChange={setUrlOverrideEnabled} />}
-                            onPress={() => setUrlOverrideEnabled((v) => !v)}
-                            showChevron={false}
-                        />
-                        {urlOverrideEnabled ? (
-                            <View style={styles.padded}>
-                                <Text style={styles.fieldLabel}>{t('settings.mcpServersFieldUrl')}</Text>
-                                <TextInput
-                                    style={styles.textInput}
-                                    value={urlOverride}
-                                    onChangeText={setUrlOverride}
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
-                                    placeholder="https://example.com/mcp"
-                                    placeholderTextColor={theme.colors.input.placeholder}
-                                />
-                            </View>
-                        ) : null}
-                    </ItemGroup>
-                )}
-
-                <McpBindingOverridesValuePatchGroup
-                    kind="env"
-                    patch={envPatch}
-                    setPatch={setEnvPatch}
-                    openValueRefModal={openValueRefModal}
-                    onPressDeleteKey={() => { void addDeletePatchKey('env'); }}
-                />
-
-                {props.serverTransport === 'stdio' ? null : (
-                    <McpBindingOverridesValuePatchGroup
-                        kind="header"
-                        patch={headersPatch}
-                        setPatch={setHeadersPatch}
-                        openValueRefModal={openValueRefModal}
-                        onPressDeleteKey={() => { void addDeletePatchKey('header'); }}
-                    />
-                )}
-
-                <ItemGroup title={t('common.actions')}>
+        <ItemList style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled">
+            {props.serverTransport === 'stdio' ? (
+                <ItemGroup title={t('settings.mcpServersOverridesStdioTitle')}>
                     <Item
-                        testID="mcp.bindingOverrides.save"
-                        title={t('common.save')}
-                        icon={<Ionicons name="save-outline" size={29} color={theme.colors.success} />}
-                        onPress={onSave}
+                        title={t('settings.mcpServersOverridesCommandTitle')}
+                        subtitle={t('settings.mcpServersOverridesCommandSubtitle')}
+                        icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.purple} />}
+                        rightElement={<Switch value={commandOverrideEnabled} onValueChange={setCommandOverrideEnabled} />}
+                        onPress={() => setCommandOverrideEnabled((v) => !v)}
+                        showChevron={false}
                     />
+                    {commandOverrideEnabled ? (
+                        <View style={styles.padded}>
+                            <Text style={styles.fieldLabel}>{t('settings.mcpServersFieldCommand')}</Text>
+                            <TextInput
+                                style={styles.textInput}
+                                value={commandOverride}
+                                onChangeText={setCommandOverride}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                placeholder="node"
+                                placeholderTextColor={theme.colors.input.placeholder}
+                            />
+                        </View>
+                    ) : null}
+
+                    <Item
+                        title={t('settings.mcpServersOverridesArgsTitle')}
+                        subtitle={t('settings.mcpServersOverridesArgsSubtitle')}
+                        icon={<Ionicons name="list-outline" size={29} color={theme.colors.accent.blue} />}
+                        rightElement={<Switch value={argsOverrideEnabled} onValueChange={setArgsOverrideEnabled} />}
+                        onPress={() => setArgsOverrideEnabled((v) => !v)}
+                        showChevron={false}
+                    />
+                    {argsOverrideEnabled ? (
+                        <View style={styles.padded}>
+                            <Text style={styles.fieldLabel}>{t('settings.mcpServersFieldArgs')}</Text>
+                            <TextInput
+                                style={styles.textInput}
+                                value={argsOverrideText}
+                                onChangeText={setArgsOverrideText}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                multiline
+                                placeholder={t('settings.mcpServersArgsPlaceholder')}
+                                placeholderTextColor={theme.colors.input.placeholder}
+                            />
+                        </View>
+                    ) : null}
                 </ItemGroup>
-            </ItemList>
-        </View>
+            ) : (
+                <ItemGroup title={t('settings.mcpServersOverridesRemoteTitle')}>
+                    <Item
+                        title={t('settings.mcpServersOverridesUrlTitle')}
+                        subtitle={t('settings.mcpServersOverridesUrlSubtitle')}
+                        icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.purple} />}
+                        rightElement={<Switch value={urlOverrideEnabled} onValueChange={setUrlOverrideEnabled} />}
+                        onPress={() => setUrlOverrideEnabled((v) => !v)}
+                        showChevron={false}
+                    />
+                    {urlOverrideEnabled ? (
+                        <View style={styles.padded}>
+                            <Text style={styles.fieldLabel}>{t('settings.mcpServersFieldUrl')}</Text>
+                            <TextInput
+                                style={styles.textInput}
+                                value={urlOverride}
+                                onChangeText={setUrlOverride}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                placeholder="https://example.com/mcp"
+                                placeholderTextColor={theme.colors.input.placeholder}
+                            />
+                        </View>
+                    ) : null}
+                </ItemGroup>
+            )}
+
+            <McpBindingOverridesValuePatchGroup
+                kind="env"
+                patch={envPatch}
+                setPatch={setEnvPatch}
+                openValueRefModal={openValueRefModal}
+                onPressDeleteKey={() => { void addDeletePatchKey('env'); }}
+            />
+
+            {props.serverTransport === 'stdio' ? null : (
+                <McpBindingOverridesValuePatchGroup
+                    kind="header"
+                    patch={headersPatch}
+                    setPatch={setHeadersPatch}
+                    openValueRefModal={openValueRefModal}
+                    onPressDeleteKey={() => { void addDeletePatchKey('header'); }}
+                />
+            )}
+
+            <ItemGroup title={t('common.actions')}>
+                <Item
+                    testID="mcp.bindingOverrides.save"
+                    title={t('common.save')}
+                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.success} />}
+                    onPress={onSave}
+                />
+            </ItemGroup>
+        </ItemList>
     );
 }

@@ -6,6 +6,7 @@ import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { ModalCardFrame } from './card/ModalCardFrame';
 
 
 interface WebPromptModalProps {
@@ -60,20 +61,6 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
     };
 
     const styles = StyleSheet.create({
-        container: {
-            backgroundColor: theme.colors.surface,
-            borderRadius: 14,
-            width: 270,
-            overflow: 'hidden',
-            shadowColor: theme.colors.shadow.color,
-            shadowOffset: {
-                width: 0,
-                height: 2
-            },
-            shadowOpacity: 0.25,
-            shadowRadius: 4,
-            elevation: 5
-        },
         content: {
             paddingHorizontal: 16,
             paddingTop: 20,
@@ -140,7 +127,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
             showBackdrop={showBackdrop}
             zIndexBase={zIndexBase}
         >
-            <View style={styles.container}>
+            <ModalCardFrame dimensions={{ width: 270, maxHeightRatio: 0.48 }}>
                 <View style={styles.content}>
                     <Text style={[styles.title, Typography.default('semiBold')]}>
                         {config.title}
@@ -207,7 +194,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                         </Text>
                     </Pressable>
                 </View>
-            </View>
+            </ModalCardFrame>
         </BaseModal>
     );
 }

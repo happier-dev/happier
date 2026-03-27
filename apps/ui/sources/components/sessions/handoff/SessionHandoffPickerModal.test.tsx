@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { findTestInstanceByTypeWithProps, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
+import type { CustomModalChromeConfig } from '@/modal';
 
 const refreshMachinesThrottledMock = vi.fn(async () => {});
 let credentialsReady = true;
@@ -15,6 +16,34 @@ let machineListByServerIdState: Record<string, any> = {};
 let allMachinesState: any[] = [];
 let sessionsState: any[] = [];
 let sessionsByIdState: Record<string, any> = {};
+
+type CardChrome = Extract<CustomModalChromeConfig, { kind: 'card' }>;
+
+function requireCardChrome(chrome: CustomModalChromeConfig | null): CardChrome {
+    if (chrome?.kind !== 'card') {
+        throw new Error('expected card chrome to be set');
+    }
+    return chrome;
+}
+
+function findElementByTestId(node: React.ReactNode, testID: string): React.ReactElement | null {
+    if (!node) return null;
+    if (Array.isArray(node)) {
+        for (const child of node) {
+            const found = findElementByTestId(child, testID);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    if (!React.isValidElement(node)) {
+        return null;
+    }
+
+    const props = node.props as Record<string, unknown> & { children?: React.ReactNode; testID?: string };
+    if (props.testID === testID) return node;
+    return findElementByTestId(props.children, testID);
+}
 
 vi.mock('@happier-dev/protocol', () => ({
     getActionSpec: () => ({ id: 'session.handoff', title: 'session.handoff.title', description: 'session.handoff.description' }),
@@ -157,10 +186,15 @@ describe('SessionHandoffPickerModal', () => {
         const onResolve = vi.fn();
         const onClose = vi.fn();
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        let chrome: CustomModalChromeConfig | null = null;
+        const setChrome = vi.fn((next: CustomModalChromeConfig | null) => {
+            chrome = next;
+        });
 
         let tree!: ReactTestRenderer;
         tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
+                    setChrome={setChrome}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
@@ -176,10 +210,15 @@ describe('SessionHandoffPickerModal', () => {
             invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
         });
 
-        const startButton = findTestInstanceByTypeWithProps(tree, 'RoundButton' as any, { testID: 'session-handoff-start' });
+        const footer = requireCardChrome(chrome).footer;
+        const startButton = findElementByTestId(footer, 'session-handoff-start');
         expect(startButton).toBeTruthy();
         await act(async () => {
-            await pressTestInstanceAsync(startButton!);
+            const onPress = (startButton!.props as { onPress?: () => unknown }).onPress;
+            if (typeof onPress !== 'function') {
+                throw new Error('expected start button to have an onPress handler');
+            }
+            await onPress();
         });
 
         expect(onResolve).toHaveBeenCalledWith({
@@ -200,10 +239,15 @@ describe('SessionHandoffPickerModal', () => {
         const onResolve = vi.fn();
         const onClose = vi.fn();
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        let chrome: CustomModalChromeConfig | null = null;
+        const setChrome = vi.fn((next: CustomModalChromeConfig | null) => {
+            chrome = next;
+        });
 
         let tree!: ReactTestRenderer;
         tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
+                    setChrome={setChrome}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
@@ -233,9 +277,14 @@ describe('SessionHandoffPickerModal', () => {
         const conflictMenuAfter = dropdownsAfter.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.conflictPolicy.title');
         expect(conflictMenuAfter?.props.selectedId).toBe('replace_existing');
 
-        const startButton = findTestInstanceByTypeWithProps(tree, 'RoundButton' as any, { testID: 'session-handoff-start' });
+        const footer = requireCardChrome(chrome).footer;
+        const startButton = findElementByTestId(footer, 'session-handoff-start');
         await act(async () => {
-            await pressTestInstanceAsync(startButton!);
+            const onPress = (startButton!.props as { onPress?: () => unknown }).onPress;
+            if (typeof onPress !== 'function') {
+                throw new Error('expected start button to have an onPress handler');
+            }
+            await onPress();
         });
 
         expect(onResolve).toHaveBeenCalledWith({
@@ -280,10 +329,15 @@ describe('SessionHandoffPickerModal', () => {
         const onResolve = vi.fn();
         const onClose = vi.fn();
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        let chrome: CustomModalChromeConfig | null = null;
+        const setChrome = vi.fn((next: CustomModalChromeConfig | null) => {
+            chrome = next;
+        });
 
         let tree!: ReactTestRenderer;
         tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
+                    setChrome={setChrome}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
@@ -299,9 +353,14 @@ describe('SessionHandoffPickerModal', () => {
             invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
         });
 
-        const startButton = findTestInstanceByTypeWithProps(tree, 'RoundButton' as any, { testID: 'session-handoff-start' });
+        const footer = requireCardChrome(chrome).footer;
+        const startButton = findElementByTestId(footer, 'session-handoff-start');
         await act(async () => {
-            await pressTestInstanceAsync(startButton!);
+            const onPress = (startButton!.props as { onPress?: () => unknown }).onPress;
+            if (typeof onPress !== 'function') {
+                throw new Error('expected start button to have an onPress handler');
+            }
+            await onPress();
         });
 
         expect(onResolve).toHaveBeenCalledWith({
@@ -458,10 +517,15 @@ describe('SessionHandoffPickerModal', () => {
         const onResolve = vi.fn();
         const onClose = vi.fn();
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        let chrome: CustomModalChromeConfig | null = null;
+        const setChrome = vi.fn((next: CustomModalChromeConfig | null) => {
+            chrome = next;
+        });
 
         let tree!: ReactTestRenderer;
         tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
+                    setChrome={setChrome}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
@@ -514,9 +578,14 @@ describe('SessionHandoffPickerModal', () => {
         expect(ignoredMenuAfterAttempt?.props.selectedId).toBe('include_selected');
         expect(tree.findByType('TextInput' as any).props.value).toBe('dist/**');
 
-        const startButton = findTestInstanceByTypeWithProps(tree, 'RoundButton' as any, { title: 'session.handoff.title' });
+        const footer = requireCardChrome(chrome).footer;
+        const startButton = findElementByTestId(footer, 'session-handoff-start');
         await act(async () => {
-            await pressTestInstanceAsync(startButton!);
+            const onPress = (startButton!.props as { onPress?: () => unknown }).onPress;
+            if (typeof onPress !== 'function') {
+                throw new Error('expected start button to have an onPress handler');
+            }
+            await onPress();
         });
 
         expect(onResolve).toHaveBeenCalledWith({

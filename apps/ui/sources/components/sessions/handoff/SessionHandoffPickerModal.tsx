@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { evaluateSessionHandoffWorkspaceTransferSourcePathSafety, getActionSpec } from '@happier-dev/protocol';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
@@ -40,34 +41,6 @@ type Props = CustomModalInjectedProps & Readonly<{
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: 14,
-        width: 520,
-        maxWidth: '94%',
-        maxHeight: '92%',
-        overflow: 'hidden',
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        elevation: 5,
-    },
-    header: {
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-    },
-    title: {
-        fontSize: 17,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
-    },
     subtitle: {
         fontSize: 13,
         color: theme.colors.textSecondary,
@@ -79,8 +52,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     footer: {
         paddingHorizontal: 16,
         paddingVertical: 14,
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'flex-end',
@@ -135,7 +106,7 @@ function expandHomeRelativePath(rawPath: unknown, homeDir: unknown): string {
     return path;
 }
 
-export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourceMachineId, serverId }: Props) {
+export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessionId, sourceMachineId, serverId }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const actionSpec = getActionSpec('session.handoff');
@@ -280,25 +251,32 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
         });
     }, [conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isDirectSession, onResolve, selectedMachineId, workspaceTransferStrategy]);
 
-    return (
-        <View testID="session-handoff-modal" style={styles.container}>
-            <View style={styles.header}>
-                <View style={{ flex: 1, paddingRight: 12 }}>
-                    <Text style={styles.title}>{actionSpec.title}</Text>
-                    {actionSpec.description ? <Text style={styles.subtitle}>{actionSpec.description}</Text> : null}
-                </View>
-                <Pressable
-                    onPress={handleCancel}
-                    hitSlop={10}
-                    style={({ pressed }) => ({ padding: 2, opacity: pressed ? 0.7 : 1 })}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.close')}
-                >
-                    <Octicons name="x" size={18} color={theme.colors.header.tint} />
-                </Pressable>
-            </View>
+    const footer = React.useMemo(() => (
+        <View style={styles.footer}>
+            <RoundButton display="inverted" title={t('common.cancel')} onPress={handleCancel} />
+            <RoundButton
+                testID="session-handoff-start"
+                title={actionSpec.title}
+                onPress={handleStart}
+                disabled={!selectedMachine || !isMachineOnline(selectedMachine as any)}
+            />
+        </View>
+    ), [actionSpec.title, handleCancel, handleStart, selectedMachine, styles.footer]);
 
-            <View style={styles.body}>
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        title: actionSpec.title,
+        subtitle: actionSpec.description,
+        testID: 'session-handoff-modal',
+        layout: 'fill' as const,
+        dimensions: { width: 520, maxHeightRatio: 0.92 },
+        footer,
+    }), [actionSpec.description, actionSpec.title, footer]);
+
+    useModalCardChrome(setChrome, chrome);
+
+    return (
+        <View style={styles.body}>
                 <View style={styles.bodyHeader}>
                     <Text style={styles.subtitle}>{t('newSession.selectMachineTitle')}</Text>
                 </View>
@@ -509,16 +487,5 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                     ) : null}
                 </ItemList>
             </View>
-
-            <View style={styles.footer}>
-                <RoundButton display="inverted" title={t('common.cancel')} onPress={handleCancel} />
-                <RoundButton
-                    testID="session-handoff-start"
-                    title={actionSpec.title}
-                    onPress={handleStart}
-                    disabled={!selectedMachine || !isMachineOnline(selectedMachine as any)}
-                />
-            </View>
-        </View>
     );
 }

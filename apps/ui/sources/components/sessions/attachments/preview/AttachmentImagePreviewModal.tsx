@@ -9,6 +9,7 @@ import { useSessionImagePreview } from '@/components/sessions/files/content/imag
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
 
 export type AttachmentImagePreviewModalImage =
@@ -33,35 +34,6 @@ type AttachmentImagePreviewModalProps = CustomModalInjectedProps & Readonly<{
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: 16,
-        overflow: 'hidden',
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 8,
-        elevation: 8,
-    },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-    },
-    title: {
-        flex: 1,
-        color: theme.colors.text,
-        fontSize: 15,
-        ...Typography.default('semiBold'),
-    },
-    closeButton: {
-        padding: 2,
-    },
     body: {
         flex: 1,
         backgroundColor: theme.colors.surfaceHigh,
@@ -191,77 +163,78 @@ export const AttachmentImagePreviewModal = React.memo(function AttachmentImagePr
 
     if (!currentImage) return null;
 
+    const maxHeightRatio = height > 0 ? (containerHeight / height) : 0.92;
+    const chromeDimensions = React.useMemo(() => ({
+        width: containerWidth,
+        maxHeightRatio,
+        size: 'lg' as const,
+    }), [containerWidth, maxHeightRatio]);
+
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        title: currentImage.title,
+        testID: 'attachment-image-preview-modal',
+        titleTestID: 'attachment-image-preview-title',
+        dimensions: chromeDimensions,
+        layout: 'fill' as const,
+    }), [chromeDimensions, currentImage.title]);
+
+    useModalCardChrome(props.setChrome, chrome);
+
     return (
-        <View testID="attachment-image-preview-modal" style={[styles.container, { width: containerWidth, height: containerHeight }]}>
-            <View style={styles.header}>
-                <Text testID="attachment-image-preview-title" numberOfLines={1} style={styles.title}>
-                    {currentImage.title}
-                </Text>
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.close')}
-                    hitSlop={10}
-                    onPress={props.onClose}
-                    style={({ pressed }) => [styles.closeButton, pressed ? { opacity: 0.7 } : null]}
-                >
-                    <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
-                </Pressable>
-            </View>
+        <View style={styles.body}>
+            <Pressable
+                testID="attachment-image-preview-surface"
+                style={styles.imageSurface}
+                onHoverIn={Platform.OS === 'web' ? () => setIsHovered(true) : undefined}
+                onHoverOut={Platform.OS === 'web' ? () => setIsHovered(false) : undefined}
+            >
+                <AttachmentImagePreviewCurrentImage image={currentImage} />
 
-            <View style={styles.body}>
-                <Pressable
-                    testID="attachment-image-preview-surface"
-                    style={styles.imageSurface}
-                    onHoverIn={Platform.OS === 'web' ? () => setIsHovered(true) : undefined}
-                    onHoverOut={Platform.OS === 'web' ? () => setIsHovered(false) : undefined}
-                >
-                    <AttachmentImagePreviewCurrentImage image={currentImage} />
+                {shouldShowNavigation ? (
+                    <>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={t('common.previous')}
+                            disabled={!canGoPrevious}
+                            hitSlop={10}
+                            onPress={() => {
+                                if (!canGoPrevious) return;
+                                setCurrentIndex((value) => Math.max(0, value - 1));
+                            }}
+                            style={({ pressed }) => [
+                                styles.navButton,
+                                styles.navButtonLeft,
+                                !canGoPrevious ? styles.navButtonDisabled : null,
+                                pressed && canGoPrevious ? { opacity: 0.85 } : null,
+                            ]}
+                            testID="attachment-image-preview-previous"
+                        >
+                            <Ionicons name="chevron-back" size={24} color={theme.colors.overlay.text} />
+                        </Pressable>
 
-                    {shouldShowNavigation ? (
-                        <>
-                            <Pressable
-                                accessibilityRole="button"
-                                accessibilityLabel={t('common.previous')}
-                                disabled={!canGoPrevious}
-                                hitSlop={10}
-                                onPress={() => {
-                                    if (!canGoPrevious) return;
-                                    setCurrentIndex((value) => Math.max(0, value - 1));
-                                }}
-                                style={({ pressed }) => [
-                                    styles.navButton,
-                                    styles.navButtonLeft,
-                                    !canGoPrevious ? styles.navButtonDisabled : null,
-                                    pressed && canGoPrevious ? { opacity: 0.85 } : null,
-                                ]}
-                                testID="attachment-image-preview-previous"
-                            >
-                                <Ionicons name="chevron-back" size={24} color={theme.colors.overlay.text} />
-                            </Pressable>
-
-                            <Pressable
-                                accessibilityRole="button"
-                                accessibilityLabel={t('common.next')}
-                                disabled={!canGoNext}
-                                hitSlop={10}
-                                onPress={() => {
-                                    if (!canGoNext) return;
-                                    setCurrentIndex((value) => Math.min(props.images.length - 1, value + 1));
-                                }}
-                                style={({ pressed }) => [
-                                    styles.navButton,
-                                    styles.navButtonRight,
-                                    !canGoNext ? styles.navButtonDisabled : null,
-                                    pressed && canGoNext ? { opacity: 0.85 } : null,
-                                ]}
-                                testID="attachment-image-preview-next"
-                            >
-                                <Ionicons name="chevron-forward" size={24} color={theme.colors.overlay.text} />
-                            </Pressable>
-                        </>
-                    ) : null}
-                </Pressable>
-            </View>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={t('common.next')}
+                            disabled={!canGoNext}
+                            hitSlop={10}
+                            onPress={() => {
+                                if (!canGoNext) return;
+                                setCurrentIndex((value) => Math.min(props.images.length - 1, value + 1));
+                            }}
+                            style={({ pressed }) => [
+                                styles.navButton,
+                                styles.navButtonRight,
+                                !canGoNext ? styles.navButtonDisabled : null,
+                                pressed && canGoNext ? { opacity: 0.85 } : null,
+                            ]}
+                            testID="attachment-image-preview-next"
+                        >
+                            <Ionicons name="chevron-forward" size={24} color={theme.colors.overlay.text} />
+                        </Pressable>
+                    </>
+                ) : null}
+            </Pressable>
         </View>
     );
 });

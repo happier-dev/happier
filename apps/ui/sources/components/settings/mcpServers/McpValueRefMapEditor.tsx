@@ -10,7 +10,7 @@ import { Modal } from '@/modal';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { t } from '@/text';
 
-import { ValueRefEditorModal } from '@/components/ui/forms/valueRefs/ValueRefEditorModal';
+import { ValueRefEditorModal, getValueRefEditorModalTitle } from '@/components/ui/forms/valueRefs/ValueRefEditorModal';
 
 type ValueRefKind = 'env' | 'header';
 
@@ -65,6 +65,11 @@ export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(pro
                 onChangeSecrets: props.onChangeSecrets,
                 onDelete: params.onDelete ?? null,
                 onSubmit: params.onSubmit,
+            },
+            chrome: {
+                kind: 'card',
+                title: getValueRefEditorModalTitle(props.kind),
+                dimensions: { size: 'lg' },
             },
             closeOnBackdrop: true,
         });

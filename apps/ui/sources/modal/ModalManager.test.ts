@@ -1,4 +1,6 @@
+import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 const platformState = { os: 'ios' as 'ios' | 'web' };
 
@@ -142,5 +144,57 @@ describe('Modal.prompt', () => {
 
         expect(onPressSpy).toHaveBeenCalledTimes(1);
         await expect(promise).resolves.toBeUndefined();
+    });
+
+    it('accepts chrome-backed custom modal props and keeps typed updates intact', async () => {
+        const { Modal } = await import('./ModalManager');
+
+        type ChromeModalProps = Readonly<{
+            label: string;
+            onClose: () => void;
+        }>;
+
+        function ChromeModal(props: ChromeModalProps) {
+            return React.createElement('ChromeModal', props);
+        }
+
+        let lastConfig: any = null;
+        Modal.setFunctions(
+            (config) => {
+                lastConfig = config;
+                return 'chrome-1';
+            },
+            () => {},
+            () => {},
+        );
+
+        const modalId = Modal.show({
+            component: ChromeModal,
+            props: {
+                label: 'browse',
+            },
+            onRequestClose: vi.fn(),
+            chrome: {
+                kind: 'card',
+                title: 'Browse provider sessions',
+                subtitle: 'Pick a session',
+                layout: 'fill',
+                dimensions: {
+                    size: 'lg',
+                },
+            },
+        });
+
+        expect(modalId).toBe('chrome-1');
+        expect(lastConfig?.chrome?.kind).toBe('card');
+        expect(lastConfig?.chrome?.title).toBe('Browse provider sessions');
+        expect(lastConfig?.chrome?.dimensions?.size).toBe('lg');
+
+        Modal.update<ChromeModalProps>(modalId, { label: 'updated' });
+
+        // @ts-expect-error - invalid props must remain rejected by the type surface.
+        Modal.update<ChromeModalProps>(modalId, { missing: true });
+
+        act(() => {});
     });
 });

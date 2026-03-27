@@ -2,12 +2,18 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installModalComponentCommonModuleMocks } from './modalComponentTestHelpers';
+import { ModalCardFrame } from './WebAlertModal';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const baseModalSpy = vi.fn();
+
 vi.mock('./BaseModal', () => ({
-    BaseModal: ({ children }: any) => React.createElement('BaseModal', null, children),
+    BaseModal: (props: any) => {
+        baseModalSpy(props);
+        return React.createElement('BaseModal', props, props.children);
+    },
 }));
 
 installModalComponentCommonModuleMocks({
@@ -40,9 +46,38 @@ function getNodeByTestID(screen: { findByTestId: (testID: string) => any }, test
 }
 
 describe('WebAlertModal', () => {
+    it('wraps the dialog content in the shared card frame and keeps backdrop dismissal disabled', async () => {
+        const { WebAlertModal } = await import('./WebAlertModal');
+
+        baseModalSpy.mockClear();
+        const onClose = vi.fn();
+        const onConfirm = vi.fn();
+
+        await renderScreen(<WebAlertModal
+                    config={{
+                        id: 'test-confirm',
+                        type: 'confirm',
+                        title: 'Push local commits',
+                        message: 'Remote: origin',
+                        cancelText: 'Cancel',
+                        confirmText: 'Push',
+                    }}
+                    onClose={onClose}
+                    onConfirm={onConfirm}
+                />);
+
+        const [baseModalProps] = baseModalSpy.mock.calls.at(-1)!;
+        expect(baseModalProps.closeOnBackdrop).toBe(false);
+        expect(baseModalProps.showBackdrop).toBe(true);
+
+        const modalCardFrame = React.Children.toArray(baseModalProps.children).find((child: any) => child.type === ModalCardFrame);
+        expect(modalCardFrame).toBeDefined();
+    });
+
     it('renders confirm buttons as accessible Pressables on web', async () => {
         const { WebAlertModal } = await import('./WebAlertModal');
 
+        baseModalSpy.mockClear();
         const onClose = vi.fn();
         const onConfirm = vi.fn();
 

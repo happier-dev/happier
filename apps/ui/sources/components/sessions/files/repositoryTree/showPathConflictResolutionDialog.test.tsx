@@ -22,7 +22,7 @@ installRepositoryTreeCommonModuleMocks({
 });
 
 describe('showPathConflictResolutionDialog', () => {
-    it('hides the modal when the user picks a conflict strategy', async () => {
+    it('closes the modal when the user picks a conflict strategy', async () => {
         showSpy.mockReset();
         hideSpy.mockReset();
         showSpy.mockReturnValue('modal-1');
@@ -39,9 +39,10 @@ describe('showPathConflictResolutionDialog', () => {
         const modalConfig = showSpy.mock.calls[0]?.[0];
         expect(modalConfig).toBeDefined();
 
+        const onClose = vi.fn();
         const screen = await renderScreen(React.createElement(modalConfig.component, {
             ...(modalConfig.props ?? {}),
-            onClose: vi.fn(),
+            onClose,
         }));
 
         const skip = screen.findByTestId('upload-conflicts-skip');
@@ -49,6 +50,6 @@ describe('showPathConflictResolutionDialog', () => {
         await screen.pressByTestIdAsync('upload-conflicts-skip');
 
         await expect(promise).resolves.toBe('skip');
-        expect(hideSpy).toHaveBeenCalledWith('modal-1');
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });

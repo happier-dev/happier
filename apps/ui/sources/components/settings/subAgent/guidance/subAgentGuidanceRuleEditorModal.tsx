@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, ScrollView, View, useWindowDimensions } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
@@ -13,6 +13,8 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { ExecutionRunsGuidanceEntry } from '@/sync/domains/settings/executionRunsGuidance';
 import { t } from '@/text';
@@ -41,10 +43,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
     mode: 'create' | 'edit';
     entry: ExecutionRunsGuidanceEntry;
     onResolve: (value: SubAgentGuidanceRuleEditorResult | null) => void;
-    onClose: () => void;
-}>) {
+}> & CustomModalInjectedProps) {
     const { theme } = useUnistyles();
-    const windowDimensions = useWindowDimensions();
     const enabledAgentIds = useEnabledAgentIds();
     const popoverBoundaryRef = React.useRef<View>(null);
     const [openPicker, setOpenPicker] = React.useState<null | 'backend' | 'model' | 'intent'>(null);
@@ -96,18 +96,6 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
         capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
     });
 
-    const modalWidth = React.useMemo(() => {
-        const raw = Number(windowDimensions?.width ?? 0);
-        if (!Number.isFinite(raw) || raw <= 0) return 640;
-        return Math.min(640, Math.max(320, Math.floor(raw * 0.94)));
-    }, [windowDimensions?.width]);
-
-    const modalMaxHeight = React.useMemo(() => {
-        const raw = Number(windowDimensions?.height ?? 0);
-        if (!Number.isFinite(raw) || raw <= 0) return 760;
-        return Math.min(760, Math.max(360, Math.floor(raw * 0.92)));
-    }, [windowDimensions?.height]);
-
     const save = React.useCallback(() => {
         if (!canSave) return;
         const next: ExecutionRunsGuidanceEntry = {
@@ -123,20 +111,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                 : {}),
         };
         props.onResolve({ kind: 'save', entry: next });
+        props.onClose();
     }, [backendTarget, canSave, description, enabled, exampleToolCalls, intent, modelId, props, title]);
-
-    const containerStyle = {
-        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
-        borderRadius: 14,
-        width: modalWidth,
-        maxHeight: modalMaxHeight,
-        overflow: 'hidden' as const,
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        elevation: 5,
-    };
 
     const fieldInputStyle = {
         borderWidth: 1,
@@ -180,25 +156,59 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
         }
     })();
 
-    return (
-        <View ref={popoverBoundaryRef} style={containerStyle}>
-            <View
-                style={{
-                    paddingHorizontal: 20,
-                    paddingTop: 16,
-                    paddingBottom: 12,
-                    borderBottomWidth: 1,
-                    borderBottomColor: theme.colors.divider,
-                    backgroundColor: theme.colors.surface,
-                }}
-            >
-                <Text style={{ fontSize: 16, color: theme.colors.text, fontWeight: '600' }}>
-                    {props.mode === 'create'
-                        ? t('subAgentGuidance.ruleEditor.header.newRule')
-                        : t('subAgentGuidance.ruleEditor.header.editRule')}
-                </Text>
+    const footer = React.useMemo(() => (
+        <View
+            style={{
+                paddingHorizontal: 16,
+                paddingVertical: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 10,
+            }}
+        >
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+                <RoundButton
+                    size="normal"
+                    display="inverted"
+                    title={t('common.cancel')}
+                    onPress={() => {
+                        props.onResolve(null);
+                        props.onClose();
+                    }}
+                />
+                {props.mode === 'edit' ? (
+                    <RoundButton
+                        size="normal"
+                        display="inverted"
+                        title={t('common.delete')}
+                        textStyle={{ color: theme.colors.textDestructive }}
+                        onPress={() => {
+                            props.onResolve({ kind: 'delete' });
+                            props.onClose();
+                        }}
+                    />
+                ) : null}
             </View>
+            <RoundButton size="normal" title={t('common.save')} disabled={!canSave} onPress={save} />
+        </View>
+    ), [canSave, props, save, theme.colors.textDestructive]);
 
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        title: props.mode === 'create'
+            ? t('subAgentGuidance.ruleEditor.header.newRule')
+            : t('subAgentGuidance.ruleEditor.header.editRule'),
+        testID: 'sub-agent-guidance-rule-editor-modal',
+        layout: 'fill' as const,
+        dimensions: { width: 640, maxHeightRatio: 0.92, size: 'lg' as const },
+        footer,
+    }), [footer, props.mode]);
+
+    useModalCardChrome(props.setChrome, chrome);
+
+    return (
+        <View ref={popoverBoundaryRef} style={{ flex: 1, minHeight: 0 }}>
             <ScrollView
                 style={{ flex: 1 }}
                 keyboardShouldPersistTaps="handled"
@@ -447,39 +457,6 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                     </View>
                 </View>
             </ScrollView>
-
-            <View
-                style={{
-                    borderTopWidth: 1,
-                    borderTopColor: theme.colors.divider,
-                    paddingHorizontal: 16,
-                    paddingVertical: 12,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 10,
-                    backgroundColor: theme.colors.surface,
-                }}
-            >
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <RoundButton
-                        size="normal"
-                        display="inverted"
-                        title={t('common.cancel')}
-                        onPress={() => props.onResolve(null)}
-                    />
-                    {props.mode === 'edit' ? (
-                        <RoundButton
-                            size="normal"
-                            display="inverted"
-                            title={t('common.delete')}
-                            textStyle={{ color: theme.colors.textDestructive }}
-                            onPress={() => props.onResolve({ kind: 'delete' })}
-                        />
-                    ) : null}
-                </View>
-                <RoundButton size="normal" title={t('common.save')} disabled={!canSave} onPress={save} />
-            </View>
         </View>
     );
 }

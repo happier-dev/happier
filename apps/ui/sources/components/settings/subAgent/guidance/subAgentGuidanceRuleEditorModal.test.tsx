@@ -111,6 +111,31 @@ vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
     resolvePreferredMachineId: () => null,
 }));
 
+function SubAgentGuidanceRuleEditorModalHarness(
+    props: React.ComponentProps<typeof import('./subAgentGuidanceRuleEditorModal').SubAgentGuidanceRuleEditorModal> & Readonly<{
+        component: React.ComponentType<any>;
+    }>,
+) {
+    const [chrome, setChrome] = React.useState<any>(null);
+    const { ModalCardFrame } = require('@/modal/components/card/ModalCardFrame') as typeof import('@/modal/components/card/ModalCardFrame');
+    const card = chrome && chrome.kind === 'card' ? chrome : null;
+
+    return (
+        <ModalCardFrame
+            leading={card?.leading}
+            title={card?.title}
+            subtitle={card?.subtitle}
+            actions={card?.actions}
+            footer={card?.footer}
+            layout={card?.layout ?? 'fit'}
+            dimensions={card?.dimensions}
+        >
+            {/* @ts-expect-error - test harness passes through dynamic chrome setter */}
+            <props.component {...props} setChrome={setChrome} />
+        </ModalCardFrame>
+    );
+}
+
 describe('SubAgentGuidanceRuleEditorModal', () => {
     it('disables Save when description is empty', async () => {
         const onResolve = vi.fn();
@@ -118,12 +143,15 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
 
         const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
 
-        const screen = await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
-                    mode: 'create',
-                    entry: { id: 'guidance_1', description: '', enabled: true },
-                    onResolve,
-                    onClose,
-                }));
+        const screen = await renderScreen(
+            <SubAgentGuidanceRuleEditorModalHarness
+                component={SubAgentGuidanceRuleEditorModal as any}
+                mode="create"
+                entry={{ id: 'guidance_1', description: '', enabled: true }}
+                onResolve={onResolve}
+                onClose={onClose}
+            />,
+        );
         const saveButton = findTestInstanceByTypeWithProps(screen.tree, 'RoundButton', { title: 'common.save' });
 
         expect(saveButton).toBeTruthy();
@@ -140,17 +168,20 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
 
         const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
 
-        const screen = await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
-                    mode: 'create',
-                    entry: {
-                        id: 'guidance_2',
-                        description: 'Delegate UI tasks',
-                        enabled: true,
-                        suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-                    },
-                    onResolve,
-                    onClose,
-                }));
+        const screen = await renderScreen(
+            <SubAgentGuidanceRuleEditorModalHarness
+                component={SubAgentGuidanceRuleEditorModal as any}
+                mode="create"
+                entry={{
+                    id: 'guidance_2',
+                    description: 'Delegate UI tasks',
+                    enabled: true,
+                    suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                }}
+                onResolve={onResolve}
+                onClose={onClose}
+            />,
+        );
         const saveButton = findTestInstanceByTypeWithProps(screen.tree, 'RoundButton', { title: 'common.save' });
 
         expect(saveButton).toBeTruthy();
@@ -177,17 +208,20 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
         const { useNewSessionPreflightModelsState } = await import('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState');
         const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
 
-        const screen = await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
-                    mode: 'edit',
-                    entry: {
-                        id: 'guidance_3',
-                        description: 'Review custom ACP changes',
-                        enabled: true,
-                        suggestedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-preset' },
-                    },
-                    onResolve,
-                    onClose,
-                }));
+        const screen = await renderScreen(
+            <SubAgentGuidanceRuleEditorModalHarness
+                component={SubAgentGuidanceRuleEditorModal as any}
+                mode="edit"
+                entry={{
+                    id: 'guidance_3',
+                    description: 'Review custom ACP changes',
+                    enabled: true,
+                    suggestedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-preset' },
+                }}
+                onResolve={onResolve}
+                onClose={onClose}
+            />,
+        );
 
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
         expect(dropdowns).toHaveLength(3);

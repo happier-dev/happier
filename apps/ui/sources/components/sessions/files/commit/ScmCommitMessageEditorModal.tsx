@@ -5,20 +5,23 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 
 
 export type ScmCommitMessageGenerateResult =
     | { ok: true; message: string }
     | { ok: false; error: string };
 
-export function ScmCommitMessageEditorModal(props: Readonly<{
+export type ScmCommitMessageEditorModalProps = CustomModalInjectedProps & Readonly<{
     title: string;
     initialMessage: string;
     canGenerate: boolean;
     onGenerate: () => Promise<ScmCommitMessageGenerateResult>;
     onResolve: (value: { kind: 'cancel' } | { kind: 'commit'; message: string }) => void;
-    onClose: () => void;
-}>) {
+}>;
+
+export function ScmCommitMessageEditorModal(props: ScmCommitMessageEditorModalProps) {
     const { theme } = useUnistyles();
     const [message, setMessage] = React.useState(props.initialMessage);
     const [busy, setBusy] = React.useState(false);
@@ -76,32 +79,9 @@ export function ScmCommitMessageEditorModal(props: Readonly<{
         } finally {
             setBusy(false);
         }
-    }, [busy, message, props]);
+    }, [busy, props.canGenerate, props.onGenerate]);
 
     const styles = StyleSheet.create({
-        container: {
-            backgroundColor: theme.colors.surface,
-            borderRadius: 14,
-            width: 520,
-            maxWidth: '92%',
-            overflow: 'hidden',
-            shadowColor: theme.colors.shadow.color,
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.25,
-            shadowRadius: 4,
-            elevation: 5,
-        },
-        header: {
-            paddingHorizontal: 16,
-            paddingTop: 14,
-            paddingBottom: 10,
-            borderBottomWidth: 1,
-            borderBottomColor: theme.colors.divider,
-        },
-        title: {
-            fontSize: 16,
-            color: theme.colors.text,
-        },
         content: {
             paddingHorizontal: 16,
             paddingTop: 12,
@@ -115,7 +95,7 @@ export function ScmCommitMessageEditorModal(props: Readonly<{
             borderRadius: 10,
             paddingHorizontal: 12,
             paddingVertical: 10,
-            textAlignVertical: 'top' as any,
+            textAlignVertical: 'top' as const,
             color: theme.colors.text,
             backgroundColor: theme.colors.input.background,
         },
@@ -124,8 +104,6 @@ export function ScmCommitMessageEditorModal(props: Readonly<{
             color: theme.colors.textDestructive,
         },
         footer: {
-            borderTopWidth: 1,
-            borderTopColor: theme.colors.divider,
             paddingHorizontal: 12,
             paddingVertical: 10,
             flexDirection: 'row',
@@ -180,14 +158,39 @@ export function ScmCommitMessageEditorModal(props: Readonly<{
         </Pressable>
     );
 
-    return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={[styles.title, Typography.default('semiBold')]}>
-                    {props.title}
-                </Text>
+    const footer = React.useMemo(() => (
+        <View style={styles.footer}>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+                <Button label={t('common.cancel')} onPress={closeCancel} disabled={busy} />
+                {props.canGenerate ? (
+                    <Button
+                        label={busy ? t('files.commitMessageEditor.generating') : t('files.commitMessageEditor.generate')}
+                        onPress={generate}
+                        disabled={busy}
+                    />
+                ) : null}
+                {pendingSuggestion ? (
+                    <Button label={t('files.commitMessageEditor.applySuggestion')} onPress={applySuggestion} disabled={busy} />
+                ) : null}
             </View>
 
+            <Button label={t('files.commitMessageEditor.commit')} primary={true} onPress={commit} disabled={busy} />
+        </View>
+    ), [applySuggestion, busy, closeCancel, commit, generate, pendingSuggestion, props.canGenerate, styles.footer]);
+
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        title: props.title,
+        testID: 'scm-commit-message-editor-modal',
+        layout: 'fill' as const,
+        dimensions: { width: 520, maxHeightRatio: 0.92, size: 'md' as const },
+        footer,
+    }), [footer, props.title]);
+
+    useModalCardChrome(props.setChrome, chrome);
+
+    return (
+        <View style={{ flex: 1, minHeight: 0 }}>
             <View style={styles.content}>
                 <TextInput
                     style={[styles.input, Typography.default()]}
@@ -203,24 +206,6 @@ export function ScmCommitMessageEditorModal(props: Readonly<{
                         {error}
                     </Text>
                 ) : null}
-            </View>
-
-            <View style={styles.footer}>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <Button label={t('common.cancel')} onPress={closeCancel} disabled={busy} />
-                    {props.canGenerate ? (
-                        <Button
-                            label={busy ? t('files.commitMessageEditor.generating') : t('files.commitMessageEditor.generate')}
-                            onPress={generate}
-                            disabled={busy}
-                        />
-                    ) : null}
-                    {pendingSuggestion ? (
-                        <Button label={t('files.commitMessageEditor.applySuggestion')} onPress={applySuggestion} disabled={busy} />
-                    ) : null}
-                </View>
-
-                <Button label={t('files.commitMessageEditor.commit')} primary={true} onPress={commit} disabled={busy} />
             </View>
         </View>
     );

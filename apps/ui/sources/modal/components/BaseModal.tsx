@@ -9,6 +9,7 @@ import {
 import { StyleSheet } from 'react-native-unistyles';
 import { requireRadixDialog, requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 import { t } from '@/text';
 
 // On web, stop events from propagating to expo-router's modal overlay
@@ -267,34 +268,36 @@ export function BaseModal({
                                 style={portalHostStyle}
                             />
                             <ModalPortalTargetProvider target={modalPortalTarget}>
-                                <KeyboardAvoidingView
-                                    pointerEvents="auto"
-                                    style={styles.container}
-                                    behavior={undefined}
-                                >
-                                    <Animated.View
+                                <ModalBoundaryProvider>
+                                    <KeyboardAvoidingView
                                         pointerEvents="auto"
-                                        style={[
-                                            styles.content,
-                                            {
-                                                opacity: fadeAnim,
-                                                transform: [{
-                                                    scale: fadeAnim.interpolate({
-                                                        inputRange: [0, 1],
-                                                        outputRange: [0.9, 1]
-                                                    })
-                                                }]
-                                            }
-                                        ]}
+                                        style={styles.container}
+                                        behavior={undefined}
                                     >
-                                        <div
-                                            data-happy-modal-card-boundary=""
-                                            style={webModalCardBoundaryStyle}
+                                        <Animated.View
+                                            pointerEvents="auto"
+                                            style={[
+                                                styles.content,
+                                                {
+                                                    opacity: fadeAnim,
+                                                    transform: [{
+                                                        scale: fadeAnim.interpolate({
+                                                            inputRange: [0, 1],
+                                                            outputRange: [0.9, 1]
+                                                        })
+                                                    }]
+                                                }
+                                            ]}
                                         >
-                                            {children}
-                                        </div>
-                                    </Animated.View>
-                                </KeyboardAvoidingView>
+                                            <div
+                                                data-happy-modal-card-boundary=""
+                                                style={webModalCardBoundaryStyle}
+                                            >
+                                                {children}
+                                            </div>
+                                        </Animated.View>
+                                    </KeyboardAvoidingView>
+                                </ModalBoundaryProvider>
                             </ModalPortalTargetProvider>
                         </Dialog.Content>
                     </DismissableLayerBranch>
@@ -347,9 +350,11 @@ export function BaseModal({
                         }
                     ]}
                 >
-                    <View pointerEvents="auto" style={{ width: '100%', alignItems: 'center' }}>
-                        {children}
-                    </View>
+                    <ModalBoundaryProvider>
+                        <View pointerEvents="auto" style={{ width: '100%', alignItems: 'center' }}>
+                            {children}
+                        </View>
+                    </ModalBoundaryProvider>
                 </Animated.View>
             </KeyboardAvoidingView>
         </View>

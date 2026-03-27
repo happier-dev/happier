@@ -4,45 +4,26 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
-    McpServerBindingV1Schema,
-    type McpServerBindingTargetV1,
     type McpServerBindingV1,
     type McpServerCatalogEntryTransportV1,
     type McpServerCatalogEntryV1,
 } from '@happier-dev/protocol';
 
-import { McpBindingTargetFields, describeBindingTarget } from '@/components/settings/mcpServers/McpBindingTargetFields';
 import { McpServerBindingEditor } from '@/components/settings/mcpServers/McpServerBindingEditor';
+import { McpServerBindingDraftExpander } from '@/components/settings/mcpServers/McpServerBindingDraftExpander';
 import { McpServerTestPanel } from '@/components/settings/mcpServers/McpServerTestPanel';
 import { McpValueRefMapEditor } from '@/components/settings/mcpServers/McpValueRefMapEditor';
-import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SettingsActionFooter } from '@/components/ui/settingsSurface/SettingsActionFooter';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { Modal } from '@/modal';
-import { randomUUID } from '@/platform/randomUUID';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { parseMcpCommandLine } from '@/sync/domains/settings/mcpServers/parseMcpCommandLine';
 import { t } from '@/text';
-import { McpWorkspaceRootPickerModal } from './McpWorkspaceRootPickerModal';
-import { createDefaultMcpBindingTarget, resolveMcpBindingTargetTypeChange } from './resolveMcpBindingTarget';
-
-function createDraftBinding(serverId: string, machines: readonly Machine[]): McpServerBindingV1 {
-    const now = Date.now();
-    return {
-        id: randomUUID(),
-        serverId,
-        enabled: true,
-        target: createDefaultMcpBindingTarget(machines),
-        createdAt: now,
-        updatedAt: now,
-    };
-}
 
 export const McpServerConfigureForm = React.memo(function McpServerConfigureForm(props: Readonly<{
     draftServer: McpServerCatalogEntryV1;
@@ -61,15 +42,6 @@ export const McpServerConfigureForm = React.memo(function McpServerConfigureForm
     const [favoriteDirectoriesRaw, setFavoriteDirectoriesRaw] = useSettingMutable('favoriteDirectories');
     const favoriteDirectories = Array.isArray(favoriteDirectoriesRaw) ? favoriteDirectoriesRaw : [];
     const [advancedCommandEditorOpen, setAdvancedCommandEditorOpen] = React.useState(false);
-    const [isAddBindingOpen, setIsAddBindingOpen] = React.useState(false);
-    const [draftBinding, setDraftBinding] = React.useState<McpServerBindingV1>(() => createDraftBinding(props.draftServer.id, props.machines));
-
-    React.useEffect(() => {
-        setDraftBinding((current) => ({
-            ...current,
-            serverId: props.draftServer.id,
-        }));
-    }, [props.draftServer.id]);
 
     const transportItems = React.useMemo(() => ([
         {
@@ -113,82 +85,6 @@ export const McpServerConfigureForm = React.memo(function McpServerConfigureForm
         const args = props.draftServer.stdio?.args ?? [];
         return [command, ...args].filter(Boolean).join(' ');
     }, [props.draftServer.stdio?.args, props.draftServer.stdio?.command]);
-
-    const resetDraftBinding = React.useCallback(() => {
-        setDraftBinding(createDraftBinding(props.draftServer.id, props.machines));
-    }, [props.draftServer.id, props.machines]);
-
-    const updateDraftBinding = React.useCallback((updater: (current: McpServerBindingV1) => McpServerBindingV1) => {
-        setDraftBinding((current) => updater(current));
-    }, []);
-
-    const setDraftBindingTargetType = React.useCallback((nextType: McpServerBindingTargetV1['t']) => {
-        updateDraftBinding((current) => {
-            const now = Date.now();
-            const nextTarget = resolveMcpBindingTargetTypeChange(current.target, nextType, props.machines);
-            if (!nextTarget) {
-                Modal.alert(t('common.error'), t('settings.mcpServersNoMachineSelected'));
-                return current;
-            }
-
-            return {
-                ...current,
-                target: nextTarget,
-                updatedAt: now,
-            };
-        });
-    }, [props.machines, updateDraftBinding]);
-
-    const setDraftBindingMachineId = React.useCallback((machineId: string) => {
-        updateDraftBinding((current) => {
-            const now = Date.now();
-            if (current.target.t === 'allMachines') return current;
-            return { ...current, target: { ...current.target, machineId }, updatedAt: now };
-        });
-    }, [updateDraftBinding]);
-
-    const openDraftWorkspacePicker = React.useCallback(() => {
-        const { target } = draftBinding;
-        if (target.t !== 'workspace') return;
-        const machine = props.machines.find((item) => item.id === target.machineId) ?? null;
-        const homeDir = machine?.metadata?.homeDir || '/home';
-        Modal.show({
-            component: McpWorkspaceRootPickerModal,
-            props: {
-                machineId: target.machineId,
-                machineHomeDir: homeDir,
-                selectedPath: target.workspaceRoot,
-                onSelectPath: (workspaceRoot: string) =>
-                    updateDraftBinding((current) => {
-                        if (current.target.t !== 'workspace') return current;
-                        return {
-                            ...current,
-                            target: { ...current.target, workspaceRoot },
-                            updatedAt: Date.now(),
-                        };
-                    }),
-                favoriteDirectories,
-                onChangeFavoriteDirectories: setFavoriteDirectoriesRaw,
-            },
-            closeOnBackdrop: true,
-        });
-    }, [draftBinding.target, favoriteDirectories, props.machines, setFavoriteDirectoriesRaw, updateDraftBinding]);
-
-    const handleSaveDraftBinding = React.useCallback(() => {
-        const parsed = McpServerBindingV1Schema.safeParse(draftBinding);
-        if (!parsed.success) {
-            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
-            return;
-        }
-        props.onChangeBindings((current) => [...current, parsed.data]);
-        setIsAddBindingOpen(false);
-        resetDraftBinding();
-    }, [draftBinding, props, resetDraftBinding]);
-
-    const handleCancelDraftBinding = React.useCallback(() => {
-        setIsAddBindingOpen(false);
-        resetDraftBinding();
-    }, [resetDraftBinding]);
 
     return (
         <>
@@ -386,40 +282,14 @@ export const McpServerConfigureForm = React.memo(function McpServerConfigureForm
                 />
             ))}
 
-            <ItemGroup>
-                <InlineAddExpander
-                    isOpen={isAddBindingOpen}
-                    onOpenChange={(nextOpen) => {
-                        setIsAddBindingOpen(nextOpen);
-                        if (nextOpen) {
-                            resetDraftBinding();
-                        } else {
-                            handleCancelDraftBinding();
-                        }
-                    }}
-                    title={t('settings.mcpServersAddApplyRule')}
-                    subtitle={t('settings.mcpServersAddApplyRuleSubtitle')}
-                    icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.success} />}
-                    helpText={t('settings.mcpServersAddApplyRuleHelp')}
-                    onCancel={handleCancelDraftBinding}
-                    onSave={handleSaveDraftBinding}
-                    saveDisabled={!McpServerBindingV1Schema.safeParse(draftBinding).success}
-                    cancelLabel={t('common.cancel')}
-                    saveLabel={t('settings.mcpServersAddApplyRuleSave')}
-                    expandedContainerStyle={styles.expandedBindingContainer}
-                >
-                    <Text style={styles.draftBindingSummary}>
-                        {describeBindingTarget(draftBinding.target, props.machines)}
-                    </Text>
-                    <McpBindingTargetFields
-                        target={draftBinding.target}
-                        machines={props.machines}
-                        onChangeTargetType={setDraftBindingTargetType}
-                        onChangeMachineId={setDraftBindingMachineId}
-                        onOpenWorkspacePicker={openDraftWorkspacePicker}
-                    />
-                </InlineAddExpander>
-            </ItemGroup>
+            <McpServerBindingDraftExpander
+                serverId={props.draftServer.id}
+                machines={props.machines}
+                favoriteDirectories={favoriteDirectories}
+                onChangeFavoriteDirectories={setFavoriteDirectoriesRaw}
+                onAddBinding={(binding) => props.onChangeBindings((current) => [...current, binding])}
+                expandedContainerStyle={styles.expandedBindingContainer}
+            />
 
             <McpServerTestPanel
                 server={props.draftServer}
@@ -475,11 +345,5 @@ const styles = StyleSheet.create((theme) => ({
     },
     expandedBindingContainer: {
         paddingTop: 0,
-    },
-    draftBindingSummary: {
-        fontSize: 14,
-        lineHeight: 20,
-        color: theme.colors.textSecondary,
-        marginBottom: 12,
     },
 }));

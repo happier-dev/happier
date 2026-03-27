@@ -1,15 +1,14 @@
 import * as React from 'react';
-import { View, Pressable, ActivityIndicator, ScrollView } from 'react-native';
+import { Pressable, ActivityIndicator, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import { DetectedClisList } from '@/components/machines/DetectedClisList';
 import { t } from '@/text';
 import type { CustomModalInjectedProps } from '@/modal';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
-import { Text } from '@/components/ui/text/Text';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 
 
 type Props = CustomModalInjectedProps & {
@@ -19,53 +18,18 @@ type Props = CustomModalInjectedProps & {
 };
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: 14,
-        width: 360,
-        maxWidth: '92%',
-        maxHeight: '85%',
-        flexShrink: 1,
-        overflow: 'hidden',
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        elevation: 5,
-    },
-    header: {
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-    },
-    title: {
-        fontSize: 17,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
-    },
-    body: {
-        flexGrow: 1,
-    },
     bodyContent: {
         paddingVertical: 4,
     },
-    footer: {
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
-        alignItems: 'center',
+    headerActionButton: {
+        padding: 2,
     },
 }));
 
-export function DetectedClisModal({ onClose, machineId, isOnline, serverId }: Props) {
+export function DetectedClisModal({ onClose, setChrome, machineId, isOnline, serverId }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const title = t('machine.detectedClis');
 
     const { state, refresh } = useDaemonScopedMachineCapabilitiesCache({
         machineId,
@@ -75,44 +39,41 @@ export function DetectedClisModal({ onClose, machineId, isOnline, serverId }: Pr
         request: CAPABILITIES_REQUEST_NEW_SESSION,
     });
 
+    const headerActions = React.useMemo(() => (
+        <Pressable
+            testID="detected-clis:refresh"
+            onPress={() => refresh({ bypassCache: true })}
+            hitSlop={10}
+            style={styles.headerActionButton}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.refresh')}
+            disabled={!isOnline || state.status === 'loading'}
+        >
+            {state.status === 'loading'
+                ? <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                : <Ionicons name="refresh" size={20} color={isOnline ? theme.colors.textSecondary : theme.colors.divider} />}
+        </Pressable>
+    ), [isOnline, refresh, state.status, styles.headerActionButton, theme.colors.divider, theme.colors.textSecondary]);
+
+    const footer = React.useMemo(() => (
+        <RoundButton testID="detected-clis:ok" title={t('common.ok')} size="normal" onPress={onClose} />
+    ), [onClose]);
+
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        title,
+        testID: 'detected-clis:modal',
+        closeButtonTestID: 'detected-clis:close',
+        actions: headerActions,
+        footer,
+        dimensions: { width: 360, maxHeightRatio: 0.85 },
+    }), [footer, headerActions, title]);
+
+    useModalCardChrome(setChrome, chrome);
+
     return (
-        <View style={styles.container} testID="detected-clis:modal">
-            <View style={styles.header}>
-                <Text style={styles.title}>{t('machine.detectedClis')}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <Pressable
-                        testID="detected-clis:refresh"
-                        onPress={() => refresh({ bypassCache: true })}
-                        hitSlop={10}
-                        style={{ padding: 2 }}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('common.refresh')}
-                        disabled={!isOnline || state.status === 'loading'}
-                    >
-                        {state.status === 'loading'
-                            ? <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                            : <Ionicons name="refresh" size={20} color={isOnline ? theme.colors.textSecondary : theme.colors.divider} />}
-                    </Pressable>
-                    <Pressable
-                        testID="detected-clis:close"
-                        onPress={() => onClose()}
-                        hitSlop={10}
-                        style={{ padding: 2 }}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('common.close')}
-                    >
-                        <Ionicons name="close" size={22} color={theme.colors.textSecondary} />
-                    </Pressable>
-                </View>
-            </View>
-
-            <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
-                <DetectedClisList state={state} layout="stacked" />
-            </ScrollView>
-
-            <View style={styles.footer}>
-                <RoundButton testID="detected-clis:ok" title={t('common.ok')} size="normal" onPress={onClose} />
-            </View>
-        </View>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.bodyContent}>
+            <DetectedClisList state={state} layout="stacked" />
+        </ScrollView>
     );
 }

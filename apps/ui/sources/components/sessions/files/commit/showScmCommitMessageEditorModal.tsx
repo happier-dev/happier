@@ -1,5 +1,3 @@
-import * as React from 'react';
-
 import { Modal } from '@/modal';
 
 import { ScmCommitMessageEditorModal, type ScmCommitMessageGenerateResult } from './ScmCommitMessageEditorModal';
@@ -15,28 +13,16 @@ export async function showScmCommitMessageEditorModal(params: Readonly<{
             resolve(value.kind === 'commit' ? value.message : null);
         };
 
-        type WrapperProps = Readonly<{
-            onRequestClose?: () => void;
-            onClose: () => void;
-        }>;
-
-        const Wrapper: React.FC<WrapperProps> = ({ onClose }) => (
-            <ScmCommitMessageEditorModal
-                title={params.title}
-                initialMessage={params.initialMessage ?? ''}
-                canGenerate={params.canGenerate}
-                onGenerate={params.onGenerate}
-                onResolve={onResolve}
-                onClose={onClose}
-            />
-        );
-
         Modal.show({
-            component: Wrapper,
+            component: ScmCommitMessageEditorModal,
             props: {
-                // Called when the modal is dismissed via backdrop/escape. Treat it as cancel.
-                onRequestClose: () => onResolve({ kind: 'cancel' }),
+                title: params.title,
+                initialMessage: params.initialMessage ?? '',
+                canGenerate: params.canGenerate,
+                onGenerate: params.onGenerate,
+                onResolve,
             },
+            onRequestClose: () => onResolve({ kind: 'cancel' }),
             closeOnBackdrop: true,
         });
     });

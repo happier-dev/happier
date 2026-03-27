@@ -51,9 +51,11 @@ describe('AttachmentImagePreviewModal', () => {
 
     it('renders the current direct image with inline width and height sizing for expo-image', async () => {
         const { AttachmentImagePreviewModal } = await import('./AttachmentImagePreviewModal');
+        const setChrome = vi.fn();
 
         const screen = await renderScreen(<AttachmentImagePreviewModal
             onClose={() => {}}
+            setChrome={setChrome}
             images={[
                 { kind: 'direct', uri: 'blob:first', title: 'first.png' },
             ]}
@@ -68,9 +70,11 @@ describe('AttachmentImagePreviewModal', () => {
 
     it('hides navigation until hover on web and omits the footer index', async () => {
         const { AttachmentImagePreviewModal } = await import('./AttachmentImagePreviewModal');
+        const setChrome = vi.fn();
 
         const screen = await renderScreen(<AttachmentImagePreviewModal
             onClose={() => {}}
+            setChrome={setChrome}
             images={[
                 { kind: 'direct', uri: 'blob:first', title: 'first.png' },
                 { kind: 'direct', uri: 'blob:second', title: 'second.png' },
@@ -92,9 +96,11 @@ describe('AttachmentImagePreviewModal', () => {
 
     it('navigates between direct images after hover', async () => {
         const { AttachmentImagePreviewModal } = await import('./AttachmentImagePreviewModal');
+        const setChrome = vi.fn();
 
         const screen = await renderScreen(<AttachmentImagePreviewModal
             onClose={() => {}}
+            setChrome={setChrome}
             images={[
                 { kind: 'direct', uri: 'blob:first', title: 'first.png' },
                 { kind: 'direct', uri: 'blob:second', title: 'second.png' },
@@ -109,14 +115,22 @@ describe('AttachmentImagePreviewModal', () => {
         await screen.pressByTestIdAsync('attachment-image-preview-next');
 
         expect(screen.findByType('Image').props.source).toEqual({ uri: 'blob:second' });
-        expect(screen.findByTestId('attachment-image-preview-title')?.props.children).toBe('second.png');
+        expect(setChrome).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                kind: 'card',
+                title: 'second.png',
+                titleTestID: 'attachment-image-preview-title',
+            }),
+        );
     });
 
     it('renders session-backed images through the shared session preview hook', async () => {
         const { AttachmentImagePreviewModal } = await import('./AttachmentImagePreviewModal');
+        const setChrome = vi.fn();
 
         const screen = await renderScreen(<AttachmentImagePreviewModal
             onClose={() => {}}
+            setChrome={setChrome}
             images={[
                 {
                     kind: 'session-image',
@@ -139,9 +153,11 @@ describe('AttachmentImagePreviewModal', () => {
     it('shows a generic localized error instead of raw preview details', async () => {
         const { AttachmentImagePreviewModal } = await import('./AttachmentImagePreviewModal');
         previewState.value = { status: 'error', uri: null, svgXml: null, error: 'internal disk path leaked' };
+        const setChrome = vi.fn();
 
         const screen = await renderScreen(<AttachmentImagePreviewModal
             onClose={() => {}}
+            setChrome={setChrome}
             images={[
                 {
                     kind: 'session-image',

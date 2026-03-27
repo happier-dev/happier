@@ -8,6 +8,8 @@ import {
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
+import type { CustomModalChromeConfig } from '@/modal';
+import type { ScmCommitMessageEditorModalProps } from './ScmCommitMessageEditorModal';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -16,11 +18,12 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: (spec: any) => spec?.ios ?? spec?.default ?? spec?.web ?? spec?.android,
-                                    },
-                                }
+            Platform: {
+                OS: 'ios',
+                select: (spec: any) => spec?.ios ?? spec?.default ?? spec?.web ?? spec?.android,
+            },
+            useWindowDimensions: () => ({ width: 1200, height: 760 }),
+        }
     );
 });
 
@@ -47,19 +50,47 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
+async function renderScmCommitMessageEditorModal(
+    Component: React.ComponentType<ScmCommitMessageEditorModalProps>,
+    props: Omit<ScmCommitMessageEditorModalProps, 'setChrome'>,
+) {
+    const { ModalCardFrame } = await import('@/modal/components/card/ModalCardFrame');
+
+    const Harness = (p: typeof props) => {
+        const [chrome, setChrome] = React.useState<CustomModalChromeConfig | null>(null);
+        const handleSetChrome = React.useCallback((next: CustomModalChromeConfig | null) => {
+            setChrome(next);
+        }, []);
+        const card = chrome?.kind === 'card' ? chrome : null;
+
+        return (
+            <ModalCardFrame
+                title={card?.title}
+                footer={card?.footer}
+                layout={card?.layout ?? 'fit'}
+                dimensions={card?.dimensions}
+            >
+                <Component {...p} setChrome={handleSetChrome} />
+            </ModalCardFrame>
+        );
+    };
+
+    return await renderScreen(<Harness {...props} />);
+}
+
 describe('ScmCommitMessageEditorModal', () => {
     it('fills the message when Generate succeeds', async () => {
         const { ScmCommitMessageEditorModal } = await import('./ScmCommitMessageEditorModal');
         const onResolve = vi.fn();
 
-        const screen = await renderScreen(<ScmCommitMessageEditorModal
-                    title="Create commit"
-                    initialMessage=""
-                    canGenerate={true}
-                    onGenerate={async () => ({ ok: true, message: 'feat: generated' })}
-                    onResolve={onResolve}
-                    onClose={vi.fn()}
-                />);
+        const screen = await renderScmCommitMessageEditorModal(ScmCommitMessageEditorModal, {
+            title: 'Create commit',
+            initialMessage: '',
+            canGenerate: true,
+            onGenerate: async () => ({ ok: true, message: 'feat: generated' }),
+            onResolve,
+            onClose: vi.fn(),
+        });
 
         const generateButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Generate');
         expect(generateButton).toBeTruthy();
@@ -73,14 +104,14 @@ describe('ScmCommitMessageEditorModal', () => {
     it('preserves typed message when Generate fails', async () => {
         const { ScmCommitMessageEditorModal } = await import('./ScmCommitMessageEditorModal');
 
-        const screen = await renderScreen(<ScmCommitMessageEditorModal
-                    title="Create commit"
-                    initialMessage="chore: typed"
-                    canGenerate={true}
-                    onGenerate={async () => ({ ok: false, error: 'nope' })}
-                    onResolve={vi.fn()}
-                    onClose={vi.fn()}
-                />);
+        const screen = await renderScmCommitMessageEditorModal(ScmCommitMessageEditorModal, {
+            title: 'Create commit',
+            initialMessage: 'chore: typed',
+            canGenerate: true,
+            onGenerate: async () => ({ ok: false, error: 'nope' }),
+            onResolve: vi.fn(),
+            onClose: vi.fn(),
+        });
 
         const generateButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Generate');
         expect(generateButton).toBeTruthy();
@@ -102,14 +133,14 @@ describe('ScmCommitMessageEditorModal', () => {
                 }),
         );
 
-        const screen = await renderScreen(<ScmCommitMessageEditorModal
-                    title="Create commit"
-                    initialMessage="chore: start"
-                    canGenerate={true}
-                    onGenerate={onGenerate}
-                    onResolve={vi.fn()}
-                    onClose={vi.fn()}
-                />);
+        const screen = await renderScmCommitMessageEditorModal(ScmCommitMessageEditorModal, {
+            title: 'Create commit',
+            initialMessage: 'chore: start',
+            canGenerate: true,
+            onGenerate,
+            onResolve: vi.fn(),
+            onClose: vi.fn(),
+        });
 
         const generateButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Generate');
         expect(generateButton).toBeTruthy();

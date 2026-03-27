@@ -12,12 +12,19 @@ installSessionHandoffCommonModuleMocks();
 describe('SessionHandoffProgressModal', () => {
     it('shows a spinner while the modal is waiting for the first status update', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const setChrome = vi.fn();
 
         const screen = await renderScreen(
-            <SessionHandoffProgressModal onClose={() => {}} />,
+            <SessionHandoffProgressModal onClose={() => {}} setChrome={setChrome} />,
         );
 
-        expect(screen.getTextContent()).toContain('sessionHandoff.progress.title');
+        expect(setChrome).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'card',
+                title: 'sessionHandoff.progress.title',
+                testID: 'session-handoff-progress-modal',
+            }),
+        );
         expect(screen.getTextContent()).toContain('sessionHandoff.progress.message');
         expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
     });
@@ -52,10 +59,12 @@ describe('SessionHandoffProgressModal', () => {
 
     it('renders workspace preflight summary and progress details from handoff status', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const setChrome = vi.fn();
 
         const screen = await renderScreen(
             <SessionHandoffProgressModal
                 onClose={() => {}}
+                setChrome={setChrome}
                 status={{
                     handoffId: 'handoff_1',
                     status: 'pending',
@@ -88,7 +97,13 @@ describe('SessionHandoffProgressModal', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-handoff-progress-modal')).toBeTruthy();
+        expect(setChrome).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'card',
+                title: 'sessionHandoff.progress.title',
+                testID: 'session-handoff-progress-modal',
+            }),
+        );
         expect(screen.findByTestId('session-handoff-progress-summary')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-bar')).toBeTruthy();
         expect(screen.findByTestId('session-handoff-progress-percent')).toBeTruthy();
@@ -209,10 +224,12 @@ describe('SessionHandoffProgressModal', () => {
 
     it('shows a failure presentation without a spinner when the handoff status is failed', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const setChrome = vi.fn();
 
         const screen = await renderScreen(
             <SessionHandoffProgressModal
                 onClose={() => {}}
+                setChrome={setChrome}
                 status={{
                     handoffId: 'handoff_failed_1',
                     status: 'failed',
@@ -222,17 +239,24 @@ describe('SessionHandoffProgressModal', () => {
             />,
         );
 
-        expect(screen.getTextContent()).toContain('sessionHandoff.failure.title');
+        expect(setChrome).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'card',
+                title: 'sessionHandoff.failure.title',
+            }),
+        );
         expect(screen.getTextContent()).toContain('sessionHandoff.failure.message');
         expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 
     it('surfaces the phase detail when the handoff is awaiting recovery', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const setChrome = vi.fn();
 
         const screen = await renderScreen(
             <SessionHandoffProgressModal
                 onClose={() => {}}
+                setChrome={setChrome}
                 status={{
                     handoffId: 'handoff_recovery_1',
                     status: 'awaiting_recovery',
@@ -256,7 +280,12 @@ describe('SessionHandoffProgressModal', () => {
             />,
         );
 
-        expect(screen.getTextContent()).toContain('sessionHandoff.recovery.title');
+        expect(setChrome).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'card',
+                title: 'sessionHandoff.recovery.title',
+            }),
+        );
         expect(screen.getTextContent()).toContain('sessionHandoff.recovery.messageAfterSourceStop');
         expect(screen.getTextContent()).toContain('daemon_restart_detected');
         expect(screen.findByTestId('session-handoff-progress-bar')).toBeNull();
@@ -439,9 +468,11 @@ describe('SessionHandoffProgressModal', () => {
 
     it('keeps the last daemon checkpoint visible when a terminal status update arrives without progress', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const setChrome = vi.fn();
 
         const renderProps = {
             onClose: () => {},
+            setChrome,
         };
 
         const screen = await renderScreen(
@@ -479,7 +510,12 @@ describe('SessionHandoffProgressModal', () => {
             );
         });
 
-        expect(screen.getTextContent()).toContain('sessionHandoff.failure.title');
+        expect(setChrome).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                kind: 'card',
+                title: 'sessionHandoff.failure.title',
+            }),
+        );
         expect(screen.getTextContent()).toContain('sessionHandoff.failure.message');
         expect(screen.findByTestId('session-handoff-progress-checkpoint-transfer_blobs')?.props.accessibilityState?.selected).toBe(true);
     });

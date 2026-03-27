@@ -12,6 +12,7 @@ import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 
 let liveSecrets: SavedSecret[] = [];
 const liveSecretListeners = new Set<() => void>();
+const modalShowSpy = vi.hoisted(() => vi.fn());
 
 function updateLiveSecrets(next: SavedSecret[]) {
     liveSecrets = next;
@@ -26,6 +27,14 @@ function resetLiveSecrets() {
 }
 
 installValueRefsCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                show: modalShowSpy,
+            },
+        }).module;
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         const { createPassThroughComponent } = await import('@/dev/testkit/mocks/components');
@@ -189,5 +198,37 @@ describe('value ref saved secrets live updates', () => {
 
         expect(screen.findByTestId('mcp.valueRefEditor.secret')?.props.title).toBe('qa_value_ref_live_secret');
         expect(screen.findByTestId('mcp.valueRefEditor.secret')?.props.subtitle).toBe('secret-live');
+    });
+
+    it('ValueRefEditorModal opens the saved-secret picker with shared chrome', async () => {
+        const { ValueRefEditorModal } = await import('./ValueRefEditorModal');
+        const { SavedSecretPickerModal } = await import('./SavedSecretPickerModal');
+
+        const screen = await renderScreen(React.createElement(ValueRefEditorModal, {
+                    onClose: vi.fn(),
+                    kind: 'header',
+                    initialKey: 'Authorization',
+                    initialValueRef: { t: 'literal', v: 'token' },
+                    secrets: [],
+                    onChangeSecrets: vi.fn(),
+                    onSubmit: () => true,
+                }));
+
+        const dropdownMenu = screen.findByType('DropdownMenu' as any);
+
+        await act(async () => {
+            dropdownMenu.props.onSelect('savedSecret');
+        });
+
+        expect(modalShowSpy).toHaveBeenCalledTimes(1);
+        expect(modalShowSpy.mock.calls[0]?.[0]).toMatchObject({
+            component: SavedSecretPickerModal,
+            chrome: {
+                kind: 'card',
+                title: 'settings.mcpServersPickSecretTitle',
+                preset: 'lg',
+            },
+            closeOnBackdrop: true,
+        });
     });
 });

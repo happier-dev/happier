@@ -116,6 +116,11 @@ export const McpServerBindingEditor = React.memo(function McpServerBindingEditor
                 favoriteDirectories,
                 onChangeFavoriteDirectories: setFavoriteDirectoriesRaw,
             },
+            chrome: {
+                kind: 'card',
+                title: t('settings.mcpServersPickWorkspaceTitle'),
+                dimensions: { size: 'lg' },
+            },
             closeOnBackdrop: true,
         });
     }, [favoriteDirectories, props.binding.target, props.machines, setFavoriteDirectoriesRaw, setWorkspaceRoot]);
@@ -129,6 +134,11 @@ export const McpServerBindingEditor = React.memo(function McpServerBindingEditor
                 secrets: props.secrets,
                 onChangeSecrets: props.onChangeSecrets,
                 onSubmit: props.onChange,
+            },
+            chrome: {
+                kind: 'card',
+                title: t('settings.mcpServersBindingOverridesTitle'),
+                dimensions: { size: 'lg' },
             },
             closeOnBackdrop: true,
         });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -12,6 +12,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -28,33 +29,6 @@ const FULL_TIMELINE = SESSION_HANDOFF_PROGRESS_FULL_TIMELINE;
 const FULL_TIMELINE_WITH_SOURCE_SCAN = SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: 14,
-        width: 420,
-        maxWidth: '92%',
-        overflow: 'hidden',
-        shadowColor: theme.colors.shadow.color,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        elevation: 5,
-    },
-    header: {
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-    },
-    title: {
-        fontSize: 17,
-        color: theme.colors.text,
-        ...Typography.default('semiBold'),
-    },
     body: {
         paddingHorizontal: 16,
         paddingVertical: 18,
@@ -246,7 +220,7 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ onClose, title, message, status }: Props) {
+export function SessionHandoffProgressModal({ setChrome, title, message, status }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
@@ -359,95 +333,90 @@ export function SessionHandoffProgressModal({ onClose, title, message, status }:
                 : t('sessionHandoff.progress.message'));
     const showSpinner = !isFailureState && !isCompleted && !isReadyForCutover;
 
+    const chrome = React.useMemo(() => ({
+        kind: 'card' as const,
+        title: resolvedTitle,
+        testID: 'session-handoff-progress-modal',
+        dimensions: { width: 420, maxHeightRatio: 0.92 },
+    }), [resolvedTitle]);
+
+    useModalCardChrome(setChrome, chrome);
+
     return (
-        <View testID="session-handoff-progress-modal" style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.title}>{resolvedTitle}</Text>
-                <Pressable
-                    onPress={onClose}
-                    hitSlop={10}
-                    style={({ pressed }) => ({ padding: 2, opacity: pressed ? 0.7 : 1 })}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.close')}
-                >
-                    <Octicons name="x" size={18} color={theme.colors.header.tint} />
-                </Pressable>
+        <View style={styles.body}>
+            <View style={styles.messageRow}>
+                {showSpinner ? (
+                    <ActivityIndicator size="small" color={theme.colors.accent.blue} />
+                ) : (
+                    <Octicons
+                        name={isFailureState ? 'alert' : 'check'}
+                        size={18}
+                        color={isFailureState ? theme.colors.textDestructive : theme.colors.accent.blue}
+                    />
+                )}
+                <Text style={styles.message}>{resolvedMessage}</Text>
             </View>
-            <View style={styles.body}>
-                <View style={styles.messageRow}>
-                    {showSpinner ? (
-                        <ActivityIndicator size="small" color={theme.colors.accent.blue} />
-                    ) : (
-                        <Octicons
-                            name={isFailureState ? 'alert' : 'check'}
-                            size={18}
-                            color={isFailureState ? theme.colors.textDestructive : theme.colors.accent.blue}
-                        />
-                    )}
-                    <Text style={styles.message}>{resolvedMessage}</Text>
-                </View>
-                {effectiveStatus ? (
-                    <View style={styles.progressSection}>
-                        {currentCheckpoint && currentCheckpointIndex >= 0 ? (
-                            <View testID="session-handoff-progress-timeline" style={styles.timeline}>
-                                {timeline.map((checkpoint, index) => {
-                                    const isDone =
-                                        effectiveStatus.status === 'completed'
-                                        || (currentCheckpointIndex >= 0 && index < currentCheckpointIndex);
-                                    const isCurrent = currentCheckpointIndex >= 0 && index === currentCheckpointIndex;
-                                    return (
+            {effectiveStatus ? (
+                <View style={styles.progressSection}>
+                    {currentCheckpoint && currentCheckpointIndex >= 0 ? (
+                        <View testID="session-handoff-progress-timeline" style={styles.timeline}>
+                            {timeline.map((checkpoint, index) => {
+                                const isDone =
+                                    effectiveStatus.status === 'completed'
+                                    || (currentCheckpointIndex >= 0 && index < currentCheckpointIndex);
+                                const isCurrent = currentCheckpointIndex >= 0 && index === currentCheckpointIndex;
+                                return (
+                                    <View
+                                        key={checkpoint}
+                                        testID={`session-handoff-progress-checkpoint-${checkpoint}`}
+                                        accessibilityState={{ selected: isCurrent }}
+                                        style={styles.timelineRow}
+                                    >
                                         <View
-                                            key={checkpoint}
-                                            testID={`session-handoff-progress-checkpoint-${checkpoint}`}
-                                            accessibilityState={{ selected: isCurrent }}
-                                            style={styles.timelineRow}
-                                        >
-                                            <View
-                                                style={[
-                                                    styles.timelineDot,
-                                                    isDone ? styles.timelineDotDone : null,
-                                                    isCurrent ? styles.timelineDotCurrent : null,
-                                                ]}
-                                            />
-                                            <Text style={[styles.timelineLabel, isCurrent ? styles.timelineLabelCurrent : null]}>
-                                                {translateCheckpoint(checkpoint)}
-                                            </Text>
-                                        </View>
-                                    );
-                                })}
-                            </View>
-                        ) : null}
-                        {summaryChips.length > 0 ? (
-                            <View testID="session-handoff-progress-summary" style={styles.summaryRow}>
-                                {summaryChips.map((chip) => (
-                                    <View key={chip} style={styles.summaryChip}>
-                                        <Text style={styles.summaryChipText}>{chip}</Text>
+                                            style={[
+                                                styles.timelineDot,
+                                                isDone ? styles.timelineDotDone : null,
+                                                isCurrent ? styles.timelineDotCurrent : null,
+                                            ]}
+                                        />
+                                        <Text style={[styles.timelineLabel, isCurrent ? styles.timelineLabelCurrent : null]}>
+                                            {translateCheckpoint(checkpoint)}
+                                        </Text>
                                     </View>
-                                ))}
-                            </View>
-                        ) : null}
-                        {progressFraction !== null ? (
-                            <View testID="session-handoff-progress-bar" style={styles.progressTrack}>
-                                <View style={[styles.progressFill, { width: `${Math.max(progressFraction * 100, 4)}%` }]} />
-                            </View>
-                        ) : null}
-                        {progressLabel || currentDetailLabel ? (
-                            <View style={styles.progressMetaRow}>
-                                {progressLabel ? (
-                                    <Text testID="session-handoff-progress-percent" style={styles.progressMetaText}>
-                                        {progressLabel}
-                                    </Text>
-                                ) : null}
-                                {currentDetailLabel ? (
-                                    <Text testID="session-handoff-progress-path" style={styles.currentPath}>
-                                        {currentDetailLabel}
-                                    </Text>
-                                ) : null}
-                            </View>
-                        ) : null}
-                    </View>
-                ) : null}
-            </View>
+                                );
+                            })}
+                        </View>
+                    ) : null}
+                    {summaryChips.length > 0 ? (
+                        <View testID="session-handoff-progress-summary" style={styles.summaryRow}>
+                            {summaryChips.map((chip) => (
+                                <View key={chip} style={styles.summaryChip}>
+                                    <Text style={styles.summaryChipText}>{chip}</Text>
+                                </View>
+                            ))}
+                        </View>
+                    ) : null}
+                    {progressFraction !== null ? (
+                        <View testID="session-handoff-progress-bar" style={styles.progressTrack}>
+                            <View style={[styles.progressFill, { width: `${Math.max(progressFraction * 100, 4)}%` }]} />
+                        </View>
+                    ) : null}
+                    {progressLabel || currentDetailLabel ? (
+                        <View style={styles.progressMetaRow}>
+                            {progressLabel ? (
+                                <Text testID="session-handoff-progress-percent" style={styles.progressMetaText}>
+                                    {progressLabel}
+                                </Text>
+                            ) : null}
+                            {currentDetailLabel ? (
+                                <Text testID="session-handoff-progress-path" style={styles.currentPath}>
+                                    {currentDetailLabel}
+                                </Text>
+                            ) : null}
+                        </View>
+                    ) : null}
+                </View>
+            ) : null}
         </View>
     );
 }

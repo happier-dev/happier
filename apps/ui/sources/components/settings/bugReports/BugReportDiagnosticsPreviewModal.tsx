@@ -1,10 +1,11 @@
 import React from 'react';
-import { ScrollView, View, Pressable, useWindowDimensions } from 'react-native';
+import { ScrollView, View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from '@/components/ui/text/Text';
+import type { CustomModalInjectedProps } from '@/modal';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
 
 export type BugReportDiagnosticsPreviewArtifact = {
@@ -16,49 +17,9 @@ export type BugReportDiagnosticsPreviewArtifact = {
 };
 
 const styles = StyleSheet.create((theme) => ({
-  card: {
-    width: '92%',
-    maxWidth: 560,
-    backgroundColor: theme.colors.surface,
-    borderRadius: 16,
-    overflow: 'hidden',
-    flexShrink: 1,
-    shadowColor: theme.colors.shadow.color,
-    shadowOffset: { width: 0, height: 0.5 },
-    shadowOpacity: theme.colors.shadow.opacity,
-    shadowRadius: 0,
-    elevation: 2,
-  },
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.divider,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  container: {
     flex: 1,
-    paddingRight: 10,
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: theme.colors.text,
-    flexShrink: 1,
-  },
-  closeButton: {
-    padding: 6,
-    borderRadius: 10,
-  },
-  backButton: {
-    padding: 6,
-    borderRadius: 10,
+    minHeight: 0,
   },
   body: {
     paddingHorizontal: 16,
@@ -108,50 +69,43 @@ function formatBytes(bytes: number): string {
 
 export function BugReportDiagnosticsPreviewModal(props: Readonly<{
   artifacts: BugReportDiagnosticsPreviewArtifact[];
-  onClose: () => void;
-}>): React.JSX.Element {
+}> & CustomModalInjectedProps): React.JSX.Element {
   const { theme } = useUnistyles();
   const s = styles;
-  const insets = useSafeAreaInsets();
-  const window = useWindowDimensions();
-  const maxHeight = Math.max(240, Math.floor(window.height - (insets.top + insets.bottom + 96)));
   const [selected, setSelected] = React.useState<BugReportDiagnosticsPreviewArtifact | null>(null);
 
-  // IMPORTANT (native Android):
-  // When the card only has a `maxHeight`, React Native can lay it out with an
-  // unconstrained height. In that case, the ScrollView with `flex: 1` may
-  // collapse to ~0px, leaving only the header visible.
-  // Give the card a concrete height so the ScrollView can measure reliably.
-  return (
-    <View style={[s.card, { height: maxHeight, maxHeight }]}>
-      <View style={s.header}>
-        <View style={s.headerLeft}>
-          {selected ? (
-            <Pressable
-              onPress={() => setSelected(null)}
-              accessibilityRole="button"
-              accessibilityLabel={t('common.back')}
-              style={s.backButton}
-              hitSlop={10}
-            >
-              <Ionicons name="arrow-back" size={18} color={theme.colors.textSecondary} />
-            </Pressable>
-          ) : null}
-          <Text style={s.title} numberOfLines={1}>
-            {selected ? selected.filename : t('bugReports.composer.diagnostics.preview.title')}
-          </Text>
-        </View>
-        <Pressable
-          onPress={props.onClose}
-          accessibilityRole="button"
-          accessibilityLabel={t('common.close')}
-          style={s.closeButton}
-          hitSlop={10}
-        >
-          <Ionicons name="close" size={18} color={theme.colors.textSecondary} />
-        </Pressable>
-      </View>
+  const leading = React.useMemo(() => {
+    if (!selected) return null;
+    return (
+      <Pressable
+        onPress={() => setSelected(null)}
+        accessibilityRole="button"
+        accessibilityLabel={t('common.back')}
+        hitSlop={10}
+      >
+        <Ionicons name="arrow-back" size={18} color={theme.colors.textSecondary} />
+      </Pressable>
+    );
+  }, [selected, theme.colors.textSecondary]);
 
+  const chromeTitle = selected ? selected.filename : t('bugReports.composer.diagnostics.preview.title');
+  const chromeSubtitle = selected
+    ? `${selected.sourceKind} · ${selected.contentType} · ${formatBytes(selected.sizeBytes)}`
+    : undefined;
+  const chrome = React.useMemo(() => ({
+    kind: 'card' as const,
+    leading,
+    title: chromeTitle,
+    subtitle: chromeSubtitle,
+    testID: 'bug-report-diagnostics-preview-modal',
+    layout: 'fill' as const,
+    dimensions: { size: 'md' as const, width: 560, maxHeightRatio: 0.92 },
+  }), [chromeSubtitle, chromeTitle, leading]);
+
+  useModalCardChrome(props.setChrome, chrome);
+
+  return (
+    <View style={s.container}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
         {selected ? (
           <>
