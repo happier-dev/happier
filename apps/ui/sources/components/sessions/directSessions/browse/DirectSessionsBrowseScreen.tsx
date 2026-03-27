@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
-import type { DirectSessionActivityV1, DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
+import { View } from 'react-native';
+import type { DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -10,28 +10,23 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
-import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useAllMachines } from '@/sync/domains/state/storage';
-import { machineDirectSessionLinkEnsure, machineDirectSessionsCandidatesList } from '@/sync/ops/machineDirectSessions';
+import { machineDirectSessionLinkEnsure } from '@/sync/ops/machineDirectSessions';
 import { useProfile, useSettings } from '@/sync/store/hooks';
 import { lightTheme } from '@/theme';
 import { t } from '@/text';
 
-import {
-    buildDirectBrowseCandidateDisplayTitle,
-    buildDirectBrowseCandidateRightElement,
-    buildDirectBrowseCandidateSearchValue,
-    buildDirectBrowseCandidateSubtitle,
-    readDirectBrowseCandidatePath,
-} from './buildDirectBrowseCandidatePresentation';
+import { readDirectBrowseCandidatePath } from './buildDirectBrowseCandidatePresentation';
 import { getPreferredDirectBrowseProviderId } from './getPreferredDirectBrowseProviderId';
 import {
     listDirectBrowseProviderIds,
     resolveDirectBrowseLinkEnsureRequestExtras,
     resolveDirectBrowseSourceOptions,
 } from './resolveDirectBrowseSourceOptions';
+import { DirectBrowseCandidatesList } from './DirectBrowseCandidatesList';
+import { shouldUseCandidateSource } from './shouldUseCandidateSource';
+import { useDirectBrowseCandidates, type DirectBrowseCandidate } from './useDirectBrowseCandidates';
 
 type DirectBrowseProviderId = DirectSessionsProviderId;
 type AppTheme = typeof lightTheme;
@@ -44,37 +39,6 @@ export type DirectSessionsBrowseScopeLock = Readonly<{
 }>;
 
 export type DirectSessionsBrowseInteraction = 'openSession' | 'pickRemoteSessionId';
-
-type DirectBrowseCandidate = Readonly<{
-    remoteSessionId: string;
-    title?: string;
-    updatedAtMs: number;
-    activity?: DirectSessionActivityV1;
-    details?: Record<string, unknown>;
-}>;
-
-function shouldUseCandidateSource(selectedSource: DirectSessionsSource, candidateSource: DirectSessionsSource | undefined): boolean {
-    if (!candidateSource || candidateSource.kind !== selectedSource.kind) return false;
-    if (selectedSource.kind === 'codexHome' && candidateSource.kind === 'codexHome') {
-        if (selectedSource.home !== candidateSource.home) return false;
-        if (selectedSource.home === 'connectedService') {
-            return selectedSource.connectedServiceId === candidateSource.connectedServiceId
-                && (selectedSource.connectedServiceProfileId ?? '') === (candidateSource.connectedServiceProfileId ?? '');
-        }
-        return true;
-    }
-    if (selectedSource.kind === 'claudeConfig' && candidateSource.kind === 'claudeConfig') {
-        return (selectedSource.configDir ?? '') === (candidateSource.configDir ?? '')
-            && (selectedSource.projectId ?? '') === (candidateSource.projectId ?? '');
-    }
-    if (selectedSource.kind === 'opencodeServer' && candidateSource.kind === 'opencodeServer') {
-        return (selectedSource.baseUrl ?? '') === (candidateSource.baseUrl ?? '')
-            && (selectedSource.directory ?? '') === (candidateSource.directory ?? '');
-    }
-    return false;
-}
-
-const CANDIDATES_PAGE_LIMIT = 50;
 
 function getPreferredMachineId(
     machines: readonly Readonly<{ id: string; active?: boolean }>[],
@@ -103,30 +67,6 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
         elevation: 0,
         marginHorizontal: 12,
     },
-    helperText: {
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        color: theme.colors.textSecondary,
-        fontSize: 13,
-    },
-    searchContainer: {
-        paddingHorizontal: 12,
-        paddingTop: 12,
-        paddingBottom: 6,
-    },
-    searchInput: {
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHigh,
-        color: theme.colors.text,
-        fontSize: 13,
-    },
-    loadingRow: {
-        paddingVertical: 18,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
 }));
 
 export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
@@ -139,7 +79,6 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
     const locked = Boolean(lockScope);
     const router = useRouter();
     const { theme } = useUnistyles() as { theme: AppTheme };
-    const itemDensity = useResolvedItemDensity(undefined);
     const styles = stylesheet;
     const machines = useAllMachines();
     const profile = useProfile();
@@ -176,17 +115,10 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
     const [selectedSourceKey, setSelectedSourceKey] = React.useState<string | null>(() => (
         lockScope ? 'locked' : sourceOptions[0]?.key ?? null
     ));
-    const [candidates, setCandidates] = React.useState<readonly DirectBrowseCandidate[]>([]);
-    const [nextCursor, setNextCursor] = React.useState<string | null>(null);
-    const [loading, setLoading] = React.useState(false);
-    const [loadingMore, setLoadingMore] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
     const [linkingSessionId, setLinkingSessionId] = React.useState<string | null>(null);
-    const [searchQuery, setSearchQuery] = React.useState('');
     const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
     const [providerMenuOpen, setProviderMenuOpen] = React.useState(false);
     const [sourceMenuOpen, setSourceMenuOpen] = React.useState(false);
-    const loadGenerationRef = React.useRef(0);
     const effectiveSelectedMachineId = React.useMemo(() => {
         if (lockScope) return lockScope.machineId;
         return getPreferredMachineId(machines, selectedMachineId);
@@ -255,88 +187,19 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
         return selectedItem?.title ?? null;
     }, []);
 
-    const loadCandidates = React.useCallback(async (opts?: Readonly<{ cursor?: string | null; append?: boolean }>) => {
-        if (!effectiveSelectedMachineId || !selectedProviderId || !selectedSource) return;
-
-        const append = opts?.append === true;
-        if (!append) {
-            loadGenerationRef.current += 1;
-        }
-        const currentGeneration = loadGenerationRef.current;
-
-        if (append) {
-            setLoadingMore(true);
-        } else {
-            setLoading(true);
-            setError(null);
-        }
-
-        try {
-            const request = {
-                machineId: effectiveSelectedMachineId,
-                providerId: selectedProviderId,
-                source: selectedSource,
-                limit: CANDIDATES_PAGE_LIMIT,
-                ...(opts?.cursor ? { cursor: opts.cursor } : {}),
-            };
-            const result = lockScope?.serverId
-                ? await machineDirectSessionsCandidatesList(request, { serverId: lockScope.serverId })
-                : await machineDirectSessionsCandidatesList(request);
-
-            if (loadGenerationRef.current !== currentGeneration) {
-                return;
-            }
-
-            if (!result.ok) {
-                setError(result.error);
-                if (!append) {
-                    setCandidates([]);
-                    setNextCursor(null);
-                }
-                return;
-            }
-
-            const nextItems = result.candidates.map((candidate) => ({
-                remoteSessionId: candidate.remoteSessionId,
-                title: candidate.title,
-                updatedAtMs: candidate.updatedAtMs,
-                activity: candidate.activity,
-                details: candidate.details,
-            })) satisfies readonly DirectBrowseCandidate[];
-
-            setCandidates((current) => append ? [...current, ...nextItems] : nextItems);
-            setNextCursor(result.nextCursor ?? null);
-            setError(null);
-        } catch (loadError) {
-            if (loadGenerationRef.current !== currentGeneration) {
-                return;
-            }
-            const message = loadError instanceof Error ? loadError.message : t('directSessions.browseFailedToLoad');
-            setError(message);
-            if (!append) {
-                setCandidates([]);
-                setNextCursor(null);
-            }
-        } finally {
-            if (loadGenerationRef.current === currentGeneration) {
-                if (append) {
-                    setLoadingMore(false);
-                } else {
-                    setLoading(false);
-                }
-            }
-        }
-    }, [effectiveSelectedMachineId, lockScope?.serverId, selectedProviderId, selectedSource]);
-
-    React.useEffect(() => {
-        void loadCandidates();
-    }, [loadCandidates]);
-
-    const filteredCandidates = React.useMemo(() => {
-        const normalizedSearchQuery = searchQuery.trim().toLowerCase();
-        if (!normalizedSearchQuery) return candidates;
-        return candidates.filter((candidate) => buildDirectBrowseCandidateSearchValue(candidate).includes(normalizedSearchQuery));
-    }, [candidates, searchQuery]);
+    const {
+        candidates,
+        nextCursor,
+        loading,
+        loadingMore,
+        error,
+        loadMore,
+    } = useDirectBrowseCandidates({
+        machineId: effectiveSelectedMachineId,
+        serverId: lockScope?.serverId ?? null,
+        providerId: selectedProviderId,
+        source: selectedSource,
+    });
 
     const handleOpenCandidate = React.useCallback(async (candidate: DirectBrowseCandidate) => {
         if (!effectiveSelectedMachineId || !selectedProviderId || !selectedSource) return;
@@ -380,11 +243,6 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
             setLinkingSessionId(null);
         }
     }, [effectiveSelectedMachineId, interaction, lockScope?.serverId, props, router, selectedProviderId, selectedSource]);
-
-    const handleLoadMore = React.useCallback(async () => {
-        if (!nextCursor || loadingMore) return;
-        await loadCandidates({ cursor: nextCursor, append: true });
-    }, [loadCandidates, loadingMore, nextCursor]);
 
     return (
         <ItemList style={styles.list} testID="direct-sessions-browse-modal">
@@ -478,57 +336,16 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            <ItemGroup title={t('directSessions.browseCandidates')}>
-                <View style={styles.searchContainer}>
-                    <TextInput
-                        testID="direct-session-candidates-search-input"
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        placeholder={t('directSessions.browseSearchPlaceholder')}
-                        placeholderTextColor={theme.colors.textSecondary}
-                        style={styles.searchInput}
-                    />
-                </View>
-                {loading ? (
-                    <View style={styles.loadingRow}>
-                        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                    </View>
-                ) : error ? (
-                    <View>
-                        <Text style={styles.helperText}>{error}</Text>
-                    </View>
-                ) : candidates.length === 0 ? (
-                    <View>
-                        <Text style={styles.helperText}>{t('directSessions.browseNoCandidates')}</Text>
-                    </View>
-                ) : filteredCandidates.length === 0 ? (
-                    <View>
-                        <Text style={styles.helperText}>{t('directSessions.browseNoSearchResults')}</Text>
-                    </View>
-                ) : (
-                    <>
-                        {filteredCandidates.map((candidate) => (
-                            <Item
-                                key={candidate.remoteSessionId}
-                                testID={`direct-session-candidate:${candidate.remoteSessionId}`}
-                                title={buildDirectBrowseCandidateDisplayTitle(candidate)}
-                                subtitle={buildDirectBrowseCandidateSubtitle(candidate, theme, itemDensity)}
-                                rightElement={buildDirectBrowseCandidateRightElement(candidate, theme, itemDensity)}
-                                onPress={() => { void handleOpenCandidate(candidate); }}
-                                loading={linkingSessionId === candidate.remoteSessionId}
-                            />
-                        ))}
-                        {nextCursor ? (
-                            <Item
-                                testID="direct-session-candidates-load-more"
-                                title={t('directSessions.browseLoadMore')}
-                                onPress={() => { void handleLoadMore(); }}
-                                loading={loadingMore}
-                            />
-                        ) : null}
-                    </>
-                )}
-            </ItemGroup>
+            <DirectBrowseCandidatesList
+                candidates={candidates}
+                loading={loading}
+                error={error}
+                nextCursor={nextCursor}
+                loadingMore={loadingMore}
+                linkingSessionId={linkingSessionId}
+                onSelectCandidate={(candidate) => { void handleOpenCandidate(candidate); }}
+                onLoadMore={() => { void loadMore(); }}
+            />
         </ItemList>
     );
 });
