@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { resolveLaunchAgentPlistPath, resolveSystemdUserUnitPath } from '@/daemon/service/plan';
 import { configuration } from '@/configuration';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
+import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -95,12 +96,22 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     child.unref();
 
     let started = false;
-    for (let i = 0; i < 50; i++) {
-      if (await checkIfDaemonRunningAndCleanupStaleState()) {
-        started = true;
-        break;
+    const timeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS', 5000);
+    const pollMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_POLL_MS', 100);
+    const deadline = Date.now() + timeoutMs;
+    if (await checkIfDaemonRunningAndCleanupStaleState()) {
+      started = true;
+    } else {
+      while (Date.now() < deadline) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, remaining)));
+        if (Date.now() >= deadline) break;
+        if (await checkIfDaemonRunningAndCleanupStaleState()) {
+          started = true;
+          break;
+        }
       }
-      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     if (started) {

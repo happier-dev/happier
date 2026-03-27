@@ -8,6 +8,30 @@ import { resolveMcpCommandDeps, type McpCommandDeps } from './mcp/deps';
 import { runMcpServeCommand } from './mcp/serve';
 import { runMcpServersSubcommand } from './mcp/servers/subcommands';
 
+function isHelpToken(value: string): boolean {
+  const trimmed = String(value ?? '').trim();
+  return trimmed === 'help' || trimmed === '--help' || trimmed === '-h';
+}
+
+function printMcpUsage(): void {
+  console.log('happier mcp serve [--session <session-id>]');
+  console.log('happier mcp servers list [--dir <path>] [--json]');
+  console.log('happier mcp servers add --name <name> --transport stdio --command <cmd> [--arg <arg>] [--json]');
+  console.log('happier mcp servers bind --mcp-server <name|id> --all-machines [--json]');
+  console.log('happier mcp servers unbind --binding-id <id> [--json]');
+  console.log('happier mcp servers detect --provider <provider-id> [--json]');
+  console.log('happier mcp servers test --mcp-server <name|id> [--dir <path>] [--json]');
+}
+
+function printMcpServersUsage(): void {
+  console.log('happier mcp servers list [--dir <path>] [--json]');
+  console.log('happier mcp servers add --name <name> --transport stdio --command <cmd> [--arg <arg>] [--json]');
+  console.log('happier mcp servers bind --mcp-server <name|id> --all-machines [--json]');
+  console.log('happier mcp servers unbind --binding-id <id> [--json]');
+  console.log('happier mcp servers detect --provider <provider-id> [--json]');
+  console.log('happier mcp servers test --mcp-server <name|id> [--dir <path>] [--json]');
+}
+
 function resolveCommandKind(args: readonly string[]): string {
   const group = args[0];
   const subcommand = args[1];
@@ -26,20 +50,34 @@ function resolveCommandKind(args: readonly string[]): string {
 
 export async function handleMcpCommand(args: string[], deps?: Partial<McpCommandDeps>): Promise<void> {
   const json = wantsJson(args);
-  const group = args[0];
-  const subcommand = args[1];
+  const group = String(args[0] ?? '').trim();
+  const subcommand = String(args[1] ?? '').trim();
   const kind = resolveCommandKind(args);
 
   const resolvedDeps = resolveMcpCommandDeps(deps);
 
   try {
+    if (!group || isHelpToken(group)) {
+      printMcpUsage();
+      return;
+    }
+
     if (group === 'serve' || group === 'start') {
+      if (isHelpToken(subcommand)) {
+        console.log('happier mcp serve [--session <session-id>]');
+        return;
+      }
       await runMcpServeCommand(args, resolvedDeps);
       return;
     }
 
     if (group !== 'servers') {
       throw new Error('Usage: happier mcp servers <command>');
+    }
+
+    if (!subcommand || isHelpToken(subcommand)) {
+      printMcpServersUsage();
+      return;
     }
 
     const handled = await runMcpServersSubcommand(subcommand ?? '', args, resolvedDeps, { json });

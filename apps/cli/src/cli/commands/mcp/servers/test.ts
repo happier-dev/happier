@@ -31,9 +31,9 @@ export async function cmdMcpServersTest(
     return;
   }
 
-  const serverRef = readFlagValue(argv, '--server');
+  const serverRef = readFlagValue(argv, '--mcp-server') ?? readFlagValue(argv, '--server');
   const directory = readFlagValue(argv, '--dir') ?? process.cwd();
-  if (!serverRef) throw new Error('Usage: happier mcp servers test --server <name|id> [--dir <path>] [--json]');
+  if (!serverRef) throw new Error('Usage: happier mcp servers test --mcp-server <name|id> [--dir <path>] [--json]');
 
   const startedAt = deps.nowMs();
 

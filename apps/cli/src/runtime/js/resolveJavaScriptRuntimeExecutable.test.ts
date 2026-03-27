@@ -95,11 +95,14 @@ describe('resolveJavaScriptRuntimeExecutable', () => {
   });
 
   it('fails closed (returns null) under bundled bun when no managed runtime is available', () => {
+    const happyHomeDir = createTempDirSync('happier-js-runtime-missing-');
+    tempDirs.add(happyHomeDir);
+
     envScope.patch({
       HAPPIER_MANAGED_NODE_BIN: undefined,
       HAPPIER_JS_RUNTIME_PATH: undefined,
       HAPPIER_NODE_PATH: undefined,
-      HAPPIER_HOME_DIR: undefined,
+      HAPPIER_HOME_DIR: happyHomeDir,
       PATH: '',
     });
 

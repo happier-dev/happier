@@ -196,7 +196,7 @@ describe.sequential('happier mcp servers --json', () => {
     const { parsed, exitCode } = await runJsonMcpCommand([
       'servers',
       'bind',
-      '--server',
+      '--mcp-server',
       'example',
       '--all-machines',
       '--json',
@@ -219,6 +219,55 @@ describe.sequential('happier mcp servers --json', () => {
     expect(next.bindings).toHaveLength(1);
     expect(next.bindings[0]).toMatchObject({
       id: 'bind-1',
+      serverId: 'srv-1',
+      enabled: true,
+      target: { t: 'allMachines' },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it('accepts legacy --server flag for bind (alias for --mcp-server)', async () => {
+    let storedSettings = createStoredAccountSettings(McpServersSettingsV1Schema.parse({
+      v: 1,
+      strictMode: false,
+      servers: [
+        {
+          id: 'srv-1',
+          name: 'example',
+          transport: 'stdio',
+          stdio: { command: 'node', args: ['server.js'] },
+          env: {},
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      bindings: [],
+    }));
+
+    const { parsed, exitCode } = await runJsonMcpCommand([
+      'servers',
+      'bind',
+      '--server',
+      'example',
+      '--all-machines',
+      '--json',
+    ], {
+      readCredentials: async () => createCredentialsStub(),
+      randomUUID: () => 'bind-legacy-1',
+      nowMs: () => 456,
+      updateAccountSettingsV2WithRetry: async ({ mutate }) => {
+        storedSettings = accountSettingsParse(mutate(storedSettings));
+        return { version: 12 };
+      },
+    } satisfies Partial<McpCommandDeps>);
+
+    expect(parsed.ok).toBe(true);
+    expect(parsed.kind).toBe('mcp_servers_bind');
+
+    const next = McpServersSettingsV1Schema.parse(storedSettings.mcpServersSettingsV1);
+    expect(next.bindings).toHaveLength(1);
+    expect(next.bindings[0]).toMatchObject({
+      id: 'bind-legacy-1',
       serverId: 'srv-1',
       enabled: true,
       target: { t: 'allMachines' },
@@ -343,7 +392,7 @@ describe.sequential('happier mcp servers --json', () => {
     const { parsed, exitCode } = await runJsonMcpCommand([
       'servers',
       'test',
-      '--server',
+      '--mcp-server',
       'example',
       '--dir',
       '/tmp',
@@ -400,7 +449,7 @@ describe.sequential('happier mcp servers --json', () => {
     const { parsed, exitCode } = await runJsonMcpCommand([
       'servers',
       'test',
-      '--server',
+      '--mcp-server',
       'example',
       '--dir',
       '/tmp',

@@ -24,9 +24,11 @@ export async function cmdMcpServersBind(
     return;
   }
 
-  const serverRef = readFlagValue(argv, '--server');
+  const serverRef = readFlagValue(argv, '--mcp-server') ?? readFlagValue(argv, '--server');
   const allMachines = hasFlag(argv, '--all-machines');
-  if (!serverRef) throw new Error('Usage: happier mcp servers bind --server <name|id> --all-machines [--json]');
+  if (!serverRef) {
+    throw new Error('Usage: happier mcp servers bind --mcp-server <name|id> --all-machines [--json]');
+  }
   if (!allMachines) throw new Error('Missing binding target (try --all-machines).');
 
   const bindingId = deps.randomUUID();
@@ -63,4 +65,3 @@ export async function cmdMcpServersBind(
 
   console.log(chalk.green('✓'), `MCP binding created: ${bindingId}`);
 }
-

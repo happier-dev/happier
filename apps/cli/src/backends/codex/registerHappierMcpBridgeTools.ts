@@ -23,7 +23,7 @@ export function registerHappierMcpBridgeTools(
     }
   };
 
-  for (const tool of listBuiltInHappierTools()) {
+  for (const tool of listBuiltInHappierTools({ surface: 'mcp' })) {
     server.registerTool(
       tool.name,
       {
