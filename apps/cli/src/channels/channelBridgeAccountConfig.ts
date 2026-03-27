@@ -43,6 +43,19 @@ function parseStringArray(value: unknown): string[] {
     .filter((entry) => entry.length > 0);
 }
 
+const TELEGRAM_WEBHOOK_SECRET_TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function assertTelegramWebhookSecretToken(value: string): string {
+  const token = value.trim();
+  if (!token) {
+    throw new Error('Invalid webhookSecret: cannot be empty');
+  }
+  if (!TELEGRAM_WEBHOOK_SECRET_TOKEN_PATTERN.test(token)) {
+    throw new Error('Invalid webhookSecret: must match [A-Za-z0-9_-]');
+  }
+  return token;
+}
+
 export type ScopedTelegramBridgeUpdate = Readonly<{
   tickMs?: number;
   botToken?: string;
@@ -302,7 +315,7 @@ export function upsertScopedTelegramBridgeConfig(params: Readonly<{
       }
     }
     if (typeof params.update.webhookSecret === 'string') {
-      secrets.webhookSecret = params.update.webhookSecret;
+      secrets.webhookSecret = assertTelegramWebhookSecretToken(params.update.webhookSecret);
       const webhook = asRecord(telegram.webhook);
       if (webhook && 'secret' in webhook) {
         delete webhook.secret;

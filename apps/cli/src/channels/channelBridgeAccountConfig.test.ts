@@ -9,6 +9,19 @@ import {
 } from './channelBridgeAccountConfig';
 
 describe('channelBridgeAccountConfig', () => {
+  it('rejects webhook secrets that do not match Telegram-safe token charset', () => {
+    expect(() =>
+      upsertScopedTelegramBridgeConfig({
+        settings: {},
+        serverId: 'local-3005',
+        accountId: 'acct-1',
+        update: {
+          webhookSecret: 'bad token!',
+        },
+      })
+    ).toThrow('Invalid webhookSecret: must match [A-Za-z0-9_-]');
+  });
+
   it('writes scoped telegram config under server/account with secrets in local-only block', () => {
     const next = upsertScopedTelegramBridgeConfig({
       settings: {},
