@@ -45,19 +45,20 @@ export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSett
             <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                 <ItemGroup title={t('settings.channelBridges')} footer={t('settingsFeatures.expChannelBridgesSubtitle')}>
                     {loading ? (
-                        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }} testID="settings-channel-bridges-loading">
                             <Text style={{ color: theme.colors.textSecondary }}>
                                 {t('common.loading')}
                             </Text>
                         </View>
                     ) : !supported ? (
-                        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }} testID="settings-channel-bridges-unsupported">
                             <Text style={{ color: theme.colors.textSecondary }}>
                                 {t('settingsChannelBridges.unsupported')}
                             </Text>
                         </View>
                     ) : needsLocalEnablement ? (
                         <Item
+                            testID="settings-channel-bridges-enable-in-features"
                             title={t('settingsChannelBridges.enableInFeatures')}
                             subtitle={t('settingsChannelBridges.enableInFeaturesSubtitle')}
                             icon={<Ionicons name="flask-outline" size={24} color={theme.colors.accent.orange} />}
@@ -74,7 +75,7 @@ export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSett
 
                 {supported && !needsLocalEnablement && telegramEnabled && !loading ? (
                     <ItemGroup title={t('settingsChannelBridges.telegramTitle')} footer={t('settingsChannelBridges.telegramFooter')}>
-                        <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                        <View style={{ paddingHorizontal: 16, paddingBottom: 12 }} testID="settings-channel-bridges-telegram-config">
                             <CodeView code={configureTelegramCommand} language="bash" />
                         </View>
                     </ItemGroup>
