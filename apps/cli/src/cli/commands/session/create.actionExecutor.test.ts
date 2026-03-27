@@ -10,6 +10,31 @@ vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
 }));
 
 describe('happier session create (action executor)', () => {
+  it('treats --help as usage and does not execute any action', async () => {
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['create', '--help', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(output.json()).toEqual(expect.objectContaining({
+        ok: false,
+        kind: 'session_create',
+        error: expect.objectContaining({
+          code: 'invalid_arguments',
+        }),
+      }));
+    } finally {
+      output.restore();
+    }
+  });
+
   it('routes through ActionExecutor with the expected action id and args', async () => {
     execute.mockResolvedValueOnce({
       ok: true,

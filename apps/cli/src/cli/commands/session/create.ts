@@ -20,7 +20,7 @@ export async function cmdSessionCreate(
   const title = (readFlagValue(argv, '--title') ?? '').trim();
   const initialPrompt = (readFlagValue(argv, '--message') ?? readFlagValue(argv, '--prompt') ?? '').trim();
   const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
-  if (hasFlag(argv, '--host')) {
+  if (hasFlag(argv, '--help') || hasFlag(argv, '-h')) {
     throw new Error(
       'Usage: happier session create [--path <path>] [--backend <backend-target>] [--title <text>] [--tag <tag>] [--prompt <text>|--message <text>] [--json]',
     );
