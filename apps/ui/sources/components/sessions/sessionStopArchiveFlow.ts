@@ -63,6 +63,7 @@ export async function stopSessionAndMaybeArchive(params: StopSessionAndMaybeArch
         },
     );
     if (!shouldArchive) {
+        clearSessionVisibleWhenInactive(params.sessionId);
         return;
     }
 

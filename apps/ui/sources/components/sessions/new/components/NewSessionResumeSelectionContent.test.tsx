@@ -147,6 +147,9 @@ describe('NewSessionResumeSelectionContent', () => {
 
         const browseButton = screen.findByTestId('resume-id-browse-trigger');
         expect(browseButton).toBeTruthy();
+        if (!browseButton) {
+            throw new Error('expected resume-id-browse-trigger');
+        }
 
         await browseButton.props.onPress?.();
 

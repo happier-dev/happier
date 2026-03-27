@@ -582,6 +582,9 @@ describe('DirectSessionsBrowseScreen', () => {
 
         const candidateItem = screen.findByTestId('direct-session-candidate:codex-session-1');
         expect(candidateItem).toBeTruthy();
+        if (!candidateItem) {
+            throw new Error('expected candidate item');
+        }
 
         await act(async () => {
             await candidateItem.props.onPress?.();

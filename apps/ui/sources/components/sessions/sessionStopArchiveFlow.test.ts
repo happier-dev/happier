@@ -96,4 +96,39 @@ describe('stopSessionAndMaybeArchive', () => {
         expect(modalConfirmSpy).not.toHaveBeenCalled();
         expect(archiveSpy).not.toHaveBeenCalled();
     });
+
+    it('clears the visibility override when the user chooses to keep the session', async () => {
+        modalConfirmSpy.mockResolvedValueOnce(false);
+
+        const stopSpy = vi.fn(async () => ({ success: true }));
+        const archiveSpy = vi.fn(async () => ({ success: true }));
+
+        const { stopSessionAndMaybeArchive } = await import('./sessionStopArchiveFlow');
+
+        await stopSessionAndMaybeArchive({
+            sessionId: 'session_3',
+            hideInactiveSessions: true,
+            isPinned: false,
+            stopSession: stopSpy,
+            archiveSession: archiveSpy,
+            stopErrorMessage: 'stop failed',
+            archiveErrorMessage: 'archive failed',
+        });
+
+        expect(applySessionListRenderablePatchesSpy).toHaveBeenNthCalledWith(1, [
+            {
+                sessionId: 'session_3',
+                patch: { keepVisibleWhenInactive: true },
+            },
+        ]);
+        expect(stopSpy).toHaveBeenCalledTimes(1);
+        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
+        expect(archiveSpy).not.toHaveBeenCalled();
+        expect(applySessionListRenderablePatchesSpy).toHaveBeenNthCalledWith(2, [
+            {
+                sessionId: 'session_3',
+                patch: { keepVisibleWhenInactive: false },
+            },
+        ]);
+    });
 });
