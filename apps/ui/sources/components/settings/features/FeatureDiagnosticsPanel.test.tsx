@@ -7,10 +7,10 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const useFeatureDecisionMock = vi.fn<(featureId: FeatureId) => FeatureDecision | null>();
+const useFeatureDecisionMock = vi.fn<(featureId: FeatureId, scope?: unknown) => FeatureDecision | null>();
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: (featureId: FeatureId) => useFeatureDecisionMock(featureId),
+    useFeatureDecision: (featureId: FeatureId, scope?: unknown) => useFeatureDecisionMock(featureId, scope),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -58,5 +58,17 @@ describe('FeatureDiagnosticsPanel', () => {
         const items = tree.findAllByType('Item' as any);
         expect(items).toHaveLength(featureIds.length);
         expect(items.map((item) => item.props.title)).toEqual(featureIds);
+    });
+
+    it('forwards scope to useFeatureDecision', async () => {
+        const { FeatureDiagnosticsPanel } = await import('./FeatureDiagnosticsPanel');
+
+        const featureIds: FeatureId[] = ['voice', 'automations'];
+        useFeatureDecisionMock.mockReturnValue(null);
+
+        await renderScreen(React.createElement(FeatureDiagnosticsPanel, { featureIds, scope: { scopeKind: 'runtime' } }));
+
+        expect(useFeatureDecisionMock).toHaveBeenCalledWith('voice', { scopeKind: 'runtime' });
+        expect(useFeatureDecisionMock).toHaveBeenCalledWith('automations', { scopeKind: 'runtime' });
     });
 });

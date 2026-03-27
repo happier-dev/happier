@@ -81,7 +81,9 @@ export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSett
                     </ItemGroup>
                 ) : null}
 
-                {!loading && supported ? <FeatureDiagnosticsPanel featureIds={diagnosticsFeatureIds} /> : null}
+                {!loading && supported ? (
+                    <FeatureDiagnosticsPanel featureIds={diagnosticsFeatureIds} scope={{ scopeKind: 'runtime' }} />
+                ) : null}
             </View>
         </ItemList>
     );
