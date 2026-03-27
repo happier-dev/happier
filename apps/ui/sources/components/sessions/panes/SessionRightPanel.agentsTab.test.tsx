@@ -121,7 +121,9 @@ describe('SessionRightPanel (core tabs)', () => {
         expect(screen.findByTestId('session-rightpanel-tab:agents')).toBeTruthy();
         expect(screen.findByTestId('session-rightpanel-tab:terminal')).toBeNull();
 
-        expect(getStyleValue(findHostByTestId(screen, 'session-rightpanel-surface-git')?.props.style, 'visibility')).toBe('visible');
+        const gitSurface = findHostByTestId(screen, 'session-rightpanel-surface-git');
+        expect(gitSurface).not.toBeNull();
+        expect(gitSurface?.props.pointerEvents).toBe('auto');
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
     });
@@ -132,7 +134,9 @@ describe('SessionRightPanel (core tabs)', () => {
 
         const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
 
-        expect(getStyleValue(findHostByTestId(screen, 'session-rightpanel-surface-agents')?.props.style, 'visibility')).toBe('visible');
+        const agentsSurface = findHostByTestId(screen, 'session-rightpanel-surface-agents');
+        expect(agentsSurface).not.toBeNull();
+        expect(agentsSurface?.props.pointerEvents).toBe('auto');
         expect(findHostByTestId(screen, 'session-rightpanel-surface-git')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
     });
