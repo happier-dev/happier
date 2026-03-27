@@ -69,7 +69,8 @@ export const SettingsView = React.memo(function SettingsView() {
     const automationsNeedLocalEnablement = automationsSupport?.blockedBy === 'local_policy';
     const channelBridgesDecision = useFeatureDecision('channelBridges');
     const showChannelBridges = getFeatureBuildPolicyDecision('channelBridges') !== 'deny'
-        && channelBridgesDecision?.state !== 'unsupported';
+        && channelBridgesDecision !== null
+        && channelBridgesDecision.state !== 'unsupported';
     const channelBridgesNeedLocalEnablement = channelBridgesDecision?.blockedBy === 'local_policy';
     const profile = useProfile();
     const displayName = getDisplayName(profile);
