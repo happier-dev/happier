@@ -63,13 +63,17 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     upsertActivateAndSwitchServer: vi.fn(async () => true),
 }));
 
-vi.mock('@/utils/path/terminalConnectUrl', () => ({
-    buildTerminalConnectDeepLink: () => 'happier://terminal?key=abc123',
-    parseTerminalConnectUrl: () => ({
-        publicKeyB64Url: 'abc123',
-        serverUrl: 'https://company.example.test',
-    }),
-}));
+vi.mock('@/utils/path/terminalConnectUrl', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/utils/path/terminalConnectUrl')>();
+    return {
+        ...actual,
+        buildTerminalConnectDeepLink: () => 'happier://terminal?key=abc123',
+        parseTerminalConnectUrl: () => ({
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'https://company.example.test',
+        }),
+    };
+});
 
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>) => promise,

@@ -155,6 +155,10 @@ vi.mock('expo-router/drawer', () => ({
   },
 }));
 
+vi.mock('expo-router', () => ({
+  Stack: (props: any) => React.createElement('Stack', props, props.children),
+}));
+
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ isAuthenticated: true }),
 }));
@@ -258,10 +262,8 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
 
     tree = (await renderScreen(<SidebarNavigator />)).tree;
 
-    const drawer = getDrawer(tree);
-    expect(drawer.props.screenOptions.drawerType).toBe('front');
-    expect(drawer.props.screenOptions.drawerStyle.width).toBe(0);
-    expect(drawer.props.screenOptions.drawerStyle.display).toBe('none');
+    expect(mockDrawerLifecycle.mounts).toBe(0);
+    expect(tree.findAllByType('Drawer' as any)).toHaveLength(0);
   });
 
   it('keeps the full sidebar when resized down to the minimum width', async () => {

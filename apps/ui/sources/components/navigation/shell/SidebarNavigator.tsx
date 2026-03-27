@@ -1,5 +1,6 @@
 import { useAuth } from '@/auth/context/AuthContext';
 import * as React from 'react';
+import { Stack } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { SidebarView } from './SidebarView';
@@ -87,6 +88,11 @@ export const SidebarNavigator = React.memo(() => {
         setSidebarWidthBasisPx(windowWidth);
     }, [setSidebarWidthBasisPx, setSidebarWidthPx, windowWidth]);
 
+    const stackNavigationOptions = React.useMemo(() => ({
+        lazy: false,
+        headerShown: false,
+    }), []);
+
     const drawerNavigationOptions = React.useMemo(() => {
         const base = {
             lazy: false,
@@ -165,10 +171,14 @@ export const SidebarNavigator = React.memo(() => {
         [drawerWidth, handleSidebarWidthCommit, handleSidebarWidthDrag, sidebarCollapsed, sidebarMaxWidthPx]
     );
 
+    if (!desktopDrawerEnabled) {
+        return <Stack screenOptions={stackNavigationOptions} />;
+    }
+
     return (
         <Drawer
             screenOptions={drawerNavigationOptions}
             drawerContent={showPermanentDrawer ? drawerContent : undefined}
         />
-    )
+    );
 });
