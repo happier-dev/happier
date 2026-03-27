@@ -10,6 +10,7 @@ const executeAction = vi.fn();
 const state: any = {
   sessions: {
     s1: {
+      active: true,
       agentState: {
         requests: {
           req_a: { id: 'req_a', tool: 'Bash', kind: 'permission' },
@@ -61,6 +62,7 @@ describe('realtimeClientTools permission handling', () => {
       req_a: { id: 'req_a', tool: 'Bash', kind: 'permission' },
       req_b: { id: 'req_b', tool: 'Read', kind: 'permission' },
     };
+    state.sessions.s1.active = true;
 
     useVoiceTargetStore.getState().setScope('global');
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
@@ -94,6 +96,7 @@ describe('realtimeClientTools permission handling', () => {
       req_question: { id: 'req_question', tool: 'AskUserQuestion', kind: 'user_action' },
       req_permission: { id: 'req_permission', tool: 'Bash', kind: 'permission' },
     };
+    state.sessions.s1.active = true;
 
     const { realtimeClientTools } = await import('./realtimeClientTools');
 
