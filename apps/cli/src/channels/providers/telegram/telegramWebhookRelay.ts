@@ -20,7 +20,6 @@ function secureCompareToken(providedToken: string, expectedToken: string): boole
 
 export type TelegramWebhookRelayHandle = Readonly<{
   port: number;
-  path: string;
   stop: () => Promise<void>;
 }>;
 
@@ -90,7 +89,6 @@ export async function startTelegramWebhookRelay(params: Readonly<{
 
   return {
     port: boundPort,
-    path,
     stop: async () => {
       await app.close();
     },

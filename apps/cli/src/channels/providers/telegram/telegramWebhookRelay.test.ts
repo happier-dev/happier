@@ -30,7 +30,7 @@ describe('startTelegramWebhookRelay', () => {
     });
 
     try {
-      const response = await axios.post(`http://127.0.0.1:${relay.port}${relay.path}`, {
+      const response = await axios.post(`http://127.0.0.1:${relay.port}/telegram/webhook/secret-123`, {
         update_id: 42,
         message: { text: 'hello' },
       }, {
@@ -65,14 +65,14 @@ describe('startTelegramWebhookRelay', () => {
     });
 
     try {
-      const missingHeaderResponse = await axios.post(`http://127.0.0.1:${relay.port}${relay.path}`, {
+      const missingHeaderResponse = await axios.post(`http://127.0.0.1:${relay.port}/telegram/webhook/secret-abc`, {
         update_id: 101,
         message: { text: 'hello' },
       }, {
         validateStatus: () => true,
       });
 
-      const invalidHeaderResponse = await axios.post(`http://127.0.0.1:${relay.port}${relay.path}`, {
+      const invalidHeaderResponse = await axios.post(`http://127.0.0.1:${relay.port}/telegram/webhook/secret-abc`, {
         update_id: 102,
         message: { text: 'hello again' },
       }, {
@@ -106,7 +106,7 @@ describe('startTelegramWebhookRelay', () => {
       });
 
       const response = await axios.post(
-        `http://127.0.0.1:${relay.port}${relay.path}`,
+        `http://127.0.0.1:${relay.port}/telegram/webhook/secret-fail`,
         {
           update_id: 202,
           message: { text: 'hello' },
