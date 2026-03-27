@@ -87,10 +87,6 @@ export class SDKToLogConverter {
      * Convert SDK message to log format
      */
     convert(sdkMessage: SDKMessage): RawJSONLines | null {
-        if (sdkMessage && typeof sdkMessage === 'object' && (sdkMessage as any).happierPartial === true) {
-            return null
-        }
-
         const sdkUuidRaw = (sdkMessage as any)?.uuid;
         const sdkUuid = typeof sdkUuidRaw === 'string' && sdkUuidRaw.trim().length > 0 ? sdkUuidRaw.trim() : null;
         const uuid = sdkUuid ?? randomUUID()

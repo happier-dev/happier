@@ -45,4 +45,25 @@ describe('parseRawJsonLines', () => {
     expect(parsed?.type).toBe('progress');
     expect((parsed as any)?.uuid).toBe('p1');
   });
+
+  it('does not drop assistant messages when usage schema changes (invalid usage is ignored)', () => {
+    const parsed = parseRawJsonLinesObject({
+      type: 'assistant',
+      uuid: 'u3',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'hi' }],
+        usage: {
+          // Missing required token counts for our structured usage parser.
+          output_tokens: 5,
+          service_tier: null,
+          something_new: true,
+        },
+      },
+    });
+
+    expect(parsed?.type).toBe('assistant');
+    expect((parsed as any)?.uuid).toBe('u3');
+    expect((parsed as any)?.message?.usage).toBeUndefined();
+  });
 });
