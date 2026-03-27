@@ -40,6 +40,9 @@ function normalizeActionExecutorResult(result: ActionExecutorResult): ActionTool
 }
 
 function normalizeActionToolResult(actionId: ActionId, result: ActionExecutorResult): ActionToolBridgeResult {
+  if (result.ok && result.result && typeof result.result === 'object' && (result.result as any).kind === 'approval_request_created') {
+    return { ok: true, result: result.result };
+  }
   if (!actionId.startsWith('execution.run.')) {
     return normalizeActionExecutorResult(result);
   }

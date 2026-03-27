@@ -477,6 +477,64 @@ describe('sessionUpdateHandlers tool call tracking', () => {
     vi.useRealTimers();
   });
 
+  it('does not arm execution timeouts while a tool call is waiting_for_permission (even if provider emits in_progress)', () => {
+    vi.useFakeTimers();
+    class ShortTimeoutTransport extends DefaultTransport {
+      getToolCallTimeout(): number {
+        return 10;
+      }
+    }
+    const ctx = createCtx({
+      transport: new ShortTimeoutTransport(defaultTransport.agentName),
+    });
+
+    handleToolCall(
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call_perm_wait_1',
+        status: 'pending',
+        kind: 'execute',
+        title: 'Run echo hello',
+        content: { command: ['/bin/zsh', '-lc', 'echo hello'] },
+      },
+      ctx,
+    );
+
+    expect(ctx.toolCallLifecycleStates.get('call_perm_wait_1')).toBe('waiting_for_permission');
+    expect(ctx.toolCallTimeouts.has('call_perm_wait_1')).toBe(false);
+
+    // Some ACP agents can incorrectly emit in_progress liveness updates while still permission-gated.
+    handleToolCallUpdate(
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call_perm_wait_1',
+        status: 'in_progress',
+        kind: 'execute',
+        title: 'Run echo hello',
+        content: { command: ['/bin/zsh', '-lc', 'echo hello'] },
+        meta: {},
+      },
+      ctx,
+    );
+
+    expect(ctx.toolCallLifecycleStates.get('call_perm_wait_1')).toBe('waiting_for_permission');
+    expect(ctx.toolCallTimeouts.has('call_perm_wait_1')).toBe(false);
+
+    // Ensure we do not emit a timeout tool-result while waiting for a permission decision.
+    vi.advanceTimersByTime(50);
+    const toolResultsWhileWaiting = ctx.emitted.filter(
+      (m) => m.type === 'tool-result' && m.callId === 'call_perm_wait_1',
+    );
+    expect(toolResultsWhileWaiting).toHaveLength(0);
+
+    // Once permission is granted, we should transition to running and arm the execution timeout.
+    markToolCallRunningAfterPermission('call_perm_wait_1', ctx);
+    expect(ctx.toolCallLifecycleStates.get('call_perm_wait_1')).toBe('running');
+    expect(ctx.toolCallTimeouts.has('call_perm_wait_1')).toBe(true);
+
+    vi.useRealTimers();
+  });
+
   it('infers tool name from title when ACP tool kind and id are opaque (Kimi)', () => {
     const ctx = createCtx({ transport: new KimiTransport() });
 
