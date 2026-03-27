@@ -299,6 +299,24 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.telegram.webhookSecret).toBe('settings-secret');
   });
 
+  it('treats invalid settings webhook secret token as missing', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      settings: {
+        channelBridge: {
+          providers: {
+            telegram: {
+              webhook: {
+                secret: 'bad token!',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.webhookSecret).toBe('');
+  });
+
   it('ignores non-loopback env webhook host and keeps settings host', () => {
     const config = resolveChannelBridgeRuntimeConfig({
       env: {

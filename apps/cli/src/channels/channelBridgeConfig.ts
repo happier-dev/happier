@@ -234,7 +234,7 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
       webhookServer?.secret,
       secretsGlobal?.webhookSecret,
       webhookGlobal?.secret,
-    ], readTrimmedString)
+    ], readWebhookSecretToken)
     ?? '';
   const envWebhookSecretRaw =
     typeof env.HAPPIER_TELEGRAM_WEBHOOK_SECRET === 'string'
