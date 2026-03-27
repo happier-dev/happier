@@ -6,6 +6,25 @@ const pattern = /(\*\*(.*?)(?:\*\*|$))|(\*(.*?)(?:\*|$))|(\[([^\]]+)\](?:\(([^)]
 const autoLinkPattern = /\b((?:https?:\/\/|www\.)[^\s<]+)/g;
 const trailingPunctuationPattern = /[.,)\]}]+$/;
 
+function normalizeMarkdownLinkUrl(raw: string): string | null {
+    const trimmed = String(raw ?? '').trim();
+    if (!trimmed) return null;
+
+    const lowerTrimmed = trimmed.toLowerCase();
+    const candidate = lowerTrimmed.startsWith('www.') ? `https://${trimmed}` : trimmed;
+    const lower = candidate.toLowerCase();
+
+    // Reject common unsafe URL schemes (XSS on web) and any URL containing whitespace/control characters.
+    if (lower.startsWith('javascript:') || lower.startsWith('data:')) return null;
+    if (/\s|[\u0000-\u001F\u007F]/.test(candidate)) return null;
+
+    if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('mailto:')) {
+        return candidate;
+    }
+
+    return null;
+}
+
 function splitPlainTextWithAutoLinks(text: string): MarkdownSpan[] {
     const out: MarkdownSpan[] = [];
     let lastIndex = 0;
@@ -71,7 +90,7 @@ export function parseMarkdownSpans(markdown: string, header: boolean) {
         } else if (match[5]) {
             // Link - handle incomplete links (no URL part)
             if (match[7]) {
-                spans.push({ styles: [], text: match[6], url: match[7] });
+                spans.push({ styles: [], text: match[6], url: normalizeMarkdownLinkUrl(match[7]) });
             } else {
                 // If no URL part, treat as plain text with brackets
                 spans.push({ styles: [], text: `[${match[6]}]`, url: null });

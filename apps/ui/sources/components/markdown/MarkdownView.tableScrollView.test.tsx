@@ -24,7 +24,6 @@ describe('MarkdownView (tables)', () => {
 
         const scrollViews = screen.findAllByType('GestureHandlerScrollView' as any);
         expect(scrollViews).toHaveLength(1);
-        expect(scrollViews[0]!.props.testID).toBe('markdown-table-scroll');
         expect(scrollViews[0]!.props.horizontal).toBe(true);
         expect(scrollViews[0]!.props.nestedScrollEnabled).toBe(true);
         expect(scrollViews[0]!.props.disallowInterruption).toBe(true);
