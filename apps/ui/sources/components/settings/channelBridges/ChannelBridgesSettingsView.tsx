@@ -18,10 +18,13 @@ import { t } from '@/text';
 export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSettingsView() {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const decision = useFeatureDecision('channelBridges');
+    const channelBridgesDecision = useFeatureDecision('channelBridges');
+    const telegramDecision = useFeatureDecision('channelBridges.telegram');
 
-    const needsLocalEnablement = decision?.blockedBy === 'local_policy';
-    const supported = decision?.state !== 'unsupported';
+    const loading = channelBridgesDecision === null;
+    const needsLocalEnablement = channelBridgesDecision?.blockedBy === 'local_policy';
+    const supported = channelBridgesDecision?.state !== 'unsupported';
+    const telegramEnabled = telegramDecision?.state === 'enabled';
 
     const configureTelegramCommand = React.useMemo(() => {
         return [
@@ -41,7 +44,13 @@ export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSett
         <ItemList style={{ paddingTop: 0 }} testID="settings-channel-bridges-screen">
             <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                 <ItemGroup title={t('settings.channelBridges')} footer={t('settingsFeatures.expChannelBridgesSubtitle')}>
-                    {!supported ? (
+                    {loading ? (
+                        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                            <Text style={{ color: theme.colors.textSecondary }}>
+                                {t('common.loading')}
+                            </Text>
+                        </View>
+                    ) : !supported ? (
                         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
                             <Text style={{ color: theme.colors.textSecondary }}>
                                 {t('settingsChannelBridges.unsupported')}
@@ -63,7 +72,7 @@ export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSett
                     )}
                 </ItemGroup>
 
-                {supported ? (
+                {supported && !needsLocalEnablement && telegramEnabled && !loading ? (
                     <ItemGroup title={t('settingsChannelBridges.telegramTitle')} footer={t('settingsChannelBridges.telegramFooter')}>
                         <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
                             <CodeView code={configureTelegramCommand} language="bash" />
@@ -71,7 +80,7 @@ export const ChannelBridgesSettingsView = React.memo(function ChannelBridgesSett
                     </ItemGroup>
                 ) : null}
 
-                {supported ? <FeatureDiagnosticsPanel featureIds={diagnosticsFeatureIds} /> : null}
+                {!loading && supported ? <FeatureDiagnosticsPanel featureIds={diagnosticsFeatureIds} /> : null}
             </View>
         </ItemList>
     );
