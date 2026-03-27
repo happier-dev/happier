@@ -26,7 +26,7 @@ export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
 > = {
   providerId: 'telegram',
   readConfig: (root) => root.telegram,
-  createRuntime: async ({ config }) => {
+  createRuntime: async ({ config, context }) => {
     const botToken = config.botToken;
     if (!botToken) return null;
 
@@ -44,7 +44,9 @@ export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
     }
 
     const webhookModeRequested = webhookEnabled;
-    const pollingCursorStore = createTelegramPollingCursorStore({ botToken });
+    const pollingCursorStore = context.accountId
+      ? createTelegramPollingCursorStore({ accountId: context.accountId, botToken })
+      : null;
 
     let relayHandle: TelegramWebhookRelayHandle | null = null;
     let adapter = createTelegramChannelAdapter({
@@ -53,7 +55,7 @@ export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
       allowAllSharedChats,
       requireTopics,
       webhookMode: webhookModeRequested,
-      pollingCursorStore,
+      pollingCursorStore: pollingCursorStore ?? undefined,
     });
 
     if (webhookModeRequested) {
@@ -63,11 +65,7 @@ export const telegramChannelBridgeProvider: ChannelBridgeProviderDefinition<
         relayHandle = await startTelegramWebhookRelay({
           port,
           host,
-          // We intentionally use one shared secret today because bridge config currently
-          // exposes a single webhook secret field. The relay API keeps both knobs
-          // separate so we can split path/header secrets in a future config version.
-          secretPathToken: webhookSecret,
-          secretHeaderToken: webhookSecret,
+          secretToken: webhookSecret,
           onUpdate: adapter.enqueueWebhookUpdate,
         });
         logger.debug(

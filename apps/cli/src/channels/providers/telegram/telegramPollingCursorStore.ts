@@ -13,10 +13,28 @@ type StoredTelegramPollingCursorDocV1 = Readonly<{
 
 const STORE_SCHEMA_VERSION = 1;
 const BOT_TOKEN_HASH_LENGTH = 32;
+const ACCOUNT_ID_SAFE_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function assertFilesystemSafeAccountId(raw: string): string {
+  const value = raw.trim();
+  if (!value) {
+    throw new Error('Invalid accountId: empty');
+  }
+  if (value === '.' || value === '..') {
+    throw new Error(`Invalid accountId: ${value}`);
+  }
+  if (value.includes('/') || value.includes('\\')) {
+    throw new Error(`Invalid accountId: ${value}`);
+  }
+  if (!ACCOUNT_ID_SAFE_RE.test(value)) {
+    throw new Error(`Invalid accountId: ${value}`);
+  }
+  return value;
 }
 
 function toNonNegativeInt(value: unknown): number | null {
@@ -47,9 +65,19 @@ async function bestEffortChmod0700(path: string): Promise<void> {
   await chmod(path, 0o700).catch(() => {});
 }
 
-function resolveCursorFile(botToken: string): string {
+function resolveCursorFile(accountId: string, botToken: string): string {
   const tokenHash = hashBotToken(botToken);
-  return join(configuration.activeServerDir, 'channel-bridges', 'v1', 'telegram', 'polling-cursors', `${tokenHash}.json`);
+  return join(
+    configuration.activeServerDir,
+    'channel-bridges',
+    'v1',
+    'account',
+    accountId,
+    'providers',
+    'telegram',
+    'polling-cursors',
+    `${tokenHash}.json`,
+  );
 }
 
 export type TelegramPollingCursorStore = Readonly<{
@@ -57,8 +85,9 @@ export type TelegramPollingCursorStore = Readonly<{
   save: (offset: number) => Promise<void>;
 }>;
 
-export function createTelegramPollingCursorStore(params: Readonly<{ botToken: string }>): TelegramPollingCursorStore {
-  const cursorFile = resolveCursorFile(params.botToken);
+export function createTelegramPollingCursorStore(params: Readonly<{ accountId: string; botToken: string }>): TelegramPollingCursorStore {
+  const accountId = assertFilesystemSafeAccountId(params.accountId);
+  const cursorFile = resolveCursorFile(accountId, params.botToken);
   let queue = Promise.resolve();
 
   const enqueue = <T>(work: () => Promise<T>): Promise<T> => {
@@ -88,7 +117,8 @@ export function createTelegramPollingCursorStore(params: Readonly<{ botToken: st
         throw new Error('Invalid Telegram polling cursor offset');
       }
 
-      const telegramDir = join(configuration.activeServerDir, 'channel-bridges', 'v1', 'telegram');
+      const accountDir = join(configuration.activeServerDir, 'channel-bridges', 'v1', 'account', accountId);
+      const telegramDir = join(accountDir, 'providers', 'telegram');
       const cursorsDir = join(telegramDir, 'polling-cursors');
       await mkdir(cursorsDir, { recursive: true, mode: 0o700 });
       await bestEffortChmod0700(configuration.activeServerDir);
@@ -100,7 +130,7 @@ export function createTelegramPollingCursorStore(params: Readonly<{ botToken: st
       await writeJsonAtomic(cursorFile, doc);
       await bestEffortChmod0700(join(configuration.activeServerDir, 'channel-bridges'));
       await bestEffortChmod0700(join(configuration.activeServerDir, 'channel-bridges', 'v1'));
-      await bestEffortChmod0700(telegramDir);
+      await bestEffortChmod0700(accountDir);
       await bestEffortChmod0700(cursorsDir);
     }),
   };

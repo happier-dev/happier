@@ -7,6 +7,7 @@ import type {
 import { startChannelBridgeWorker } from '@/channels/core/channelBridgeWorker';
 import type { ChannelBridgeRuntimeConfig } from '@/channels/channelBridgeConfig';
 import { listChannelBridgeProviderIds, resolveChannelBridgeProviderDefinition } from '@/channels/providers/_registry/channelBridgeProviderRegistry';
+import type { ChannelBridgeProviderRuntimeContext } from '@/channels/providers/_registry/types';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
 
@@ -14,6 +15,7 @@ export type ChannelBridgeRuntimeHandle = ChannelBridgeWorkerHandle;
 
 async function startProviderRuntimes(params: Readonly<{
   runtimeConfig: ChannelBridgeRuntimeConfig;
+  context: ChannelBridgeProviderRuntimeContext;
 }>): Promise<Readonly<{ adapters: readonly ChannelBridgeAdapter[]; stop: () => Promise<void> }>> {
   const adapters: ChannelBridgeAdapter[] = [];
   const stopFns: Array<() => Promise<void>> = [];
@@ -23,7 +25,7 @@ async function startProviderRuntimes(params: Readonly<{
     const providerConfig = provider.readConfig(params.runtimeConfig);
     let runtime: Awaited<ReturnType<typeof provider.createRuntime>> | null;
     try {
-      runtime = await provider.createRuntime({ config: providerConfig });
+      runtime = await provider.createRuntime({ config: providerConfig, context: params.context });
     } catch (error) {
       logger.warn(
         `[channelBridge] Failed to start provider runtime (provider=${providerId}); skipping provider`,
@@ -54,8 +56,9 @@ export async function startChannelBridgeRuntime(params: Readonly<{
   store: ChannelBindingStore;
   deps: ChannelBridgeDeps;
   runtimeConfig: ChannelBridgeRuntimeConfig;
+  context: ChannelBridgeProviderRuntimeContext;
 }>): Promise<ChannelBridgeRuntimeHandle | null> {
-  const providers = await startProviderRuntimes({ runtimeConfig: params.runtimeConfig });
+  const providers = await startProviderRuntimes({ runtimeConfig: params.runtimeConfig, context: params.context });
   if (providers.adapters.length === 0) return null;
 
   let worker: ChannelBridgeWorkerHandle;

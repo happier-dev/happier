@@ -5,6 +5,11 @@ export type ChannelBridgeProviderRuntime = Readonly<{
   stop: () => Promise<void>;
 }>;
 
+export type ChannelBridgeProviderRuntimeContext = Readonly<{
+  serverId: string | null;
+  accountId: string | null;
+}>;
+
 export type ChannelBridgeProviderDefinition<
   TProviderId extends string,
   TRootConfig,
@@ -12,5 +17,5 @@ export type ChannelBridgeProviderDefinition<
 > = Readonly<{
   providerId: TProviderId;
   readConfig: (root: TRootConfig) => TProviderConfig;
-  createRuntime(params: Readonly<{ config: TProviderConfig }>): Promise<ChannelBridgeProviderRuntime | null>;
+  createRuntime(params: Readonly<{ config: TProviderConfig; context: ChannelBridgeProviderRuntimeContext }>): Promise<ChannelBridgeProviderRuntime | null>;
 }>;

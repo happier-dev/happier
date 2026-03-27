@@ -166,7 +166,7 @@ happier daemon stop && happier daemon start
 Telegram bridge example:
 
 - if Telegram bridge is configured but bot token is missing, doctor prints a red bridge error and the final line is `❌`
-- if `webhook.enabled=true` and `secrets.webhookSecret` (or `HAPPIER_TELEGRAM_WEBHOOK_SECRET`) is empty, doctor prints a warning and the daemon will fall back to polling
+- if `webhook.enabled=true` and `secrets.webhookSecret` (or `HAPPIER_TELEGRAM_WEBHOOK_SECRET`) is empty, doctor prints a critical bridge error and the final line is `❌`
 
 ## Webhook Setup (daemon relay mode)
 
@@ -183,10 +183,9 @@ HAPPIER_TELEGRAM_WEBHOOK_PORT=8787
 
 `HAPPIER_TELEGRAM_WEBHOOK_SECRET` is currently used for both:
 
-- webhook URL path token (`/telegram/webhook/<token>`)
 - Telegram `secret_token` header validation
 
-This is an implementation limitation today (single configured secret) and is weaker than using separate secrets for path and header checks.
+This is an implementation limitation today (single configured secret). The webhook endpoint path does not include any secrets.
 
 Important:
 
@@ -197,24 +196,23 @@ Important:
 Expose/proxy this daemon endpoint publicly:
 
 ```text
-POST /telegram/webhook/<HAPPIER_TELEGRAM_WEBHOOK_SECRET>
+POST /telegram/webhook
 ```
 
 Example:
 
 ```text
-https://your-public-host/telegram/webhook/<secret>
-  -> http://127.0.0.1:8787/telegram/webhook/<secret>
+https://your-public-host/telegram/webhook
+  -> http://127.0.0.1:8787/telegram/webhook
 ```
 
 Set Telegram webhook:
 
 ```bash
-curl "https://api.telegram.org/bot<token>/setWebhook?url=https://your-public-host/telegram/webhook/<secret>&secret_token=<secret>"
+curl "https://api.telegram.org/bot<token>/setWebhook?url=https://your-public-host/telegram/webhook&secret_token=<secret>"
 ```
 
-Current implementation requires the same `<secret>` value for both webhook URL path token and `secret_token`.
-Use a high-entropy random value and avoid sharing/logging webhook URLs.
+Use a high-entropy random value and avoid sharing/logging webhook secrets.
 
 If you switch back to polling mode, clear webhook first:
 

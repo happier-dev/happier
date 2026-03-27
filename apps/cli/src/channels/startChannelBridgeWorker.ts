@@ -418,6 +418,10 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
           store,
           deps,
           runtimeConfig,
+          context: {
+            serverId: typeof params.serverId === 'string' ? params.serverId.trim() || null : null,
+            accountId: typeof params.accountId === 'string' ? params.accountId.trim() || null : null,
+          },
         });
 
     if (!worker) {
