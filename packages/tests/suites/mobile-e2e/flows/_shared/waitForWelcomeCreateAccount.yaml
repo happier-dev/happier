@@ -17,10 +17,8 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # - the developer menu onboarding sheet,
 # then dismiss the sheet if it appeared, and finally wait for Welcome.
 - extendedWaitUntil:
-    # When connecting via Expo Dev Client, Metro can show intermediate progress
-    # surfaces ("Loading from", "Bundling ..."). Consider those as "app is
-    # starting" and keep waiting until we reach an interactive surface.
-    visible: "(welcome-server-loading|welcome-create-account|This is the developer menu\\..*|Go home|Loading from|Bundling.*|Downloading.*)"
+    visible:
+      id: welcome-hero
     timeout: 480000
 
 - runFlow:
@@ -30,7 +28,9 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: dismissExpoDevMenuOverlayMaybe.yaml
 
 - extendedWaitUntil:
-    visible: welcome-create-account
+    visible:
+      id: welcome-create-account
     timeout: 480000
 
-- assertVisible: welcome-create-account
+- assertVisible:
+    id: welcome-create-account

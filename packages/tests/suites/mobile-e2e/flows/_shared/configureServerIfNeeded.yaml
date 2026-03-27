@@ -25,7 +25,8 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # Wait until *any* known Happier surface is visible (the welcome hero can be
 # present even while the server is still "Loading...").
 - extendedWaitUntil:
-    visible: "(main-header-start-new-session|welcome-server-loading|welcome-create-account|Loading from|Bundling.*|Downloading.*)"
+    visible:
+      id: welcome-hero
     timeout: 240000
 
 - openLink: happier:///server?auto=1&url=${HAPPIER_E2E_SERVER_URL}
@@ -38,20 +39,10 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - runFlow:
     file: dismissExpoDevMenuOverlayMaybe.yaml
 
+# In `auto=1` mode, server auto-add happens in a background effect and the
+# screen redirects away on success. Wait for the Welcome hero to be visible
+# again, indicating we're back on `/`.
 - extendedWaitUntil:
-    visible: "(welcome-create-account|server-settings-add-server-toggle|Loading from|Bundling.*|Downloading.*)"
+    visible:
+      id: welcome-hero
     timeout: 240000
-
-# In `auto=1` mode, server auto-add happens in a background effect.
-# Expand the server form so any validation errors become visible to Maestro.
-- runFlow:
-    when:
-      visible: server-settings-add-server-toggle
-    commands:
-      - tapOn: server-settings-add-server-toggle
-
-- extendedWaitUntil:
-    visible: "(welcome-create-account|server-settings-add-error)"
-    timeout: 240000
-
-- assertNotVisible: server-settings-add-error

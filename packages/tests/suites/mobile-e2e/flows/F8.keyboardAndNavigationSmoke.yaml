@@ -13,16 +13,19 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: _shared/loginCreateAccount.yaml
 
 - runFlow:
-    file: _shared/openDevAgentInputDemo.yaml
+    file: _shared/gotoNewSessionComposer.yaml
 
 # Keyboard/layout smoke: focusing the composer should not hide the send affordance.
-- tapOn: new-session-composer-input
+- tapOn:
+    id: new-session-composer-input
 - inputText: "MOBILE_E2E_KEYBOARD_SMOKE"
-- assertVisible: new-session-composer-send
+- assertVisible:
+    id: new-session-composer-send
 
 # Navigation smoke: can deep-link to Settings and back to home without breaking layout.
 - openLink: happier:///settings
-- assertVisible: settings-connect-terminal-scan
+- assertVisible:
+    id: settings-connect-terminal-scan
 - openLink: happier:///
 - assertVisible:
     id: main-header-start-new-session

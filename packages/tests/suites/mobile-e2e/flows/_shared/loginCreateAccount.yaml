@@ -4,12 +4,14 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 
 - runFlow:
     when:
-      visible: welcome-create-account
+      visible:
+        id: welcome-create-account
     commands:
       - runFlow:
           file: waitForWelcomeCreateAccount.yaml
 
-      - tapOn: welcome-create-account
+      - tapOn:
+          id: welcome-create-account
 
       # After login, the main header action for starting a new session should appear.
       - assertVisible:

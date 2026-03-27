@@ -54,8 +54,7 @@ describe('mobileMaestroRunner', () => {
     }));
 
     const runMaestro = vi.fn(async (params: { env: NodeJS.ProcessEnv }) => {
-      // When `adb reverse` is enabled, the device should use loopback URLs.
-      expect(params.env.HAPPIER_E2E_SERVER_URL).toBe('http://127.0.0.1:43210');
+      expect(params.env.HAPPIER_E2E_SERVER_URL).toBe('http://10.0.2.2:43210');
       return { exitCode: 0 };
     });
 
@@ -128,8 +127,8 @@ describe('mobileMaestroRunner', () => {
 
     const runMaestro = vi.fn(async (params: { args: string[] }) => {
       const joined = params.args.join(' ');
-      expect(joined).toContain('HAPPIER_E2E_SERVER_URL=http://127.0.0.1:26050');
-      expect(joined).toContain('HAPPIER_E2E_DEV_CLIENT_METRO_URL=http://127.0.0.1:8081');
+      expect(joined).toContain('HAPPIER_E2E_SERVER_URL=http://10.0.2.2:26050');
+      expect(joined).toContain('HAPPIER_E2E_DEV_CLIENT_METRO_URL=http://10.0.2.2:8081');
       return { exitCode: 0 };
     });
 

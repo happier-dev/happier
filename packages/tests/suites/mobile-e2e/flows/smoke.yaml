@@ -1,0 +1,16 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+# Mobile E2E smoke lane: production screens + critical controls only.
+#
+# Note: each sub-flow currently launches the app with `clearState: true` to keep
+# runs isolated and reduce flake from persisted settings.
+- runFlow:
+    file: F1.bootAndCreateAccount.yaml
+- runFlow:
+    file: F3.newSessionComposerSmoke.yaml
+- runFlow:
+    file: F4.modeControl.yaml
+- runFlow:
+    file: F8.keyboardAndNavigationSmoke.yaml
+- runFlow:
+    file: F9.agentInputChipsAndPopovers.yaml

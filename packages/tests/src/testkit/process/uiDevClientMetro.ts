@@ -4,7 +4,6 @@ import { resolve as resolvePath } from 'node:path';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { repoRootDir } from '../paths';
 import { waitFor } from '../timing';
-import { createMobileE2eExpoEnv } from '../mobile/mobileE2eExpoEnv';
 import {
   inspectOwnedProcess,
   registerProcessOwnershipLease,
@@ -91,7 +90,7 @@ export async function startUiDevClientMetro(params: {
       ...(clearCache ? ['--clear'] : []),
     ],
     cwd: uiWorkspaceDir,
-    env: createMobileE2eExpoEnv({
+    env: {
       ...params.env,
       CI: '1',
       EXPO_NO_TELEMETRY: '1',
@@ -99,7 +98,7 @@ export async function startUiDevClientMetro(params: {
       TMPDIR: tmpDir,
       TMP: tmpDir,
       TEMP: tmpDir,
-    }),
+    },
     stdoutPath,
     stderrPath,
   });

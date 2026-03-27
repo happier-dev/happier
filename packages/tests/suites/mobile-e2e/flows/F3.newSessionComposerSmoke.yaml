@@ -13,13 +13,18 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: _shared/loginCreateAccount.yaml
 
 - runFlow:
-    file: _shared/openDevAgentInputDemo.yaml
+    file: _shared/gotoNewSessionComposer.yaml
 
-- assertVisible: agent-input-agent-chip
-- assertVisible: agent-input-permission-chip
-- assertVisible: agent-input-session-mode-chip
+- assertVisible:
+    id: agent-input-agent-chip
+- assertVisible:
+    id: agent-input-permission-chip
+- assertVisible:
+    id: agent-input-session-mode-chip
 
-- tapOn: new-session-composer-input
+- tapOn:
+    id: new-session-composer-input
 - inputText: "MOBILE_E2E_NEW_SESSION_SMOKE"
 
-- assertVisible: new-session-composer-send
+- assertVisible:
+    id: new-session-composer-send

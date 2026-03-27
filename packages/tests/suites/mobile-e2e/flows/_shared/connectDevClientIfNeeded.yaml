@@ -16,7 +16,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # screen before showing either the connect UI or the app UI. Wait until at
 # least one known bootstrap surface is visible.
 - extendedWaitUntil:
-    visible: "(main-header-start-new-session|welcome-server-loading|welcome-create-account|DEVELOPMENT SERVERS|Development servers|New development server|Connect)"
+    visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Connect|Error loading app|Loading from|Bundling.*|Downloading.*)"
     timeout: 60000
 
 # The Expo Dev Client can show a blocking onboarding sheet/overlay at any time.
@@ -152,7 +152,8 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # Maestro (accessibility), so do not wait for "Bundling ..." text. Instead,
 # wait for our own stable `testID`-backed surfaces.
 - extendedWaitUntil:
-    visible: "(Error loading app|main-header-start-new-session|welcome-server-loading|welcome-create-account|This is the developer menu\\..*|Go home)"
+    visible:
+      id: welcome-hero
     timeout: 480000
 
 - runFlow:
@@ -167,7 +168,8 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
       # not attempt to reconnect (that can steal focus and make the run flaky).
       - runFlow:
           when:
-            notVisible: "(main-header-start-new-session|welcome-server-loading|welcome-create-account|This is the developer menu\\..*|Go home)"
+            notVisible:
+              id: welcome-hero
           commands:
             - runFlow:
                 when:
@@ -199,11 +201,13 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
                         - tapOn:
                             text: "Connect"
             - extendedWaitUntil:
-                visible: "(main-header-start-new-session|welcome-server-loading|welcome-create-account|This is the developer menu\\..*|Go home)"
+                visible:
+                  id: welcome-hero
                 timeout: 240000
 
 - extendedWaitUntil:
-    visible: "(main-header-start-new-session|welcome-server-loading|welcome-create-account|This is the developer menu\\..*|Go home)"
+    visible:
+      id: welcome-hero
     timeout: 480000
 
 - runFlow:

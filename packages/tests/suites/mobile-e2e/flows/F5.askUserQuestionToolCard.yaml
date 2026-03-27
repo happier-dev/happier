@@ -16,12 +16,17 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: _shared/openDevTools2.yaml
 
 - extendedWaitUntil:
-    visible: 'dev-tools2-filter:ask-user-question'
+    visible:
+      id: 'dev-tools2-filter:ask-user-question'
     timeout: 240000
 
-- tapOn: 'dev-tools2-filter:ask-user-question'
+- tapOn:
+    id: 'dev-tools2-filter:ask-user-question'
 
 # AskUserQuestion should render as a user-action card (not a permission approval footer).
-- assertVisible: 'ask-user-question.option:0:0'
-- assertVisible: 'ask-user-question.option:0:1'
-- assertVisible: ask-user-question.submit
+- assertVisible:
+    id: 'ask-user-question.option:0:0'
+- assertVisible:
+    id: 'ask-user-question.option:0:1'
+- assertVisible:
+    id: ask-user-question.submit

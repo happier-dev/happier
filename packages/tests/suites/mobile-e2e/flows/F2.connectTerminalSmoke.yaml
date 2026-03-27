@@ -16,5 +16,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - openLink: happier:///settings
 
 # Smoke: the terminal connect entrypoints should be visible on mobile.
-- assertVisible: settings-connect-terminal-scan
-- assertVisible: settings-connect-terminal-enter-url
+- assertVisible:
+    id: settings-connect-terminal-scan
+- assertVisible:
+    id: settings-connect-terminal-enter-url

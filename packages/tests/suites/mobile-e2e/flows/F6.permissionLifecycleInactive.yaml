@@ -16,16 +16,23 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: _shared/openDevTools2.yaml
 
 - extendedWaitUntil:
-    visible: 'dev-tools2-filter:permissions.pending'
+    visible:
+      id: 'dev-tools2-filter:permissions.pending'
     timeout: 240000
 
 # Active session: a pending tool should show permission controls.
-- tapOn: 'dev-tools2-filter:permissions.pending'
-- assertVisible: permission-footer.allow
-- assertVisible: permission-footer.deny
+- tapOn:
+    id: 'dev-tools2-filter:permissions.pending'
+- assertVisible:
+    id: permission-footer.allow
+- assertVisible:
+    id: permission-footer.deny
 
 # Inactive provider/session: we should NOT show an actionable permission approval card.
 # Instead, the tool is normalized to an error/canceled state (see `resolveInactiveSessionToolCallFailure`).
-- tapOn: 'dev-tools2-filter:permissions.pending-inactive'
-- assertNotVisible: permission-footer.allow
-- assertNotVisible: permission-footer.deny
+- tapOn:
+    id: 'dev-tools2-filter:permissions.pending-inactive'
+- assertNotVisible:
+    id: permission-footer.allow
+- assertNotVisible:
+    id: permission-footer.deny

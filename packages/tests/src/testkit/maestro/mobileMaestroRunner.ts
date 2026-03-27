@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 import { createRunDirs } from '../runDir';
+import { resolveDeviceVisibleBaseUrl } from '../mobile/resolveDeviceHost';
 import { parseMaestroArgs as defaultParseMaestroArgs } from '../../../scripts/runMaestroWithHeartbeat.shared.mjs';
 
 export type StartedServerLike = Readonly<{
@@ -75,33 +76,6 @@ function extractUrlPort(url: string): number | null {
   } catch {
     return null;
   }
-}
-
-function resolveDeviceVisibleBaseUrl(params: Readonly<{
-  env: NodeJS.ProcessEnv;
-  platform: string;
-  baseUrl: string;
-  androidAdbReverse: boolean;
-}>): string {
-  const override = String(params.env.HAPPIER_E2E_MOBILE_DEVICE_HOST ?? '').trim();
-  const url = new URL(params.baseUrl);
-
-  if (override) {
-    url.hostname = override;
-    return url.toString().replace(/\/$/, '');
-  }
-
-  if (params.platform === 'android') {
-    if (params.androidAdbReverse === true) {
-      return url.toString().replace(/\/$/, '');
-    }
-    const host = url.hostname.trim().toLowerCase();
-    if (host === 'localhost' || host === '127.0.0.1') {
-      url.hostname = '10.0.2.2';
-    }
-  }
-
-  return url.toString().replace(/\/$/, '');
 }
 
 function runAdbReverseIfEnabled(params: Readonly<{
@@ -233,25 +207,15 @@ export async function runMobileMaestro(
     urls: [server.baseUrl, hostMetroUrl].filter(Boolean),
   });
 
-  const deviceServerUrl =
-    server.baseUrl && (platform === 'android' || platform === 'ios')
-      ? resolveDeviceVisibleBaseUrl({
-          env: params.env,
-          platform,
-          baseUrl: server.baseUrl,
-          androidAdbReverse: adbReverse.enabled,
-        })
-      : server.baseUrl;
+  const mobilePlatform = platform === 'android' || platform === 'ios' ? platform : null;
 
-  const deviceMetroUrl =
-    hostMetroUrl && (platform === 'android' || platform === 'ios')
-      ? resolveDeviceVisibleBaseUrl({
-          env: params.env,
-          platform,
-          baseUrl: hostMetroUrl,
-          androidAdbReverse: adbReverse.enabled,
-        })
-      : hostMetroUrl;
+  const deviceServerUrl = server.baseUrl && mobilePlatform
+    ? resolveDeviceVisibleBaseUrl({ platform: mobilePlatform, baseUrl: server.baseUrl, env: params.env })
+    : server.baseUrl;
+
+  const deviceMetroUrl = hostMetroUrl && mobilePlatform
+    ? resolveDeviceVisibleBaseUrl({ platform: mobilePlatform, baseUrl: hostMetroUrl, env: params.env })
+    : hostMetroUrl;
 
   const maestroBin = deps.resolveMaestroBin
     ? deps.resolveMaestroBin(params.env)

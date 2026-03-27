@@ -17,19 +17,24 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 
 # Wait for the demo transcript to render before swiping.
 - extendedWaitUntil:
-    visible: markdown-table-scroll
+    visible:
+      id: markdown-table-scroll
     timeout: 240000
 
 # Table horizontal scroll (sentinel is offscreen to the right).
-- assertVisible: markdown-table-scroll
+- assertVisible:
+    id: markdown-table-scroll
 - swipe:
     direction: LEFT
-    element: markdown-table-scroll
+    element:
+      id: markdown-table-scroll
 - assertVisible: "MOBILE_E2E_TABLE_SENTINEL_RIGHT"
 
 # Code block horizontal scroll (sentinel is offscreen to the right).
-- assertVisible: markdown-code-block-scroll
+- assertVisible:
+    id: markdown-code-block-scroll
 - swipe:
     direction: LEFT
-    element: markdown-code-block-scroll
+    element:
+      id: markdown-code-block-scroll
 - assertVisible: "MOBILE_E2E_CODE_SENTINEL_RIGHT"

@@ -15,7 +15,7 @@ Prereqs:
 - Java 17+
 - Android emulator / iOS simulator
 - Maestro installed (`maestro --version`)
-- Metro running for the Expo Dev Client with native E2E selectors enabled (`EXPO_PUBLIC_HAPPIER_NATIVE_E2E_TEST_IDS=1`) (default Metro URL: `http://127.0.0.1:8081`)
+- Metro running for the Expo Dev Client (default Metro URL: `http://127.0.0.1:8081`)
 
 From repo root:
 

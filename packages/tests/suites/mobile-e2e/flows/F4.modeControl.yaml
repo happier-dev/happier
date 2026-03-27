@@ -13,15 +13,19 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: _shared/loginCreateAccount.yaml
 
 - runFlow:
-    file: _shared/openDevAgentInputDemo.yaml
+    file: _shared/gotoNewSessionComposer.yaml
 
-- assertVisible: agent-input-session-mode-chip
-- tapOn: agent-input-session-mode-chip
+- assertVisible:
+    id: agent-input-session-mode-chip
+- tapOn:
+    id: agent-input-session-mode-chip
 
-- assertVisible: 'agent-input-session-mode-option:plan'
+- assertVisible:
+    id: 'agent-input-session-mode-option:plan'
 
 # Toggle to Plan mode if present (no-op if already selected).
-- tapOn: 'agent-input-session-mode-option:plan'
+- tapOn:
+    id: 'agent-input-session-mode-option:plan'
 
 # Dismiss overlay.
 - tapOn:
