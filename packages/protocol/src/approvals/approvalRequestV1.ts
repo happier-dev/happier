@@ -5,8 +5,10 @@ import { ActionIdSchema } from '../actions/actionIds.js';
 export const ApprovalRequestStatusSchema = z.enum(['open', 'approved', 'rejected', 'executed', 'failed', 'canceled']);
 export type ApprovalRequestStatus = z.infer<typeof ApprovalRequestStatusSchema>;
 
+const ApprovalRequestedSurfaceSchema = z.string().min(1);
+
 export const ApprovalRequestCreatedBySchema = z.object({
-  surface: z.enum(['voice', 'session_agent', 'mcp', 'system']),
+  surface: z.enum(['voice', 'session_agent', 'mcp', 'cli', 'system']),
   agentId: z.string().min(1).optional(),
   sessionId: z.string().min(1).optional(),
 }).strict();
@@ -33,6 +35,7 @@ export const ApprovalRequestV1Schema = z.object({
   createdAtMs: z.number().int().min(0),
   updatedAtMs: z.number().int().min(0),
   createdBy: ApprovalRequestCreatedBySchema,
+  requestedSurface: ApprovalRequestedSurfaceSchema.optional(),
   actionId: ActionIdSchema,
   actionArgs: z.unknown(),
   summary: z.string().min(1),

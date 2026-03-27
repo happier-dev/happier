@@ -10,6 +10,7 @@ function createDeps(): ActionExecutorDeps {
     executionRunSend: vi.fn(async () => ({})),
     executionRunStop: vi.fn(async () => ({})),
     executionRunAction: vi.fn(async () => ({})),
+    executionRunWait: vi.fn(async () => ({})),
 
     sessionOpen: vi.fn(async () => ({})),
     sessionFork: vi.fn(async () => ({})),
@@ -245,6 +246,38 @@ describe('createActionExecutor (inventory/discovery)', () => {
     );
   });
 
+  it('routes voice_agent.start to deps.executionRunStart', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('voice_agent.start', {
+      sessionId: 'session_1',
+      backendTargetKeys: ['agent:codex'],
+      instructions: 'Start the voice agent run.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.executionRunStart).toHaveBeenCalledWith(
+      'session_1',
+      expect.objectContaining({
+        intent: 'voice_agent',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'long_lived',
+        ioMode: 'streaming',
+        intentInput: expect.objectContaining({
+          backendTargetKey: 'agent:codex',
+        }),
+      }),
+      undefined,
+    );
+  });
+
   it('routes agents.backends.list to deps.agentsBackendsList', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -430,9 +463,10 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('action.spec.search', { query: 'mode', limit: 10 }, { surface: 'mcp' });
+    const res = await executor.execute('action.spec.search', { query: '', limit: 50 }, { surface: 'mcp' });
     expect(res.ok).toBe(true);
-    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'session.mode.set')).toBe(false);
+    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'session.mode.set')).toBe(true);
+    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'ui.voice_global.reset')).toBe(false);
   });
 
   it('routes ui.voice_agent.teleport to deps.teleportVoiceAgentToSessionRoot using the default session fallback', async () => {
@@ -559,6 +593,19 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionModeSet).toHaveBeenCalledWith({ sessionId: 's1', modeId: 'plan' });
   });
 
+  it('allows session.mode.set when the available modes list is empty', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('session.mode.set', {
+      sessionId: 's1',
+      modeId: 'plan',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.sessionModeSet).toHaveBeenCalledWith({ sessionId: 's1', modeId: 'plan' });
+  });
+
   it('preserves default as a real mode id when the available modes literally include default', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -601,7 +648,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('action.spec.get', { id: 'session.mode.set' }, { surface: 'mcp' });
+    const res = await executor.execute('action.spec.get', { id: 'ui.voice_global.reset' }, { surface: 'mcp' });
 
     expect(res).toEqual({
       ok: false,
@@ -614,7 +661,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('session.mode.set', { sessionId: 's1', modeId: 'plan' }, { surface: 'mcp' });
+    const res = await executor.execute('ui.voice_global.reset', {}, { surface: 'mcp' });
 
     expect(res).toEqual({
       ok: false,

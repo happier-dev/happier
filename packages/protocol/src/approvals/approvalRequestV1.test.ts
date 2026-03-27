@@ -19,6 +19,37 @@ describe('ApprovalRequestV1Schema', () => {
     expect(parsed.actionId).toBe('review.start');
   });
 
+  it('accepts createdBy.surface=cli for requests created from the CLI surface', () => {
+    const parsed = ApprovalRequestV1Schema.parse({
+      v: 1,
+      status: 'open',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      createdBy: { surface: 'cli', sessionId: 's1' },
+      actionId: 'review.start',
+      actionArgs: { sessionId: 's1', engineIds: ['x'], instructions: 'y' },
+      summary: 'Run review',
+    });
+
+    expect(parsed.createdBy.surface).toBe('cli');
+    expect(parsed.createdBy.sessionId).toBe('s1');
+  });
+
+  it('allows cli as a createdBy surface', () => {
+    const parsed = ApprovalRequestV1Schema.parse({
+      v: 1,
+      status: 'open',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      createdBy: { surface: 'cli' },
+      actionId: 'review.start',
+      actionArgs: { sessionId: 's1', engineIds: ['x'], instructions: 'y' },
+      summary: 'Run review',
+    });
+
+    expect(parsed.createdBy.surface).toBe('cli');
+  });
+
   it('rejects open requests that already include a decision or execution payload', () => {
     expect(() => ApprovalRequestV1Schema.parse({
       v: 1,

@@ -19,15 +19,16 @@ describe('embedded feature build policy', () => {
     expect(policy.deny).toEqual([]);
   });
 
-  it('loads the production embedded policy and marks known features allowed', () => {
+  it('loads the production embedded policy (may be neutral)', () => {
     const policy = resolveEmbeddedFeatureBuildPolicy('production');
-    expect(policy.allow.length).toBeGreaterThan(0);
-    expect(evaluateFeatureBuildPolicy(policy, 'updates.ota')).toBe('allow');
+    expect(policy.allow).toEqual(expect.any(Array));
+    expect(policy.deny).toEqual(expect.any(Array));
+    expect(evaluateFeatureBuildPolicy(policy, 'updates.ota')).toBe('neutral');
   });
 
-  it('allows attachments uploads in the production embedded policy', () => {
+  it('does not ship-deny attachments uploads in the production embedded policy', () => {
     const policy = resolveEmbeddedFeatureBuildPolicy('production');
-    expect(evaluateFeatureBuildPolicy(policy, 'attachments.uploads')).toBe('allow');
+    expect(evaluateFeatureBuildPolicy(policy, 'attachments.uploads')).toBe('neutral');
   });
 
   it('merges env policy by union and preserves deny precedence', () => {

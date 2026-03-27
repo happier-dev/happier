@@ -10,6 +10,7 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     executionRunSend: async () => ({}),
     executionRunStop: async () => ({}),
     executionRunAction: async () => ({}),
+    executionRunWait: async () => ({}),
     sessionOpen: async () => ({}),
     sessionFork: async () => ({}),
     sessionRollback: async () => ({}),
@@ -40,6 +41,34 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (session control)', () => {
+  it('executes session.message.send via deps.sessionSendMessage (including optional overrides)', async () => {
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSendMessage });
+
+    const res = await executor.execute(
+      'session.message.send' as any,
+      {
+        sessionId: 's1',
+        message: 'Hello',
+        permissionModeOverride: 'read_only',
+        modelOverride: 'gpt-4o',
+        wait: true,
+        timeoutSeconds: 42,
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
+      message: 'Hello',
+      permissionModeOverride: 'read_only',
+      modelOverride: 'gpt-4o',
+      wait: true,
+      timeoutSeconds: 42,
+    }));
+  });
+
   it('executes session.title.set via deps.sessionTitleSet', async () => {
     const sessionTitleSet = vi.fn(async () => ({ ok: true }));
     const executor = createExecutor({ sessionTitleSet });
@@ -170,5 +199,81 @@ describe('createActionExecutor (session control)', () => {
 
     expect(res).toEqual({ ok: true, result: { ok: true } });
     expect(sessionWaitIdle).toHaveBeenCalledWith({ sessionId: 's1', timeoutSeconds: 42 });
+  });
+
+  it('executes session.spawn_new via deps.sessionSpawnNew (including backendTargetKey/title)', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnNew });
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        path: '/repo',
+        backendTargetKey: 'agent:claude',
+        title: 'My title',
+        tag: 'tag-1',
+        initialMessage: 'Hello',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/repo',
+      backendTargetKey: 'agent:claude',
+      title: 'My title',
+      tag: 'tag-1',
+      initialMessage: 'Hello',
+    }));
+  });
+
+  it('executes session.list via deps.sessionList (including cli filter flags)', async () => {
+    const sessionList = vi.fn(async () => ({ sessions: [] }));
+    const executor = createExecutor({ sessionList });
+
+    const res = await executor.execute(
+      'session.list' as any,
+      {
+        limit: 10,
+        cursor: 'cursor-1',
+        activeOnly: true,
+        includeSystem: true,
+        resumableOnly: true,
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { sessions: [] } });
+    expect(sessionList).toHaveBeenCalledWith(expect.objectContaining({
+      limit: 10,
+      cursor: 'cursor-1',
+      activeOnly: true,
+      includeSystem: true,
+      resumableOnly: true,
+    }));
+  });
+
+  it('returns unsupported_action when session.permission.respond is not implemented by deps', async () => {
+    const executor = createExecutor({ sessionPermissionRespond: undefined as any });
+
+    const res = await executor.execute(
+      'session.permission.respond' as any,
+      { sessionId: 's1', decision: 'allow' },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.permission.respond' });
+  });
+
+  it('returns unsupported_action when session.user_action.answer is not implemented by deps', async () => {
+    const executor = createExecutor({ sessionUserActionAnswer: undefined as any });
+
+    const res = await executor.execute(
+      'session.user_action.answer' as any,
+      { sessionId: 's1', decision: 'approve' },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.user_action.answer' });
   });
 });

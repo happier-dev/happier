@@ -37,11 +37,13 @@ export const ACTION_IDS = [
   'subagents.delegate.start',
   'voice_agent.start',
   // Execution runs control plane (RPC-backed)
+  'execution.run.start',
   'execution.run.list',
   'execution.run.get',
   'execution.run.send',
   'execution.run.stop',
   'execution.run.action',
+  'execution.run.wait',
   // Session targeting + listing (voice)
   'session.target.primary.set',
   'session.target.tracked.set',

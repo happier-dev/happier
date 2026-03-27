@@ -7,7 +7,7 @@ import {
   serializeActionFieldOptions,
 } from './actionCatalog.js';
 import { resolveRequestedSessionModeId } from './sessionModeIds.js';
-import { getActionSpec, isActionSpecSurfacedOn, type ActionSpec, type ActionSurfaces } from './actionSpecs.js';
+import { ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, type ActionSpec, type ActionSurfaces } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
@@ -48,6 +48,16 @@ export type ActionExecutorContext = Readonly<{
    * placement gating when desired.
    */
   placement?: ActionUiPlacement | null;
+
+  /**
+   * Internal escape hatch used when executing an action *because it has already been approved*.
+   *
+   * When true, the executor will still enforce surface/placement enablement, but it will not
+   * route the underlying action through the approvals queue again. This prevents nested
+   * approvals (and recursion) when `approval.request.decide` executes an approved action
+   * on the same surface that originally required approvals.
+   */
+  bypassApprovals?: boolean;
 }>;
 
 export type ActionExecutorDeps = Readonly<{
@@ -58,6 +68,7 @@ export type ActionExecutorDeps = Readonly<{
   executionRunSend: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunStop: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunAction: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
+  executionRunWait: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
 
   // Session navigation/spawn (client-side)
   sessionOpen: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
@@ -74,6 +85,8 @@ export type ActionExecutorDeps = Readonly<{
     tag?: string;
     agentId?: string;
     modelId?: string;
+    backendTargetKey?: string;
+    title?: string;
     path?: string;
     host?: string;
     initialMessage?: string;
@@ -89,7 +102,15 @@ export type ActionExecutorDeps = Readonly<{
   agentsModelsList: (args: Readonly<{ agentId: string; machineId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
 
   // Session messaging (socket message event, server-scoped)
-  sessionSendMessage: (args: Readonly<{ sessionId: string; message: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionSendMessage: (args: Readonly<{
+    sessionId: string;
+    message: string;
+    permissionModeOverride?: string;
+    modelOverride?: string | null;
+    wait?: boolean;
+    timeoutSeconds?: number;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
   sessionTitleSet?: (args: Readonly<{ sessionId: string; title: string; serverId?: string | null }>) => Promise<unknown>;
   sessionStop?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
   sessionPermissionModeSet?: (args: Readonly<{ sessionId: string; permissionMode: string; serverId?: string | null }>) => Promise<unknown>;
@@ -107,13 +128,13 @@ export type ActionExecutorDeps = Readonly<{
   sessionWaitIdle?: (args: Readonly<{ sessionId: string; timeoutSeconds?: number; serverId?: string | null }>) => Promise<unknown>;
 
   // Permission response (session RPC, server-scoped)
-  sessionPermissionRespond: (args: Readonly<{
+  sessionPermissionRespond?: (args: Readonly<{
     sessionId: string;
     decision: 'allow' | 'deny';
     requestId?: string | null;
     serverId?: string | null;
   }>) => Promise<unknown>;
-  sessionUserActionAnswer: (args: Readonly<{
+  sessionUserActionAnswer?: (args: Readonly<{
     sessionId: string;
     requestId?: string | null;
     answers: readonly Readonly<{ question: string; answer: string }>[];
@@ -128,7 +149,15 @@ export type ActionExecutorDeps = Readonly<{
   // Voice panel targeting + session query tools
   sessionTargetPrimarySet: (args: Readonly<{ sessionId: string | null }>) => Promise<unknown>;
   sessionTargetTrackedSet: (args: Readonly<{ sessionIds: readonly string[] }>) => Promise<unknown>;
-  sessionList: (args: Readonly<{ limit?: number; cursor?: string | null; includeLastMessagePreview?: boolean }>) => Promise<unknown>;
+  sessionList: (args: Readonly<{
+    limit?: number;
+    cursor?: string | null;
+    includeLastMessagePreview?: boolean;
+    activeOnly?: boolean;
+    archivedOnly?: boolean;
+    includeSystem?: boolean;
+    resumableOnly?: boolean;
+  }>) => Promise<unknown>;
   sessionActivityGet: (args: Readonly<{ sessionId: string; windowSeconds?: number }>) => Promise<unknown>;
   sessionRecentMessagesGet: (args: Readonly<{
     sessionId: string;
@@ -159,6 +188,7 @@ export type ActionExecutorDeps = Readonly<{
   approvalsCreate?: (args: Readonly<{ request: ApprovalRequestV1; serverId?: string | null }>) => Promise<{ artifactId: string }>;
   approvalsGet?: (args: Readonly<{ artifactId: string; serverId?: string | null }>) => Promise<ApprovalRequestV1 | null>;
   approvalsUpdate?: (args: Readonly<{ artifactId: string; request: ApprovalRequestV1; serverId?: string | null }>) => Promise<{ ok: true } | { ok: false; errorCode: string; error: string }>;
+
   promptDocUpdate?: (args: Readonly<{
     artifactId: string;
     title: string;
@@ -202,6 +232,14 @@ export type ActionExecutorDeps = Readonly<{
   // Optional policy hook for fail-closed action disablement.
   isActionEnabled?: (actionId: ActionId, ctx: ActionExecutorContext) => boolean;
 
+  /**
+   * Optional approvals routing policy hook.
+   *
+   * When true, and when the ActionSpec is eligible (`requiresApprovalQueue`),
+   * the executor will create an approval request instead of executing the action.
+   */
+  isActionApprovalRequired?: (actionId: ActionId, ctx: ActionExecutorContext) => boolean;
+
   // Server routing resolver (optional)
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
 }>;
@@ -210,11 +248,32 @@ function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
 }
 
+const ActionSurfaceKeySchema = ActionSurfaceSchema.keyof();
+
+function parseActionSurfaceKey(value: unknown): keyof ActionSurfaces | null {
+  const parsed = ActionSurfaceKeySchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 function resolveSessionIdFromInput(input: any, ctx: ActionExecutorContext): string | null {
   const sessionId = normalizeId(input?.sessionId);
   if (sessionId) return sessionId;
   const fallback = normalizeId(ctx.defaultSessionId);
   return fallback || null;
+}
+
+function mapApprovalCreatedBySurface(surface: ActionExecutorContext['surface']): ApprovalRequestV1['createdBy']['surface'] {
+  if (surface === 'voice_tool' || surface === 'voice_action_block') return 'voice';
+  if (surface === 'session_agent') return 'session_agent';
+  if (surface === 'mcp') return 'mcp';
+  if (surface === 'cli') return 'cli';
+  // UI surfaces (and unknown surfaces) map to `system`.
+  return 'system';
+}
+
+function buildApprovalSummary(spec: ActionSpec, sessionId: string | null): string {
+  const base = String(spec.title ?? '').trim() || String(spec.id);
+  return sessionId ? `${base} — ${sessionId}` : base;
 }
 
 function extractListedSessions(value: unknown): readonly Readonly<{ id: string; title: string }>[] {
@@ -459,6 +518,14 @@ function buildApprovalDecisionResult(request: ApprovalRequestV1): ActionExecuteR
   };
 }
 
+function resolveApprovalRequestExecutionSurface(createdBySurface: ApprovalRequestV1['createdBy']['surface']): keyof ActionSurfaces | null {
+  if (createdBySurface === 'session_agent') return 'session_agent';
+  if (createdBySurface === 'mcp') return 'mcp';
+  if (createdBySurface === 'voice') return 'voice_tool';
+  if (createdBySurface === 'cli') return 'cli';
+  return null;
+}
+
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }> {
@@ -471,8 +538,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const ctx: ActionExecutorContext = context ?? {};
 
     const spec = getActionSpec(actionId);
+    const approvalRequired = ctx.bypassApprovals
+      ? false
+      : deps.isActionApprovalRequired?.(actionId, ctx) === true;
+    const isApprovalAction = actionId === 'approval.request.create' || actionId === 'approval.request.decide';
     const bypassSurfaceGate = actionId === 'action.spec.search';
-    if (bypassSurfaceGate ? !isActionEnabledByPolicy(spec, ctx) : !isActionEnabled(spec, ctx)) {
+    if (
+      bypassSurfaceGate
+        ? !isActionEnabledByPolicy(spec, ctx)
+        : !isActionEnabled(spec, ctx)
+    ) {
       return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
     }
     const parsed = (spec.inputSchema as any).safeParse(input ?? {});
@@ -481,6 +556,47 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
 
     try {
+      if (approvalRequired && !isApprovalAction) {
+        if (!spec.requiresApprovalQueue) {
+          return { ok: false, errorCode: 'approval_not_supported', error: 'approval_not_supported' };
+        }
+        if (!deps.approvalsCreate) {
+          return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
+        }
+
+        const now = Date.now();
+        const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+        const requestedSurface = parseActionSurfaceKey(ctx.surface);
+        const createdBy = {
+          surface: mapApprovalCreatedBySurface(ctx.surface ?? null),
+          ...(sessionId ? { sessionId } : {}),
+        } as const;
+
+        const request: ApprovalRequestV1 = {
+          v: 1,
+          status: 'open',
+          createdAtMs: now,
+          updatedAtMs: now,
+          createdBy,
+          ...(requestedSurface ? { requestedSurface } : {}),
+          actionId,
+          actionArgs: parsed.data,
+          summary: buildApprovalSummary(spec, sessionId),
+          preview: { actionId, actionArgs: parsed.data },
+          ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
+        };
+
+        const res = await deps.approvalsCreate({ request, serverId: normalizeId(ctx.serverId) || null });
+        return {
+          ok: true,
+          result: {
+            kind: 'approval_request_created',
+            artifactId: (res as any)?.artifactId,
+            actionId,
+          },
+        };
+      }
+
       // Switch by actionId; keep substrate generic.
       if (actionId === 'review.start') {
         const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
@@ -649,6 +765,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           };
         }
 
+        if (actionId === 'execution.run.start') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const opts = serverId ? { serverId } : undefined;
+
+          const { sessionId: _ignored, ...request } = parsed.data as any;
+          const res = await deps.executionRunStart(sessionId, request, opts);
+          return { ok: true, result: res };
+        }
+
         if (actionId === 'execution.run.list') {
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
@@ -698,6 +825,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const opts = serverId ? { serverId } : undefined;
           const res = await deps.executionRunAction(sessionId, { runId: (parsed.data as any).runId, actionId: (parsed.data as any).actionId, input: (parsed.data as any).input }, opts);
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'execution.run.wait') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const opts = serverId ? { serverId } : undefined;
+          const res = await deps.executionRunWait(sessionId, {
+            runId: (parsed.data as any).runId,
+            ...(typeof (parsed.data as any).timeoutSeconds === 'number' ? { timeoutSeconds: (parsed.data as any).timeoutSeconds } : {}),
+            ...(typeof (parsed.data as any).pollIntervalMs === 'number' ? { pollIntervalMs: (parsed.data as any).pollIntervalMs } : {}),
+          }, opts);
           return { ok: true, result: res };
         }
 
@@ -762,6 +902,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(((parsed.data as any).tag) ? { tag: String((parsed.data as any).tag) } : {}),
             ...(((parsed.data as any).agentId) ? { agentId: String((parsed.data as any).agentId) } : {}),
             ...(((parsed.data as any).modelId) ? { modelId: String((parsed.data as any).modelId) } : {}),
+            ...(((parsed.data as any).backendTargetKey) ? { backendTargetKey: String((parsed.data as any).backendTargetKey) } : {}),
+            ...(((parsed.data as any).title) ? { title: String((parsed.data as any).title) } : {}),
             ...(((parsed.data as any).path) ? { path: String((parsed.data as any).path) } : {}),
             ...(((parsed.data as any).host) ? { host: String((parsed.data as any).host) } : {}),
             ...(((parsed.data as any).initialMessage) ? { initialMessage: String((parsed.data as any).initialMessage) } : {}),
@@ -849,7 +991,22 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const res = await deps.sessionSendMessage({ sessionId, message: (parsed.data as any).message, ...(serverId ? { serverId } : {}) });
+          const modelOverrideRaw = Object.prototype.hasOwnProperty.call(parsed.data, 'modelOverride')
+            ? (parsed.data as any).modelOverride
+            : undefined;
+          const res = await deps.sessionSendMessage({
+            sessionId,
+            message: (parsed.data as any).message,
+            ...(((parsed.data as any).permissionModeOverride) ? { permissionModeOverride: (parsed.data as any).permissionModeOverride } : {}),
+            ...(modelOverrideRaw === null
+              ? { modelOverride: null }
+              : typeof modelOverrideRaw === 'string' && modelOverrideRaw.trim().length > 0
+                ? { modelOverride: modelOverrideRaw.trim() }
+                : {}),
+            ...(typeof (parsed.data as any).wait === 'boolean' ? { wait: (parsed.data as any).wait } : {}),
+            ...(typeof (parsed.data as any).timeoutSeconds === 'number' ? { timeoutSeconds: (parsed.data as any).timeoutSeconds } : {}),
+            ...(serverId ? { serverId } : {}),
+          });
           return { ok: true, result: res };
         }
 
@@ -949,6 +1106,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (actionId === 'session.permission.respond') {
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.sessionPermissionRespond) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.permission.respond' };
+          }
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionPermissionRespond({
             sessionId,
@@ -962,6 +1122,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (actionId === 'session.user_action.answer') {
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.sessionUserActionAnswer) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.user_action.answer' };
+          }
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionUserActionAnswer({
             sessionId,
@@ -984,7 +1147,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const modeIdRaw = normalizeId((parsed.data as any).modeId);
           const availableModes = normalizeResolvedOptions(await deps.sessionModesList({ sessionId }));
           const modeId = resolveRequestedSessionModeId(modeIdRaw, availableModes);
-          if (modeId) {
+          if (modeId && availableModes.length > 0) {
             if (!availableModes.some((option) => normalizeId(option.value) === modeId)) {
               return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
             }
@@ -1021,6 +1184,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
             ...(Object.prototype.hasOwnProperty.call(parsed.data, 'cursor') ? { cursor: (((parsed.data as any).cursor ?? null) as any) } : {}),
             ...(typeof (parsed.data as any).includeLastMessagePreview === 'boolean' ? { includeLastMessagePreview: (parsed.data as any).includeLastMessagePreview } : {}),
+            ...(typeof (parsed.data as any).activeOnly === 'boolean' ? { activeOnly: (parsed.data as any).activeOnly } : {}),
+            ...(typeof (parsed.data as any).archivedOnly === 'boolean' ? { archivedOnly: (parsed.data as any).archivedOnly } : {}),
+            ...(typeof (parsed.data as any).includeSystem === 'boolean' ? { includeSystem: (parsed.data as any).includeSystem } : {}),
+            ...(typeof (parsed.data as any).resumableOnly === 'boolean' ? { resumableOnly: (parsed.data as any).resumableOnly } : {}),
           });
           return { ok: true, result: res };
         }
@@ -1247,15 +1414,31 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // Safety metadata remains useful for UI copy and defaults, but it is not a hard gate here.
         getActionSpec(targetActionId);
 
+        const rawCreatedBy = (parsed.data as any).createdBy as ApprovalRequestV1['createdBy'];
+        const forcedSurface = mapApprovalCreatedBySurface(ctx.surface ?? null);
+        const actionArgsSessionId = normalizeId((parsed.data as any).actionArgs?.sessionId);
+        const ctxDefaultSessionId = normalizeId(ctx.defaultSessionId);
+        const rawAgentId = rawCreatedBy && typeof rawCreatedBy === 'object' ? normalizeId((rawCreatedBy as any).agentId) : null;
+        const requestedSurface = parseActionSurfaceKey(ctx.surface);
+        const createdBy: ApprovalRequestV1['createdBy'] = {
+          surface: forcedSurface,
+          ...(rawAgentId ? { agentId: rawAgentId } : {}),
+          ...(actionArgsSessionId ? { sessionId: actionArgsSessionId } : ctxDefaultSessionId ? { sessionId: ctxDefaultSessionId } : {}),
+        };
+
+        const summary = String((parsed.data as any).summary ?? '').trim();
+        if (!summary) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+
         const request: ApprovalRequestV1 = {
           v: 1,
           status: 'open',
           createdAtMs: now,
           updatedAtMs: now,
-          createdBy: (parsed.data as any).createdBy,
+          createdBy,
+          ...(requestedSurface ? { requestedSurface } : {}),
           actionId: targetActionId,
           actionArgs: (parsed.data as any).actionArgs,
-          summary: String((parsed.data as any).summary ?? '').trim(),
+          summary,
           ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
           ...(Object.prototype.hasOwnProperty.call(parsed.data, 'preview') ? { preview: (parsed.data as any).preview } : {}),
         };
@@ -1337,12 +1520,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
         }
 
-        const exec = await execute(existing.actionId, existing.actionArgs, {
-          ...ctx,
-          ...(effectiveServerId ? { serverId: effectiveServerId } : {}),
-          surface: null,
-          placement: null,
-        });
+        const requestSurface = parseActionSurfaceKey((approvedRequest as any).requestedSurface)
+          ?? resolveApprovalRequestExecutionSurface(existing.createdBy.surface);
+        const requestDefaultSessionId = typeof existing.createdBy.sessionId === 'string' ? existing.createdBy.sessionId.trim() : '';
+        const exec = requestSurface
+          ? await execute(existing.actionId, existing.actionArgs, {
+              ...ctx,
+              ...(effectiveServerId ? { serverId: effectiveServerId } : {}),
+              ...(requestDefaultSessionId ? { defaultSessionId: requestDefaultSessionId } : {}),
+              surface: requestSurface,
+              placement: null,
+              bypassApprovals: true,
+            })
+          : { ok: false as const, errorCode: 'approval_execution_surface_invalid', error: 'approval_execution_surface_invalid' };
         const executedAtMs = Date.now();
         const nextExecuted: ApprovalRequestV1 = {
           ...approvedRequest,

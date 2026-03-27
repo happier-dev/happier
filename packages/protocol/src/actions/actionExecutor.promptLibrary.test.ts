@@ -10,6 +10,7 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     executionRunSend: async () => ({}),
     executionRunStop: async () => ({}),
     executionRunAction: async () => ({}),
+    executionRunWait: async () => ({}),
     sessionOpen: async () => ({}),
     sessionFork: async () => ({}),
     sessionRollback: async () => ({}),

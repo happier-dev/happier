@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApprovalRequestV1 } from '../approvals/approvalRequestV1.js';
+import { getActionSpec } from './actionSpecs.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 
 function createApprovalRequest(
@@ -12,10 +13,11 @@ function createApprovalRequest(
     status,
     createdAtMs: 1,
     updatedAtMs: 1,
-    createdBy: { surface: 'system' },
+    createdBy: { surface: 'mcp', sessionId: 's1' },
     actionId: 'session.message.send',
     actionArgs: { sessionId: 's1', message: 'hello' },
     summary: 'Send message',
+    requestedSurface: 'mcp',
   };
 
   if (status === 'approved') {
@@ -55,6 +57,7 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     executionRunSend: async () => ({}),
     executionRunStop: async () => ({}),
     executionRunAction: async () => ({}),
+    executionRunWait: async () => ({}),
     sessionOpen: async () => ({}),
     sessionFork: async () => ({}),
     sessionRollback: async () => ({}),
@@ -83,6 +86,142 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (approvals)', () => {
+  it('does not route non-surfaced actions through approvals even when a policy requires approvals', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+
+    const executor = createExecutor({
+      approvalsCreate,
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'ui.voice_global.reset' && ctx.surface === 'mcp',
+    } as any);
+
+    const res = await executor.execute(
+      'ui.voice_global.reset' as any,
+      {},
+      { surface: 'mcp' },
+    );
+
+    expect(res).toEqual({ ok: false, errorCode: 'action_disabled', error: 'action_disabled' });
+    expect(approvalsCreate).not.toHaveBeenCalled();
+  });
+
+  it('routes actions through approvals when required by the caller policy', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+
+    const executor = createExecutor({
+      approvalsCreate,
+      sessionSendMessage,
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'mcp',
+    } as any);
+
+    const res = await executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'hello' },
+      { surface: 'mcp' },
+    );
+
+    expect(res.ok).toBe(true);
+    expect(sessionSendMessage).not.toHaveBeenCalled();
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        actionId: 'session.message.send',
+        summary: expect.stringContaining('Send a message'),
+        createdBy: expect.objectContaining({ surface: 'mcp', sessionId: 's1' }),
+      }),
+    }));
+    expect((res as any).result?.kind).toBe('approval_request_created');
+    expect((res as any).result?.artifactId).toBe('a1');
+  });
+
+  it('records createdBy.surface=cli when approvals are created from the CLI surface', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+
+    const executor = createExecutor({
+      approvalsCreate,
+      sessionSendMessage,
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'cli',
+    });
+
+    const res = await executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'hello' },
+      { surface: 'cli' },
+    );
+
+    expect(res.ok).toBe(true);
+    expect(sessionSendMessage).not.toHaveBeenCalled();
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        createdBy: expect.objectContaining({ surface: 'cli', sessionId: 's1' }),
+      }),
+    }));
+  });
+
+  it('marks approval requests created from the CLI surface as createdBy.surface=cli', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+
+    const executor = createExecutor({
+      approvalsCreate,
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'cli',
+    } as any);
+
+    const res = await executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'hello' },
+      { surface: 'cli' },
+    );
+
+    expect(res.ok).toBe(true);
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        createdBy: expect.objectContaining({ surface: 'cli', sessionId: 's1' }),
+      }),
+    }));
+  });
+
+  it('routes eligible actions through approvals when required by the caller policy', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+    const executionRunStart = vi.fn(async () => ({ ok: true }));
+
+    const executor = createExecutor({
+      approvalsCreate,
+      executionRunStart,
+      isActionApprovalRequired: (actionId) => actionId === 'review.start',
+    } as any);
+
+    const res = await executor.execute(
+      'review.start' as any,
+      { sessionId: 's1', engineIds: ['x'], instructions: 'y' },
+      { surface: 'cli' },
+    );
+
+    expect(res.ok).toBe(true);
+    expect(executionRunStart).not.toHaveBeenCalled();
+    expect((res as any).result?.kind).toBe('approval_request_created');
+    expect((res as any).result?.artifactId).toBe('a1');
+  });
+
+  it('rejects requiring approval for actions that are not eligible for approval routing', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+
+    expect(getActionSpec('agents.backends.list').requiresApprovalQueue).not.toBe(true);
+
+    const executor = createExecutor({
+      approvalsCreate,
+      isActionApprovalRequired: (actionId) => actionId === 'agents.backends.list',
+    } as any);
+
+    const res = await executor.execute(
+      'agents.backends.list' as any,
+      {},
+      { surface: 'cli' },
+    );
+
+    expect(res).toEqual({ ok: false, errorCode: 'approval_not_supported', error: 'approval_not_supported' });
+    expect(approvalsCreate).not.toHaveBeenCalled();
+  });
+
   it('creates an approval request via deps.approvalsCreate', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
 
@@ -101,6 +240,97 @@ describe('createActionExecutor (approvals)', () => {
         status: 'open',
         actionId: 'session.message.send',
         summary: 'Send message',
+      }),
+    }));
+  });
+
+  it('rejects creating approval requests with a blank (trimmed) summary', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+
+    const executor = createExecutor({ approvalsCreate });
+
+    const res = await executor.execute('approval.request.create' as any, {
+      actionId: 'session.message.send',
+      actionArgs: { sessionId: 's1', message: 'hello' },
+      summary: '   ',
+      createdBy: { surface: 'system' },
+    });
+
+    expect(res).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(approvalsCreate).not.toHaveBeenCalled();
+  });
+
+  it('forces approval.request.create createdBy.surface to match the execution surface', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+
+    const executor = createExecutor({ approvalsCreate });
+
+    const res = await executor.execute('approval.request.create' as any, {
+      actionId: 'session.message.send',
+      actionArgs: { sessionId: 's1', message: 'hello' },
+      summary: 'Send message',
+      createdBy: { surface: 'cli' },
+    }, {
+      surface: 'mcp',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        createdBy: expect.objectContaining({
+          surface: 'mcp',
+        }),
+      }),
+    }));
+  });
+
+  it('forces approval.request.create createdBy.sessionId to match actionArgs.sessionId when present', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+
+    const executor = createExecutor({ approvalsCreate });
+
+    const res = await executor.execute('approval.request.create' as any, {
+      actionId: 'session.message.send',
+      actionArgs: { sessionId: 's2', message: 'hello' },
+      summary: 'Send message',
+      createdBy: { surface: 'cli', sessionId: 's1' },
+    }, {
+      surface: 'mcp',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        createdBy: expect.objectContaining({
+          surface: 'mcp',
+          sessionId: 's2',
+        }),
+      }),
+    }));
+  });
+
+  it('ignores approval.request.create createdBy.sessionId when actionArgs.sessionId is missing and uses ctx.defaultSessionId instead', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+
+    const executor = createExecutor({ approvalsCreate });
+
+    const res = await executor.execute('approval.request.create' as any, {
+      actionId: 'session.message.send',
+      actionArgs: { message: 'hello' },
+      summary: 'Send message',
+      createdBy: { surface: 'cli', sessionId: 's-injected' },
+    }, {
+      surface: 'mcp',
+      defaultSessionId: 's-default',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        createdBy: expect.objectContaining({
+          surface: 'mcp',
+          sessionId: 's-default',
+        }),
       }),
     }));
   });
@@ -180,6 +410,62 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
+  it('marks approvals as failed when the execution surface cannot be resolved (fails closed)', async () => {
+    const approvalsGet = vi.fn(async () => createApprovalRequest('open', {
+      createdBy: { surface: 'system', sessionId: 's1' },
+      requestedSurface: undefined,
+    }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+
+    const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });
+
+    const res = await executor.execute('approval.request.decide' as any, {
+      artifactId: 'a1',
+      decision: 'approve',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(sessionSendMessage).not.toHaveBeenCalled();
+    expect(approvalsUpdate).toHaveBeenCalledTimes(2);
+    expect(approvalsUpdate).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      artifactId: 'a1',
+      request: expect.objectContaining({
+        status: 'failed',
+        execution: expect.objectContaining({
+          ok: false,
+          errorCode: 'approval_execution_surface_invalid',
+        }),
+      }),
+    }));
+  });
+
+  it('does not re-route already-approved actions through approvals when executing them', async () => {
+    const approvalsGet = vi.fn(async () => createApprovalRequest('open', { createdBy: { surface: 'mcp', sessionId: 's1' } }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'nested' }));
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+
+    const executor = createExecutor({
+      approvalsGet,
+      approvalsUpdate,
+      approvalsCreate,
+      sessionSendMessage,
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'mcp',
+    } as any);
+
+    const res = await executor.execute('approval.request.decide' as any, {
+      artifactId: 'a1',
+      decision: 'approve',
+    }, {
+      surface: 'mcp',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(approvalsCreate).not.toHaveBeenCalled();
+    expect(sessionSendMessage).toHaveBeenCalledWith({ sessionId: 's1', message: 'hello', serverId: undefined });
+  });
+
   it('uses the stored approval serverId when the decision context omits one', async () => {
     const approvalsGet = vi.fn(async () => createApprovalRequest('open', { serverId: 'server-a' }));
     const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
@@ -248,6 +534,72 @@ describe('createActionExecutor (approvals)', () => {
       title: 'Review prompt',
       markdown: '# Review',
     });
+  });
+
+  it('does not bypass per-surface disablement when executing approved actions', async () => {
+    const approvalsGet = vi.fn(async () => createApprovalRequest('open', {
+      createdBy: { surface: 'session_agent', sessionId: 's1' },
+      requestedSurface: 'session_agent',
+    }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+
+    const executor = createExecutor({
+      approvalsGet,
+      approvalsUpdate,
+      sessionSendMessage,
+      isActionEnabled: (_id, ctx) => ctx.surface !== 'session_agent',
+    });
+
+    const res = await executor.execute('approval.request.decide' as any, {
+      artifactId: 'a1',
+      decision: 'approve',
+    }, {
+      surface: 'ui_button',
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        status: 'failed',
+        execution: expect.objectContaining({ ok: false, errorCode: 'action_disabled' }),
+      },
+    });
+    expect(sessionSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not bypass per-surface disablement when executing approvals created from the CLI surface', async () => {
+    const approvalsGet = vi.fn(async () => createApprovalRequest('open', {
+      createdBy: { surface: 'cli', sessionId: 's1' },
+      requestedSurface: 'cli',
+    }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+
+    const executor = createExecutor({
+      approvalsGet,
+      approvalsUpdate,
+      sessionSendMessage,
+      isActionEnabled: (_id, ctx) => ctx.surface !== 'cli',
+    });
+
+    const res = await executor.execute('approval.request.decide' as any, {
+      artifactId: 'a1',
+      decision: 'approve',
+    }, {
+      surface: 'ui_button',
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        status: 'failed',
+        execution: expect.objectContaining({ ok: false, errorCode: 'action_disabled' }),
+      },
+    });
+    expect(sessionSendMessage).not.toHaveBeenCalled();
   });
 
   it('resumes an already-approved approval by finalizing execution', async () => {

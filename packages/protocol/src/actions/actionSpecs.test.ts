@@ -34,10 +34,49 @@ describe('Action Spec Registry', () => {
     expect(spec.surfaces.voice_tool).toBe(true);
   });
 
-  it('treats session_agent as the internal in-session MCP surface (not external mcp)', () => {
+  it('surfaces action discovery tools on both session_agent and external mcp', () => {
     const spec = getActionSpec('action.spec.search');
     expect(spec.surfaces.session_agent).toBe(true);
-    expect(spec.surfaces.mcp).toBe(false);
+    expect(spec.surfaces.mcp).toBe(true);
+  });
+
+  it('surfaces session targeting + listing tools on external mcp', () => {
+    expect(getActionSpec('session.target.primary.set').surfaces.mcp).toBe(true);
+    expect(getActionSpec('session.target.tracked.set').surfaces.mcp).toBe(true);
+    expect(getActionSpec('session.list').surfaces.mcp).toBe(true);
+    expect(getActionSpec('session.activity.get').surfaces.mcp).toBe(true);
+    expect(getActionSpec('session.messages.recent.get').surfaces.mcp).toBe(true);
+  });
+
+  it('accepts session.list filter fields in the action schema', () => {
+    const spec = getActionSpec('session.list');
+
+    expect(
+      spec.inputSchema.parse({
+        limit: 200,
+        cursor: 'cursor-1',
+        includeLastMessagePreview: false,
+        activeOnly: true,
+        archivedOnly: false,
+        includeSystem: true,
+        resumableOnly: true,
+      }),
+    ).toEqual({
+      limit: 200,
+      cursor: 'cursor-1',
+      includeLastMessagePreview: false,
+      activeOnly: true,
+      archivedOnly: false,
+      includeSystem: true,
+      resumableOnly: true,
+    });
+  });
+
+  it('surfaces approval actions on external mcp and cli (power user/internal)', () => {
+    expect(getActionSpec('approval.request.create').surfaces.mcp).toBe(true);
+    expect(getActionSpec('approval.request.create').surfaces.cli).toBe(true);
+    expect(getActionSpec('approval.request.decide').surfaces.mcp).toBe(true);
+    expect(getActionSpec('approval.request.decide').surfaces.cli).toBe(true);
   });
 
   it('accepts explicit execution.run.list filter fields in the action schema', () => {
@@ -86,8 +125,23 @@ describe('Action Spec Registry', () => {
     expect(spec.slash?.tokens).toEqual(['/review', '/h.review']);
   });
 
-  it('does not expose de-surfaced legacy execution.run.start action', () => {
-    expect(() => getActionSpec('execution.run.start' as any)).toThrow();
+  it('exposes execution.run.start for cli and external mcp surfaces', () => {
+    const spec = getActionSpec('execution.run.start' as any);
+    expect(spec.surfaces.cli).toBe(true);
+    expect(spec.surfaces.mcp).toBe(true);
+  });
+
+  it('exposes execution.run.wait for cli and external mcp surfaces', () => {
+    const spec = getActionSpec('execution.run.wait' as any);
+    expect(spec.surfaces.cli).toBe(true);
+    expect(spec.surfaces.mcp).toBe(true);
+    expect(spec.bindings?.mcpToolName).toBe('execution_run_wait');
+  });
+
+  it('exposes session.spawn_new as an MCP tool', () => {
+    const spec = getActionSpec('session.spawn_new');
+    expect(spec.surfaces.mcp).toBe(true);
+    expect(spec.bindings?.mcpToolName).toBe('session_spawn_new');
   });
 
   it('does not expose legacy voice_mediator intent in ExecutionRunIntentSchema', () => {
@@ -372,12 +426,12 @@ describe('Action Spec Registry', () => {
     expect(parsed.ioMode).toBe('streaming');
   });
 
-  it('filters action specs by surfaced availability', () => {
-    expect(isActionSpecSurfacedOn(getActionSpec('session.mode.set'), 'voice_tool')).toBe(true);
-    expect(isActionSpecSurfacedOn(getActionSpec('session.mode.set'), 'mcp')).toBe(false);
-    expect(listActionSpecsForSurface('mcp').some((spec) => spec.id === 'session.mode.set')).toBe(false);
-    expect(listActionSpecsForSurface('voice_tool').some((spec) => spec.id === 'session.mode.set')).toBe(true);
-  });
+	  it('filters action specs by surfaced availability', () => {
+	    expect(isActionSpecSurfacedOn(getActionSpec('session.mode.set'), 'voice_tool')).toBe(true);
+	    expect(isActionSpecSurfacedOn(getActionSpec('session.mode.set'), 'mcp')).toBe(true);
+	    expect(listActionSpecsForSurface('mcp').some((spec) => spec.id === 'session.mode.set')).toBe(true);
+	    expect(listActionSpecsForSurface('voice_tool').some((spec) => spec.id === 'session.mode.set')).toBe(true);
+	  });
 
   it('derives the voice prompt hot-path inventory from ActionSpec metadata', () => {
     const hotPathIds = listVoicePromptHotPathSpecs().map((spec) => spec.id);

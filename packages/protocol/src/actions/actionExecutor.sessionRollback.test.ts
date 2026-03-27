@@ -10,6 +10,7 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
     executionRunSend: vi.fn(async () => ({})),
     executionRunStop: vi.fn(async () => ({})),
     executionRunAction: vi.fn(async () => ({})),
+    executionRunWait: vi.fn(async () => ({})),
 
     sessionOpen: vi.fn(async () => ({})),
     sessionFork: vi.fn(async () => ({})),
