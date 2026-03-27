@@ -616,7 +616,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       session_agent: true,
       mcp: true,
-      cli: true,
+      cli: false,
     },
     inputHints: {
       title: 'Search action specs',
@@ -646,7 +646,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       session_agent: true,
       mcp: true,
-      cli: true,
+      cli: false,
     },
     inputHints: {
       title: 'Get action spec',
@@ -674,7 +674,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       session_agent: true,
       mcp: true,
-      cli: true,
+      cli: false,
     },
     inputHints: {
       title: 'Resolve action options',
@@ -1888,19 +1888,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","modeId":"plan"}' },
     },
-	    surfaces: {
-	      ui_button: false,
-	      ui_slash_command: false,
-	      voice_tool: true,
-	      voice_action_block: true,
-	      session_agent: true,
-	      mcp: true,
-	      cli: true,
-	    },
-	    inputHints: {
-	      title: 'Set session mode',
-	      fields: [
-	        { path: 'sessionId', title: 'Session id', description: 'Optional when the active target session is already correct.', widget: 'text' },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+    },
+    inputHints: {
+      title: 'Set session mode',
+      fields: [
+        { path: 'sessionId', title: 'Session id', description: 'Optional when the active target session is already correct.', widget: 'text' },
         {
           path: 'modeId',
           title: 'Mode id',

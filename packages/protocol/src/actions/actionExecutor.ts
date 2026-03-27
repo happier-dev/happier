@@ -20,6 +20,7 @@ import {
   SessionHandoffWorkspaceTransferSchema,
   type SessionHandoffWorkspaceTransfer,
 } from '../sessionControl/handoff/handoffSchemas.js';
+import { SessionControlErrorCodeSchema } from '../sessionControl/contract.js';
 
 export type ActionExecuteResult =
   | Readonly<{ ok: true; result: unknown }>
@@ -524,6 +525,28 @@ function resolveApprovalRequestExecutionSurface(createdBySurface: ApprovalReques
   if (createdBySurface === 'voice') return 'voice_tool';
   if (createdBySurface === 'cli') return 'cli';
   return null;
+}
+
+function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string }> {
+  const anyErr = error as any;
+  const rawCode = typeof anyErr?.code === 'string' ? String(anyErr.code).trim() : '';
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : '';
+
+  if (rawCode && SessionControlErrorCodeSchema.safeParse(rawCode).success) {
+    return { errorCode: rawCode, error: message || rawCode };
+  }
+
+  // Common network failures from axios/node.
+  if (rawCode && ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT'].includes(rawCode)) {
+    return { errorCode: 'server_unreachable', error: message || 'server_unreachable' };
+  }
+
+  return { errorCode: 'action_failed', error: message || 'action_failed' };
 }
 
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
@@ -1550,7 +1573,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
       return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
     } catch (error) {
-      return { ok: false, errorCode: 'action_failed', error: error instanceof Error ? error.message : 'action_failed' };
+      const normalized = normalizeActionExecutorThrownError(error);
+      return { ok: false, errorCode: normalized.errorCode, error: normalized.error };
     }
   };
 
