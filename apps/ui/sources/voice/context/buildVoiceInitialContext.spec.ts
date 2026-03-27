@@ -306,6 +306,76 @@ describe('buildVoiceInitialContext', () => {
     expect(out).toContain('Reply with answerUserActionRequest');
   });
 
+  it('omits pending requests entirely when the target session is inactive', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      sessions: {
+        hidden_voice: {
+          ...createSession('Hidden voice session summary'),
+          id: 'hidden_voice',
+          metadata: {
+            ...createSession('Hidden voice session summary').metadata,
+            path: '/tmp/voice',
+          },
+        },
+        s1: {
+          ...createSession('Target session summary'),
+          active: false,
+          agentState: {
+            requests: {
+              req_inactive: {
+                tool: 'Bash',
+                kind: 'permission',
+                arguments: { command: 'pwd' },
+                createdAt: 1,
+              },
+            },
+            completedRequests: {},
+          },
+        },
+      },
+      sessionMessages: {
+        hidden_voice: { messages: [createUserMessage('Hidden transcript')] },
+        s1: {
+          messages: [
+            createUserMessage('Target transcript'),
+            {
+              kind: 'tool-call',
+              id: 'tool_inactive_1',
+              localId: null,
+              createdAt: 2,
+              children: [],
+              tool: {
+                id: 'tool_inactive_1',
+                name: 'Bash',
+                description: 'Run a shell command',
+                state: 'running',
+                input: { command: 'pwd' },
+                createdAt: 2,
+                startedAt: 2,
+                completedAt: null,
+                result: null,
+                permission: {
+                  id: 'req_inactive',
+                  kind: 'permission',
+                  status: 'pending',
+                },
+              },
+            } as any,
+          ],
+        },
+      },
+    }));
+    useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
+
+    const out = buildVoiceInitialContext('hidden_voice', { targetSessionId: 's1' });
+
+    expect(out).not.toContain('## Pending Requests');
+    expect(out).not.toContain('<request_id>req_inactive</request_id>');
+    expect(out).not.toContain('Ask the human to say approve or deny.');
+    expect(out).toContain('# Session: Target session summary');
+  });
+
   it('fails closed for file paths when shareFilePaths is omitted from voice privacy settings', () => {
     storage.setState((state: any) => ({
       ...state,

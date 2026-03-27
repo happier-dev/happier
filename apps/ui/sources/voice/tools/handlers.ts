@@ -60,6 +60,9 @@ function getPendingSessionRequests(session: unknown): Array<Readonly<{
   toolName: string;
   requestKind: AgentRequestKind;
 }>> {
+  if ((session as any)?.active !== true) {
+    return [];
+  }
   const requests = (session as any)?.agentState?.requests as Record<string, unknown> | undefined;
   if (!requests || typeof requests !== 'object') return [];
   const out: Array<Readonly<{ requestId: string; toolName: string; requestKind: AgentRequestKind }>> = [];
@@ -82,10 +85,14 @@ function getPendingRequestsForSession(sessionId: string, session: unknown): Arra
   requestKind: AgentRequestKind;
 }>> {
   const candidateSession = session && typeof session === 'object'
-    ? session as Parameters<typeof listPendingPermissionRequests>[0]
+    ? (session as Parameters<typeof listPendingPermissionRequests>[0])
     : null;
   if (!candidateSession) {
     return getPendingSessionRequests(session);
+  }
+
+  if ((candidateSession as any).active !== true) {
+    return [];
   }
 
   const permissionRequests = (() => {

@@ -742,6 +742,24 @@ describe('voice tool handlers', () => {
     });
   });
 
+  it('does not select pending requests from an inactive session', async () => {
+    state.sessions.s1.active = false;
+    state.sessions.s1.agentState.requests = {
+      req_inactive: { id: 'req_inactive', tool: 'Bash', kind: 'permission' },
+    };
+    state.sessions.s2.agentState.requests = {};
+    state.sessions.sys_voice.agentState.requests = {};
+    sessionRpcWithServerScope.mockResolvedValue({ ok: true });
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
+
+    const result = await tools.processPermissionRequest({ decision: 'allow' });
+
+    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'no_permission_request', sessionId: 's1' });
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
+  });
+
   it('prefers the transcript-backed permission id over a matching agentState request id alias', async () => {
     state.sessions.s1.agentState.requests = {
       call_MRGAh1tIH4dBEwSc0mCt3MtU: {

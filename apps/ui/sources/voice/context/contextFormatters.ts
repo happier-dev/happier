@@ -207,6 +207,9 @@ function listPendingTranscriptRequests(messages: Message[]): VoicePendingRequest
 }
 
 function listPendingRequestsForVoice(session: Session, messages: Message[]): VoicePendingRequestLike[] {
+    if (session.active !== true) {
+        return [];
+    }
     const merged = new Map<string, VoicePendingRequestLike>();
 
     for (const request of listPendingUserActionRequests(session)) {
