@@ -1420,9 +1420,8 @@ export function startChannelBridgeWorker(params: Readonly<{
   const warnedMissingAdapterBindings = new Set<string>();
   const warnedAdapterPullFailures = new Set<string>();
   const adapterPullSingleFlightByAdapter = new WeakMap<ChannelBridgeAdapter, Promise<ChannelBridgeInboundMessage[]>>();
-  const adaptersForTick: ChannelBridgeAdapter[] = params.adapters.map((adapter) => ({
-    ...adapter,
-    pullInboundMessages: () => {
+  const adaptersForTick: ChannelBridgeAdapter[] = params.adapters.map((adapter) => {
+    const pullInboundMessages = (): Promise<ChannelBridgeInboundMessage[]> => {
       const existing = adapterPullSingleFlightByAdapter.get(adapter);
       if (existing) {
         return existing;
@@ -1439,8 +1438,25 @@ export function startChannelBridgeWorker(params: Readonly<{
 
       adapterPullSingleFlightByAdapter.set(adapter, inflight);
       return inflight;
-    },
-  }));
+    };
+
+    const wrapped: ChannelBridgeAdapter = {
+      providerId: adapter.providerId,
+      pullInboundMessages,
+      sendMessage: async (params) => {
+        await adapter.sendMessage(params);
+      },
+      ...(adapter.ackInboundMessages
+        ? {
+            ackInboundMessages: async (messages) => {
+              await adapter.ackInboundMessages!(messages);
+            },
+          }
+        : {}),
+    };
+
+    return wrapped;
+  });
   let inFlightTick: Promise<void> | null = null;
 
   const runTick = async (): Promise<void> => {

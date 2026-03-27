@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -92,6 +94,37 @@ describe('createLocalChannelBindingStore', () => {
           lastForwardedSeq: 10,
         }),
       );
+    });
+  });
+
+  it('creates account-scoped binding directories with 0700 permissions on unix', async () => {
+    if (process.platform === 'win32') return;
+
+    await withTempDir('happier-channel-bridge-bindings-perms-', async (homeDir) => {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir });
+      vi.resetModules();
+
+      const { configuration } = await import('@/configuration');
+      const { createLocalChannelBindingStore } = await import('./localBindingStore');
+
+      const store = createLocalChannelBindingStore({
+        accountId: 'acct-1',
+      });
+
+      await store.upsertBinding({
+        providerId: 'telegram',
+        conversationId: '-1001',
+        threadId: null,
+        sessionId: 'sess-1',
+        lastForwardedSeq: 0,
+        ownerSenderId: 'user-1',
+        inboundMode: 'ownerOnly',
+        allowMissingSenderId: false,
+      });
+
+      const accountDir = join(configuration.activeServerDir, 'channel-bridges', 'v1', 'account', 'acct-1');
+      const perms = (await stat(accountDir)).mode & 0o777;
+      expect(perms).toBe(0o700);
     });
   });
 });

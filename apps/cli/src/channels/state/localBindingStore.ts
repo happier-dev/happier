@@ -195,7 +195,12 @@ export function createLocalChannelBindingStore(params: Readonly<{
   }
 
   async function persist(bindings: readonly ChannelSessionBinding[]): Promise<void> {
-    await mkdir(join(configuration.activeServerDir, 'channel-bridges', 'v1'), { recursive: true, mode: 0o700 });
+    const channelBridgesDir = join(configuration.activeServerDir, 'channel-bridges');
+    const v1Dir = join(channelBridgesDir, 'v1');
+    const accountsDir = join(v1Dir, 'account');
+    const accountDir = join(accountsDir, accountId);
+
+    await mkdir(accountDir, { recursive: true, mode: 0o700 });
     await bestEffortChmod0700(configuration.activeServerDir);
 
     const doc: StoredBindingsDocV1 = {
@@ -214,8 +219,10 @@ export function createLocalChannelBindingStore(params: Readonly<{
       })),
     };
     await writeJsonAtomic(bindingsFile, doc);
-    await bestEffortChmod0700(join(configuration.activeServerDir, 'channel-bridges'));
-    await bestEffortChmod0700(join(configuration.activeServerDir, 'channel-bridges', 'v1'));
+    await bestEffortChmod0700(channelBridgesDir);
+    await bestEffortChmod0700(v1Dir);
+    await bestEffortChmod0700(accountsDir);
+    await bestEffortChmod0700(accountDir);
   }
 
   function setCache(bindings: readonly ChannelSessionBinding[]): void {
