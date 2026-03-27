@@ -273,6 +273,26 @@ describe('listExecutionRuns', () => {
         });
     });
 
+    it('returns an empty list when rpc is unavailable and no markers or transcript runs exist', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        listExecutionRunMarkers.mockResolvedValueOnce([]);
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
+
+        const result = await listExecutionRuns({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: {},
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            data: {
+                runs: [],
+            },
+        });
+    });
+
     it('merges marker-backed and transcript-backed runs during app-level fallback instead of hiding transcript history', async () => {
         callSessionRpc.mockResolvedValueOnce({
             ok: false,

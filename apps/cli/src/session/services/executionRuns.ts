@@ -181,11 +181,14 @@ async function getTranscriptBackedExecutionRun(
 
 async function tryListTranscriptBackedExecutionRuns(
     params: ExecutionRunRpcContext,
-): Promise<readonly ExecutionRunPublicState[] | null> {
+): Promise<Readonly<{ ok: true; runs: readonly ExecutionRunPublicState[] }> | Readonly<{ ok: false }>> {
     try {
-        return await listTranscriptBackedExecutionRuns(params);
+        return {
+            ok: true,
+            runs: await listTranscriptBackedExecutionRuns(params),
+        };
     } catch {
-        return null;
+        return { ok: false };
     }
 }
 
@@ -201,9 +204,10 @@ async function tryGetTranscriptBackedExecutionRun(
 
 async function buildExecutionRunListFallbackRuns(
     params: ExecutionRunRpcContext & Readonly<{ request: ExecutionRunListRequest }>,
-): Promise<readonly ExecutionRunPublicState[]> {
+): Promise<Readonly<{ runs: readonly ExecutionRunPublicState[]; transcriptFallbackOk: boolean }>> {
     const markerRuns = await listMarkerBackedExecutionRuns({ sessionId: params.sessionId });
-    const transcriptRuns = await tryListTranscriptBackedExecutionRuns(params);
+    const transcriptResult = await tryListTranscriptBackedExecutionRuns(params);
+    const transcriptRuns = transcriptResult.ok ? transcriptResult.runs : null;
     const combinedRuns =
         transcriptRuns && transcriptRuns.length > 0
             ? mergeExecutionRunLists({
@@ -212,7 +216,10 @@ async function buildExecutionRunListFallbackRuns(
             })
             : markerRuns;
 
-    return applyExecutionRunListRequest(combinedRuns, params.request);
+    return {
+        runs: applyExecutionRunListRequest(combinedRuns, params.request),
+        transcriptFallbackOk: transcriptResult.ok,
+    };
 }
 
 async function buildExecutionRunGetFallbackRun(
@@ -332,15 +339,15 @@ export async function listExecutionRuns(
                 return result;
             }
 
-            const fallbackRuns = await buildExecutionRunListFallbackRuns({ ...params, request });
-            if (fallbackRuns.length === 0) {
-                return result;
+            const fallback = await buildExecutionRunListFallbackRuns({ ...params, request });
+            if (fallback.runs.length > 0 || fallback.transcriptFallbackOk) {
+                return {
+                    ok: true,
+                    data: { runs: fallback.runs },
+                };
             }
 
-            return {
-                ok: true,
-                data: { runs: fallbackRuns },
-            };
+            return result;
         }
 
         const parsed = ExecutionRunListResponseSchema.safeParse(result.data);
@@ -375,15 +382,15 @@ export async function listExecutionRuns(
             throw error;
         }
 
-        const fallbackRuns = await buildExecutionRunListFallbackRuns({ ...params, request });
-        if (fallbackRuns.length === 0) {
-            return toExecutionRunUnknownError(error);
+        const fallback = await buildExecutionRunListFallbackRuns({ ...params, request });
+        if (fallback.runs.length > 0 || fallback.transcriptFallbackOk) {
+            return {
+                ok: true,
+                data: { runs: fallback.runs },
+            };
         }
 
-        return {
-            ok: true,
-            data: { runs: fallbackRuns },
-        };
+        return toExecutionRunUnknownError(error);
     }
 }
 
