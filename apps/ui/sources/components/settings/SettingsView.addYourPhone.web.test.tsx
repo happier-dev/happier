@@ -93,7 +93,7 @@ installSettingsViewCommonModuleMocks({
 });
 
 vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (cb: () => void) => cb(),
+    useFocusEffect: (_cb: () => void) => {},
 }));
 
 vi.mock('expo-constants', () => ({
@@ -206,13 +206,21 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
 
+vi.mock('@/hooks/server/useFeatureDecision', () => ({
+    useFeatureDecision: () => null,
+}));
+
 vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
     getFeatureBuildPolicyDecision: () => 'allow',
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 'srv', generation: 0 }),
+    getActiveServerSnapshot: () => ({ serverId: 'srv', serverUrl: 'https://local.example.test', generation: 0 }),
     listServerProfiles: () => [],
+    subscribeActiveServer: (listener: any) => {
+        listener({ serverId: 'srv', serverUrl: 'https://local.example.test', generation: 0 });
+        return () => {};
+    },
 }));
 
 vi.mock('@/components/settings/server/hooks/useActiveSelectionMachineGroups', () => ({
