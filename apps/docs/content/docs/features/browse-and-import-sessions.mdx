@@ -26,6 +26,10 @@ This works best with:
 - **Claude**
 - **OpenCode**
 
+If you are trying to continue an existing provider session by id (without opening it as a direct session first), see:
+
+- [Resume a provider session (Resume ID)](./resume-provider-sessions)
+
 ## Where to find it
 
 1. Open the session list
@@ -151,7 +155,7 @@ If the session has already been **synced/imported** into Happier, the synced Hap
 
 ## Search and filtering
 
-The browse modal lets users narrow down provider sessions by:
+In the Direct sessions flow, the browse modal lets users narrow down provider sessions by:
 
 - machine
 - provider
@@ -164,6 +168,8 @@ Happier also shows useful browse metadata when available, including:
 - last activity
 - path/context
 - activity state such as running, recent, or idle
+
+In the Resume ID flow, the picker is intentionally locked to the machine/provider/auth context you already selected, so you can safely pick a session that will resume correctly.
 
 ## Typical user scenarios
 
@@ -185,6 +191,7 @@ Browse the OpenCode source, open the session directly, and sync it later only if
 ## Related guides
 
 - [Resume inactive sessions](./session-resume)
+- [Resume a provider session (Resume ID)](./resume-provider-sessions)
 - [Synced and direct sessions](./direct-sessions)
 - [Connected services](./connected-services)
 - [Profiles](./profiles)

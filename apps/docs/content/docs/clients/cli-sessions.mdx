@@ -1,0 +1,209 @@
+---
+title: CLI sessions
+description: Create, list, control, and script sessions from the CLI.
+---
+
+This page focuses on **session lifecycle and session control** from the CLI.
+
+If you’re looking for install/auth/server profiles first, start at [CLI](./cli).
+
+The same canonical **action catalog** also powers the app, session agents, voice, and the external MCP server. That is why the session CLI, the built-in action surface, and external MCP controls all describe the same session operations in different transports.
+
+## Session identifiers
+
+Most commands accept either:
+
+- a full `<session-id>`
+- or an **unambiguous prefix** (`<session-id-or-prefix>`)
+- (often) an exact **session tag** if the session metadata is available locally (`--tag` from `session create`)
+
+If the prefix matches multiple sessions, the command fails and prints candidates (use `--json` for structured output).
+
+## Attach vs resume
+
+Use **attach** when the session is still running and you want to reconnect to the live local/provider process:
+
+```bash
+happier attach <session-id>
+```
+
+Use **resume** when the session is inactive but vendor-resumable:
+
+```bash
+happier resume <session-id>
+```
+
+Short version:
+
+- **attach** = reconnect to a running session
+- **resume** = reopen an inactive session through the provider/backend
+
+For the full workflows, see [Attach to a running session](/docs/features/attach-to-session) and [Resume inactive sessions](/docs/features/session-resume).
+
+## Create a session
+
+```bash
+happier session create --title "My session" --message "Hello"
+```
+
+Target a different directory:
+
+```bash
+happier session create --path /path/to/repo --title "Repo session"
+```
+
+### Backend targeting (`--backend`)
+
+`--backend` expects a **backend target key**:
+
+```bash
+happier session create --backend "agent:<agent-id>"
+happier session create --backend "acpBackend:<backend-id>"
+```
+
+When in doubt, inspect the canonical schema and available options via the action catalog:
+
+```bash
+happier session actions describe session.spawn_new --json
+```
+
+## List sessions
+
+```bash
+happier session list
+```
+
+Scripting-friendly:
+
+```bash
+happier session list --json
+```
+
+Useful filters:
+
+```bash
+happier session list --active
+happier session list --archived
+happier session list --resumable
+```
+
+## Status
+
+```bash
+happier session status <session-id-or-prefix>
+```
+
+Live status (when supported):
+
+```bash
+happier session status <session-id-or-prefix> --live
+```
+
+## Messaging
+
+Send a user message:
+
+```bash
+happier session send <session-id-or-prefix> "ping"
+```
+
+Wait for the agent to become idle:
+
+```bash
+happier session send <session-id-or-prefix> "ping" --wait --timeout 60
+```
+
+Or wait without sending:
+
+```bash
+happier session wait <session-id-or-prefix> --timeout 60
+```
+
+Notes:
+
+- `--wait` can time out if the agent is offline/busy or if the backend does not emit an “idle” signal.
+- `--permission-mode` lets you override the permission intent for a single send.
+- `--model` lets you target a specific model for that message when the backend supports it.
+- `--json` + explicit timeouts are recommended for scripts.
+
+## Session control
+
+Stop a session:
+
+```bash
+happier session stop <session-id-or-prefix>
+```
+
+Archive / unarchive:
+
+```bash
+happier session archive <session-id-or-prefix>
+happier session unarchive <session-id-or-prefix>
+```
+
+Update metadata:
+
+```bash
+happier session set-title <session-id-or-prefix> "New title"
+happier session set-model <session-id-or-prefix> <model-id>
+happier session set-permission-mode <session-id-or-prefix> <mode>
+```
+
+`set-permission-mode` accepts common aliases (for example `ask`, `default`, `yolo`). Use `--json` to see the normalized `permissionMode`.
+
+These session control commands map to canonical actions such as:
+
+- `session.title.set`
+- `session.model.set`
+- `session.permission_mode.set`
+- `session.stop`
+- `session.archive`
+- `session.unarchive`
+- `session.wait.idle`
+- `session.message.send`
+- `session.run.start`
+- `session.run.send`
+- `session.run.stop`
+
+That is what makes them available not just from the CLI, but also from external MCP hosts and session agents when the relevant surface is enabled.
+
+## Approvals and action gating
+
+Session control commands are implemented as **actions**.
+
+That means:
+
+- each action can be enabled/disabled per surface (UI / CLI / session-agent / voice / external MCP)
+- each action can optionally require approval per surface
+
+When a command is approval-gated, the CLI returns an “approval request created” payload instead of executing immediately.
+Approve/deny in the app Inbox:
+
+- [Inbox and approvals](/docs/features/inbox-and-approvals)
+- [Happier tools & actions](/docs/features/happier-tools)
+
+## Actions (advanced scripting)
+
+Discover actions:
+
+```bash
+happier session actions list --json
+happier session actions describe <action-id> --json
+```
+
+Execute an action:
+
+```bash
+happier session actions execute <session-id> <action-id> --input-json '<json>' --json
+```
+
+## Execution runs
+
+Execution runs are the structured “run” layer for multi-step flows (review / plan / delegate / voice agent):
+
+```bash
+happier session run start <session-id> --intent <intent> --backend <backend-target-key> --json
+happier session run list <session-id> --json
+happier session run send <session-id> <run-id> "message" --json
+happier session run stop <session-id> <run-id> --json
+```

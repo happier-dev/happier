@@ -7,6 +7,7 @@
     "acp-backends",
     "device-linking-and-restore",
     "session-resume",
+    "resume-provider-sessions",
     "session-handoff",
     "attach-to-session",
     "prompts-and-skills",

@@ -1,12 +1,23 @@
 ---
 title: Clients
-description: How the CLI and app interact with the server.
+description: How the app, CLI, daemon, and external MCP clients interact with Happier.
 ---
 
-Happier has two primary clients:
+Happier has multiple client surfaces that can all interact with the same server and account.
 
-- **CLI** (`@happier-dev/cli`): agent runner + daemon + sync client.
-- **App** (`@happier-dev/app`): mobile + web UI for sessions and devices.
+Use this section to understand which surface does what:
+
+- **App** (`@happier-dev/app`): the desktop, web, and mobile UI for sessions, devices, approvals, and settings.
+- **CLI** (`@happier-dev/cli`): the scripting and operator client for install/auth/server profiles plus session control.
+- **Daemon**: the background process that keeps remote session control available without an open terminal.
+- **Happier MCP**: the external MCP server you run from the CLI so other MCP hosts can control Happier sessions and actions.
+
+For the most common user-facing flows:
+
+- [CLI](./cli) for install/auth/server selection
+- [CLI sessions](./cli-sessions) for create/list/send/resume/attach/manage
+- [Happier MCP (external)](./mcp) for editor/agent automation
+- [MCP host setup](./mcp-hosts) for privileged host configuration
 
 If you’re looking specifically for background operation and service installation, see [Daemon](./daemon).
 

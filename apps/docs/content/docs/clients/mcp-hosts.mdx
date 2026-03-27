@@ -1,0 +1,114 @@
+---
+title: MCP host setup
+description: Configure an editor or automation to run the Happier external MCP server.
+---
+
+This page is about **MCP hosts** (Cursor, Claude Desktop, custom agents, automations) that spawn `happier mcp serve`.
+
+Use it when you want an external editor or agent to act on Happier sessions through the same authenticated account and action catalog as the app and CLI.
+
+Start here for the conceptual overview: [Happier MCP (external)](./mcp).
+
+## Security model (important)
+
+`happier mcp serve` runs with the **same local privileges** as the MCP host process and uses the CLI’s authenticated credentials.
+
+Treat an MCP host’s server configuration as privileged:
+
+- It can execute enabled Happier actions.
+- It can request approvals (and execute immediately if approvals are not required for that surface).
+- It can access whatever sessions your account allows.
+
+## Minimal configuration
+
+Most hosts let you configure a server with:
+
+- a **command**
+- an **args** array
+
+Example shape:
+
+```json
+{
+  "mcpServers": {
+    "happier": {
+      "command": "happier",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+If your host does not run in the same shell environment as your terminal, use an absolute command path.
+
+## Server selection
+
+For security, `happier mcp serve` does **not** honor server-selection environment variables (like `HAPPIER_SERVER_URL`).
+
+To target a non-default server, pass the CLI server selection flags as **args**:
+
+```json
+{
+  "mcpServers": {
+    "happier": {
+      "command": "happier",
+      "args": ["--server", "company", "mcp", "serve"]
+    }
+  }
+}
+```
+
+Or target ad-hoc URLs:
+
+```json
+{
+  "mcpServers": {
+    "happier": {
+      "command": "happier",
+      "args": ["--server-url", "https://api.company.example", "--webapp-url", "https://app.company.example", "mcp", "serve"]
+    }
+  }
+}
+```
+
+## Session scoping
+
+You can set a default session context at server start:
+
+```json
+{
+  "mcpServers": {
+    "happier": {
+      "command": "happier",
+      "args": ["mcp", "serve", "--session", "<session-id>"]
+    }
+  }
+}
+```
+
+Many tools also accept an explicit `sessionId` argument; prefer passing `sessionId` when building deterministic automations.
+
+## Recommended workflow for “any action”
+
+When you don’t know the action id or the valid option values:
+
+1) Discover:
+   - `action_spec_search`
+   - `action_spec_get`
+2) Resolve options when needed:
+   - `action_options_resolve`
+3) Execute:
+   - `action_execute`
+
+This keeps clients resilient even as Happier evolves the action catalog.
+
+## Approvals
+
+Approvals are configured per **action + surface** in the app:
+
+- **Settings → Actions**
+
+When an MCP tool call is approval-gated, the tool returns an `approval_request_created` payload with an `artifactId`.
+Approve/deny in the Inbox:
+
+- [Inbox and approvals](/docs/features/inbox-and-approvals)

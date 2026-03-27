@@ -1,7 +1,16 @@
 ---
 title: CLI
-description: Install, authenticate, and target servers from the CLI.
+description: Install, authenticate, control sessions, and run the external MCP server from the CLI.
 ---
+
+The Happier CLI is the power-user client for:
+
+- installing and updating Happier
+- authenticating to one or more servers
+- selecting a default server profile or targeting one command
+- creating, listing, resuming, attaching to, and managing sessions
+- running the external Happier MCP server
+- inspecting Happier tools and action-driven workflows
 
 ## Install
 
@@ -212,6 +221,114 @@ happier session list --json
 - `--resumable` filters to sessions that can currently be resumed
 - `--plain` restores the older one-line output
 - `--json` is for scripting
+
+## Session control (non-interactive)
+
+The `happier session ...` command group is the non-interactive surface for creating and controlling sessions.
+
+Deep reference: [CLI sessions](./cli-sessions).
+
+### Create a session (scriptable)
+
+```bash
+happier session create --title "My session" --message "Hello"
+```
+
+Optional targeting:
+
+```bash
+happier session create --path /path/to/repo --backend <backend-target-key> --tag <tag>
+```
+
+`--backend` expects a **backend target key** (not a short name). Common forms:
+
+```bash
+# Built-in catalog agent
+happier session create --backend "agent:<agent-id>"
+
+# ACP backend target (e.g. opencode, gemini, etc)
+happier session create --backend "acpBackend:<backend-id>"
+```
+
+### Send messages
+
+```bash
+happier session send <session-id> "ping"
+```
+
+Wait for an agent response (useful for scripts; can time out if the agent is busy/offline):
+
+```bash
+happier session send <session-id> "ping" --wait --timeout 60
+```
+
+### Status, stop, archive
+
+```bash
+happier session status <session-id>
+happier session stop <session-id>
+happier session archive <session-id>
+happier session unarchive <session-id>
+```
+
+### Set title / model / permission mode
+
+```bash
+happier session set-title <session-id> "New title"
+happier session set-model <session-id> <model-id>
+happier session set-permission-mode <session-id> <mode>
+```
+
+`<mode>` accepts common aliases (for example `ask`, `default`, `yolo`). Use `--json` to script and see the normalized `permissionMode` value.
+
+### Session id prefixes
+
+Commands that accept `<session-id-or-prefix>` allow an **unambiguous prefix** of a full session id.
+
+If the prefix matches multiple sessions, the command fails with candidates.
+
+### Approvals from CLI commands
+
+Some actions can be configured as **approval-gated** on the CLI surface.
+
+In that case, the CLI command does not execute immediately; it creates an approval request instead.
+Use the app’s **Inbox** to review/approve/deny and see the final execution result:
+
+- [Inbox and approvals](/docs/features/inbox-and-approvals)
+- [Happier tools & actions](/docs/features/happier-tools)
+
+### Action catalog from the CLI
+
+You can inspect and execute Happier actions directly:
+
+```bash
+happier session actions list
+happier session actions describe <action-id>
+happier session actions execute <session-id> <action-id> --input-json '<json>'
+```
+
+### Execution runs (review / plan / delegate / voice agent)
+
+Execution runs are the structured “run” layer for multi-step flows in a session (for example: start a review run, then send follow-up messages, then stop).
+
+```bash
+happier session run list <session-id>
+happier session run start <session-id> --intent <intent> --backend <backend-target-key>
+happier session run send <session-id> <run-id> "message"
+happier session run stop <session-id> <run-id>
+```
+
+## External MCP control surface
+
+If you want an MCP host (editor/agent) to control Happier sessions and actions, run the external MCP server:
+
+```bash
+happier mcp serve
+```
+
+`happier mcp start` is accepted as a compatibility alias, but `serve` is the canonical command name in the docs and CLI help.
+
+Guide: [Happier MCP (external)](./mcp)
 
 ## Backend profiles
 

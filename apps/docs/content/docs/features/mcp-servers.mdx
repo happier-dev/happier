@@ -42,9 +42,19 @@ happier mcp servers test --mcp-server <name-or-id>
 happier mcp servers detect --provider codex
 ```
 
-Command details can evolve, so use `happier mcp servers --help` for the current subcommands and flags.
+Use `happier mcp servers --help` for the current subcommands and flags.
 
 The same account-synced MCP settings are used by the app UI, the daemon, and the CLI.
+
+## Happier MCP (external control plane)
+
+In addition to managing *other* MCP servers, Happier can also run **its own MCP server** so external MCP clients can control sessions and execute Happier actions:
+
+```bash
+happier mcp serve
+```
+
+Guide: [Happier MCP (external)](/docs/clients/mcp)
 
 ## How the MCP settings screen is organized
 

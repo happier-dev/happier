@@ -2,9 +2,12 @@
   "title": "Clients",
   "pages": [
     "index",
-    "cli",
-    "daemon",
     "app",
+    "cli",
+    "cli-sessions",
+    "daemon",
+    "mcp",
+    "mcp-hosts",
     "notifications",
     "voice"
   ]

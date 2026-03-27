@@ -1,0 +1,186 @@
+---
+title: Happier MCP (external)
+description: Run Happier as an external stdio MCP server so editors and agents can start/manage sessions and execute Happier actions.
+---
+
+Happier can run its own **external MCP server** so other MCP hosts (editors, agents, automations) can control Happier:
+
+- list and inspect sessions
+- start/stop/archive sessions
+- send messages to sessions
+- change a session’s title / permission mode / model
+- start execution runs (review / plan / delegate / voice agent)
+- execute any enabled Happier action (using the action spec as source of truth)
+
+This is separate from **MCP servers you manage inside Happier** (Playwright, GitHub, etc). Those are documented under [MCP servers](/docs/features/mcp-servers).
+
+## Run the server
+
+The external MCP server is a **stdio MCP server** (meant to be spawned by an MCP host):
+
+```bash
+happier mcp serve
+```
+
+`happier mcp start` is accepted as a compatibility alias.
+
+If you are wiring up a new host, keep `serve` as the canonical command name in your config so the intent is obvious to the next person who reads it.
+
+Optionally set a default session context for tools that can infer “current session”:
+
+```bash
+happier mcp serve --session <session-id>
+```
+
+## Configure an MCP host
+
+Most MCP hosts let you configure a server by specifying a **command** and **args**.
+
+Example shape:
+
+```json
+{
+  "mcpServers": {
+    "happier": {
+      "command": "happier",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+Notes:
+
+- Ensure `happier` is on `PATH` (or use an absolute path to the binary).
+- The MCP host must run on a machine that is already authenticated to Happier, or the server will fail with `not_authenticated`.
+- For security, `happier mcp serve` does **not** honor server-selection *environment variables* (like `HAPPIER_SERVER_URL`). To target a non-default server, pass the CLI server flags in `args` (see below) or switch the active server profile in the CLI home directory.
+
+### Target a specific server
+
+If your MCP host supports it, include the normal CLI server selection flags in the configured `args`:
+
+```json
+{
+  "mcpServers": {
+    "happier": {
+      "command": "happier",
+      "args": ["--server", "company", "mcp", "serve"]
+    }
+  }
+}
+```
+
+Or use ad-hoc URLs:
+
+```json
+{
+  "mcpServers": {
+    "happier": {
+      "command": "happier",
+      "args": ["--server-url", "https://api.company.example", "--webapp-url", "https://app.company.example", "mcp", "serve"]
+    }
+  }
+}
+```
+
+Deep reference (host setup and security): [MCP host setup](./mcp-hosts).
+
+## Quick smoke test
+
+If you want to verify the server is wired correctly, point any MCP host or inspector at:
+
+- `command`: `happier`
+- `args`: `["mcp", "serve"]`
+
+Then try the session-control tools first:
+
+- `session_list`
+- `session_message_send`
+- `session_title_set`
+- `session_permission_mode_set`
+
+If those work, try the generic path next:
+
+- `action_spec_search`
+- `action_spec_get`
+- `action_execute`
+
+That gives you a quick end-to-end check that the server, account auth, action catalog, and approval routing are all connected.
+
+## What tools you get
+
+The external MCP surface is a blend of:
+
+- **Happier action tools** (generated from the action spec catalog)
+- a few **manual convenience tools** (for common control-plane behaviors)
+
+Common session control tool examples:
+
+- `session_list`
+- `session_status_get`
+- `session_message_send`
+- `session_stop`
+- `session_archive` / `session_unarchive`
+- `session_title_set`
+- `session_permission_mode_set`
+- `session_model_set`
+- `session_wait_idle`
+
+Action discovery tools:
+
+- `action_spec_search`
+- `action_spec_get`
+- `action_options_resolve`
+
+Generic executor tool:
+
+- `action_execute` (execute any enabled action by `actionId` with structured `input`)
+
+Execution run tool:
+
+- `execution_run_start`
+
+The exact set depends on what your account has enabled (and on which surfaces). See “Approvals and enablement”.
+
+## Approvals and enablement
+
+Happier treats **actions** as a single catalog that can be enabled/disabled per “surface”, including:
+
+- session agents (in-session tools)
+- voice
+- CLI
+- external MCP
+
+In the app, configure this under:
+
+- **Settings → Actions**
+
+For each action + surface, you can:
+
+- enable/disable the action
+- optionally require approval (approval-gated execution)
+
+If a tool is approval-gated, the MCP tool call returns an `approval_request_created` payload (with an `artifactId`).
+Use the app’s **Inbox** to approve/deny and view the final result:
+
+- [Inbox and approvals](/docs/features/inbox-and-approvals)
+- [Happier tools & actions](/docs/features/happier-tools)
+
+## Troubleshooting
+
+### `not_authenticated`
+
+Authenticate the CLI first:
+
+```bash
+happier auth login
+```
+
+If you’re targeting a self-hosted server, ensure the MCP host launches Happier with the right server profile (or server URL flags). See [CLI → Server profiles](/docs/clients/cli#server-profiles).
+
+### A tool is missing
+
+Tool visibility is driven by the action spec catalog and your account settings. Check:
+
+- **Settings → Actions** (surface enablement + approvals)
+- **Settings → MCP servers** (if you expected a *custom MCP server* tool, not a Happier action tool)

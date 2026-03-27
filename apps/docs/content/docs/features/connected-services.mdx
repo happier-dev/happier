@@ -139,6 +139,22 @@ That picker is dynamic:
 
 If no compatible connected profile exists for a service, Happier keeps that service on native auth and offers a shortcut to open Connected services settings.
 
+## Connected services and browsing sessions (Codex)
+
+For some providers, your connected-service choice affects which provider “home” Happier should use for session browsing.
+
+The most important example is **Codex**:
+
+- With **native auth**, Happier browses sessions from the machine’s standard Codex home.
+- With a **connected service profile** selected for Codex, Happier browses sessions from that connected-service-backed Codex home.
+
+This matters in two places:
+
+- **Direct → Browse provider sessions**: you can explicitly choose a source/home when browsing.
+- **Resume ID browse**: the picker is locked to the effective Codex home implied by your new-session selection so the chosen session can actually be resumed under that auth.
+
+If you need to browse a different Codex home, switch the auth choice first and then browse again.
+
 ## Connected services and session handoff
 
 Connected services are often the easiest way to preserve session continuity across machines.

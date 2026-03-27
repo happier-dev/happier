@@ -114,6 +114,25 @@ Custom MCP tools are still configured the same way as before:
 
 Once configured, they join the same Happier tools surface as built-in actions.
 
+## Surfaces and approvals
+
+Each built-in action can be configured per **surface** (where it is available), such as:
+
+- session agents
+- the CLI (`happier session ...` and `happier tools ...`)
+- the external MCP server (`happier mcp serve`)
+- voice tools
+
+Those are all powered by the same action catalog, so one surface can be documented, approved, or disabled without creating a separate action system for each client.
+
+For sensitive actions, you can also configure the surface as **approval-gated**.
+
+In the app, this lives under **Settings → Actions**.
+
+When an action is approval-gated, callers do not execute it immediately. Instead, Happier creates an approval request and surfaces it in **Inbox** for review and execution.
+
+User guide: [Inbox and approvals](./inbox-and-approvals)
+
 ## Discovery-first behavior
 
 Happier no longer needs to stuff a huge fixed action catalog into every prompt.

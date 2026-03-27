@@ -1,0 +1,75 @@
+---
+title: Resume a provider session (Resume ID)
+description: Start a new Happier session by resuming an existing Codex, Claude, or OpenCode provider session, and use the Resume ID browse picker when it is available.
+---
+
+Happier can start a **new session** by resuming an **existing provider session**.
+
+This is useful when you already have a session started outside Happier (for example in a terminal) but you want to continue it from the Happier UI.
+
+This page is about the **Resume ID** flow. It is different from:
+
+- [Resume inactive sessions](./session-resume) (resuming an existing Happier session)
+- [Browse and import provider sessions](./browse-and-import-sessions) (opening provider sessions as direct sessions and optionally syncing them)
+
+## What “Resume ID” means
+
+**Resume ID** is the provider’s session identifier (or resumable session key) that the backend uses to reopen an existing provider session.
+
+When you start a session with a Resume ID:
+
+- Happier creates a new Happier session
+- the provider backend resumes the existing provider session using that id
+- Happier connects to that resumed provider session
+
+## Where to use it
+
+You can enter a Resume ID in the **new-session** flow:
+
+1. Open the new session screen
+2. Choose the provider backend (Codex, Claude, OpenCode, …)
+3. Open the input controls and find **Resume ID**
+4. Paste the provider session id, or use **Browse** when available
+
+## Browse existing sessions to fill the Resume ID
+
+For some providers, Happier can browse the provider’s existing sessions and let you pick one to fill the Resume ID field.
+
+When it is available, you will see a **browse icon** next to the Resume ID input.
+
+Important behavior:
+
+- The browse picker is shown only when the selected backend supports session browsing.
+- The browse list is scoped to the provider and machine you already selected in the new-session screen.
+- For Codex, the browse list is also scoped to the effective Codex home for the auth choice you selected (see below).
+
+When you pick a session, Happier fills the Resume ID field and closes the Resume ID control.
+
+### Codex homes and connected services
+
+Codex can have more than one “home” in Happier:
+
+- the standard user Codex home on the machine
+- a connected-service-backed Codex home (when you start Codex with a connected service profile)
+
+The Resume ID browse picker is intentionally **locked** to the Codex home implied by your current new-session selection so you do not accidentally pick a session from a different home that will not resume under the selected auth.
+
+If you want to browse sessions from a different Codex home:
+
+1. change the Codex auth choice in the new-session flow (native vs connected service profile)
+2. reopen the Resume ID picker and browse again
+
+## Troubleshooting
+
+If you do not see the browse icon:
+
+- the provider may not support session browsing in current builds, or
+- no machine is selected yet
+
+You can still paste a Resume ID manually.
+
+If the browse list is empty:
+
+- confirm the selected machine is online and reachable, and
+- confirm you are browsing the correct provider/auth context (for Codex, the correct home/profile).
+
