@@ -245,6 +245,7 @@ export function syncBundledWorkspacePackages(opts = {}) {
   const readFile = opts.readFileSync ?? readFileSync;
   const writeFile = opts.writeFileSync ?? writeFileSync;
   const syncId = opts.syncId;
+  const replaceExisting = opts.replaceExisting !== false;
   const hostApps = Array.isArray(opts.hostApps) && opts.hostApps.length > 0
     ? opts.hostApps
     : ['cli', 'stack'];
@@ -262,18 +263,28 @@ export function syncBundledWorkspacePackages(opts = {}) {
       const destDist = resolve(destPackageDir, 'dist');
       if (exists(srcDist)) {
         try {
-          replaceDirFromSourceSync(destDist, srcDist, {
-            existsSync: exists,
-            cpSync: cp,
-            mkdirSync: mkdir,
-            renameSync: rename,
-            rmSync: rm,
-          }, {
-            syncSuffix: syncId,
-            staleSwapDirAgeMs: opts.staleSwapDirAgeMs,
-            nowMs: opts.nowMs,
-            isPidAlive: opts.isPidAlive,
-          });
+          if (!replaceExisting && exists(destDist)) {
+            // Preflight mode: keep the `dist/**` directory stable once it exists.
+            // Copy into place instead of swapping the directory out from under other processes.
+            //
+            // Note: this does *not* delete removed files; it is "presence-only" to make sure the
+            // bundled tree is usable (and to avoid transient ENOENT during directory swaps).
+            mkdir(destDist, { recursive: true });
+            cp(srcDist, destDist, { recursive: true, force: true });
+          } else {
+            replaceDirFromSourceSync(destDist, srcDist, {
+              existsSync: exists,
+              cpSync: cp,
+              mkdirSync: mkdir,
+              renameSync: rename,
+              rmSync: rm,
+            }, {
+              syncSuffix: syncId,
+              staleSwapDirAgeMs: opts.staleSwapDirAgeMs,
+              nowMs: opts.nowMs,
+              isPidAlive: opts.isPidAlive,
+            });
+          }
         } catch {
           // Best-effort: bundled deps may be missing or readonly.
         }

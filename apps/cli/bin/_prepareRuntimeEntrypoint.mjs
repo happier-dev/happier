@@ -41,6 +41,9 @@ export async function maybeRefreshLocalBundledWorkspacePackages(projectRoot, opt
   syncBundledWorkspacePackages({
     repoRoot,
     hostApps: Array.isArray(opts.hostApps) && opts.hostApps.length > 0 ? opts.hostApps : DEFAULT_HOST_APPS,
+    // Preflight should be "presence-only" and avoid swapping an existing `dist/**` directory out from
+    // under other running processes in a dev checkout.
+    replaceExisting: false,
   });
 }
 
