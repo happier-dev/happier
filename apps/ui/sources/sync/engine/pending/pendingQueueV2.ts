@@ -94,6 +94,24 @@ function coercePendingUserTextRecord(decrypted: unknown): { rawRecord: RawRecord
     return { rawRecord: record, text, displayText };
 }
 
+const enqueueCommitTailsBySessionId = new Map<string, Promise<void>>();
+
+function runPendingEnqueueCommitInOrder(sessionId: string, op: () => Promise<void>): Promise<void> {
+    const prev = enqueueCommitTailsBySessionId.get(sessionId) ?? Promise.resolve();
+    const next = prev.catch(() => undefined).then(op);
+    const settled = next.then(
+        () => undefined,
+        () => undefined,
+    );
+    const tail = settled.finally(() => {
+        if (enqueueCommitTailsBySessionId.get(sessionId) === tail) {
+            enqueueCommitTailsBySessionId.delete(sessionId);
+        }
+    });
+    enqueueCommitTailsBySessionId.set(sessionId, tail);
+    return next;
+}
+
 function buildPendingDecryptFailureMessage(params: {
     row: Pick<PendingRow, 'localId' | 'createdAt' | 'updatedAt'>;
 }): {
@@ -305,19 +323,6 @@ export async function enqueuePendingMessageV2(params: {
 
     const createdAt = nowServerMs();
     const updatedAt = createdAt;
-    let writeBody: Record<string, unknown>;
-    if (sessionEncryptionMode === 'plain') {
-        writeBody = { localId, content: { t: 'plain', v: rawRecord } };
-    } else {
-        let ciphertext: string;
-        try {
-            ciphertext = await sessionEncryption!.encryptRawRecord(rawRecord);
-        } catch (e) {
-            storage.getState().clearSessionOptimisticThinking(sessionId);
-            throw e;
-        }
-        writeBody = { localId, ciphertext };
-    }
 
     storage.getState().upsertPendingMessage(sessionId, {
         id: localId,
@@ -330,14 +335,24 @@ export async function enqueuePendingMessageV2(params: {
     });
 
     try {
-        const response = await request(`/v2/sessions/${sessionId}/pending`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(writeBody),
+        await runPendingEnqueueCommitInOrder(sessionId, async () => {
+            let writeBody: Record<string, unknown>;
+            if (sessionEncryptionMode === 'plain') {
+                writeBody = { localId, content: { t: 'plain', v: rawRecord } };
+            } else {
+                const ciphertext = await sessionEncryption!.encryptRawRecord(rawRecord);
+                writeBody = { localId, ciphertext };
+            }
+
+            const response = await request(`/v2/sessions/${sessionId}/pending`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(writeBody),
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to enqueue pending message (${response.status})`);
+            }
         });
-        if (!response.ok) {
-            throw new Error(`Failed to enqueue pending message (${response.status})`);
-        }
         storage.getState().clearSessionOptimisticThinking(sessionId);
     } catch (e) {
         storage.getState().removePendingMessage(sessionId, localId);

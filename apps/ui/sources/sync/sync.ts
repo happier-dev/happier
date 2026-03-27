@@ -2352,6 +2352,7 @@ class Sync {
             credentials: this.credentials,
             encryption: this.encryption,
             machineDataKeys: this.machineDataKeys,
+            throwOnError: false,
             getExistingMachine: (machineId) => storage.getState().machines[machineId] ?? null,
             cachedMachineDisplayEntries,
             shouldContinue,

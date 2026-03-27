@@ -78,6 +78,23 @@ describe('sessionAbort', () => {
     await expect(sessionAbort('sid-1')).resolves.toBeUndefined();
   });
 
+  it('does not throw when scoped session encryption is unavailable', async () => {
+    const sessionId = 'sid-encryption-missing';
+    storage.getState().applySessions([buildSession(sessionId)]);
+    storage.getState().markSessionOptimisticThinking(sessionId);
+
+    mockSessionRpcWithPreferredSessionScope.mockRejectedValue(
+      new RpcError('Unable to resolve session encryption for scoped RPC', 'scoped_session_encryption_unavailable'),
+    );
+
+    await expect(sessionAbort(sessionId)).resolves.toBeUndefined();
+
+    const after = storage.getState().sessions[sessionId];
+    expect(after?.thinking).toBe(false);
+    expect(after?.optimisticThinkingAt ?? null).toBeNull();
+    expect(after?.thinkingGraceUntil ?? null).toBeNull();
+  });
+
   it('does not treat legacy message-only errors as method-not-available', async () => {
     mockSessionRpcWithPreferredSessionScope.mockRejectedValue(new Error('RPC method not available'));
 

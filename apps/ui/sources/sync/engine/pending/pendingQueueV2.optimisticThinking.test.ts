@@ -36,6 +36,57 @@ describe('pendingQueueV2 optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
     });
 
+    it('keeps queued pending messages in call order even when earlier encryption resolves later', async () => {
+        const sessionId = 's_test_enqueue_order';
+        storage.getState().applySessions([buildSession({ sessionId })]);
+
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => {
+            releaseFirst = () => resolve();
+        });
+
+        const requestCiphertexts: string[] = [];
+        const encryption = {
+            getSessionEncryption: () =>
+                ({
+                    encryptRawRecord: async (rawRecord: any) => {
+                        const text = rawRecord?.content?.text;
+                        if (text === 'first') {
+                            await firstGate;
+                        }
+                        return `cipher-${String(text)}`;
+                    },
+                }) as unknown as ReturnType<Encryption['getSessionEncryption']>,
+        } as unknown as Encryption;
+
+        const request = async (_path: string, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body ?? 'null')) as any;
+            requestCiphertexts.push(String(body?.ciphertext ?? ''));
+            return new Response(null, { status: 200 });
+        };
+
+        const promiseFirst = enqueuePendingMessageV2({
+            sessionId,
+            text: 'first',
+            encryption,
+            request,
+        });
+        const promiseSecond = enqueuePendingMessageV2({
+            sessionId,
+            text: 'second',
+            encryption,
+            request,
+        });
+
+        releaseFirst();
+
+        await Promise.all([promiseFirst, promiseSecond]);
+
+        const pending = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(pending.map((m) => m.text)).toEqual(['first', 'second']);
+        expect(requestCiphertexts).toEqual(['cipher-first', 'cipher-second']);
+    });
+
     it('clears optimistic thinking when encryption fails', async () => {
         const sessionId = 's_test_encrypt_fail';
         storage.getState().applySessions([buildSession({ sessionId })]);

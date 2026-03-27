@@ -114,6 +114,7 @@ export function createDefaultActionExecutor(opts?: Readonly<{
     executionRunSend: sessionExecutionRunSend,
     executionRunStop: sessionExecutionRunStop,
     executionRunAction: sessionExecutionRunAction,
+    executionRunWait: async () => ({ ok: false, error: 'unsupported_action:execution.run.wait', errorCode: 'unsupported_action' }),
 
     sessionOpen: async ({ sessionId }) =>
       opts?.openSession

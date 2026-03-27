@@ -133,6 +133,25 @@ describe('socket update handling cursor isolation', () => {
         expect(applySessions).not.toHaveBeenCalled();
     });
 
+    it('ignores stale activity thinking=true updates when activeAt equals updatedAt (prevents resurrecting cleared sessions)', () => {
+        const sessionId = 's_equal_activeAt';
+        storage.getState().applySessions([{
+            ...buildSession(sessionId),
+            thinking: false,
+            thinkingAt: 150,
+            updatedAt: 150,
+        }]);
+
+        const updates = new Map<string, any>([
+            [sessionId, { type: 'activity', id: sessionId, active: true, activeAt: 150, thinking: true }],
+        ]);
+        const applySessions = vi.fn();
+
+        flushActivityUpdates({ updates, applySessions });
+
+        expect(applySessions).not.toHaveBeenCalled();
+    });
+
     it('applies activity active=false updates even if activeAt < updatedAt', async () => {
         const sessionId = 's_inactive_turnoff';
         storage.getState().applySessions([{

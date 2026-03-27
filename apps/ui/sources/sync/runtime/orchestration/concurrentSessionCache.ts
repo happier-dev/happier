@@ -265,6 +265,7 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
         encryption,
         machineDataKeys,
         request,
+        throwOnError: false,
         applyMachines: (nextMachines) => {
             machines = nextMachines;
         },

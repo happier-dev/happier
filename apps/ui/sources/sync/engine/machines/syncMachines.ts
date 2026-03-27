@@ -139,6 +139,13 @@ export async function fetchAndApplyMachines(params: {
      * inconsistencies (SWR-style) and to avoid confusing UI flicker.
      */
     replace?: boolean;
+    /**
+     * When true, propagate network/HTTP/parse failures to the caller.
+     *
+     * Defaults to false so callers can use SWR-style refresh semantics without
+     * spurious error surfaces.
+     */
+    throwOnError?: boolean;
 }): Promise<void> {
     const { credentials, encryption, machineDataKeys, applyMachines } = params;
     const request =
@@ -146,19 +153,39 @@ export async function fetchAndApplyMachines(params: {
         ?? ((path: string, init: RequestInit) => serverFetch(path, init, { includeAuth: false }));
     const concurrencyLimit = Math.max(1, Math.trunc(params.machineDisplayHydrationConcurrencyLimit ?? 4));
     const shouldContinue = params.shouldContinue ?? (() => true);
+    const throwOnError = params.throwOnError === true;
 
-    const response = await request('/v1/machines', {
-        headers: {
-            'Authorization': `Bearer ${credentials.token}`,
-            'Content-Type': 'application/json',
-        },
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to fetch machines: ${response.status}`);
+    let response: Response;
+    try {
+        response = await request('/v1/machines', {
+            headers: {
+                'Authorization': `Bearer ${credentials.token}`,
+                'Content-Type': 'application/json',
+            },
+        });
+    } catch (error) {
+        if (throwOnError) {
+            throw error;
+        }
+        return;
     }
 
-    const data: unknown = await response.json();
+    if (!response.ok) {
+        if (throwOnError) {
+            throw new Error(`Failed to fetch machines: ${response.status}`);
+        }
+        return;
+    }
+
+    let data: unknown;
+    try {
+        data = await response.json();
+    } catch (error) {
+        if (throwOnError) {
+            throw error;
+        }
+        return;
+    }
     const machines = data as Array<{
         id: string;
         metadata: string;
@@ -207,7 +234,13 @@ export async function fetchAndApplyMachines(params: {
     }
 
     // Initialize machine encryptions
-    await encryption.initializeMachines(machineKeysMap);
+    let machineEncryptionReady = true;
+    try {
+        await encryption.initializeMachines(machineKeysMap);
+    } catch (error) {
+        machineEncryptionReady = false;
+        console.error('[machinesSnapshot] Failed to initialize machine encryption; continuing with cached/unencrypted machine rows', error);
+    }
 
     if (!shouldContinue()) {
         return;
@@ -273,7 +306,19 @@ export async function fetchAndApplyMachines(params: {
         const machineEncryption = encryption.getMachineEncryption(machine.id);
         if (!machineEncryption) {
             console.error(`Machine encryption not found for ${machine.id} - this should never happen`);
-            return null;
+            return {
+                id: machine.id,
+                seq: machine.seq,
+                createdAt: machine.createdAt,
+                updatedAt: machine.updatedAt,
+                active: machine.active,
+                activeAt: machine.activeAt,
+                revokedAt: machine.revokedAt ?? null,
+                metadata: null,
+                metadataVersion: machine.metadataVersion,
+                daemonState: null,
+                daemonStateVersion: machine.daemonStateVersion || 0,
+            };
         }
 
         try {
@@ -328,7 +373,9 @@ export async function fetchAndApplyMachines(params: {
             params.replace ?? false,
         );
 
-        const machinesNeedingHydration = machines.filter((machine) => needsMachineWarmHydration(machine));
+        const machinesNeedingHydration = machineEncryptionReady
+            ? machines.filter((machine) => needsMachineWarmHydration(machine))
+            : [];
         if (machinesNeedingHydration.length > 0) {
             void runTasksWithLimit(
                 machinesNeedingHydration.map((machine) => async () => {

@@ -13,6 +13,7 @@ describe('createActionExecutor', () => {
             executionRunSend: async () => ({}),
             executionRunStop: async () => ({}),
             executionRunAction: async () => ({}),
+            executionRunWait: async () => ({}),
             sessionOpen: async () => ({}),
             sessionSpawnNew: async () => ({}),
             sessionSpawnPicker: async () => ({}),

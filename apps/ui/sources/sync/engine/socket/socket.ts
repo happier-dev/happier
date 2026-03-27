@@ -582,6 +582,7 @@ export function flushActivityUpdates(params: { updates: Map<string, ApiEphemeral
         if (session) {
             const nextThinking = update.thinking ?? false;
             const isTurningOff = update.active === false && nextThinking === false;
+            const isThinkingResurrection = nextThinking === true && session.thinking !== true;
 
             // Most activity ephemerals should be ignored when they predate a newer durable/lifecycle update
             // (for example a recent turn_aborted/task_complete clear). Otherwise old "thinking=true" ephemerals
@@ -594,7 +595,15 @@ export function flushActivityUpdates(params: { updates: Map<string, ApiEphemeral
             if (isTurningOff) {
                 if (update.activeAt < session.activeAt) continue;
             } else {
-                if (update.activeAt < session.updatedAt) continue;
+                // Be slightly stricter when an activity update would re-enable thinking, because some
+                // server clocks/reporting paths can produce equal timestamps for the lifecycle clear and
+                // the older "thinking=true" activity update. Using `<=` here prevents resurrecting sessions
+                // into a stuck "working" state after the turn has completed.
+                if (isThinkingResurrection) {
+                    if (update.activeAt <= session.updatedAt) continue;
+                } else {
+                    if (update.activeAt < session.updatedAt) continue;
+                }
             }
             sessions.push({
                 ...session,

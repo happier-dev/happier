@@ -3,7 +3,7 @@
  */
 
 import { apiSocket } from '../api/session/apiSocket';
-import { createRpcCallError, isRpcMethodNotAvailableError, readRpcErrorCode } from '../runtime/rpcErrors';
+import { createRpcCallError, isRpcMethodNotAvailableError, readRpcErrorCode as readSessionRpcErrorCode } from '../runtime/rpcErrors';
 import { assertRpcResponseWithSuccess } from '../runtime/assertRpcResponseWithSuccess';
 import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
@@ -282,7 +282,7 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
         });
         return normalizeSpawnSessionResult(result);
     } catch (error) {
-        if (isRpcMethodNotAvailableError(error as any) || readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+        if (isRpcMethodNotAvailableError(error as any) || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
@@ -355,7 +355,7 @@ export async function continueSessionWithReplay(options: ContinueSessionWithRepl
         }
         return parsed.data;
     } catch (error) {
-        if (isRpcMethodNotAvailableError(error as any) || readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+        if (isRpcMethodNotAvailableError(error as any) || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
@@ -415,7 +415,7 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
         }
         return parsed.data;
     } catch (error) {
-        if (isRpcMethodNotAvailableError(error as any) || readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+        if (isRpcMethodNotAvailableError(error as any) || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
             return {
                 ok: false,
                 errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
@@ -453,7 +453,7 @@ export async function rollbackSessionConversation(options: Readonly<{
         }
         return parsed.data;
     } catch (error) {
-        if (isRpcMethodNotAvailableError(error as any) || readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+        if (isRpcMethodNotAvailableError(error as any) || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
             return {
                 ok: false,
                 errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
@@ -478,12 +478,29 @@ export async function sessionAbort(sessionId: string): Promise<void> {
             },
         });
     } catch (e) {
-        if (e instanceof Error && isRpcMethodNotAvailableError(e)) {
+        const errorCode = readSessionRpcErrorCode(e);
+        if (
+            e instanceof Error
+            && (
+                isRpcMethodNotAvailableError(e)
+            )
+        ) {
             // Session RPCs are unavailable when no agent process is attached (inactive/resumable).
             // Treat abort as a no-op in that case.
             return;
         }
-        throw e;
+        if (
+            e instanceof Error
+            && (
+                errorCode === 'scoped_session_encryption_unavailable'
+                || errorCode === 'session_encryption_not_found'
+            )
+        ) {
+            // Scoped session RPC encryption can be unavailable when the provider is already detached.
+            // Abort is best-effort; do not block follow-up user actions (e.g. sending pending messages).
+        } else {
+            throw e;
+        }
     }
 
     // Best-effort local UX recovery: aborts should immediately return the session to non-thinking state
@@ -752,7 +769,7 @@ export async function sessionKill(sessionId: string): Promise<SessionKillRespons
         return {
             success: false,
             message: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readRpcErrorCode(error),
+            errorCode: readSessionRpcErrorCode(error),
         };
     }
 }
@@ -792,7 +809,7 @@ export async function sessionStopWithServerScope(
             return {
                 success: false,
                 message: error instanceof Error ? error.message : 'Unknown error',
-                errorCode: readRpcErrorCode(error),
+                errorCode: readSessionRpcErrorCode(error),
             };
         }
     })();
