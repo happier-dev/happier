@@ -114,6 +114,8 @@ trap 'wsrepl_early_terminate_due_to_signal 130 int' INT
 #   WSREPL_QA_MACHINE_ID_POLL_RETRIES=...  # default: 40 (poll daemon status until machineId is persisted)
 #   WSREPL_QA_MACHINE_ID_POLL_DELAY_MS=...  # default: 250 (delay between machineId polls)
 #   WSREPL_QA_HOST_HOME_REL=...  # if set, run the host daemon under $HOME/<rel> (isolated from stack-managed CLI home)
+#   WSREPL_QA_HOST_DIRECT_PEER_ADVERTISED_HOSTS=...  # default: host.lima.internal (published by the host daemon for Lima guests)
+#   WSREPL_QA_HOST_HAPPIER_SOURCE=auto|stack_runtime|worktree_node|explicit:/abs/path  # default: auto
 #   WSREPL_QA_FORCE_VM_RECONFIGURE=1  # force stop/reconfigure/start via macos-lima-vm.sh (default is reuse-first)
 #   WSREPL_QA_VM_HAPPIER_MODE=skip|require|autoupdate  # default: require (fail closed if the guest is running an unexpected Happier build)
 #     - autoupdate builds a Linux CLI artifact from this repo and installs it into the VM
@@ -636,7 +638,9 @@ wait_for_host_daemon_health_after_start() {
 
   local attempt=0
   while [[ "${attempt}" -lt "${retries}" ]]; do
-    if [[ -s "${status_file}" ]] && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
+    if [[ -s "${status_file}" ]] \
+      && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null \
+      && ! grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${status_file}" 2>/dev/null; then
       refresh_daemon_log_tail_best_effort "${log_path_file}" "${log_tail_file}"
       return 0
     fi
@@ -645,7 +649,9 @@ wait_for_host_daemon_health_after_start() {
     refresh_host_daemon_status_best_effort "${status_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}"
   done
 
-  if [[ -s "${status_file}" ]] && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
+  if [[ -s "${status_file}" ]] \
+    && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null \
+    && ! grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${status_file}" 2>/dev/null; then
     refresh_daemon_log_tail_best_effort "${log_path_file}" "${log_tail_file}"
     return 0
   fi
@@ -751,25 +757,153 @@ PY
 
 run_host_happier() {
   WSREPL_QA_HOST_HAPPIER_KIND=""
+  local source="${WSREPL_QA_HOST_HAPPIER_SOURCE:-auto}"
+  source="$(printf "%s" "${source}" | tr '[:upper:]' '[:lower:]')"
+
+  local kind=""
+  local resolved_path=""
+  local version_output=""
+  local -a invocation=()
+  local -a cmd=()
+
+  local write_resolution="${DAEMON_DIAG_DIR:-}/host.happier.resolve.json"
+
+  write_resolution_once() {
+    if [[ -n "${WSREPL_QA_HOST_HAPPIER_RESOLVE_WRITTEN:-}" ]]; then
+      return 0
+    fi
+    if [[ -z "${DAEMON_DIAG_DIR:-}" ]]; then
+      return 0
+    fi
+    mkdir -p "${DAEMON_DIAG_DIR}" >/dev/null 2>&1 || true
+    python3 - "${write_resolution}" "${source}" "${kind}" "${resolved_path}" "${version_output}" "${invocation[@]}" <<'PY' 2>/dev/null || true
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+source = (sys.argv[2] or "").strip() or None
+kind = (sys.argv[3] or "").strip() or None
+resolved_path = (sys.argv[4] or "").strip() or None
+version = (sys.argv[5] or "").strip() or None
+invocation = sys.argv[6:]
+
+path.write_text(
+    json.dumps(
+        {
+            "kind": "wsrepl_host_happier_resolution",
+            "source": source,
+            "kind": kind,
+            "resolvedPath": resolved_path,
+            "version": version,
+            "invocation": invocation,
+        },
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+    WSREPL_QA_HOST_HAPPIER_RESOLVE_WRITTEN=1
+    export WSREPL_QA_HOST_HAPPIER_RESOLVE_WRITTEN
+  }
+
+  if [[ "${source}" == explicit:* ]]; then
+    local explicit_path="${WSREPL_QA_HOST_HAPPIER_SOURCE#explicit:}"
+    explicit_path="$(printf "%s" "${explicit_path}" | tr -d '\r')"
+    if [[ -z "${explicit_path}" || ! -x "${explicit_path}" ]]; then
+      echo "[wsrepl-qa] invalid WSREPL_QA_HOST_HAPPIER_SOURCE (explicit path not executable): ${WSREPL_QA_HOST_HAPPIER_SOURCE}" >&2
+      return 2
+    fi
+    kind="explicit"
+    resolved_path="${explicit_path}"
+    invocation=("${explicit_path}")
+    version_output="$("${explicit_path}" --version 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+    cmd=("${explicit_path}" "$@")
+    WSREPL_QA_HOST_HAPPIER_KIND="${kind}"
+    write_resolution_once
+    "${cmd[@]}"
+    return $?
+  fi
+
+  if [[ "${source}" == "stack_runtime" ]]; then
+    local runtime_cli_bin=""
+    runtime_cli_bin="$(resolve_stack_runtime_cli_bin)"
+    if [[ -z "${runtime_cli_bin}" ]]; then
+      echo "[wsrepl-qa] WSREPL_QA_HOST_HAPPIER_SOURCE=stack_runtime but no stack runtime CLI was found" >&2
+      return 2
+    fi
+    kind="stack_runtime"
+    resolved_path="${runtime_cli_bin}"
+    invocation=("${runtime_cli_bin}")
+    version_output="$("${runtime_cli_bin}" --version 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+    cmd=("${runtime_cli_bin}" "$@")
+    WSREPL_QA_HOST_HAPPIER_KIND="${kind}"
+    write_resolution_once
+    "${cmd[@]}"
+    return $?
+  fi
+
+  if [[ "${source}" == "worktree_node" ]]; then
+    kind="worktree_node"
+    resolved_path="node ${REPO_DIR}/apps/cli/bin/happier.mjs"
+    invocation=(node "${REPO_DIR}/apps/cli/bin/happier.mjs")
+    version_output="$(node "${REPO_DIR}/apps/cli/bin/happier.mjs" --version 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+    cmd=(node "${REPO_DIR}/apps/cli/bin/happier.mjs" "$@")
+    WSREPL_QA_HOST_HAPPIER_KIND="${kind}"
+    write_resolution_once
+    "${cmd[@]}"
+    return $?
+  fi
+
+  if [[ "${source}" != "auto" && -n "${source}" ]]; then
+    echo "[wsrepl-qa] invalid WSREPL_QA_HOST_HAPPIER_SOURCE: ${WSREPL_QA_HOST_HAPPIER_SOURCE} (expected auto|stack_runtime|worktree_node|explicit:/abs/path)" >&2
+    return 2
+  fi
+
   local runtime_cli_bin
   runtime_cli_bin="$(resolve_stack_runtime_cli_bin)"
   if [[ -n "${runtime_cli_bin}" ]]; then
-    WSREPL_QA_HOST_HAPPIER_KIND="stack_runtime"
-    "${runtime_cli_bin}" "$@"
+    kind="stack_runtime"
+    resolved_path="${runtime_cli_bin}"
+    invocation=("${runtime_cli_bin}")
+    version_output="$("${runtime_cli_bin}" --version 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+    cmd=("${runtime_cli_bin}" "$@")
+    WSREPL_QA_HOST_HAPPIER_KIND="${kind}"
+    write_resolution_once
+    "${cmd[@]}"
     return $?
   fi
   if [[ -x "$HOME/.happier/bin/happier" ]]; then
-    WSREPL_QA_HOST_HAPPIER_KIND="user_install"
-    "$HOME/.happier/bin/happier" "$@"
+    kind="user_install"
+    resolved_path="$HOME/.happier/bin/happier"
+    invocation=("$HOME/.happier/bin/happier")
+    version_output="$("$HOME/.happier/bin/happier" --version 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+    cmd=("$HOME/.happier/bin/happier" "$@")
+    WSREPL_QA_HOST_HAPPIER_KIND="${kind}"
+    write_resolution_once
+    "${cmd[@]}"
     return $?
   fi
   if command -v happier >/dev/null 2>&1; then
-    WSREPL_QA_HOST_HAPPIER_KIND="path"
-    happier "$@"
+    kind="path"
+    resolved_path="$(command -v happier 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+    invocation=("happier")
+    version_output="$(happier --version 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+    cmd=(happier "$@")
+    WSREPL_QA_HOST_HAPPIER_KIND="${kind}"
+    write_resolution_once
+    "${cmd[@]}"
     return $?
   fi
-  WSREPL_QA_HOST_HAPPIER_KIND="worktree_node"
-  node "${REPO_DIR}/apps/cli/bin/happier.mjs" "$@"
+  kind="worktree_node"
+  resolved_path="node ${REPO_DIR}/apps/cli/bin/happier.mjs"
+  invocation=(node "${REPO_DIR}/apps/cli/bin/happier.mjs")
+  version_output="$(node "${REPO_DIR}/apps/cli/bin/happier.mjs" --version 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+  cmd=(node "${REPO_DIR}/apps/cli/bin/happier.mjs" "$@")
+  WSREPL_QA_HOST_HAPPIER_KIND="${kind}"
+  write_resolution_once
+  "${cmd[@]}"
 }
 
 resolve_stack_cli_access_key_path_for_ui_url() {
@@ -1129,6 +1263,11 @@ restart_host_daemon_and_capture_logs() {
     fi
   fi
 
+  # For host↔Lima direct-peer transfers, the guest can always resolve `host.lima.internal` but may not
+  # be able to reach the host's LAN/VPN interface IPs. Publish `host.lima.internal` by default so the
+  # host advertises at least one direct-peer endpoint candidate that is reachable from the Lima VM.
+  local host_direct_peer_advertised_hosts="${WSREPL_QA_HOST_DIRECT_PEER_ADVERTISED_HOSTS:-host.lima.internal}"
+
   local host_provider_install_id=""
   host_provider_install_id="${HAPPIER_QA_PREFERRED_AGENT_ENGINES%%,*}"
   if [[ -z "${host_provider_install_id}" ]]; then
@@ -1200,11 +1339,13 @@ PY
     set +e
     if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
       HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
       HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
       HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
       HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
     else
       HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
       HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
       HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
       HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
@@ -1227,11 +1368,13 @@ PY
     set +e
     if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
       HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
       HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
       HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
       HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
     else
       HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
       HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
       HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
       run_host_happier daemon start >"${start_file}" 2>&1
@@ -1255,8 +1398,9 @@ PY
     printf "%s\n" "(no daemon log file found)" > "${log_tail_file}"
   fi
 
+  local daemon_healthy_after_start="0"
   if wait_for_host_daemon_health_after_start "${status_file}" "${log_path_file}" "${log_tail_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}"; then
-    return 0
+    daemon_healthy_after_start="1"
   fi
 
   local cli_dist_rebuild_attempted=0
@@ -1268,32 +1412,36 @@ PY
       yarn workspace @happier-dev/cli build
     ) >"${build_file}" 2>&1 || true
 
-    set +e
-    if [[ -n "${server_url}" ]]; then
-      if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-      else
-        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-        HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-      fi
-    else
-      if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
-      else
-        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-        run_host_happier daemon start >"${start_file}" 2>&1
-      fi
-    fi
+	    set +e
+	    if [[ -n "${server_url}" ]]; then
+	      if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+	        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+	        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
+	        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
+	        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
+	        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
+	      else
+	        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+	        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
+	        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
+	        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
+	        HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
+	      fi
+	    else
+	      if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+	        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+	        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
+	        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
+	        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
+	        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
+	      else
+	        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
+	        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
+	        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
+	        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
+	        run_host_happier daemon start >"${start_file}" 2>&1
+	      fi
+	    fi
     start_status=$?
     set -e
 
@@ -1381,6 +1529,13 @@ PY
     *)
       ;;
   esac
+
+  if [[ -n "${WSREPL_QA_MACHINE_ID_POLL_RETRIES:-}" ]]; then
+    local raw_poll_retries="${WSREPL_QA_MACHINE_ID_POLL_RETRIES:-}"
+    if [[ "${raw_poll_retries}" =~ ^[0-9]+$ ]] && [[ "${raw_poll_retries}" -ge 1 ]]; then
+      should_poll_host_machine_id="1"
+    fi
+  fi
 
   if [[ "${should_poll_host_machine_id}" == "1" && -z "${WSREPL_QA_HOST_MACHINE_ID:-}" && -z "${HAPPIER_QA_SOURCE_MACHINE_ID:-}" && -s "${status_file}" ]] && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null; then
     poll_host_machine_id_if_needed_best_effort

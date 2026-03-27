@@ -151,6 +151,11 @@ test('macos wsrepl lima matrix wrapper writes diagnostics and forwards playwight
       '  create)',
       '    name=""',
       '    while [[ $# -gt 0 ]]; do',
+      '      if [[ "$1" == --name=* ]]; then',
+      '        name="${1#--name=}"',
+      '        shift',
+      '        continue',
+      '      fi',
       '      if [[ "$1" == "--name" ]]; then',
       '        name="$2"',
       '        shift 2',
@@ -158,6 +163,9 @@ test('macos wsrepl lima matrix wrapper writes diagnostics and forwards playwight
       '      fi',
       '      shift || true',
       '    done',
+      '    if [[ -z "$name" ]]; then',
+      '      name="happy-wsrepl"',
+      '    fi',
       '    mkdir -p "${LIMA_HOME:-$HOME/.lima}/${name}"',
       '    cat > "${LIMA_HOME:-$HOME/.lima}/${name}/lima.yaml" <<EOF',
       'memory: "4GiB"',
@@ -4943,6 +4951,163 @@ test('macos wsrepl lima matrix wrapper rebuilds the CLI when host daemon status 
   assert.equal(summary.parameters.vmMachineId, 'machine_vm_1');
 });
 
+test('macos wsrepl lima matrix wrapper fails closed when host daemon status stays on a missing dist entrypoint after rebuild', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-macos-lima-wsrepl-matrix-host-missing-dist-hardfail-'));
+  const binDir = join(root, 'bin');
+  const homeDir = join(root, 'home');
+  const reportDir = join(root, 'reports');
+  const logDir = join(root, 'logs');
+  const limaHome = join(homeDir, '.lima');
+
+  await mkdir(binDir, { recursive: true });
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(reportDir, { recursive: true });
+  await mkdir(logDir, { recursive: true });
+
+  const yarnLog = join(logDir, 'yarn.log');
+
+  const unamePath = join(binDir, 'uname');
+  await writeFile(unamePath, ['#!/usr/bin/env bash', 'echo Darwin'].join('\n') + '\n', 'utf8');
+  await chmod(unamePath, 0o755);
+
+  const nodePath = join(binDir, 'node');
+  await writeFile(
+    nodePath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'script="${1:-}"',
+      'shift || true',
+      'if [[ "$script" == "--version" ]]; then',
+      '  echo "v99.0.0-test"',
+      '  exit 0',
+      'fi',
+      'if [[ "$script" == *"/apps/cli/bin/happier.mjs" ]]; then',
+      '  cmd="${1:-}"',
+      '  shift || true',
+      '  case "$cmd" in',
+      '    --version)',
+      '      echo "0.1.0"',
+      '      exit 0',
+      '      ;;',
+      '    daemon)',
+      '      sub="${1:-}"',
+      '      shift || true',
+      '      case "$sub" in',
+      '        stop)',
+      '          exit 0',
+      '          ;;',
+      '        start)',
+      "          echo \"Error: Cannot find module '/Users/leeroy/Documents/Development/happier/dev/apps/cli/dist/index.mjs'\" >&2",
+      '          exit 1',
+      '          ;;',
+      '        status)',
+      "          echo \"Error: Cannot find module '/Users/leeroy/Documents/Development/happier/dev/apps/cli/dist/index.mjs'\"",
+      '          exit 0',
+      '          ;;',
+      '        logs)',
+      '          echo "/tmp/daemon.log"',
+      '          exit 0',
+      '          ;;',
+      '        *)',
+      '          exit 0',
+      '          ;;',
+      '      esac',
+      '      ;;',
+      '    install)',
+      '      exit 0',
+      '      ;;',
+      '    *)',
+      '      exit 0',
+      '      ;;',
+      '  esac',
+      'fi',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  await chmod(nodePath, 0o755);
+
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(
+    yarnPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `echo "yarn $*" >> ${JSON.stringify(yarnLog)}`,
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  await chmod(yarnPath, 0o755);
+
+  const limactlPath = join(binDir, 'limactl');
+  await writeFile(
+    limactlPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'cmd="${1:-}"',
+      'shift || true',
+      'case "$cmd" in',
+      '  create)',
+      '    name=""',
+      '    while [[ $# -gt 0 ]]; do',
+      '      if [[ "$1" == "--name" ]]; then',
+      '        name="$2"',
+      '        shift 2',
+      '        continue',
+      '      fi',
+      '      shift || true',
+      '    done',
+      '    mkdir -p "${LIMA_HOME:-$HOME/.lima}/${name}"',
+      '    cat > "${LIMA_HOME:-$HOME/.lima}/${name}/lima.yaml" <<EOF',
+      'memory: "4GiB"',
+      'EOF',
+      '    exit 0',
+      '    ;;',
+      '  stop|start|list|info|shell|copy)',
+      '    exit 0',
+      '    ;;',
+      '  *)',
+      '    exit 0',
+      '    ;;',
+      'esac',
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  await chmod(limactlPath, 0o755);
+
+  const scriptPath = resolve(join(__dirname, 'macos-lima-wsrepl-matrix.sh'));
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    LIMA_HOME: limaHome,
+    PATH: `${binDir}:/usr/bin:/bin`,
+    WSREPL_QA_OUTPUT_DIR: reportDir,
+    HAPPIER_QA_STEPS_JSON: JSON.stringify([{ targetMachineId: 'machine_target_1', strategy: 'sync_changes' }]),
+    WSREPL_QA_HOST_MACHINE_ID: 'machine_host_1',
+    WSREPL_QA_VM_MACHINE_ID: 'machine_vm_1',
+    HAPPIER_UI_URL: 'http://localhost:19000/?server=http%3A%2F%2Flocalhost%3A53288',
+    HAPPIER_QA_HEADLESS: '1',
+    WSREPL_QA_VM_HAPPIER_MODE: 'skip',
+  };
+
+  const res = spawnSync('bash', [scriptPath, 'happy-wsrepl'], {
+    cwd: root,
+    env,
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(res.status, 0, `expected nonzero exit\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const summary = JSON.parse(await readFile(join(reportDir, 'summary.json'), 'utf8'));
+  assert.notEqual(summary.status, 0, `expected nonzero summary.status (got ${summary.status})`);
+
+  const yarnOut = await readFile(yarnLog, 'utf8').catch(() => '');
+  assert.match(yarnOut, /yarn workspace @happier-dev\/cli build/);
+});
+
 test('macos wsrepl lima matrix wrapper fails closed when guest wsrepl build marker mismatches the worktree (require mode)', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-macos-lima-wsrepl-matrix-marker-mismatch-'));
   const binDir = join(root, 'bin');
@@ -5335,7 +5500,39 @@ test('macos wsrepl lima matrix wrapper writes a nonzero summary status when term
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       `echo "limactl $*" >> ${JSON.stringify(limactlLog)}`,
-      'exit 0',
+      'cmd="${1:-}"',
+      'shift || true',
+      'case "$cmd" in',
+      '  create)',
+      '    name=""',
+      '    while [[ $# -gt 0 ]]; do',
+      '      if [[ "$1" == "--name" ]]; then',
+      '        name="$2"',
+      '        shift 2',
+      '        continue',
+      '      fi',
+      '      shift || true',
+      '    done',
+      '    mkdir -p "${LIMA_HOME:-$HOME/.lima}/${name}"',
+      '    cat > "${LIMA_HOME:-$HOME/.lima}/${name}/lima.yaml" <<EOF',
+      'memory: "4GiB"',
+      'EOF',
+      '    exit 0',
+      '    ;;',
+      '  stop|start|list|info)',
+      '    exit 0',
+      '    ;;',
+      '  shell)',
+      '    while [[ $# -gt 0 && "$1" != "--" ]]; do',
+      '      shift',
+      '    done',
+      '    if [[ "${1:-}" == "--" ]]; then shift; fi',
+      '    exec env PATH=/usr/bin:/bin "$@"',
+      '    ;;',
+      '  *)',
+      '    exit 0',
+      '    ;;',
+      'esac',
     ].join('\n') + '\n',
     'utf8',
   );
@@ -5374,4 +5571,247 @@ test('macos wsrepl lima matrix wrapper writes a nonzero summary status when term
 
   const summary = JSON.parse(await readFile(join(reportDir, 'summary.json'), 'utf8'));
   assert.notEqual(summary.status, 0, `expected nonzero summary.status (got ${summary.status})`);
+});
+
+test('macos wsrepl lima matrix wrapper can force host happier source to worktree_node', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-macos-lima-wsrepl-matrix-host-source-'));
+  const binDir = join(root, 'bin');
+  const homeDir = join(root, 'home');
+  const reportDir = join(root, 'reports');
+  const logDir = join(root, 'logs');
+  const limaHome = join(homeDir, '.lima');
+
+  await mkdir(binDir, { recursive: true });
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(reportDir, { recursive: true });
+  await mkdir(logDir, { recursive: true });
+
+  const runtimeLog = join(logDir, 'happier.runtime.log');
+  const nodeLog = join(logDir, 'node.log');
+  const happierLog = join(logDir, 'happier.path.log');
+  const limactlLog = join(logDir, 'limactl.log');
+
+  const unamePath = join(binDir, 'uname');
+  await writeFile(unamePath, ['#!/usr/bin/env bash', 'echo Darwin'].join('\n') + '\n', 'utf8');
+  await chmod(unamePath, 0o755);
+
+  const runtimeHappierDir = join(
+    homeDir,
+    '.happier',
+    'stacks',
+    'stack-test',
+    'runtime',
+    'current',
+    'cli',
+  );
+  await mkdir(runtimeHappierDir, { recursive: true });
+  const runtimeHappierPath = join(runtimeHappierDir, 'happier');
+  await writeFile(
+    runtimeHappierPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `echo "runtime-happier $*" >> ${JSON.stringify(runtimeLog)}`,
+      'echo "runtime stub ok"',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  await chmod(runtimeHappierPath, 0o755);
+
+  const happierPath = join(binDir, 'happier');
+  await writeFile(
+    happierPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `echo "path-happier $*" >> ${JSON.stringify(happierLog)}`,
+      'echo "path stub ok"',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  await chmod(happierPath, 0o755);
+
+  const nodePath = join(binDir, 'node');
+  await writeFile(
+    nodePath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `echo "node $*" >> ${JSON.stringify(nodeLog)}`,
+      'if [[ "${1:-}" == "--version" ]]; then',
+      '  echo "v99.0.0-test"',
+      '  exit 0',
+      'fi',
+      'script="${1:-}"',
+      'shift || true',
+      'if [[ "$script" == *"/apps/cli/bin/happier.mjs" ]]; then',
+      '  cmd="${1:-}"',
+      '  sub="${2:-}"',
+      '  if [[ "$cmd" == "--version" ]]; then',
+      '    echo "0.1.0"',
+      '    exit 0',
+      '  fi',
+      '  if [[ "$cmd" == "install" ]]; then',
+      '    exit 0',
+      '  fi',
+      '  if [[ "$cmd" == "daemon" ]]; then',
+      '    case "$sub" in',
+      '      stop)',
+      '        exit 0',
+      '        ;;',
+      '      start|start-sync)',
+      '        echo "Daemon started successfully"',
+      '        exit 0',
+      '        ;;',
+      '      status)',
+      '        echo "Daemon is running"',
+      '        exit 0',
+      '        ;;',
+      '      logs)',
+      '        log_path="${HOME}/daemon.log"',
+      '        printf "%s\\n" "stub daemon log" > "$log_path"',
+      '        echo "$log_path"',
+      '        exit 0',
+      '        ;;',
+      '    esac',
+      '  fi',
+      '  exit 0',
+      'fi',
+      'if [[ "$script" == *playwright-session-handoff-wsrepl-matrix.mjs ]]; then',
+      '  out="${HAPPIER_QA_OUTDIR:-}"',
+      '  if [[ -z "$out" ]]; then',
+      '    echo "missing HAPPIER_QA_OUTDIR" >&2',
+      '    exit 2',
+      '  fi',
+      '  steps="${HAPPIER_QA_STEPS_JSON:-}"',
+      '  if [[ -z "$steps" ]]; then',
+      '    echo "missing HAPPIER_QA_STEPS_JSON" >&2',
+      '    exit 3',
+      '  fi',
+      '  sid="sess_created_1"',
+      '  mkdir -p "$out/steps/step-01"',
+      '  printf "%s\\n" "{\\"ok\\":true}" > "$out/steps/step-01/result.json"',
+      '  python3 - "$out" "$steps" "${HAPPIER_QA_SESSION_PATH:-}" "$sid" <<\'PY\'',
+      'import json',
+      'import sys',
+      'from pathlib import Path',
+      '',
+      'out_dir, steps, session_path, sid = sys.argv[1:]',
+      'payload = {',
+      '  "kind": "stub",',
+      '  "outDir": out_dir,',
+      '  "sessionId": sid.strip() or None,',
+      '  "sessionPath": session_path,',
+      '  "stepsJson": steps,',
+      '}',
+      'Path(out_dir, "meta.json").write_text(json.dumps(payload), encoding="utf-8")',
+      'PY',
+      '  echo "stub ok"',
+      '  exit 0',
+      'fi',
+      'echo "stub node passthrough"',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  await chmod(nodePath, 0o755);
+
+  const limactlPath = join(binDir, 'limactl');
+  await writeFile(
+    limactlPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `echo "limactl $*" >> ${JSON.stringify(limactlLog)}`,
+      'cmd="${1:-}"',
+      'shift || true',
+      'case "$cmd" in',
+      '  create)',
+      '    name=""',
+      '    while [[ $# -gt 0 ]]; do',
+      '      if [[ "$1" == --name=* ]]; then',
+      '        name="${1#--name=}"',
+      '        shift',
+      '        continue',
+      '      fi',
+      '      if [[ "$1" == "--name" ]]; then',
+      '        name="$2"',
+      '        shift 2',
+      '        continue',
+      '      fi',
+      '      shift || true',
+      '    done',
+      '    if [[ -z "$name" ]]; then',
+      '      name="happy-wsrepl"',
+      '    fi',
+      '    mkdir -p "${LIMA_HOME:-$HOME/.lima}/${name}"',
+      '    cat > "${LIMA_HOME:-$HOME/.lima}/${name}/lima.yaml" <<EOF',
+      'memory: "4GiB"',
+      'EOF',
+      '    exit 0',
+      '    ;;',
+      '  stop|start|list|info)',
+      '    exit 0',
+      '    ;;',
+      '  shell)',
+      '    while [[ $# -gt 0 && "$1" != "--" ]]; do',
+      '      shift',
+      '    done',
+      '    if [[ "${1:-}" == "--" ]]; then shift; fi',
+      '    exec env PATH=/usr/bin:/bin "$@"',
+      '    ;;',
+      '  *)',
+      '    exit 0',
+      '    ;;',
+      'esac',
+    ].join('\n') + '\n',
+    'utf8',
+  );
+  await chmod(limactlPath, 0o755);
+
+  const scriptPath = resolve(join(__dirname, 'macos-lima-wsrepl-matrix.sh'));
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    LIMA_HOME: limaHome,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    WSREPL_QA_OUTPUT_DIR: reportDir,
+    HAPPIER_QA_STACK_NAME: 'stack-test',
+    HAPPIER_QA_STEPS_JSON: JSON.stringify([{ targetMachineId: 'machine_target_1', strategy: 'sync_changes' }]),
+    WSREPL_QA_HOST_MACHINE_ID: 'machine_host_1',
+    WSREPL_QA_VM_MACHINE_ID: 'machine_vm_1',
+    HAPPIER_UI_URL: 'http://localhost:19000/?server=http%3A%2F%2Flocalhost%3A53288',
+    HAPPIER_QA_HEADLESS: '1',
+    WSREPL_QA_VM_HAPPIER_MODE: 'skip',
+    WSREPL_QA_SKIP_HOST_PROVIDER_INSTALL: '1',
+    WSREPL_QA_HOST_HAPPIER_SOURCE: 'worktree_node',
+  };
+
+  const res = spawnSync('bash', [scriptPath, 'happy-wsrepl'], {
+    cwd: root,
+    env,
+    encoding: 'utf8',
+  });
+
+  assert.equal(res.status, 0, `expected exit 0\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  assert.equal(await fileExists(join(reportDir, 'daemon', 'host.happier.resolve.json')), true);
+
+  const resolvePayload = JSON.parse(await readFile(join(reportDir, 'daemon', 'host.happier.resolve.json'), 'utf8'));
+  assert.equal(resolvePayload.source, 'worktree_node');
+  assert.equal(resolvePayload.kind, 'worktree_node');
+  assert.ok(
+    Array.isArray(resolvePayload.invocation) && resolvePayload.invocation.join(' ').includes('apps/cli/bin/happier.mjs'),
+    `expected invocation to mention apps/cli/bin/happier.mjs (got ${JSON.stringify(resolvePayload.invocation)})`,
+  );
+
+  const nodeInvocations = await readFile(nodeLog, 'utf8');
+  assert.ok(
+    nodeInvocations.includes('apps/cli/bin/happier.mjs daemon'),
+    `expected node to be used for host daemon (got ${nodeInvocations})`,
+  );
+
+  assert.equal(await fileExists(runtimeLog), false, 'expected stack runtime happier not to be invoked');
 });
