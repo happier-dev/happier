@@ -31,4 +31,27 @@ describe('fetchEncryptedTranscriptMessages', () => {
     const call = (getSpy as any).mock.calls[0];
     expect(call?.[1]?.params).toEqual({ limit: 10, beforeSeq: 123 });
   });
+
+  it('exposes paging metadata via fetchEncryptedTranscriptMessagesPage', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: { messages: [{ seq: 1 }], hasMore: true, nextBeforeSeq: 1, nextAfterSeq: null },
+    } as any);
+
+    const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
+
+    const res = await fetchEncryptedTranscriptMessagesPage({
+      token: 't',
+      sessionId: 'sess_1',
+      limit: 10,
+      afterSeq: 5,
+    });
+
+    expect(res).toEqual({
+      messages: [{ seq: 1 }],
+      hasMore: true,
+      nextBeforeSeq: 1,
+      nextAfterSeq: null,
+    });
+  });
 });

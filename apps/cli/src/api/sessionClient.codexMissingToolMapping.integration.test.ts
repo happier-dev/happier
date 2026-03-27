@@ -61,5 +61,5 @@ describe('ApiSessionClient (Codex MCP) diagnostics', () => {
         } finally {
             await client.close();
         }
-    }, 20_000);
+    });
 });

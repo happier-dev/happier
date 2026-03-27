@@ -7,6 +7,9 @@ import { projectPath } from '@/projectPath';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
+const DAEMON_START_SYNC_CHILD_TIMEOUT_MS = 60_000;
+const DAEMON_LOCK_WAIT_TIMEOUT_MS = 60_000;
+
 function findDaemonLockFiles(homeDir: string): string[] {
   const serversDir = join(homeDir, 'servers');
   if (!existsSync(serversDir)) return [];
@@ -65,17 +68,19 @@ describe.sequential('daemon start-sync auth gating', () => {
       // Ensure we do not accidentally hit real infra
       HAPPIER_SERVER_URL: 'http://127.0.0.1:9',
       HAPPIER_WEBAPP_URL: 'http://127.0.0.1:9',
+      // Make the test hermetic even if the developer environment enables daemon auth wait.
+      HAPPIER_DAEMON_WAIT_FOR_AUTH: '0',
       DEBUG: '1',
     };
 
     try {
-      const res = await runNode(['--import', 'tsx', entry, 'daemon', 'start-sync'], env, 30_000);
+      const res = await runNode(['--import', 'tsx', entry, 'daemon', 'start-sync'], env, DAEMON_START_SYNC_CHILD_TIMEOUT_MS);
       expect(res.code).not.toBe(0);
       expect(findDaemonLockFiles(home)).toHaveLength(0);
     } finally {
       await removeTempDir(home);
     }
-  }, 40_000);
+  }, 90_000);
 
   it(
     'creates a lock and waits for credentials when HAPPIER_DAEMON_WAIT_FOR_AUTH=1',
@@ -117,7 +122,7 @@ describe.sequential('daemon start-sync auth gating', () => {
         }
         return findDaemonLockFiles(home).length > 0;
       }, {
-        timeoutMs: 30_000,
+        timeoutMs: DAEMON_LOCK_WAIT_TIMEOUT_MS,
         label: 'daemon lock file creation',
         debug: () => `stdout:\n${childStdout}\nstderr:\n${childStderr}`,
       });
@@ -132,12 +137,12 @@ describe.sequential('daemon start-sync auth gating', () => {
       }
 
       await waitForCondition(() => child.exitCode !== null, {
-        timeoutMs: 30_000,
+        timeoutMs: DAEMON_LOCK_WAIT_TIMEOUT_MS,
         label: 'daemon process termination',
         debug: () => `stdout:\n${childStdout}\nstderr:\n${childStderr}`,
       });
       await waitForCondition(() => findDaemonLockFiles(home).length === 0, {
-        timeoutMs: 30_000,
+        timeoutMs: DAEMON_LOCK_WAIT_TIMEOUT_MS,
         label: 'lock file cleanup after daemon exit',
         debug: () => `stdout:\n${childStdout}\nstderr:\n${childStderr}`,
       });

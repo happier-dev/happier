@@ -40,6 +40,7 @@ export async function dispatchCli(params: Readonly<{
   } catch (error) {
     console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
     process.exit(1);
+    return;
   }
 
   // Check if first argument is a subcommand
@@ -69,6 +70,7 @@ export async function dispatchCli(params: Readonly<{
       if (subcommand && !isTmuxAllowedCommand(subcommand)) {
         console.error(chalk.red('Error:'), '--tmux can only be used when starting a session.');
         process.exit(1);
+        return;
       }
 
       try {

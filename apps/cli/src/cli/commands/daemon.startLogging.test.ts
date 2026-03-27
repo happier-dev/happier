@@ -65,6 +65,29 @@ describe('happier daemon start output', () => {
     getLatestDaemonLogMock.mockResolvedValue(null);
   });
 
+  it('honors HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS to bound polling (fail-closed)', async () => {
+    vi.useRealTimers();
+
+    const envScope = createEnvKeyScope([
+      'HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS',
+    ]);
+
+    try {
+      vi.resetModules();
+      checkIfDaemonRunningMock.mockResolvedValue(false);
+      envScope.patch({
+        HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS: '1',
+      });
+
+      const stdout = await runDaemonStartAndCapture(1);
+      expect(stdout).toContain('Failed to start daemon');
+
+      expect(checkIfDaemonRunningMock.mock.calls.length).toBe(1);
+    } finally {
+      envScope.restore();
+    }
+  }, 20_000);
+
   it('prints server url, active server id, and account subject', async () => {
     // Defensive: other test files may enable fake timers and forget to restore them.
     // This command uses real setTimeout polling when the daemon isn't immediately detected.
@@ -75,6 +98,7 @@ describe('happier daemon start output', () => {
       'HAPPIER_SERVER_URL',
       'HAPPIER_WEBAPP_URL',
       'HAPPIER_ACTIVE_SERVER_ID',
+      'HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS',
     ]);
     const tmp = await createTempDir('happier-daemon-start-');
 
@@ -85,6 +109,7 @@ describe('happier daemon start output', () => {
         HAPPIER_SERVER_URL: 'http://localhost:4321',
         HAPPIER_WEBAPP_URL: 'http://localhost:9999',
         HAPPIER_ACTIVE_SERVER_ID: 'env_test',
+        HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS: '1',
       });
 
       const credDir = join(tmp, 'servers', 'env_test');
@@ -117,9 +142,17 @@ describe('happier daemon start output', () => {
     checkIfDaemonRunningMock.mockResolvedValue(false);
     getLatestDaemonLogMock.mockResolvedValue({ path: '/tmp/happier-daemon.log' });
 
-    const stdout = await runDaemonStartAndCapture(1);
+    const envScope = createEnvKeyScope(['HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS']);
+    try {
+      vi.resetModules();
+      envScope.patch({ HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS: '1' });
 
-    expect(stdout).toContain('Failed to start daemon');
-    expect(stdout).toContain('/tmp/happier-daemon.log');
+      const stdout = await runDaemonStartAndCapture(1);
+
+      expect(stdout).toContain('Failed to start daemon');
+      expect(stdout).toContain('/tmp/happier-daemon.log');
+    } finally {
+      envScope.restore();
+    }
   }, 60_000);
 });
