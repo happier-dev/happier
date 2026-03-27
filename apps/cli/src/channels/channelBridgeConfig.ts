@@ -166,10 +166,8 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
       telegramGlobal?.botToken,
     ], readTrimmedString)
     ?? '';
-  const botToken =
-    typeof env.HAPPIER_TELEGRAM_BOT_TOKEN === 'string'
-      ? env.HAPPIER_TELEGRAM_BOT_TOKEN.trim()
-      : settingsBotToken;
+  const envBotToken = readTrimmedString(env.HAPPIER_TELEGRAM_BOT_TOKEN);
+  const botToken = envBotToken ?? settingsBotToken;
 
   const settingsAllowedChatIds =
     firstParsed(

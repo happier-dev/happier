@@ -143,6 +143,55 @@ describe('startTelegramWebhookRelay', () => {
     })).rejects.toThrow('Webhook header secret token is required');
   });
 
+  it('rejects webhook secret tokens that exceed the maximum length', async () => {
+    await expect(startTelegramWebhookRelay({
+      port: 0,
+      host: '127.0.0.1',
+      secretPathToken: 'x'.repeat(300),
+      secretHeaderToken: 'secret-123',
+      onUpdate: () => undefined,
+    })).rejects.toThrow('Webhook secret token is too long');
+
+    await expect(startTelegramWebhookRelay({
+      port: 0,
+      host: '127.0.0.1',
+      secretPathToken: 'secret-123',
+      secretHeaderToken: 'x'.repeat(300),
+      onUpdate: () => undefined,
+    })).rejects.toThrow('Webhook header secret token is too long');
+  });
+
+  it('rejects requests with oversized header secret tokens without allocating large buffers', async () => {
+    const received: unknown[] = [];
+
+    const relay = await startTelegramWebhookRelay({
+      port: 0,
+      host: '127.0.0.1',
+      secretPathToken: 'secret-abc',
+      secretHeaderToken: 'header-token-abc',
+      onUpdate: (update) => {
+        received.push(update);
+      },
+    });
+
+    try {
+      const oversizedHeaderResponse = await axios.post(`http://127.0.0.1:${relay.port}/telegram/webhook/secret-abc`, {
+        update_id: 103,
+        message: { text: 'hello' },
+      }, {
+        headers: {
+          'X-Telegram-Bot-Api-Secret-Token': 'x'.repeat(400),
+        },
+        validateStatus: () => true,
+      });
+
+      expect(oversizedHeaderResponse.status).toBe(431);
+      expect(received).toEqual([]);
+    } finally {
+      await relay.stop();
+    }
+  });
+
   it('rejects non-loopback webhook hosts', async () => {
     await expect(startTelegramWebhookRelay({
       port: 0,

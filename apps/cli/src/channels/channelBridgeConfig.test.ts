@@ -111,6 +111,25 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.telegram.webhookPort).toBe(9_001);
   });
 
+  it('does not override settings bot token when env bot token is empty/whitespace', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {
+        HAPPIER_TELEGRAM_BOT_TOKEN: '   ',
+      },
+      settings: {
+        channelBridge: {
+          providers: {
+            telegram: {
+              botToken: 'settings-token',
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.botToken).toBe('settings-token');
+  });
+
   it('applies a valid env webhook port override', () => {
     const config = resolveChannelBridgeRuntimeConfig({
       env: {

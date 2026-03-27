@@ -488,4 +488,42 @@ describe('createTelegramChannelAdapter', () => {
       postSpy.mockRestore();
     }
   });
+
+  it('bounds getUpdates HTTP timeout under the worker IO timeout to avoid overlapping polls', async () => {
+    const postSpy = vi.spyOn(axios, 'post').mockImplementation(async (url, data, config) => {
+      if (typeof url === 'string' && url.includes('/getUpdates')) {
+        return {
+          status: 200,
+          data: { ok: true, result: [] },
+          __capturedConfig: config,
+          __capturedBody: data,
+        } as never;
+      }
+      if (typeof url === 'string' && url.includes('/getMe')) {
+        return {
+          status: 200,
+          data: { ok: true, result: { id: 9, username: 'happier_bot' } },
+          __capturedConfig: config,
+          __capturedBody: data,
+        } as never;
+      }
+      throw new Error(`Unexpected Telegram API call: ${String(url)}`);
+    });
+
+    try {
+      const adapter = createTelegramChannelAdapter({
+        botToken: 'test-token',
+      });
+
+      await expect(adapter.pullInboundMessages()).resolves.toEqual([]);
+
+      const getUpdatesCall = postSpy.mock.calls.find((call) => String(call[0]).includes('/getUpdates'));
+      expect(getUpdatesCall).toBeTruthy();
+      const getUpdatesConfig = getUpdatesCall?.[2] as { timeout?: number } | undefined;
+      expect(typeof getUpdatesConfig?.timeout).toBe('number');
+      expect((getUpdatesConfig?.timeout ?? 0)).toBeLessThanOrEqual(30_000);
+    } finally {
+      postSpy.mockRestore();
+    }
+  });
 });

@@ -5,6 +5,8 @@ import fastify from 'fastify';
 import { isLoopbackHostname } from '@/server/serverUrlClassification';
 import { logger } from '@/ui/logger';
 
+const MAX_WEBHOOK_SECRET_TOKEN_LENGTH = 256;
+
 function secureCompareToken(providedToken: string, expectedToken: string): boolean {
   const providedBytes = Buffer.from(providedToken, 'utf8');
   const expectedBytes = Buffer.from(expectedToken, 'utf8');
@@ -34,6 +36,9 @@ export async function startTelegramWebhookRelay(params: Readonly<{
   if (!secretPathToken) {
     throw new Error('Webhook secret token is required');
   }
+  if (secretPathToken.length > MAX_WEBHOOK_SECRET_TOKEN_LENGTH) {
+    throw new Error('Webhook secret token is too long');
+  }
   if (!/^[A-Za-z0-9_-]+$/.test(secretPathToken)) {
     throw new Error('Webhook secret token must match [A-Za-z0-9_-]');
   }
@@ -41,6 +46,9 @@ export async function startTelegramWebhookRelay(params: Readonly<{
   const secretHeaderToken = String(params.secretHeaderToken ?? '').trim();
   if (!secretHeaderToken) {
     throw new Error('Webhook header secret token is required');
+  }
+  if (secretHeaderToken.length > MAX_WEBHOOK_SECRET_TOKEN_LENGTH) {
+    throw new Error('Webhook header secret token is too long');
   }
 
   const host = String(params.host ?? '127.0.0.1').trim() || '127.0.0.1';
@@ -66,7 +74,11 @@ export async function startTelegramWebhookRelay(params: Readonly<{
         : Array.isArray(providedHeader) && providedHeader.length > 0
           ? providedHeader[0] ?? ''
           : '';
-    if (!secureCompareToken(providedToken.trim(), secretHeaderToken)) {
+    const trimmedProvidedToken = providedToken.trim();
+    if (trimmedProvidedToken.length > MAX_WEBHOOK_SECRET_TOKEN_LENGTH) {
+      return reply.status(431).send({ ok: false, error: 'Request Header Fields Too Large' });
+    }
+    if (!secureCompareToken(trimmedProvidedToken, secretHeaderToken)) {
       return reply.status(401).send({ ok: false, error: 'Unauthorized' });
     }
 
@@ -76,7 +88,7 @@ export async function startTelegramWebhookRelay(params: Readonly<{
     } catch (error) {
       logger.warn('[TELEGRAM_WEBHOOK_RELAY] Failed to process inbound webhook update', {
         path: redactedPath,
-        tokenLength: providedToken.trim().length,
+        tokenLength: trimmedProvidedToken.length,
         error: error instanceof Error ? error.message : String(error),
       });
       return reply.status(500).send({ ok: false, error: 'Internal Server Error' });
