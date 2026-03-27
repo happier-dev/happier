@@ -170,6 +170,52 @@ test('syncBundledWorkspacePackages updates bundled copies for every configured h
   assert.equal(writeCalls[1][0], '/repo/apps/stack/node_modules/@happier-dev/protocol/package.json');
 });
 
+test('syncBundledWorkspacePackages does not replace an existing dist directory when replaceExisting is false', () => {
+  const cpCalls = [];
+  const renameCalls = [];
+
+  syncBundledWorkspacePackages({
+    repoRoot: '/repo',
+    packages: ['custom-bundle'],
+    hostApps: ['cli'],
+    replaceExisting: false,
+    existsSync: (candidate) => {
+      const text = String(candidate);
+      if (text.endsWith('/apps/cli/package.json')) return true;
+      if (text.endsWith('/packages/custom-bundle/package.json')) return true;
+      if (text.endsWith('/packages/custom-bundle/dist')) return true;
+      if (text.endsWith('/apps/cli/node_modules/@happier-dev/custom-bundle/package.json')) return true;
+      if (text.endsWith('/apps/cli/node_modules/@happier-dev/custom-bundle/dist')) return true;
+      return false;
+    },
+    readFileSync: (path) => {
+      const text = String(path);
+      if (text.endsWith('/apps/cli/package.json')) {
+        return JSON.stringify({
+          bundledDependencies: ['@happier-dev/custom-bundle'],
+        });
+      }
+      if (text.endsWith('/packages/custom-bundle/package.json')) {
+        return JSON.stringify({
+          name: '@happier-dev/custom-bundle',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+        });
+      }
+      throw new Error(`unexpected read: ${text}`);
+    },
+    mkdirSync: () => {},
+    rmSync: () => {},
+    cpSync: (...args) => cpCalls.push(args),
+    renameSync: (...args) => renameCalls.push(args),
+    writeFileSync: () => {},
+  });
+
+  assert.equal(cpCalls.length, 1);
+  assert.equal(renameCalls.length, 0);
+});
+
 test('syncBundledWorkspacePackages preserves the previous bundled dist when copying a replacement fails', () => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-sync-bundled-workspaces-'));
   try {

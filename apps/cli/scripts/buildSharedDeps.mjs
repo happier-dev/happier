@@ -4,15 +4,9 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import {
-  bundleInstalledPackageWithRuntimeDependencies,
-  resolveWorkspaceBundlesFromPackageJson,
-  vendorBundledPackageRuntimeDependencies,
-} from '../../../packages/cli-common/dist/workspaces/index.js';
 import { syncBundledWorkspacePackages } from '../../../scripts/workspaces/syncBundledWorkspacePackages.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_BUILD_LOCK_PATH = resolve(findRepoRoot(__dirname), '.project', 'tmp', 'cli-shared-deps-build.lock');
 
 function serializeBuildLockOwner(createdAtMs) {
   return JSON.stringify({ pid: process.pid, createdAtMs });
@@ -142,6 +136,37 @@ function findRepoRoot(startDir) {
 }
 
 const repoRoot = findRepoRoot(__dirname);
+const DEFAULT_BUILD_LOCK_PATH = resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
+
+function execYarn(args, options) {
+  const npmExecPath = process.env.npm_execpath;
+  if (npmExecPath) {
+    return execFileSync(process.execPath, [npmExecPath, ...args], options);
+  }
+  return execFileSync(process.platform === 'win32' ? 'yarn.cmd' : 'yarn', args, options);
+}
+
+async function loadCliCommonWorkspacesModule() {
+  const modulePath = resolve(repoRoot, 'packages', 'cli-common', 'dist', 'workspaces', 'index.js');
+
+  if (!existsSync(modulePath)) {
+    // `build:shared` is invoked by tests/e2e harnesses that may not have pre-built workspace packages.
+    // Ensure `@happier-dev/cli-common` is compiled before importing its build helpers.
+    execYarn(['-s', 'workspace', '@happier-dev/cli-common', 'build'], { cwd: repoRoot, stdio: 'inherit' });
+  }
+
+  if (!existsSync(modulePath)) {
+    throw new Error(`Missing cli-common workspaces build helpers: ${modulePath}`);
+  }
+
+  return await import(pathToFileURL(modulePath).href);
+}
+
+const {
+  bundleInstalledPackageWithRuntimeDependencies,
+  resolveWorkspaceBundlesFromPackageJson,
+  vendorBundledPackageRuntimeDependencies,
+} = await loadCliCommonWorkspacesModule();
 const CLI_BUNDLED_HOST_APPS = ['cli'];
 const CLI_SHARED_WORKSPACE_BUILD_ORDER = [
   'agents',
