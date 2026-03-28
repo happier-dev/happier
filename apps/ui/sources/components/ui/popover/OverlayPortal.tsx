@@ -57,6 +57,9 @@ export function OverlayPortalHost(props: { pointerEvents?: 'box-none' | 'none' |
 
     return (
         <View
+            // Required on native: Popover measures the portal root to derive anchor-relative coordinates.
+            // Collapsable views can be optimized away, producing invalid measurements (e.g. y=0 in contained modals).
+            collapsable={false}
             pointerEvents={props.pointerEvents ?? 'box-none'}
             style={[StyleSheet.absoluteFill, { zIndex: 999999, elevation: 999999 }]}
         >

@@ -64,6 +64,23 @@ describe('PopoverPortalTargetProvider (native)', () => {
         expect(screen.findByType('Tick' as any).props.value).toBe(1);
     });
 
+    it('marks the portal root as non-collapsable (ensures measurement works in contained-sheet presentations)', async () => {
+        const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
+
+        const screen = await renderScreen(
+            React.createElement(
+                PopoverPortalTargetProvider,
+                null,
+                React.createElement('View', { testID: 'child' }),
+            ),
+        );
+
+        const views = screen.tree.findAll((node: any) => node?.type === 'View');
+        const portalRoot = views.find((node: any) => typeof node?.props?.onLayout === 'function');
+        expect(portalRoot).toBeTruthy();
+        expect(portalRoot?.props?.collapsable).toBe(false);
+    });
+
     it('renders popovers into a screen-local OverlayPortalHost (avoids coordinate-space mismatch in contained modals)', async () => {
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');

@@ -105,4 +105,33 @@ describe('OverlayPortalProvider', () => {
         expect(screen.findByTestId(portalTestIdB)).toBeNull();
         expect(renderCount).toBe(1);
     });
+
+    it('renders the host view as non-collapsable (enables reliable native measurement)', async () => {
+        const { OverlayPortalHost, OverlayPortalProvider, useOverlayPortal } = await import('./OverlayPortal');
+
+        let dispatch: ReturnType<typeof useOverlayPortal> | null = null;
+
+        function CaptureDispatch() {
+            dispatch = useOverlayPortal();
+            return React.createElement('CaptureDispatch');
+        }
+
+        const screen = await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(CaptureDispatch),
+            React.createElement(OverlayPortalHost),
+        ));
+
+        act(() => {
+            dispatch?.setPortalNode('test-node', React.createElement('PortalContent'));
+        });
+
+        const hosts = screen.tree.root.findAll((node: any) => (
+            node?.type === 'View'
+            && node?.props?.collapsable === false
+            && typeof node?.props?.pointerEvents === 'string'
+        ));
+        expect(hosts.length).toBeGreaterThan(0);
+    });
 });

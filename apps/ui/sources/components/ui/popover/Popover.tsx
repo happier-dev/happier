@@ -296,20 +296,71 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             let anchorIsPortalRelative = false;
 
             if (portalRootNode) {
-                const relative = await measureLayoutRelativeTo(anchorNode, portalRootNode);
-                if (relative) {
-                    anchorRect = relative;
-                    anchorIsPortalRelative = true;
-                } else {
-                    // Some host components (or cross-root trees) don't support `measureLayout`.
-                    // In portal mode we must keep anchor + boundary in the *same* coordinate space,
-                    // so derive portal-root-relative coordinates from window measurements.
+                const portalLayout = portalTarget?.layout;
+                const portalLayoutWidth = portalLayout?.width ?? 0;
+                const portalLayoutHeight = portalLayout?.height ?? 0;
+                const hasPortalLayout = portalLayoutWidth > 0 && portalLayoutHeight > 0;
+                const withinPortalLayout = (rect: WindowRect | null): boolean => {
+                    if (!rect) return false;
+                    if (!hasPortalLayout) return true;
+                    // Allow a small tolerance so anchors on edges aren't treated as invalid.
+                    const tolerance = 16;
+                    if (rect.x < -tolerance) return false;
+                    if (rect.y < -tolerance) return false;
+                    if (rect.x + rect.width > portalLayoutWidth + tolerance) return false;
+                    if (rect.y + rect.height > portalLayoutHeight + tolerance) return false;
+                    return true;
+                };
+
+                // Prefer deriving portal-relative coords from window measurements (reliable when
+                // `measureLayout` reports inconsistent offsets in iOS sheets/drawers). However,
+                // `measure`/`measureInWindow` can also occasionally return coordinates in a different
+                // space than the portal root (yielding negative/way-off deltas). In that case, fall
+                // back to `measureLayout`.
+                const relativeFromWindowDelta = async (): Promise<WindowRect | null> => {
+                    if (Platform.OS === 'web') return null;
                     const portalRootWindowRect = await measureInWindow(portalRootNode);
                     const anchorWindowRect = await measureInWindow(anchorNode);
+                    if (!portalRootWindowRect || !anchorWindowRect) return null;
+                    return {
+                        x: anchorWindowRect.x - portalRootWindowRect.x,
+                        y: anchorWindowRect.y - portalRootWindowRect.y,
+                        width: anchorWindowRect.width,
+                        height: anchorWindowRect.height,
+                    };
+                };
+
+                const relativeFromLayout = async (): Promise<WindowRect | null> => {
+                    return await measureLayoutRelativeTo(anchorNode, portalRootNode);
+                };
+
+                const [deltaRect, layoutRect] = await Promise.all([
+                    relativeFromWindowDelta(),
+                    relativeFromLayout(),
+                ]);
+
+                // Choose the first portal-relative rect that is plausible for the portal root.
+                // If the preferred delta-based rect is out-of-bounds but the layout-based rect is
+                // in-bounds, use layout to avoid negative/offset popovers in contained modals.
+                const chosen =
+                    (deltaRect && withinPortalLayout(deltaRect))
+                        ? deltaRect
+                        : (layoutRect && withinPortalLayout(layoutRect))
+                            ? layoutRect
+                            : (deltaRect ?? layoutRect);
+
+                if (chosen) {
+                    anchorRect = chosen;
+                    anchorIsPortalRelative = true;
+                }
+
+                if (!anchorRect) {
                     // If the portal root cannot be measured (can happen with react-native-screens
-                    // modal presentations), fall back to the boundary rect as the origin.
+                    // modal presentations), fall back to boundary-relative window measurements as
+                    // a last resort.
                     const boundaryWindowRect = boundaryNode ? await measureInWindow(boundaryNode) : null;
-                    const originWindowRect = portalRootWindowRect ?? boundaryWindowRect;
+                    const anchorWindowRect = await measureInWindow(anchorNode);
+                    const originWindowRect = boundaryWindowRect;
                     if (originWindowRect && anchorWindowRect) {
                         anchorRect = {
                             x: anchorWindowRect.x - originWindowRect.x,

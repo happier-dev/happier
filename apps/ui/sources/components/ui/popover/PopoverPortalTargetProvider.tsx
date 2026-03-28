@@ -150,6 +150,9 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
             <OverlayPortalProvider>
                 <View
                     ref={rootRef}
+                    // Required on native: Popover measures the portal root to derive anchor-relative coordinates.
+                    // Collapsable views can be optimized away, producing invalid measurements (e.g. y=0 in contained modals).
+                    collapsable={false}
                     style={{ flex: 1 }}
                     pointerEvents="box-none"
                     onLayout={(e) => {
