@@ -139,11 +139,24 @@ const repoRoot = findRepoRoot(__dirname);
 const DEFAULT_BUILD_LOCK_PATH = resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
 
 function execYarn(args, options) {
-  const npmExecPath = process.env.npm_execpath;
-  if (npmExecPath) {
-    return execFileSync(process.execPath, [npmExecPath, ...args], options);
+  const { command, args: invocationArgs } = resolveYarnInvocation();
+  return execFileSync(command, [...invocationArgs, ...args], options);
+}
+
+export function resolveYarnInvocation(npmExecPath = process.env.npm_execpath) {
+  const normalizedNpmExecPath = String(npmExecPath ?? '').trim();
+  const yarnCommand = process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
+
+  if (!normalizedNpmExecPath) {
+    return { command: yarnCommand, args: [] };
   }
-  return execFileSync(process.platform === 'win32' ? 'yarn.cmd' : 'yarn', args, options);
+
+  const isNpmCliPath = /(^|[\\/])npm-cli\.js$/i.test(normalizedNpmExecPath);
+  if (isNpmCliPath) {
+    return { command: yarnCommand, args: [] };
+  }
+
+  return { command: process.execPath, args: [normalizedNpmExecPath] };
 }
 
 async function loadCliCommonWorkspacesModule() {

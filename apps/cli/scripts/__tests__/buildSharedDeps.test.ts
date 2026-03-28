@@ -5,6 +5,7 @@ import { join, resolve, sep } from 'node:path';
 import { createTempDirSync, removeTempDirSync } from '../../src/testkit/fs/tempDir';
 import {
   resolveTscBin,
+  resolveYarnInvocation,
   runTsc,
   syncBundledWorkspaceDist,
   syncCliRuntimeDependencies,
@@ -56,6 +57,24 @@ describe('buildSharedDeps', () => {
 
     expect(bin).toMatch(/node_modules/);
     expect(bin).not.toMatch(/cli[\\/]+node_modules/);
+  });
+
+  it('falls back to yarn on PATH when npm_execpath points at npm-cli.js', () => {
+    const invocation = resolveYarnInvocation('/somewhere/lib/node_modules/npm/bin/npm-cli.js');
+
+    expect(invocation).toEqual({
+      command: process.platform === 'win32' ? 'yarn.cmd' : 'yarn',
+      args: [],
+    });
+  });
+
+  it('uses node + npm_execpath when npm_execpath points at a Yarn entrypoint', () => {
+    const invocation = resolveYarnInvocation('/somewhere/lib/node_modules/yarn/bin/yarn.js');
+
+    expect(invocation).toEqual({
+      command: process.execPath,
+      args: ['/somewhere/lib/node_modules/yarn/bin/yarn.js'],
+    });
   });
 
   it('executes tsc via node to avoid .bin symlink ENOENT issues', () => {
