@@ -105,9 +105,10 @@ export function createLinkedFilesActionChip(params: Readonly<{
         disabled: params.disabled,
         maxHeightCap: 520,
         maxWidthCap: 560,
-        popoverContent: ({ requestClose }) => (
+        popoverContent: ({ requestClose, maxHeight }) => (
             <LinkFilePickerPopoverContent
                 sessionId={params.sessionId}
+                maxHeight={maxHeight}
                 onPickPath={params.onPickPath}
                 onRequestClose={requestClose}
             />

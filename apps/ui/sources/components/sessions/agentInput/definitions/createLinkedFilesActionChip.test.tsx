@@ -69,6 +69,9 @@ describe('createLinkedFilesActionChip', () => {
             </React.Fragment>,
         );
 
+        const linkFilePicker = contentScreen.findByType('LinkFilePickerPopoverContent');
+        expect(linkFilePicker?.props.maxHeight).toBe(420);
+
         await contentScreen.pressByTestIdAsync('pick-file');
         expect(onPickPath).toHaveBeenCalledWith('src/example.ts');
         expect(requestClose).toHaveBeenCalled();

@@ -35,6 +35,23 @@ describe('LinkFilePickerPopoverContent', () => {
         expect(onRequestClose).toHaveBeenCalled();
     });
 
+    it('wraps the session repository tree browser with an explicit height when a maxHeight is provided (prevents 0-height popovers)', async () => {
+        const { LinkFilePickerPopoverContent } = await import('./LinkFilePickerPopoverContent');
+
+        const screen = await renderScreen(
+            <LinkFilePickerPopoverContent
+                sessionId="s1"
+                maxHeight={333}
+                onPickPath={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        const wrapper = screen.findByTestId('link-file-picker-session-wrapper');
+        expect(wrapper).toBeTruthy();
+        expect(wrapper?.props?.style).toEqual(expect.objectContaining({ height: 333 }));
+    });
+
     it('uses the machine path browser when scoped to a new-session root directory', async () => {
         const { LinkFilePickerPopoverContent } = await import('./LinkFilePickerPopoverContent');
         const onPickPath = vi.fn();
@@ -62,5 +79,23 @@ describe('LinkFilePickerPopoverContent', () => {
         browser?.props.onPickPath('/repo/src/example.ts');
         expect(onPickPath).toHaveBeenCalledWith('/repo/src/example.ts');
         expect(onRequestClose).toHaveBeenCalled();
+    });
+
+    it('wraps the machine path browser with an explicit height when a maxHeight is provided (prevents 0-height popovers)', async () => {
+        const { LinkFilePickerPopoverContent } = await import('./LinkFilePickerPopoverContent');
+
+        const screen = await renderScreen(
+            <LinkFilePickerPopoverContent
+                machineId="m1"
+                rootDirectoryPath="/repo"
+                maxHeight={444}
+                onPickPath={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        const wrapper = screen.findByTestId('link-file-picker-machine-wrapper');
+        expect(wrapper).toBeTruthy();
+        expect(wrapper?.props?.style).toEqual(expect.objectContaining({ height: 444 }));
     });
 });
