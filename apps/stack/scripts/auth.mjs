@@ -1672,8 +1672,13 @@ async function cmdLogin({ argv, json }) {
     ...(force ? { HAPPIER_AUTH_FORCE: '1' } : {}),
   };
   env = applyStackActiveServerScopeEnv({ env, stackName, cliIdentity: identity });
+  const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env });
+  const loginEnv =
+    credentialPaths.activeServerId && credentialPaths.activeServerId !== env.HAPPIER_ACTIVE_SERVER_ID
+      ? { ...env, HAPPIER_ACTIVE_SERVER_ID: credentialPaths.activeServerId }
+      : env;
 
-  const cliExecutable = await resolveStackAuthCliExecutable({ rootDir, env });
+  const cliExecutable = await resolveStackAuthCliExecutable({ rootDir, env: loginEnv });
   const executableLooksLikeScript =
     cliExecutable.endsWith('.mjs') || cliExecutable.endsWith('.js') || cliExecutable.endsWith('.cjs');
   const loginCommand = executableLooksLikeScript ? process.execPath : cliExecutable;
@@ -1693,7 +1698,7 @@ async function cmdLogin({ argv, json }) {
       `HAPPIER_HOME_DIR="${cliHomeDir}" ` +
       `HAPPIER_SERVER_URL="${internalServerUrl}" ` +
       `HAPPIER_PUBLIC_SERVER_URL="${publicServerUrl}" ` +
-      (env.HAPPIER_ACTIVE_SERVER_ID ? `HAPPIER_ACTIVE_SERVER_ID="${env.HAPPIER_ACTIVE_SERVER_ID}" ` : '') +
+      (loginEnv.HAPPIER_ACTIVE_SERVER_ID ? `HAPPIER_ACTIVE_SERVER_ID="${loginEnv.HAPPIER_ACTIVE_SERVER_ID}" ` : '') +
       (webappUrl ? `HAPPIER_WEBAPP_URL="${webappUrl}" ` : '') +
       (noOpen ? `HAPPIER_NO_BROWSER_OPEN="1" ` : '') +
       (method ? `HAPPIER_AUTH_METHOD="${method}" ` : '') +
@@ -1851,11 +1856,7 @@ async function cmdLogin({ argv, json }) {
   }
 
   const verbosity = getVerbosityLevel(process.env);
-  const scopedEnv = applyStackActiveServerScopeEnv({
-    env,
-    stackName,
-    cliIdentity: identity,
-  });
+  const scopedEnv = loginEnv;
   let clearedForceCredentials = false;
   const runLogin = async (runEnv) => {
     if (force && !clearedForceCredentials) {

@@ -11,6 +11,7 @@ import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv } from './utils
 import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
 import { resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
+import { resolvePreferredStackServerIdFromCliSettings } from './utils/auth/credentials_paths.mjs';
 import { readCliDistIntegrity } from './utils/cli/cliDistIntegrity.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { resolveCliRuntimeLaunchSpec } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
@@ -259,10 +260,14 @@ async function main() {
   // the user's CLI settings.json may still point at Happier Cloud (or another server). We must not let that
   // override the stack-local server URL; otherwise stack-scoped commands would silently target the wrong
   // server and resolve credentials from the wrong per-server directory.
+  //
+  // We treat an invocation as "stack-scoped" only when the stack env file actually exists (or when the
+  // CLI home dir is explicitly overridden by the stack). This keeps plain `hstack happier` able to
+  // reuse the user's CLI settings even when stack helper env vars are present in test/dev harnesses.
+  const stackEnvFilePath = String(env.HAPPIER_STACK_ENV_FILE ?? '').trim();
   const isStackScopedInvocation =
-    Boolean(String(env.HAPPIER_STACK_ENV_FILE ?? '').trim()) ||
     Boolean(String(env.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim()) ||
-    Boolean(String(env.HAPPIER_STACK_STACK ?? '').trim());
+    Boolean(stackEnvFilePath && existsSync(stackEnvFilePath));
 
   const settingsDefaults =
     !isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection
@@ -309,6 +314,13 @@ async function main() {
       stackName,
       cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
     });
+    const settingsServerId = resolvePreferredStackServerIdFromCliSettings({
+      cliHomeDir,
+      serverUrl: internalServerUrl,
+    });
+    if (settingsServerId) {
+      env.HAPPIER_ACTIVE_SERVER_ID = settingsServerId;
+    }
   }
 
   const forwardedArgv = stripHstackHappierWrapperFlags(argv);

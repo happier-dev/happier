@@ -21,6 +21,7 @@ for name in \
   guest.diag.txt \
   lima.list.txt \
   lima.info.txt \
+  vm.host-direct-peer.tcp.txt \
   daemon/host.daemon.start.txt \
   daemon/host.daemon.status.txt \
   daemon/host.daemon.log.path.txt \
@@ -35,6 +36,29 @@ for name in \
   fi
 done
 
+wsrepl_early_seed_summary_json_best_effort() {
+  # If the wrapper is killed with an untrappable signal (SIGKILL), EXIT/TERM/INT traps will not
+  # run. Seed a minimal summary.json up front so the report directory is still diagnosable.
+  if [[ -f "${REPORT_ROOT}/summary.json" ]]; then
+    return 0
+  fi
+  cat > "${REPORT_ROOT}/summary.json" <<EOF
+{
+  "kind": "wsrepl_lima_matrix_wrapper",
+  "vmName": "${VM_NAME}",
+  "reportRoot": "${REPORT_ROOT}",
+  "playwrightOutDir": "${PLAYWRIGHT_OUTDIR}",
+  "startedAt": "${STARTED_AT}",
+  "endedAt": "${STARTED_AT}",
+  "status": 1,
+  "failureStage": "in_progress",
+  "failureReason": "not_finalized"
+}
+EOF
+}
+
+wsrepl_early_seed_summary_json_best_effort >/dev/null 2>&1 || true
+
 wsrepl_early_write_summary() {
   if [[ "${FINALIZED}" == "1" ]]; then
     return 0
@@ -43,6 +67,16 @@ wsrepl_early_write_summary() {
   local status="${1:-1}"
   local ended_at
   ended_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  if [[ ( "${status}" == "126" || "${status}" == "127" ) && -z "${FAILURE_STAGE}" ]]; then
+    FAILURE_STAGE="early_abort"
+  fi
+  if [[ ( "${status}" == "126" || "${status}" == "127" ) && -z "${FAILURE_REASON}" ]]; then
+    if [[ "${status}" == "127" ]]; then
+      FAILURE_REASON="command_not_found"
+    else
+      FAILURE_REASON="command_invocation_failed"
+    fi
+  fi
   local failure_stage_json="null"
   local failure_reason_json="null"
   if [[ -n "${FAILURE_STAGE}" ]]; then
@@ -109,12 +143,20 @@ trap 'wsrepl_early_terminate_due_to_signal 130 int' INT
 #   WSREPL_QA_DAEMON_START_RETRY_DELAY_MS=...  # default: 250 (delay between host daemon start retries)
 #   WSREPL_QA_HOST_DAEMON_START_POLL_RETRIES=...  # default: 30 (post-start health poll retries)
 #   WSREPL_QA_HOST_DAEMON_START_POLL_DELAY_MS=...  # default: 500 (post-start health poll delay)
+#   WSREPL_QA_HOST_DAEMON_STOP_POLL_RETRIES=...  # default: 40 (after `daemon stop`, poll until status is not running)
+#   WSREPL_QA_HOST_DAEMON_STOP_POLL_DELAY_MS=...  # default: 250 (delay between stop polls)
 #   WSREPL_QA_HOST_DAEMON_WATCHDOG=1  # enable a best-effort watchdog that restarts the host daemon while Playwright runs
 #   WSREPL_QA_HOST_DAEMON_WATCHDOG_INTERVAL_MS=...  # default: 1000 (how often the watchdog probes)
 #   WSREPL_QA_MACHINE_ID_POLL_RETRIES=...  # default: 40 (poll daemon status until machineId is persisted)
 #   WSREPL_QA_MACHINE_ID_POLL_DELAY_MS=...  # default: 250 (delay between machineId polls)
 #   WSREPL_QA_HOST_HOME_REL=...  # if set, run the host daemon under $HOME/<rel> (isolated from stack-managed CLI home)
 #   WSREPL_QA_HOST_DIRECT_PEER_ADVERTISED_HOSTS=...  # default: host.lima.internal (published by the host daemon for Lima guests)
+#   WSREPL_QA_HOST_DIRECT_PEER_BIND_PORT=...  # stable host direct-peer bind port; defaults to WSREPL_QA_HOST_DIRECT_PEER_BIND_PORT_DEFAULT (13378)
+#   WSREPL_QA_HOST_DIRECT_PEER_BIND_PORT_DEFAULT=...  # default: 13378
+#   WSREPL_QA_HOST_DIRECT_PEER_VM_CONNECTIVITY_CHECK=0|1  # default: 1 (probe host.lima.internal:<hostBindPort> from inside the VM; diagnostic only)
+#   WSREPL_QA_VM_DIRECT_PEER_BIND_PORT=...  # stable guest direct-peer bind port; when set, the wrapper forwards the same port through Lima
+#   WSREPL_QA_VM_DIRECT_PEER_BIND_PORT_DEFAULT=...  # stable guest direct-peer bind port default for WSREPL runs; default: 13377
+#   WSREPL_QA_VM_DIRECT_PEER_ADVERTISED_HOSTS=...  # guest direct-peer advertised hosts; defaults to 127.0.0.1 (or 127.0.0.1,host.lima.internal for multi-VM runs)
 #   WSREPL_QA_HOST_HAPPIER_SOURCE=auto|stack_runtime|worktree_node|explicit:/abs/path  # default: auto
 #   WSREPL_QA_FORCE_VM_RECONFIGURE=1  # force stop/reconfigure/start via macos-lima-vm.sh (default is reuse-first)
 #   WSREPL_QA_VM_HAPPIER_MODE=skip|require|autoupdate  # default: require (fail closed if the guest is running an unexpected Happier build)
@@ -155,6 +197,21 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "[wsrepl-qa] expected macOS (Darwin); got: $(uname -s)" >&2
   exit 1
 fi
+
+prepend_wsrepl_system_path_entry() {
+  local entry="${1:-}"
+  if [[ -z "${entry}" ]]; then
+    return 0
+  fi
+  case "${PATH:-}" in
+    "${entry}:"*|"${entry}") return 0 ;;
+  esac
+  PATH="${entry}${PATH:+:${PATH}}"
+  export PATH
+}
+
+prepend_wsrepl_system_path_entry /sbin
+prepend_wsrepl_system_path_entry /usr/sbin
 
 for cmd in limactl python3 node; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -501,6 +558,52 @@ read_wsrepl_daemon_log_tail_lines() {
   return 0
 }
 
+capture_vm_connectivity_to_host_direct_peer_port_best_effort() {
+  local out_file="${REPORT_ROOT}/vm.host-direct-peer.tcp.txt"
+  local enabled="${WSREPL_QA_HOST_DIRECT_PEER_VM_CONNECTIVITY_CHECK:-1}"
+  if [[ "${enabled}" == "0" ]]; then
+    printf "%s\n" "(skipped: WSREPL_QA_HOST_DIRECT_PEER_VM_CONNECTIVITY_CHECK=0)" > "${out_file}"
+    return 0
+  fi
+
+  local host_port=""
+  host_port="$(resolve_wsrepl_host_direct_peer_bind_port)"
+
+  # Best-effort: do not fail the wrapper if the connectivity probe fails. The matrix itself
+  # should fail closed if direct-peer is not viable.
+  set +e
+  limactl shell "${VM_NAME}" -- bash -lc "
+    set -euo pipefail
+    host='host.lima.internal'
+    port='${host_port}'
+    echo \"host=\${host}\"
+    echo \"port=\${port}\"
+    if command -v nc >/dev/null 2>&1; then
+      if nc -z -w 2 \"\${host}\" \"\${port}\"; then
+        echo \"result=ok\"
+        exit 0
+      fi
+      rc=\$?
+      echo \"result=failed rc=\${rc}\"
+      exit \${rc}
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+      if timeout 2 bash -lc \"echo > /dev/tcp/\${host}/\${port}\" >/dev/null 2>&1; then
+        echo \"result=ok\"
+        exit 0
+      fi
+      rc=\$?
+      echo \"result=failed rc=\${rc}\"
+      exit \${rc}
+    fi
+    echo \"result=skipped missing_nc_or_timeout\"
+    exit 0
+  " > "${out_file}" 2>&1
+  set -e
+
+  return 0
+}
+
 read_wsrepl_host_daemon_start_poll_retries() {
   local raw="${WSREPL_QA_HOST_DAEMON_START_POLL_RETRIES:-}"
   if [[ -z "${raw}" ]]; then
@@ -580,6 +683,117 @@ print(f"{ms/1000.0:.3f}")
 PY
 }
 
+HOST_DAEMON_WATCHDOG_PID=""
+
+extract_pid_from_daemon_status_output() {
+  local status_out="${1:-}"
+  if [[ -z "${status_out}" ]]; then
+    echo ""
+    return 0
+  fi
+
+  printf "%s\n" "${status_out}" | sed -nE 's/^[[:space:]]*PID:[[:space:]]*([0-9]+).*/\1/p' | head -n 1
+}
+
+host_daemon_pid_is_alive() {
+  local pid="${1:-}"
+  if [[ -z "${pid}" || ! "${pid}" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+
+  kill -0 "${pid}" >/dev/null 2>&1
+}
+
+start_host_daemon_watchdog_background() {
+  local outdir="${1:-}"
+  local host_server_url="${2:-}"
+  if [[ "${WSREPL_QA_HOST_DAEMON_WATCHDOG:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ -n "${HOST_DAEMON_WATCHDOG_PID}" ]]; then
+    return 0
+  fi
+
+  mkdir -p "${outdir}" >/dev/null 2>&1 || true
+
+  # The host daemon is normally run under a stack-scoped home directory so it shares credentials
+  # with the UI. The watchdog must probe status using the same home+activeServerId or it will
+  # report "Daemon is not running" and restart continuously.
+  local watchdog_cli_root=""
+  local watchdog_active_server_id=""
+  local watchdog_stack_hint=""
+  watchdog_stack_hint="$(resolve_stack_cli_home_and_active_server_id_for_ui_url || true)"
+  if [[ -n "${watchdog_stack_hint}" ]]; then
+    watchdog_cli_root="$(printf "%s" "${watchdog_stack_hint}" | cut -d '|' -f 1)"
+    watchdog_active_server_id="$(printf "%s" "${watchdog_stack_hint}" | cut -d '|' -f 2)"
+  fi
+  local host_home_rel="${WSREPL_QA_HOST_HOME_REL:-}"
+  if [[ -n "${host_home_rel}" && -n "${watchdog_active_server_id}" ]]; then
+    local overridden_home="$HOME/${host_home_rel}"
+    if [[ -d "${overridden_home}" && -f "${overridden_home}/servers/${watchdog_active_server_id}/access.key" ]]; then
+      watchdog_cli_root="${overridden_home}"
+    fi
+  fi
+
+  local interval_s
+  interval_s="$(read_wsrepl_host_daemon_watchdog_interval_s)"
+  (
+    set +e
+    set +u
+    set +o pipefail
+    consecutive_not_running=0
+    while true; do
+      sleep "${interval_s}"
+      # `happier daemon status` can exit 0 even when unhealthy; treat explicit "not running" as unhealthy.
+      if [[ -n "${watchdog_cli_root}" && -n "${watchdog_active_server_id}" ]]; then
+        status_out="$(HAPPIER_SERVER_URL="${host_server_url:-}" HAPPIER_HOME_DIR="${watchdog_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${watchdog_active_server_id}" run_host_happier daemon status 2>&1)"
+        status_code=$?
+      else
+        status_out="$(HAPPIER_SERVER_URL="${host_server_url:-}" run_host_happier daemon status 2>&1)"
+        status_code=$?
+      fi
+      if [[ "${status_code}" != "0" ]]; then
+        consecutive_not_running=0
+        printf "%s\n" "[wsrepl-qa] host daemon watchdog: ensuring daemon is running (status_code=${status_code})" >> "${outdir}/host-daemon-watchdog.log" 2>&1 || true
+        restart_host_daemon_and_capture_logs "${host_server_url:-}" ensure || true
+        continue
+      fi
+
+      local reported_pid=""
+      reported_pid="$(extract_pid_from_daemon_status_output "${status_out}")"
+      if printf "%s" "${status_out}" | grep -qi "Daemon is running" && [[ -n "${reported_pid}" ]] && ! host_daemon_pid_is_alive "${reported_pid}"; then
+        consecutive_not_running=0
+        printf "%s\n" "[wsrepl-qa] host daemon watchdog: ensuring daemon is running (reported_pid_dead=${reported_pid})" >> "${outdir}/host-daemon-watchdog.log" 2>&1 || true
+        restart_host_daemon_and_capture_logs "${host_server_url:-}" ensure || true
+        continue
+      fi
+
+      if printf "%s" "${status_out}" | grep -qi "Daemon is not running"; then
+        consecutive_not_running=$((consecutive_not_running + 1))
+      else
+        consecutive_not_running=0
+      fi
+
+      # Avoid flapping: a daemon can momentarily report "not running" during version restarts.
+      if [[ "${consecutive_not_running}" -ge 3 ]]; then
+        consecutive_not_running=0
+        printf "%s\n" "[wsrepl-qa] host daemon watchdog: ensuring daemon is running (status_code=${status_code})" >> "${outdir}/host-daemon-watchdog.log" 2>&1 || true
+        restart_host_daemon_and_capture_logs "${host_server_url:-}" ensure || true
+      fi
+    done
+  ) &
+  HOST_DAEMON_WATCHDOG_PID="$!"
+}
+
+stop_host_daemon_watchdog_background() {
+  if [[ -z "${HOST_DAEMON_WATCHDOG_PID}" ]]; then
+    return 0
+  fi
+  kill "${HOST_DAEMON_WATCHDOG_PID}" >/dev/null 2>&1 || true
+  wait "${HOST_DAEMON_WATCHDOG_PID}" >/dev/null 2>&1 || true
+  HOST_DAEMON_WATCHDOG_PID=""
+}
+
 refresh_daemon_log_tail_best_effort() {
   local log_path_file="${1:-}"
   local log_tail_file="${2:-}"
@@ -653,6 +867,105 @@ wait_for_host_daemon_health_after_start() {
     && ! grep -qi "Daemon is not running" "${status_file}" 2>/dev/null \
     && ! grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${status_file}" 2>/dev/null; then
     refresh_daemon_log_tail_best_effort "${log_path_file}" "${log_tail_file}"
+    return 0
+  fi
+
+  return 1
+}
+
+read_wsrepl_host_daemon_stop_poll_retries() {
+  local raw="${WSREPL_QA_HOST_DAEMON_STOP_POLL_RETRIES:-}"
+  if [[ -z "${raw}" ]]; then
+    echo "40"
+    return 0
+  fi
+  if [[ "${raw}" -lt 0 ]]; then
+    echo "0"
+    return 0
+  fi
+  echo "${raw}"
+  return 0
+}
+
+read_wsrepl_host_daemon_stop_poll_delay_s() {
+  local raw="${WSREPL_QA_HOST_DAEMON_STOP_POLL_DELAY_MS:-}"
+  if [[ -z "${raw}" ]]; then
+    raw="250"
+  fi
+  python3 - <<'PY' "${raw}" 2>/dev/null || true
+import sys
+try:
+  ms = int(sys.argv[1])
+except Exception:
+  ms = 250
+if ms < 0:
+  ms = 0
+print(f"{ms/1000.0:.3f}")
+PY
+}
+
+capture_host_daemon_status_out_and_code() {
+  local server_url="${1:-}"
+  local stack_cli_root="${2:-}"
+  local stack_active_server_id="${3:-}"
+  local out_var="${4:-}"
+  local code_var="${5:-}"
+
+  local out=""
+  local code=0
+  set +e
+  if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+    if [[ -n "${server_url}" ]]; then
+      out="$(HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status 2>&1)"
+      code=$?
+    else
+      out="$(HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon status 2>&1)"
+      code=$?
+    fi
+  else
+    if [[ -n "${server_url}" ]]; then
+      out="$(HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status 2>&1)"
+      code=$?
+    else
+      out="$(run_host_happier daemon status 2>&1)"
+      code=$?
+    fi
+  fi
+  set -e
+
+  if [[ -n "${out_var}" ]]; then
+    printf -v "${out_var}" "%s" "${out}"
+  fi
+  if [[ -n "${code_var}" ]]; then
+    printf -v "${code_var}" "%s" "${code}"
+  fi
+}
+
+wait_for_host_daemon_stopped_after_stop() {
+  local server_url="${1:-}"
+  local stack_cli_root="${2:-}"
+  local stack_active_server_id="${3:-}"
+  local retries
+  retries="$(read_wsrepl_host_daemon_stop_poll_retries)"
+  local delay_s
+  delay_s="$(read_wsrepl_host_daemon_stop_poll_delay_s)"
+
+  local attempt=0
+  while [[ "${attempt}" -lt "${retries}" ]]; do
+    local status_out=""
+    local status_code="0"
+    capture_host_daemon_status_out_and_code "${server_url}" "${stack_cli_root}" "${stack_active_server_id}" status_out status_code
+    if [[ "${status_code}" != "0" ]] || printf "%s" "${status_out}" | grep -qi "Daemon is not running"; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep "${delay_s}" || true
+  done
+
+  local final_out=""
+  local final_code="0"
+  capture_host_daemon_status_out_and_code "${server_url}" "${stack_cli_root}" "${stack_active_server_id}" final_out final_code
+  if [[ "${final_code}" != "0" ]] || printf "%s" "${final_out}" | grep -qi "Daemon is not running"; then
     return 0
   fi
 
@@ -757,7 +1070,7 @@ PY
 
 run_host_happier() {
   WSREPL_QA_HOST_HAPPIER_KIND=""
-  local source="${WSREPL_QA_HOST_HAPPIER_SOURCE:-auto}"
+  local source="${WSREPL_QA_HOST_HAPPIER_SOURCE:-worktree_node}"
   source="$(printf "%s" "${source}" | tr '[:upper:]' '[:lower:]')"
 
   local kind=""
@@ -783,7 +1096,7 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 source = (sys.argv[2] or "").strip() or None
-kind = (sys.argv[3] or "").strip() or None
+host_kind = (sys.argv[3] or "").strip() or None
 resolved_path = (sys.argv[4] or "").strip() or None
 version = (sys.argv[5] or "").strip() or None
 invocation = sys.argv[6:]
@@ -793,7 +1106,7 @@ path.write_text(
         {
             "kind": "wsrepl_host_happier_resolution",
             "source": source,
-            "kind": kind,
+            "hostHappierKind": host_kind,
             "resolvedPath": resolved_path,
             "version": version,
             "invocation": invocation,
@@ -1100,6 +1413,60 @@ resolve_stack_cli_home_and_active_server_id_for_ui_url() {
   echo "${cli_root}|${server_id}"
 }
 
+resolve_machine_transfer_server_routed_max_bytes_seed_from_server_features() {
+  local server_url="${1:-}"
+  if [[ -n "${HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES:-}" ]]; then
+    echo ""
+    return 0
+  fi
+  if [[ -z "${server_url}" ]]; then
+    echo ""
+    return 0
+  fi
+
+  local features_url="${server_url%/}/v1/features"
+  local resolved
+  resolved="$(
+    curl -fsSL "${features_url}" 2>/dev/null | python3 -c '
+import json
+import sys
+
+try:
+  payload = json.load(sys.stdin)
+except Exception:
+  raise SystemExit(0)
+
+capabilities = payload.get("capabilities") if isinstance(payload, dict) else None
+machines = capabilities.get("machines") if isinstance(capabilities, dict) else None
+transfer = machines.get("transfer") if isinstance(machines, dict) else None
+server_routed = transfer.get("serverRouted") if isinstance(transfer, dict) else None
+max_bytes = server_routed.get("maxBytes") if isinstance(server_routed, dict) else None
+
+value = None
+if isinstance(max_bytes, bool):
+  value = None
+elif isinstance(max_bytes, (int, float)):
+  value = int(max_bytes)
+elif isinstance(max_bytes, str) and max_bytes.strip():
+  try:
+    value = int(float(max_bytes.strip()))
+  except Exception:
+    value = None
+
+if isinstance(value, int) and value > 0:
+  sys.stdout.write(str(value))
+' 2>/dev/null || true
+  )"
+
+  if [[ -n "${resolved}" && "${resolved}" =~ ^[0-9]+$ && "${resolved}" -gt 0 ]]; then
+    echo "${resolved}"
+    return 0
+  fi
+
+  echo ""
+  return 0
+}
+
 rewrite_server_url_for_lima_guest() {
   local server_url="${1:-}"
   if [[ -z "${server_url}" ]]; then
@@ -1228,6 +1595,11 @@ PY
 
 restart_host_daemon_and_capture_logs() {
   local server_url="${1:-}"
+  local restart_mode="${2:-restart}"
+  local should_stop="1"
+  if [[ "${restart_mode}" == "ensure" ]]; then
+    should_stop="0"
+  fi
   init_daemon_diagnostic_placeholders
 
   local start_file="${DAEMON_DIAG_DIR}/host.daemon.start.txt"
@@ -1245,6 +1617,8 @@ restart_host_daemon_and_capture_logs() {
     stack_cli_root="$(printf "%s" "${stack_home_hint}" | cut -d '|' -f 1)"
     stack_active_server_id="$(printf "%s" "${stack_home_hint}" | cut -d '|' -f 2)"
   fi
+  local canonical_stack_cli_root="${stack_cli_root}"
+  local canonical_stack_active_server_id="${stack_active_server_id}"
 
   # Optionally run the host daemon in an isolated home directory so other stack tooling (or other QA
   # runs) does not stop it mid-matrix. When enabled, we pre-seed the stack server credentials into
@@ -1255,10 +1629,29 @@ restart_host_daemon_and_capture_logs() {
     stack_access_key_src="$(resolve_stack_cli_access_key_path_for_ui_url || true)"
     if [[ -n "${stack_access_key_src}" && -f "${stack_access_key_src}" ]]; then
       local host_home_dir="$HOME/${host_home_rel}"
-      local host_access_key_dst="${host_home_dir}/servers/${stack_active_server_id}/access.key"
-      mkdir -p "$(dirname "${host_access_key_dst}")"
+      local host_cli_dir="${host_home_dir}/cli"
+      local host_server_dir="${host_home_dir}/servers/${stack_active_server_id}"
+      local host_access_key_dst="${host_server_dir}/access.key"
+      mkdir -p "${host_server_dir}"
       cp "${stack_access_key_src}" "${host_access_key_dst}"
       chmod 600 "${host_access_key_dst}" 2>/dev/null || true
+      if [[ -n "${canonical_stack_cli_root}" ]]; then
+        local canonical_settings_src="${canonical_stack_cli_root}/settings.json"
+        local host_settings_dst="${host_cli_dir}/settings.json"
+        if [[ -f "${canonical_settings_src}" ]]; then
+          mkdir -p "${host_cli_dir}"
+          cp -f "${canonical_settings_src}" "${host_settings_dst}"
+          chmod 600 "${host_settings_dst}" 2>/dev/null || true
+        fi
+      fi
+      if [[ -n "${canonical_stack_cli_root}" && -n "${canonical_stack_active_server_id}" ]]; then
+        local canonical_daemon_state_src="${canonical_stack_cli_root}/servers/${canonical_stack_active_server_id}/daemon.state.json"
+        local host_daemon_state_dst="${host_server_dir}/daemon.state.json"
+        if [[ -f "${canonical_daemon_state_src}" ]]; then
+          cp -f "${canonical_daemon_state_src}" "${host_daemon_state_dst}"
+          chmod 600 "${host_daemon_state_dst}" 2>/dev/null || true
+        fi
+      fi
       stack_cli_root="${host_home_dir}"
     fi
   fi
@@ -1267,6 +1660,12 @@ restart_host_daemon_and_capture_logs() {
   # be able to reach the host's LAN/VPN interface IPs. Publish `host.lima.internal` by default so the
   # host advertises at least one direct-peer endpoint candidate that is reachable from the Lima VM.
   local host_direct_peer_advertised_hosts="${WSREPL_QA_HOST_DIRECT_PEER_ADVERTISED_HOSTS:-host.lima.internal}"
+  local host_direct_peer_bind_port=""
+  host_direct_peer_bind_port="$(resolve_wsrepl_host_direct_peer_bind_port)"
+  local host_direct_peer_feature_enabled="${WSREPL_QA_HOST_DIRECT_PEER_FEATURE_ENABLED:-true}"
+  local host_direct_peer_server_enabled="${WSREPL_QA_HOST_DIRECT_PEER_SERVER_ENABLED:-true}"
+  local server_routed_max_bytes_seed=""
+  server_routed_max_bytes_seed="$(resolve_machine_transfer_server_routed_max_bytes_seed_from_server_features "${server_url}")"
 
   local host_provider_install_id=""
   host_provider_install_id="${HAPPIER_QA_PREFERRED_AGENT_ENGINES%%,*}"
@@ -1329,65 +1728,112 @@ print(f"{ms/1000.0:.3f}")
 PY
   )"
 
-  local start_status=0
-  if [[ -n "${server_url}" ]]; then
-    if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-      HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon stop >/dev/null 2>&1 || true
-    else
-      HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon stop >/dev/null 2>&1 || true
-    fi
-    set +e
-    if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-      HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
-      HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-      HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-      HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-    else
-      HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
-      HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-      HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-      HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-    fi
-    start_status=$?
-    set -e
-    if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-      HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
-      HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
-    else
-      HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
-      HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
-    fi
+  run_host_daemon_start_with_matrix_env() {
+    local output_file="${1:-}"
+    local run_server_url="${2:-}"
+    local run_stack_cli_root="${3:-}"
+    local run_stack_active_server_id="${4:-}"
+    local run_server_routed_max_bytes_seed="${5:-}"
+    local run_host_direct_peer_feature_enabled="${6:-}"
+    local run_host_direct_peer_bind_port="${7:-}"
+    local run_host_direct_peer_advertised_hosts="${8:-}"
+    local run_host_direct_peer_server_enabled="${9:-}"
+
+    local effective_server_routed_max_bytes="${HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES:-${run_server_routed_max_bytes_seed}}"
+    local effective_host_direct_peer_feature_enabled="${HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED:-${run_host_direct_peer_feature_enabled}}"
+    local effective_host_direct_peer_bind_port="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT:-${run_host_direct_peer_bind_port}}"
+    local effective_host_direct_peer_advertised_hosts="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${run_host_direct_peer_advertised_hosts}}"
+    local effective_host_direct_peer_server_enabled="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED:-${run_host_direct_peer_server_enabled}}"
+
+    (
+      export HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}"
+      export HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED="${effective_host_direct_peer_feature_enabled}"
+      export HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${effective_host_direct_peer_advertised_hosts}"
+      export HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED="${effective_host_direct_peer_server_enabled}"
+      export HAPPIER_DAEMON_WAIT_FOR_AUTH=1
+      export HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}"
+
+      if [[ -n "${effective_server_routed_max_bytes}" ]]; then
+        export HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES="${effective_server_routed_max_bytes}"
+      else
+        unset HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES
+      fi
+
+      if [[ -n "${effective_host_direct_peer_bind_port}" ]]; then
+        export HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT="${effective_host_direct_peer_bind_port}"
+      else
+        unset HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT
+      fi
+
+      if [[ -n "${run_server_url}" ]]; then
+        export HAPPIER_SERVER_URL="${run_server_url}"
+      else
+        unset HAPPIER_SERVER_URL
+      fi
+
+      if [[ -n "${run_stack_cli_root}" && -n "${run_stack_active_server_id}" ]]; then
+        export HAPPIER_HOME_DIR="${run_stack_cli_root}"
+        export HAPPIER_ACTIVE_SERVER_ID="${run_stack_active_server_id}"
+      else
+        unset HAPPIER_HOME_DIR
+        unset HAPPIER_ACTIVE_SERVER_ID
+      fi
+
+      run_host_happier daemon start >"${output_file}" 2>&1
+    )
+  }
+
+	  local start_status=0
+	  if [[ -n "${server_url}" ]]; then
+	    if [[ "${should_stop}" == "1" ]]; then
+	      if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+	        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon stop >/dev/null 2>&1 || true
+	      else
+	        HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon stop >/dev/null 2>&1 || true
+	      fi
+	      if ! wait_for_host_daemon_stopped_after_stop "${server_url}" "${stack_cli_root}" "${stack_active_server_id}"; then
+	        FAILURE_STAGE="host_daemon"
+	        FAILURE_REASON="host_daemon_stop_failed"
+	        echo "[wsrepl-qa] host daemon stop did not take effect (status remained running); refusing to restart with potentially stale env. Set WSREPL_QA_HOST_DAEMON_STOP_POLL_RETRIES/DELAY_MS to tune." >&2
+	        return 1
+	      fi
+	    fi
+	    set +e
+      run_host_daemon_start_with_matrix_env "${start_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}" "${server_routed_max_bytes_seed}" "${host_direct_peer_feature_enabled}" "${host_direct_peer_bind_port}" "${host_direct_peer_advertised_hosts}" "${host_direct_peer_server_enabled}"
+      start_status=$?
+      set -e
+      if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
+        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
+      else
+        HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
+        HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
+      fi
   else
-    if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-      HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon stop >/dev/null 2>&1 || true
-    else
-      run_host_happier daemon stop >/dev/null 2>&1 || true
-    fi
-    set +e
-    if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-      HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
-      HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-      HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-      HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
-    else
-      HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-      HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
-      HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-      HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-      run_host_happier daemon start >"${start_file}" 2>&1
-    fi
-    start_status=$?
-    set -e
-    if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-      HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon status >"${status_file}" 2>&1 || true
-      HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
-    else
-      run_host_happier daemon status >"${status_file}" 2>&1 || true
-      run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
-    fi
+	    if [[ "${should_stop}" == "1" ]]; then
+	      if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+	        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon stop >/dev/null 2>&1 || true
+	      else
+	        run_host_happier daemon stop >/dev/null 2>&1 || true
+	      fi
+	      if ! wait_for_host_daemon_stopped_after_stop "" "${stack_cli_root}" "${stack_active_server_id}"; then
+	        FAILURE_STAGE="host_daemon"
+	        FAILURE_REASON="host_daemon_stop_failed"
+	        echo "[wsrepl-qa] host daemon stop did not take effect (status remained running); refusing to restart with potentially stale env. Set WSREPL_QA_HOST_DAEMON_STOP_POLL_RETRIES/DELAY_MS to tune." >&2
+	        return 1
+	      fi
+	    fi
+	    set +e
+      run_host_daemon_start_with_matrix_env "${start_file}" "" "${stack_cli_root}" "${stack_active_server_id}" "${server_routed_max_bytes_seed}" "${host_direct_peer_feature_enabled}" "${host_direct_peer_bind_port}" "${host_direct_peer_advertised_hosts}" "${host_direct_peer_server_enabled}"
+      start_status=$?
+      set -e
+      if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon status >"${status_file}" 2>&1 || true
+        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
+      else
+        run_host_happier daemon status >"${status_file}" 2>&1 || true
+        run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
+      fi
   fi
 
   local log_path
@@ -1398,13 +1844,10 @@ PY
     printf "%s\n" "(no daemon log file found)" > "${log_tail_file}"
   fi
 
-  local daemon_healthy_after_start="0"
-  if wait_for_host_daemon_health_after_start "${status_file}" "${log_path_file}" "${log_tail_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}"; then
-    daemon_healthy_after_start="1"
-  fi
+  wait_for_host_daemon_health_after_start "${status_file}" "${log_path_file}" "${log_tail_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}" || true
 
   local cli_dist_rebuild_attempted=0
-  if [[ "${WSREPL_QA_HOST_HAPPIER_KIND:-}" == "worktree_node" ]] && grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${start_file}" "${status_file}" "${log_tail_file}" 2>/dev/null; then
+  if [[ "${WSREPL_QA_HOST_HAPPIER_KIND:-}" == "worktree_node" ]] && grep -Eq "Cannot find module '.*/apps/cli/(dist|package-dist)/index\\.mjs'|Daemon packaged entrypoint is missing: .*/apps/cli/package-dist/index\\.mjs" "${start_file}" "${status_file}" "${log_tail_file}" 2>/dev/null; then
     cli_dist_rebuild_attempted=1
     echo "[wsrepl-qa] host daemon start/status reported a missing CLI dist entrypoint; rebuilding and retrying..." >&2
     (
@@ -1413,37 +1856,9 @@ PY
     ) >"${build_file}" 2>&1 || true
 
 	    set +e
-	    if [[ -n "${server_url}" ]]; then
-	      if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-	        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-	        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
-	        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-	        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-	        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-	      else
-	        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-	        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
-	        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-	        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-	        HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-	      fi
-	    else
-	      if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-	        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-	        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
-	        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-	        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-	        HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
-	      else
-	        HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-	        HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS:-${host_direct_peer_advertised_hosts}}" \
-	        HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-	        HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-	        run_host_happier daemon start >"${start_file}" 2>&1
-	      fi
-	    fi
-    start_status=$?
-    set -e
+      run_host_daemon_start_with_matrix_env "${start_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}" "${server_routed_max_bytes_seed}" "${host_direct_peer_feature_enabled}" "${host_direct_peer_bind_port}" "${host_direct_peer_advertised_hosts}" "${host_direct_peer_server_enabled}"
+      start_status=$?
+      set -e
 
     if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
       if [[ -n "${server_url}" ]]; then
@@ -1555,7 +1970,7 @@ PY
     # In dev worktrees the CLI entrypoint depends on `apps/cli/dist/**`. If another process is
     # rebuilding the CLI (or the dist folder is missing), `daemon start` can fail with a missing
     # entrypoint. Recover by rebuilding once and retrying so the QA harness doesn't fail flakily.
-    if [[ "${cli_dist_rebuild_attempted}" != "1" && "${WSREPL_QA_HOST_HAPPIER_KIND:-}" == "worktree_node" ]] && grep -Eq "Cannot find module '.*/apps/cli/dist/index\\.mjs'" "${start_file}" "${log_tail_file}" 2>/dev/null; then
+    if [[ "${cli_dist_rebuild_attempted}" != "1" && "${WSREPL_QA_HOST_HAPPIER_KIND:-}" == "worktree_node" ]] && grep -Eq "Cannot find module '.*/apps/cli/(dist|package-dist)/index\\.mjs'|Daemon packaged entrypoint is missing: .*/apps/cli/package-dist/index\\.mjs" "${start_file}" "${log_tail_file}" 2>/dev/null; then
       echo "[wsrepl-qa] host daemon start failed due to missing CLI dist entrypoint; rebuilding and retrying..." >&2
       (
         cd "${REPO_DIR}"
@@ -1563,27 +1978,7 @@ PY
       ) >"${build_file}" 2>&1 || true
 
       set +e
-      if [[ -n "${server_url}" ]]; then
-        if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-          HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-          HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-          HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-        else
-          HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-          HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-          HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-        fi
-      else
-        if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-          HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-          HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-          HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
-        else
-          HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-          HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-          run_host_happier daemon start >"${start_file}" 2>&1
-        fi
-      fi
+      run_host_daemon_start_with_matrix_env "${start_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}" "${server_routed_max_bytes_seed}" "${host_direct_peer_feature_enabled}" "${host_direct_peer_bind_port}" "${host_direct_peer_advertised_hosts}" "${host_direct_peer_server_enabled}"
       start_status=$?
       set -e
 
@@ -1619,30 +2014,20 @@ PY
       # before Playwright starts. (The Playwright harness does not perform terminal connect.)
       if seed_host_daemon_access_key_if_possible "${log_tail_file}"; then
         set +e
-        if [[ -n "${server_url}" ]]; then
-          if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-            HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-          else
-            HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-          fi
-          start_status=$?
-          if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+        run_host_daemon_start_with_matrix_env "${start_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}" "${server_routed_max_bytes_seed}" "${host_direct_peer_feature_enabled}" "${host_direct_peer_bind_port}" "${host_direct_peer_advertised_hosts}" "${host_direct_peer_server_enabled}"
+        start_status=$?
+        if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+          if [[ -n "${server_url}" ]]; then
             HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
             HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
           else
-            HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
-            HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
-          fi
-        else
-          if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-            HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
-          else
-            run_host_happier daemon start >"${start_file}" 2>&1
-          fi
-          start_status=$?
-          if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
             HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon status >"${status_file}" 2>&1 || true
             HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
+          fi
+        else
+          if [[ -n "${server_url}" ]]; then
+            HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon status >"${status_file}" 2>&1 || true
+            HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
           else
             run_host_happier daemon status >"${status_file}" 2>&1 || true
             run_host_happier daemon logs >"${log_path_file}" 2>&1 || true
@@ -1666,48 +2051,26 @@ PY
       while [[ "${attempt}" -le "${daemon_start_retries}" ]]; do
         echo "[wsrepl-qa] host daemon start failed (exit=${start_status}); retrying (${attempt}/${daemon_start_retries})..." >&2
 
-        if [[ -n "${server_url}" ]]; then
-          if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-            HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon stop >/dev/null 2>&1 || true
+        if [[ "${should_stop}" == "1" ]]; then
+          if [[ -n "${server_url}" ]]; then
+            if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+              HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon stop >/dev/null 2>&1 || true
+            else
+              HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon stop >/dev/null 2>&1 || true
+            fi
           else
-            HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon stop >/dev/null 2>&1 || true
-          fi
-        else
-          if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-            HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon stop >/dev/null 2>&1 || true
-          else
-            run_host_happier daemon stop >/dev/null 2>&1 || true
+            if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
+              HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon stop >/dev/null 2>&1 || true
+            else
+              run_host_happier daemon stop >/dev/null 2>&1 || true
+            fi
           fi
         fi
 
         sleep "${daemon_start_retry_delay_s}" || true
 
         set +e
-        if [[ -n "${server_url}" ]]; then
-          if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-            HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-            HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-            HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-            HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-          else
-            HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-            HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-            HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-            HAPPIER_SERVER_URL="${server_url}" run_host_happier daemon start >"${start_file}" 2>&1
-          fi
-        else
-          if [[ -n "${stack_cli_root}" && -n "${stack_active_server_id}" ]]; then
-            HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-            HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-            HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-            HAPPIER_HOME_DIR="${stack_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${stack_active_server_id}" run_host_happier daemon start >"${start_file}" 2>&1
-          else
-            HAPPIER_CLAUDE_PATH="${HAPPIER_CLAUDE_PATH:-}" \
-            HAPPIER_DAEMON_WAIT_FOR_AUTH=1 \
-            HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS="${HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS:-600000}" \
-            run_host_happier daemon start >"${start_file}" 2>&1
-          fi
-        fi
+        run_host_daemon_start_with_matrix_env "${start_file}" "${server_url}" "${stack_cli_root}" "${stack_active_server_id}" "${server_routed_max_bytes_seed}" "${host_direct_peer_feature_enabled}" "${host_direct_peer_bind_port}" "${host_direct_peer_advertised_hosts}" "${host_direct_peer_server_enabled}"
         start_status=$?
         set -e
 
@@ -1756,6 +2119,7 @@ PY
 
 restart_guest_daemon_and_capture_logs() {
   local server_url="${1:-}"
+  local server_routed_max_bytes_seed="${2:-}"
   init_daemon_diagnostic_placeholders
 
   local start_file="${DAEMON_DIAG_DIR}/guest.daemon.start.txt"
@@ -1768,12 +2132,27 @@ restart_guest_daemon_and_capture_logs() {
   local guest_happier_home_rel=""
   local guest_active_server_id=""
   local guest_access_key_src=""
+  local guest_direct_peer_bind_port=""
+  local guest_direct_peer_advertised_hosts=""
+  local guest_direct_peer_feature_enabled=""
+  local guest_direct_peer_server_enabled=""
+  local guest_server_routed_max_bytes=""
   local stack_home_hint
   stack_home_hint="$(resolve_stack_cli_home_and_active_server_id_for_ui_url)"
   if [[ -n "${stack_home_hint}" ]]; then
     guest_active_server_id="$(printf "%s" "${stack_home_hint}" | cut -d '|' -f 2)"
   fi
   guest_access_key_src="$(resolve_stack_cli_access_key_path_for_ui_url || true)"
+  if [[ -z "${server_routed_max_bytes_seed}" ]]; then
+    server_routed_max_bytes_seed="$(resolve_machine_transfer_server_routed_max_bytes_seed_from_server_features "${server_url}")"
+  fi
+  guest_server_routed_max_bytes="${HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES:-${server_routed_max_bytes_seed}}"
+  guest_direct_peer_bind_port="$(resolve_wsrepl_vm_direct_peer_bind_port_for_vm "${VM_NAME}")"
+  if [[ -n "${guest_direct_peer_bind_port}" ]]; then
+    guest_direct_peer_advertised_hosts="$(resolve_wsrepl_vm_direct_peer_advertised_hosts)"
+    guest_direct_peer_feature_enabled="${WSREPL_QA_VM_DIRECT_PEER_FEATURE_ENABLED:-true}"
+    guest_direct_peer_server_enabled="${WSREPL_QA_VM_DIRECT_PEER_SERVER_ENABLED:-true}"
+  fi
   if [[ -n "${guest_active_server_id}" && -n "${guest_access_key_src}" && -f "${guest_access_key_src}" ]]; then
     guest_happier_home_rel=".happier/wsrepl-qa"
   fi
@@ -1827,6 +2206,11 @@ PY
     HAPPIER_SERVER_URL="${server_url}" \
     ${guest_happier_home_rel:+WSREPL_QA_GUEST_HOME_REL="${guest_happier_home_rel}"} \
     ${guest_active_server_id:+HAPPIER_ACTIVE_SERVER_ID="${guest_active_server_id}"} \
+    ${guest_server_routed_max_bytes:+HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES="${guest_server_routed_max_bytes}"} \
+    ${guest_direct_peer_bind_port:+HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT="${guest_direct_peer_bind_port}"} \
+    ${guest_direct_peer_advertised_hosts:+HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS="${guest_direct_peer_advertised_hosts}"} \
+    ${guest_direct_peer_feature_enabled:+HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED="${guest_direct_peer_feature_enabled}"} \
+    ${guest_direct_peer_server_enabled:+HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED="${guest_direct_peer_server_enabled}"} \
     bash -lc '
     set -euo pipefail
     if [[ -n "${WSREPL_QA_GUEST_HOME_REL:-}" ]]; then
@@ -2216,7 +2600,17 @@ PY
 resolve_final_status() {
   local status="$1"
   RESOLVED_FINAL_STATUS="${status}"
-  if [[ "${status}" != "0" ]]; then
+  if [[ "${status}" == "126" || "${status}" == "127" ]]; then
+    if [[ -z "${FAILURE_STAGE}" ]]; then
+      FAILURE_STAGE="early_abort"
+    fi
+    if [[ -z "${FAILURE_REASON}" ]]; then
+      if [[ "${status}" == "127" ]]; then
+        FAILURE_REASON="command_not_found"
+      else
+        FAILURE_REASON="command_invocation_failed"
+      fi
+    fi
     return 0
   fi
 
@@ -2236,7 +2630,7 @@ resolve_final_status() {
 }
 
 RESOLVED_FINAL_STATUS=""
-trap 'status=$?; resolve_final_status "${status}"; final_status="${RESOLVED_FINAL_STATUS:-${status}}"; refresh_post_playwright_diagnostics_best_effort || true; ensure_summary "${final_status}"; exit "${final_status}"' EXIT
+trap 'status=$?; resolve_final_status "${status}"; final_status="${RESOLVED_FINAL_STATUS:-${status}}"; stop_host_daemon_watchdog_background || true; refresh_post_playwright_diagnostics_best_effort || true; ensure_summary "${final_status}"; exit "${final_status}"' EXIT
 
 terminate_due_to_signal() {
   local exit_code="${1:-143}"
@@ -2318,6 +2712,242 @@ ensure_vm_ready() {
     return 1
   fi
   echo "[wsrepl-qa] ensure VM: ready"
+}
+
+resolve_wsrepl_vm_direct_peer_bind_port() {
+  local raw_bind_port="${WSREPL_QA_VM_DIRECT_PEER_BIND_PORT:-}"
+  if [[ -z "${raw_bind_port}" ]]; then
+    raw_bind_port="${WSREPL_QA_VM_DIRECT_PEER_BIND_PORT_DEFAULT:-13377}"
+  fi
+
+  if [[ ! "${raw_bind_port}" =~ ^[0-9]+$ ]] || [[ "${raw_bind_port}" -lt 1 ]] || [[ "${raw_bind_port}" -gt 65535 ]]; then
+    FAILURE_STAGE="ensure_vm"
+    FAILURE_REASON="invalid_vm_direct_peer_bind_port"
+    echo "[wsrepl-qa] invalid WSREPL_QA_VM_DIRECT_PEER_BIND_PORT(_DEFAULT): ${raw_bind_port} (expected 1-65535)" >&2
+    return 1
+  fi
+
+  echo "${raw_bind_port}"
+  return 0
+}
+
+resolve_wsrepl_vm_index() {
+  local vm_name="${1:-${VM_NAME}}"
+  local index=0
+  local candidate=""
+  for candidate in "${VM_NAMES[@]}"; do
+    if [[ "${candidate}" == "${vm_name}" ]]; then
+      echo "${index}"
+      return 0
+    fi
+    index=$((index + 1))
+  done
+  echo "0"
+  return 0
+}
+
+resolve_wsrepl_vm_direct_peer_bind_port_for_vm() {
+  local vm_name="${1:-${VM_NAME}}"
+  local base_bind_port=""
+  base_bind_port="$(resolve_wsrepl_vm_direct_peer_bind_port)"
+  if [[ -z "${base_bind_port}" ]]; then
+    return 0
+  fi
+  if [[ "${#VM_NAMES[@]}" -le 1 ]]; then
+    echo "${base_bind_port}"
+    return 0
+  fi
+
+  local host_bind_port=""
+  host_bind_port="$(resolve_wsrepl_host_direct_peer_bind_port)"
+  local vm_index=""
+  vm_index="$(resolve_wsrepl_vm_index "${vm_name}")"
+
+  local candidate="${base_bind_port}"
+  local current_index=0
+  while true; do
+    if [[ "${candidate}" == "${host_bind_port}" ]]; then
+      candidate=$((candidate + 1))
+      continue
+    fi
+    if [[ "${current_index}" == "${vm_index}" ]]; then
+      echo "${candidate}"
+      return 0
+    fi
+    current_index=$((current_index + 1))
+    candidate=$((candidate + 1))
+  done
+}
+
+resolve_wsrepl_vm_direct_peer_advertised_hosts() {
+  local configured_hosts="${WSREPL_QA_VM_DIRECT_PEER_ADVERTISED_HOSTS:-}"
+  if [[ -n "${configured_hosts}" ]]; then
+    echo "${configured_hosts}"
+    return 0
+  fi
+  if [[ "${#VM_NAMES[@]}" -gt 1 ]]; then
+    echo "127.0.0.1,host.lima.internal"
+    return 0
+  fi
+  echo "127.0.0.1"
+  return 0
+}
+
+wsrepl_is_tcp_port_listening() {
+  local port="${1:-}"
+  if [[ -z "${port}" ]]; then
+    return 1
+  fi
+
+  local lsof_path=""
+  if command -v lsof >/dev/null 2>&1; then
+    lsof_path="$(command -v lsof)"
+  elif [[ -x /usr/sbin/lsof ]]; then
+    lsof_path="/usr/sbin/lsof"
+  elif [[ -x /bin/lsof ]]; then
+    lsof_path="/bin/lsof"
+  fi
+
+  if [[ -n "${lsof_path}" ]]; then
+    if "${lsof_path}" -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  if command -v nc >/dev/null 2>&1; then
+    if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
+      return 0
+    fi
+    if nc -z -w 1 host.lima.internal "${port}" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${port}" <<'PY' >/dev/null 2>&1
+import socket
+import sys
+
+port = int(sys.argv[1])
+for host in ("127.0.0.1", "host.lima.internal"):
+  try:
+    with socket.create_connection((host, port), timeout=1):
+      raise SystemExit(0)
+  except Exception:
+    pass
+raise SystemExit(1)
+PY
+    return $?
+  fi
+
+  # Fail closed when we cannot verify availability.
+  return 1
+}
+
+resolve_wsrepl_host_direct_peer_bind_port() {
+  local raw_bind_port="${WSREPL_QA_HOST_DIRECT_PEER_BIND_PORT:-}"
+  if [[ -z "${raw_bind_port}" ]]; then
+    raw_bind_port="${WSREPL_QA_HOST_DIRECT_PEER_BIND_PORT_DEFAULT:-13378}"
+  fi
+
+  if [[ ! "${raw_bind_port}" =~ ^[0-9]+$ ]] || [[ "${raw_bind_port}" -lt 1 ]] || [[ "${raw_bind_port}" -gt 65535 ]]; then
+    FAILURE_STAGE="host_daemon"
+    FAILURE_REASON="invalid_host_direct_peer_bind_port"
+    echo "[wsrepl-qa] invalid WSREPL_QA_HOST_DIRECT_PEER_BIND_PORT(_DEFAULT): ${raw_bind_port} (expected 1-65535)" >&2
+    return 1
+  fi
+
+  local candidate_port="${raw_bind_port}"
+  local attempt=0
+  local max_attempts="${WSREPL_QA_HOST_DIRECT_PEER_BIND_PORT_SCAN_LIMIT:-64}"
+  if [[ ! "${max_attempts}" =~ ^[0-9]+$ ]] || [[ "${max_attempts}" -lt 1 ]]; then
+    max_attempts=64
+  fi
+
+  while [[ "${attempt}" -lt "${max_attempts}" ]]; do
+    if ! wsrepl_is_tcp_port_listening "${candidate_port}"; then
+      echo "${candidate_port}"
+      return 0
+    fi
+
+    local next_candidate_port="$((candidate_port + 1))"
+    echo "[wsrepl-qa] host direct-peer bind port ${candidate_port} is already in use; trying ${next_candidate_port}" >&2
+    candidate_port="${next_candidate_port}"
+    if [[ "${candidate_port}" -gt 65535 ]]; then
+      break
+    fi
+    attempt="$((attempt + 1))"
+  done
+
+  FAILURE_STAGE="host_daemon"
+  FAILURE_REASON="host_direct_peer_bind_port_unavailable"
+  echo "[wsrepl-qa] unable to find a free host direct-peer bind port starting from ${raw_bind_port} after ${max_attempts} attempts" >&2
+  return 1
+}
+
+ensure_vm_direct_peer_port_forwarding() {
+  local direct_peer_bind_port="${1:-}"
+  if [[ -z "${direct_peer_bind_port}" ]]; then
+    return 0
+  fi
+
+  local direct_peer_advertised_hosts="${WSREPL_QA_VM_DIRECT_PEER_ADVERTISED_HOSTS:-}"
+  if [[ -z "${direct_peer_advertised_hosts}" ]]; then
+    direct_peer_advertised_hosts="127.0.0.1"
+  fi
+
+  local update_output=""
+  update_output="$(
+    python3 - "${LIMA_YAML}" "${direct_peer_bind_port}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+port = int(sys.argv[2])
+
+begin = "  # --- wsrepl direct peer port forward (managed) ---"
+end = "  # --- /wsrepl direct peer port forward ---"
+entry = (
+    f"{begin}\n"
+    f"  - guestPortRange: [{port}, {port}]\n"
+    f"    hostPortRange:  [{port}, {port}]\n"
+    f"{end}\n"
+)
+
+text = path.read_text(encoding="utf-8")
+pattern = re.compile(
+    r"(?ms)^  # --- wsrepl direct peer port forward \(managed\) ---\n"
+    r"  - guestPortRange: \[[0-9]+, [0-9]+\]\n"
+    r"    hostPortRange:  \[[0-9]+, [0-9]+\]\n"
+    r"  # --- /wsrepl direct peer port forward ---\n?"
+)
+if pattern.search(text):
+    updated = pattern.sub(entry, text, count=1)
+elif "# --- /happier port forwards ---" in text:
+    updated = text.replace("# --- /happier port forwards ---", f"{entry}# --- /happier port forwards ---", 1)
+else:
+    updated = text.rstrip() + "\n" + entry
+
+if updated != text:
+    path.write_text(updated, encoding="utf-8")
+    print("updated")
+PY
+  )"
+
+  if [[ "${update_output}" == *"updated"* ]]; then
+    echo "[wsrepl-qa] ensure VM: applying direct-peer port forward ${direct_peer_bind_port} via Lima..."
+    limactl stop "${VM_NAME}" >/dev/null 2>&1 || true
+    limactl start "${VM_NAME}" >/dev/null 2>&1
+    if ! wait_for_vm_shell 90 1; then
+      FAILURE_STAGE="ensure_vm"
+      FAILURE_REASON="vm_shell_unreachable"
+      echo "[wsrepl-qa] failed to reach VM shell after reconfiguring direct-peer port forward: ${VM_NAME}" >&2
+      return 1
+    fi
+  fi
+
+  return 0
 }
 
 resolve_expected_worktree_happier_version() {
@@ -2542,6 +3172,64 @@ resolve_guest_wsrepl_build_marker_cli_version() {
     2>/dev/null | head -n 1 | tr -d '\r' || true
 }
 
+ensure_current_vm_happier_matches_worktree() {
+  local expected_version="${1:-}"
+  local expected_git_rev="${2:-}"
+  local guest_marker_git_rev=""
+  local guest_marker_version=""
+  local guest_version=""
+
+  if [[ "${WSREPL_QA_VM_HAPPIER_MODE}" == "autoupdate" ]]; then
+    if ! autoupdate_guest_happier_from_worktree "${expected_version}" "${expected_git_rev}"; then
+      echo "[wsrepl-qa] guest autoupdate failed" >&2
+      return 2
+    fi
+    guest_marker_git_rev="$(resolve_guest_wsrepl_build_marker_git_rev)"
+    guest_marker_version="$(resolve_guest_wsrepl_build_marker_cli_version)"
+  else
+    guest_marker_git_rev="$(resolve_guest_wsrepl_build_marker_git_rev)"
+    guest_marker_version="$(resolve_guest_wsrepl_build_marker_cli_version)"
+    guest_version="$(resolve_guest_happier_version)"
+  fi
+
+  if [[ -n "${expected_git_rev}" ]]; then
+    if [[ -z "${guest_marker_git_rev}" ]]; then
+      echo "[wsrepl-qa] guest wsrepl build marker is missing, but the worktree git rev is available (mode=${WSREPL_QA_VM_HAPPIER_MODE})." >&2
+      echo "[wsrepl-qa] expected git rev: ${expected_git_rev}" >&2
+      echo "[wsrepl-qa] expected marker path: \$HOME/.happier/wsrepl-dev/payload/wsrepl-build.json" >&2
+      echo "[wsrepl-qa] Fix: rerun with WSREPL_QA_VM_HAPPIER_MODE=autoupdate (installs a matching build marker), or set WSREPL_QA_VM_HAPPIER_MODE=skip to bypass this guard." >&2
+      return 2
+    fi
+    if [[ "${guest_marker_git_rev}" != "${expected_git_rev}" ]]; then
+      echo "[wsrepl-qa] guest wsrepl build marker does not match the current worktree (mode=${WSREPL_QA_VM_HAPPIER_MODE})." >&2
+      echo "[wsrepl-qa] expected git rev: ${expected_git_rev}" >&2
+      echo "[wsrepl-qa] guest git rev:    ${guest_marker_git_rev}" >&2
+      echo "[wsrepl-qa] Fix: rerun with WSREPL_QA_VM_HAPPIER_MODE=autoupdate, or set WSREPL_QA_VM_HAPPIER_MODE=skip to bypass this guard." >&2
+      return 2
+    fi
+    if [[ -n "${guest_marker_version}" && "${guest_marker_version}" != "${expected_version}" ]]; then
+      echo "[wsrepl-qa] guest wsrepl build marker version does not match the worktree version." >&2
+      echo "[wsrepl-qa] expected version: ${expected_version}" >&2
+      echo "[wsrepl-qa] guest version:    ${guest_marker_version}" >&2
+      return 2
+    fi
+  else
+    if [[ -z "${guest_version}" ]]; then
+      echo "[wsrepl-qa] failed to resolve guest Happier version; ensure happier is installed in the VM and reachable from PATH" >&2
+      return 2
+    fi
+    if [[ "${guest_version}" != "${expected_version}" ]]; then
+      echo "[wsrepl-qa] guest Happier CLI version does not match the current worktree (mode=${WSREPL_QA_VM_HAPPIER_MODE})." >&2
+      echo "[wsrepl-qa] expected: ${expected_version}" >&2
+      echo "[wsrepl-qa] guest:    ${guest_version}" >&2
+      echo "[wsrepl-qa] Fix: update the VM's Happier install to the same commit/build, rerun with WSREPL_QA_VM_HAPPIER_MODE=autoupdate, or set WSREPL_QA_VM_HAPPIER_MODE=skip to bypass this guard." >&2
+      return 2
+    fi
+  fi
+
+  return 0
+}
+
 if [[ -z "${HAPPIER_QA_SESSION_PATH:-}" && -n "${WSREPL_QA_LARGE_REPO_PATH:-}" ]]; then
   export HAPPIER_QA_SESSION_PATH="${WSREPL_QA_LARGE_REPO_PATH}"
 fi
@@ -2695,6 +3383,9 @@ echo "[wsrepl-qa] ensure VM exists + port forwarding (reuse-first)..."
   ensure_vm_ready
 } 2>&1 | tee "${REPORT_ROOT}/ensure-vm.log"
 
+wsrepl_vm_direct_peer_bind_port="$(resolve_wsrepl_vm_direct_peer_bind_port_for_vm "${VM_NAME}")"
+ensure_vm_direct_peer_port_forwarding "${wsrepl_vm_direct_peer_bind_port}"
+
 if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
   for extra_vm in "${EXTRA_VM_NAMES[@]}"; do
     safe_extra_vm="${extra_vm//[^A-Za-z0-9._-]/_}"
@@ -2707,6 +3398,8 @@ if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
       LIMA_DIR="${LIMA_HOME_DIR}/${VM_NAME}"
       LIMA_YAML="${LIMA_DIR}/lima.yaml"
       ensure_vm_ready
+      extra_vm_direct_peer_bind_port="$(resolve_wsrepl_vm_direct_peer_bind_port_for_vm "${VM_NAME}")"
+      ensure_vm_direct_peer_port_forwarding "${extra_vm_direct_peer_bind_port}"
     ) 2>&1 | tee "${extra_root}/ensure-vm.log"
 
     # Best-effort: seed any provider fixtures needed by the Playwright matrix.
@@ -2813,9 +3506,17 @@ fi
 if [[ -n "${host_server_url:-}" ]]; then
   echo "[wsrepl-qa] host server url: ${host_server_url}"
 fi
+server_routed_max_bytes_seed=""
+server_routed_max_bytes_seed="$(resolve_machine_transfer_server_routed_max_bytes_seed_from_server_features "${host_server_url}")"
 
 echo "[wsrepl-qa] restart host daemon and capture logs..."
 restart_host_daemon_and_capture_logs "${host_server_url}"
+capture_vm_connectivity_to_host_direct_peer_port_best_effort || true
+
+# Keep the host daemon under observation while the wrapper builds/installs the guest artifact
+# and while Playwright runs. If the host daemon is restarted or exits during long guest setup,
+# the watchdog will bring it back before the UI tries to create the matrix session.
+start_host_daemon_watchdog_background "${PLAYWRIGHT_OUTDIR}" "${host_server_url:-}"
 
 guest_server_url="$(rewrite_server_url_for_lima_guest "${host_server_url}")"
 if [[ -n "${guest_server_url:-}" ]]; then
@@ -2842,70 +3543,48 @@ if [[ "${WSREPL_QA_VM_HAPPIER_MODE}" != "skip" ]]; then
     exit 2
   fi
 
-  if [[ "${WSREPL_QA_VM_HAPPIER_MODE}" == "autoupdate" ]]; then
-    if ! autoupdate_guest_happier_from_worktree "${expected_version}" "${expected_git_rev}"; then
-      FAILURE_STAGE="guest_version_check"
-      FAILURE_REASON="guest_autoupdate_failed"
-      echo "[wsrepl-qa] guest autoupdate failed" >&2
-      exit 2
-    fi
-    guest_marker_git_rev="$(resolve_guest_wsrepl_build_marker_git_rev)"
-    guest_marker_version="$(resolve_guest_wsrepl_build_marker_cli_version)"
-  else
-    guest_marker_git_rev="$(resolve_guest_wsrepl_build_marker_git_rev)"
-    guest_marker_version="$(resolve_guest_wsrepl_build_marker_cli_version)"
-    guest_version="$(resolve_guest_happier_version)"
+  if ! ensure_current_vm_happier_matches_worktree "${expected_version}" "${expected_git_rev}"; then
+    FAILURE_STAGE="guest_version_check"
+    FAILURE_REASON="$(
+      if [[ "${WSREPL_QA_VM_HAPPIER_MODE}" == "autoupdate" ]]; then
+        printf "%s" "guest_autoupdate_failed"
+      elif [[ -n "${expected_git_rev}" ]]; then
+        printf "%s" "guest_build_mismatch"
+      else
+        printf "%s" "guest_version_mismatch"
+      fi
+    )"
+    exit 2
   fi
 
-  # Prefer a build marker comparison when the worktree is a git checkout.
-  if [[ -n "${expected_git_rev}" ]]; then
-    if [[ -z "${guest_marker_git_rev}" ]]; then
-      FAILURE_STAGE="guest_version_check"
-      FAILURE_REASON="guest_build_marker_missing"
-      echo "[wsrepl-qa] guest wsrepl build marker is missing, but the worktree git rev is available (mode=${WSREPL_QA_VM_HAPPIER_MODE})." >&2
-      echo "[wsrepl-qa] expected git rev: ${expected_git_rev}" >&2
-      echo "[wsrepl-qa] expected marker path: $HOME/.happier/wsrepl-dev/payload/wsrepl-build.json" >&2
-      echo "[wsrepl-qa] Fix: rerun with WSREPL_QA_VM_HAPPIER_MODE=autoupdate (installs a matching build marker), or set WSREPL_QA_VM_HAPPIER_MODE=skip to bypass this guard." >&2
-      exit 2
-    fi
-    if [[ "${guest_marker_git_rev}" != "${expected_git_rev}" ]]; then
-      FAILURE_STAGE="guest_version_check"
-      FAILURE_REASON="guest_build_mismatch"
-      echo "[wsrepl-qa] guest wsrepl build marker does not match the current worktree (mode=${WSREPL_QA_VM_HAPPIER_MODE})." >&2
-      echo "[wsrepl-qa] expected git rev: ${expected_git_rev}" >&2
-      echo "[wsrepl-qa] guest git rev:    ${guest_marker_git_rev}" >&2
-      echo "[wsrepl-qa] Fix: rerun with WSREPL_QA_VM_HAPPIER_MODE=autoupdate, or set WSREPL_QA_VM_HAPPIER_MODE=skip to bypass this guard." >&2
-      exit 2
-    fi
-    if [[ -n "${guest_marker_version}" && "${guest_marker_version}" != "${expected_version}" ]]; then
-      FAILURE_STAGE="guest_version_check"
-      FAILURE_REASON="guest_version_mismatch"
-      echo "[wsrepl-qa] guest wsrepl build marker version does not match the worktree version." >&2
-      echo "[wsrepl-qa] expected version: ${expected_version}" >&2
-      echo "[wsrepl-qa] guest version:    ${guest_marker_version}" >&2
-      exit 2
-    fi
-  else
-    if [[ -z "${guest_version}" ]]; then
-      FAILURE_STAGE="guest_version_check"
-      FAILURE_REASON="guest_version_unresolved"
-      echo "[wsrepl-qa] failed to resolve guest Happier version; ensure happier is installed in the VM and reachable from PATH" >&2
-      exit 2
-    fi
-    if [[ "${guest_version}" != "${expected_version}" ]]; then
-      FAILURE_STAGE="guest_version_check"
-      FAILURE_REASON="guest_version_mismatch"
-      echo "[wsrepl-qa] guest Happier CLI version does not match the current worktree (mode=${WSREPL_QA_VM_HAPPIER_MODE})." >&2
-      echo "[wsrepl-qa] expected: ${expected_version}" >&2
-      echo "[wsrepl-qa] guest:    ${guest_version}" >&2
-      echo "[wsrepl-qa] Fix: update the VM's Happier install to the same commit/build, rerun with WSREPL_QA_VM_HAPPIER_MODE=autoupdate, or set WSREPL_QA_VM_HAPPIER_MODE=skip to bypass this guard." >&2
-      exit 2
-    fi
+  if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
+    for extra_vm in "${EXTRA_VM_NAMES[@]}"; do
+      safe_extra_vm="${extra_vm//[^A-Za-z0-9._-]/_}"
+      extra_root="${REPORT_ROOT}/vms/${safe_extra_vm}"
+      mkdir -p "${extra_root}"
+      echo "[wsrepl-qa] ensure additional VM Happier build matches worktree: ${extra_vm}"
+      if ! (
+        VM_NAME="${extra_vm}"
+        ensure_current_vm_happier_matches_worktree "${expected_version}" "${expected_git_rev}"
+      ) 2>&1 | tee "${extra_root}/guest.happier.version.txt" >/dev/null; then
+        FAILURE_STAGE="guest_version_check"
+        FAILURE_REASON="$(
+          if [[ "${WSREPL_QA_VM_HAPPIER_MODE}" == "autoupdate" ]]; then
+            printf "%s" "guest_autoupdate_failed"
+          elif [[ -n "${expected_git_rev}" ]]; then
+            printf "%s" "guest_build_mismatch"
+          else
+            printf "%s" "guest_version_mismatch"
+          fi
+        )"
+        exit 2
+      fi
+    done
   fi
 fi
 
 echo "[wsrepl-qa] restart guest daemon and capture logs..."
-restart_guest_daemon_and_capture_logs "${guest_server_url}"
+restart_guest_daemon_and_capture_logs "${guest_server_url}" "${server_routed_max_bytes_seed}"
 
 guest_provider_install_id="${WSREPL_QA_GUEST_PROVIDER_ID:-}"
 if [[ -z "${guest_provider_install_id}" ]]; then
@@ -2924,7 +3603,7 @@ if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
     (
       VM_NAME="${extra_vm}"
       DAEMON_DIAG_DIR="${extra_daemon_dir}"
-      restart_guest_daemon_and_capture_logs "${guest_server_url}" || true
+      restart_guest_daemon_and_capture_logs "${guest_server_url}" "${server_routed_max_bytes_seed}" || true
 
       # Best-effort only: do not fail the whole wrapper if an additional VM lacks Happier/provider tooling.
       if limactl shell "${VM_NAME}" -- bash -lc '[[ -x "$HOME/.happier/bin/happier" ]] || command -v happier >/dev/null 2>&1' >/dev/null 2>&1; then
@@ -3021,7 +3700,7 @@ echo "[wsrepl-qa] capture host diagnostics..."
 echo "[wsrepl-qa] capture guest diagnostics..."
 set +e
 limactl list 2>&1 | tee "${REPORT_ROOT}/lima.list.txt" >/dev/null
-limactl info "${VM_NAME}" 2>&1 | tee "${REPORT_ROOT}/lima.info.txt" >/dev/null
+limactl list --all-fields --json "${VM_NAME}" 2>&1 | tee "${REPORT_ROOT}/lima.info.txt" >/dev/null
 limactl shell "${VM_NAME}" -- bash -lc "set -euo pipefail; uname -a; id; df -h; command -v node >/dev/null 2>&1 && node --version || true; command -v free >/dev/null 2>&1 && free -m || true" \
   2>&1 | tee "${REPORT_ROOT}/guest.diag.txt" >/dev/null
 if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
@@ -3029,7 +3708,7 @@ if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
     safe_extra_vm="${extra_vm//[^A-Za-z0-9._-]/_}"
     extra_root="${REPORT_ROOT}/vms/${safe_extra_vm}"
     mkdir -p "${extra_root}"
-    limactl info "${extra_vm}" 2>&1 | tee "${extra_root}/lima.info.txt" >/dev/null
+    limactl list --all-fields --json "${extra_vm}" 2>&1 | tee "${extra_root}/lima.info.txt" >/dev/null
     limactl shell "${extra_vm}" -- bash -lc "set -euo pipefail; uname -a; id; df -h; command -v node >/dev/null 2>&1 && node --version || true; command -v free >/dev/null 2>&1 && free -m || true" \
       2>&1 | tee "${extra_root}/guest.diag.txt" >/dev/null
   done
@@ -3161,78 +3840,13 @@ run_playwright_attempt() {
   fi
   mkdir -p "${outdir}"
 
-  # The host daemon is normally run under a stack-scoped home directory so it shares credentials
-  # with the UI. The watchdog must probe status using the same home+activeServerId or it will
-  # report "Daemon is not running" and restart continuously.
-  local watchdog_cli_root=""
-  local watchdog_active_server_id=""
-  local watchdog_stack_hint=""
-  watchdog_stack_hint="$(resolve_stack_cli_home_and_active_server_id_for_ui_url || true)"
-  if [[ -n "${watchdog_stack_hint}" ]]; then
-    watchdog_cli_root="$(printf "%s" "${watchdog_stack_hint}" | cut -d '|' -f 1)"
-    watchdog_active_server_id="$(printf "%s" "${watchdog_stack_hint}" | cut -d '|' -f 2)"
-  fi
-  local host_home_rel="${WSREPL_QA_HOST_HOME_REL:-}"
-  if [[ -n "${host_home_rel}" && -n "${watchdog_active_server_id}" ]]; then
-    local overridden_home="$HOME/${host_home_rel}"
-    if [[ -d "${overridden_home}" && -f "${overridden_home}/servers/${watchdog_active_server_id}/access.key" ]]; then
-      watchdog_cli_root="${overridden_home}"
-    fi
-  fi
-
-  local watchdog_pid=""
-  if [[ "${WSREPL_QA_HOST_DAEMON_WATCHDOG:-0}" == "1" ]]; then
-    local interval_s
-    interval_s="$(read_wsrepl_host_daemon_watchdog_interval_s)"
-    (
-      set +e
-      set +u
-      set +o pipefail
-      consecutive_not_running=0
-      while true; do
-        sleep "${interval_s}"
-        # `happier daemon status` can exit 0 even when unhealthy; treat explicit "not running" as unhealthy.
-        if [[ -n "${watchdog_cli_root}" && -n "${watchdog_active_server_id}" ]]; then
-          status_out="$(HAPPIER_SERVER_URL="${host_server_url:-}" HAPPIER_HOME_DIR="${watchdog_cli_root}" HAPPIER_ACTIVE_SERVER_ID="${watchdog_active_server_id}" run_host_happier daemon status 2>&1)"
-          status_code=$?
-        else
-          status_out="$(HAPPIER_SERVER_URL="${host_server_url:-}" run_host_happier daemon status 2>&1)"
-          status_code=$?
-        fi
-        if [[ "${status_code}" != "0" ]]; then
-          consecutive_not_running=0
-          printf "%s\n" "[wsrepl-qa] host daemon watchdog: restarting daemon (status_code=${status_code})" >> "${outdir}/host-daemon-watchdog.log" 2>&1 || true
-          restart_host_daemon_and_capture_logs "${host_server_url:-}" || true
-          continue
-        fi
-
-        if printf "%s" "${status_out}" | grep -qi "Daemon is not running"; then
-          consecutive_not_running=$((consecutive_not_running + 1))
-        else
-          consecutive_not_running=0
-        fi
-
-        # Avoid flapping: a daemon can momentarily report "not running" during version restarts.
-        if [[ "${consecutive_not_running}" -ge 3 ]]; then
-          consecutive_not_running=0
-          printf "%s\n" "[wsrepl-qa] host daemon watchdog: restarting daemon (status_code=${status_code})" >> "${outdir}/host-daemon-watchdog.log" 2>&1 || true
-          restart_host_daemon_and_capture_logs "${host_server_url:-}" || true
-        fi
-      done
-    ) &
-    watchdog_pid="$!"
-  fi
+  start_host_daemon_watchdog_background "${outdir}" "${host_server_url:-}"
 
   HAPPIER_QA_OUTDIR="${outdir}" \
     run_with_timeout_ms "${HAPPIER_QA_TIMEOUT_MS}" \
       node "${REPO_DIR}/.project/scripts/qa/playwright-session-handoff-wsrepl-matrix.mjs" \
       2>&1 | tee "${outdir}/runner.log"
   local status="${PIPESTATUS[0]}"
-
-  if [[ -n "${watchdog_pid}" ]]; then
-    kill "${watchdog_pid}" >/dev/null 2>&1 || true
-    wait "${watchdog_pid}" >/dev/null 2>&1 || true
-  fi
 
   return "${status}"
 }
@@ -3310,7 +3924,7 @@ if [[ "${playwright_status}" != "0" ]]; then
   if should_retry_for_daemon_rpc_unavailable "${PLAYWRIGHT_OUTDIR}"; then
     echo "[wsrepl-qa] Playwright failed with daemon RPC unavailable; restarting daemons and retrying once..." >&2
     restart_host_daemon_and_capture_logs "${host_server_url}"
-    restart_guest_daemon_and_capture_logs "${guest_server_url}"
+    restart_guest_daemon_and_capture_logs "${guest_server_url}" "${server_routed_max_bytes_seed}"
 
     PLAYWRIGHT_ATTEMPT=2
     PLAYWRIGHT_OUTDIR="${PLAYWRIGHT_ROOTDIR}/attempt-02"

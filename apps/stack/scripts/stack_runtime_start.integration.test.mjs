@@ -15,6 +15,27 @@ function stackRootDirFromMeta(metaUrl) {
   return dirname(scriptsDir);
 }
 
+async function waitForStackDaemonRunning({ rootDir, fixture, env, timeoutMs = 10_000 }) {
+  const startedAt = Date.now();
+  let daemonStatus = null;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const statusRes = await runNode(
+      [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', fixture.stackName, 'status', '--json'],
+      { cwd: rootDir, env },
+    );
+    assert.equal(statusRes.code, 0, `stdout:\n${statusRes.stdout}\nstderr:\n${statusRes.stderr}`);
+    daemonStatus = JSON.parse(statusRes.stdout.trim());
+    if (/running/i.test(String(daemonStatus?.status ?? ''))) {
+      return daemonStatus;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  assert.match(String(daemonStatus?.status ?? ''), /running/i);
+  return daemonStatus;
+}
+
 test('hstack stack start --runtime --background launches the active runtime snapshot', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createStartableRuntimeSnapshotFixture(t, { stackName: 'runtime-prod' });
@@ -55,27 +76,72 @@ test('hstack stack start --runtime --background launches the active runtime snap
     );
     assert.equal(serverRuntimeEnv.HAPPIER_SERVER_LIGHT_DATA_DIR, join(fixture.stackDir, 'server-light'));
 
-    const daemonStatusRes = await runNode(
-      [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', fixture.stackName, 'status', '--json'],
-      { cwd: rootDir, env },
-    );
-    assert.equal(daemonStatusRes.code, 0, `stdout:\n${daemonStatusRes.stdout}\nstderr:\n${daemonStatusRes.stderr}`);
-    let daemonStatus = JSON.parse(daemonStatusRes.stdout.trim());
-    const startedAt = Date.now();
-    while (!/running/i.test(String(daemonStatus?.status ?? '')) && Date.now() - startedAt < 10_000) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const nextStatusRes = await runNode(
-        [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', fixture.stackName, 'status', '--json'],
-        { cwd: rootDir, env },
-      );
-      assert.equal(nextStatusRes.code, 0, `stdout:\n${nextStatusRes.stdout}\nstderr:\n${nextStatusRes.stderr}`);
-      daemonStatus = JSON.parse(nextStatusRes.stdout.trim());
-    }
-    assert.match(String(daemonStatus?.status ?? ''), /running/i);
+    await waitForStackDaemonRunning({ rootDir, fixture, env });
   } finally {
     await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
       cwd: rootDir,
       env,
+    });
+  }
+});
+
+test('hstack stack start --runtime --restart reuses persisted direct-peer topology env', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createStartableRuntimeSnapshotFixture(t, { stackName: 'runtime-direct-peer' });
+
+  const baseEnv = {
+    ...process.env,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+  };
+  const topologyEnv = {
+    ...baseEnv,
+    HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: 'host.lima.internal',
+    HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT: '13378',
+    HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED: 'true',
+    HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED: 'true',
+  };
+
+  const startArgs = [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'start', fixture.stackName, '--background', '--runtime', '--no-browser'];
+  const restartArgs = [...startArgs, '--restart'];
+
+  const startRes = await runNode(startArgs, { cwd: rootDir, env: topologyEnv });
+  assert.equal(startRes.code, 0, `stdout:\n${startRes.stdout}\nstderr:\n${startRes.stderr}`);
+
+  try {
+    await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
+    await waitForStackDaemonRunning({ rootDir, fixture, env: topologyEnv });
+
+    const envTextAfterStart = await readFile(join(fixture.stackDir, 'env'), 'utf8');
+    assert.match(envTextAfterStart, /HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS=host\.lima\.internal/);
+    assert.match(envTextAfterStart, /HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT=13378/);
+    assert.match(envTextAfterStart, /HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED=true/);
+    assert.match(envTextAfterStart, /HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED=true/);
+
+    const daemonLogPath = join(fixture.cliHomeDir, 'runtime-daemon.log');
+    const daemonLogAfterStart = await readFile(daemonLogPath, 'utf8');
+    assert.match(daemonLogAfterStart, /direct_peer_bind_port=13378/);
+    assert.match(daemonLogAfterStart, /direct_peer_advertised_hosts=host\.lima\.internal/);
+    assert.match(daemonLogAfterStart, /direct_peer_feature_enabled=true/);
+    assert.match(daemonLogAfterStart, /direct_peer_server_enabled=true/);
+
+    const restartRes = await runNode(restartArgs, { cwd: rootDir, env: baseEnv });
+    assert.equal(restartRes.code, 0, `stdout:\n${restartRes.stdout}\nstderr:\n${restartRes.stderr}`);
+    await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
+    await waitForStackDaemonRunning({ rootDir, fixture, env: baseEnv });
+
+    const restartedDaemonLog = await readFile(daemonLogPath, 'utf8');
+    const appendedLog = restartedDaemonLog.slice(daemonLogAfterStart.length);
+    assert.match(appendedLog, /direct_peer_bind_port=13378/);
+    assert.match(appendedLog, /direct_peer_advertised_hosts=host\.lima\.internal/);
+    assert.match(appendedLog, /direct_peer_feature_enabled=true/);
+    assert.match(appendedLog, /direct_peer_server_enabled=true/);
+  } finally {
+    await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
+      cwd: rootDir,
+      env: baseEnv,
     });
   }
 });

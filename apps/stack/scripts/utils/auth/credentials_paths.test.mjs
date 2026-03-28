@@ -105,6 +105,84 @@ test('resolveStackCredentialPaths uses HAPPIER_ACTIVE_SERVER_ID when provided', 
   assert.notEqual(out.serverScopedPath, out.urlHashServerScopedPath);
 });
 
+test('resolveStackCredentialPaths prefers the matching cli settings server id over a leaked stable scope alias', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-settings-'));
+  const serverUrl = 'http://127.0.0.1:3009';
+  const canonicalServerId = 'stack-dev-profile';
+  await writeFile(
+    join(dir, 'settings.json'),
+    JSON.stringify(
+      {
+        schemaVersion: 6,
+        activeServerId: canonicalServerId,
+        servers: {
+          [canonicalServerId]: {
+            id: canonicalServerId,
+            name: canonicalServerId,
+            serverUrl,
+            webappUrl: 'http://localhost:3009',
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: 1,
+          },
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf-8',
+  );
+
+  const out = resolveStackCredentialPaths({
+    cliHomeDir: dir,
+    serverUrl,
+    env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_dev__id_default' },
+  });
+
+  assert.equal(out.activeServerId, canonicalServerId);
+  assert.equal(out.serverScopedPath, join(dir, 'servers', canonicalServerId, 'access.key'));
+  assert.ok(out.paths.includes(join(dir, 'servers', 'stack_dev__id_default', 'access.key')));
+});
+
+test('resolveStackDaemonStatePaths prefers the matching cli settings server id over a leaked stable scope alias', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-paths-settings-'));
+  const serverUrl = 'http://127.0.0.1:3012';
+  const canonicalServerId = 'stack-dev-profile';
+  await writeFile(
+    join(dir, 'settings.json'),
+    JSON.stringify(
+      {
+        schemaVersion: 6,
+        activeServerId: canonicalServerId,
+        servers: {
+          [canonicalServerId]: {
+            id: canonicalServerId,
+            name: canonicalServerId,
+            serverUrl,
+            webappUrl: 'http://localhost:3012',
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: 1,
+          },
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf-8',
+  );
+
+  const out = resolveStackDaemonStatePaths({
+    cliHomeDir: dir,
+    serverUrl,
+    env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_dev__id_default' },
+  });
+
+  assert.equal(out.activeServerId, canonicalServerId);
+  assert.equal(out.serverScopedStatePath, join(dir, 'servers', canonicalServerId, 'daemon.state.json'));
+  assert.ok(out.pairs.some((pair) => pair.statePath === join(dir, 'servers', 'stack_dev__id_default', 'daemon.state.json')));
+});
+
 test('findExistingStackCredentialPath falls back to url-hash path when stable scope path is empty', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-'));
   const serverUrl = 'http://127.0.0.1:3009';

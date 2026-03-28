@@ -103,6 +103,10 @@ if (sub === 'start') {
   // Capture resolved target server so integration tests can assert correct stack port selection.
   append('server_url=' + String(process.env.HAPPIER_SERVER_URL || ''));
   append('webapp_url=' + String(process.env.HAPPIER_WEBAPP_URL || ''));
+  append('direct_peer_bind_port=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT || ''));
+  append('direct_peer_advertised_hosts=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS || ''));
+  append('direct_peer_feature_enabled=' + String(process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED || ''));
+  append('direct_peer_server_enabled=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED || ''));
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
   child.unref();
   writeFileSync(state, JSON.stringify({ pid: child.pid, httpPort: 0, startTime: new Date().toISOString() }) + '\\n', 'utf-8');
@@ -504,6 +508,53 @@ test('hstack stack daemon <name> start uses explicit HAPPIER_SERVER_URL when env
     logText.includes(`server_url=http://127.0.0.1:${explicitPort}`),
     `expected daemon env to target explicit HAPPIER_SERVER_URL port ${explicitPort}\n${logText}`
   );
+});
+
+test('hstack stack daemon <name> restart reuses persisted direct-peer topology env', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happy-stacks-stack-daemon-direct-peer-env-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+  await fixture.writeStackEnv();
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
+
+  const topologyEnv = {
+    ...fixture.baseEnv,
+    HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: 'host.lima.internal',
+    HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT: '13378',
+    HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED: 'true',
+    HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED: 'true',
+  };
+
+  const startRes = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--json'], { env: topologyEnv });
+  assertExitOk(startRes, 'stack daemon start with direct-peer topology env');
+
+  const envPath = join(fixture.storageDir, fixture.stackName, 'env');
+  const envTextAfterStart = await readFile(envPath, 'utf-8');
+  assert.match(envTextAfterStart, /HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS=host\.lima\.internal/);
+  assert.match(envTextAfterStart, /HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT=13378/);
+  assert.match(envTextAfterStart, /HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED=true/);
+  assert.match(envTextAfterStart, /HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED=true/);
+
+  const logPath = join(fixture.stackCliHome, 'stub-daemon.log');
+  const logTextAfterStart = await readLogText(logPath);
+  assert.match(logTextAfterStart, /direct_peer_bind_port=13378/);
+  assert.match(logTextAfterStart, /direct_peer_advertised_hosts=host\.lima\.internal/);
+  assert.match(logTextAfterStart, /direct_peer_feature_enabled=true/);
+  assert.match(logTextAfterStart, /direct_peer_server_enabled=true/);
+
+  const restartRes = await runHstack(['stack', 'daemon', fixture.stackName, 'restart', '--json'], { env: fixture.baseEnv });
+  assertExitOk(restartRes, 'stack daemon restart with persisted direct-peer topology env');
+
+  const restartLogText = await readLogText(logPath);
+  const appendedLog = restartLogText.slice(logTextAfterStart.length);
+  assert.match(appendedLog, /direct_peer_bind_port=13378/);
+  assert.match(appendedLog, /direct_peer_advertised_hosts=host\.lima\.internal/);
+  assert.match(appendedLog, /direct_peer_feature_enabled=true/);
+  assert.match(appendedLog, /direct_peer_server_enabled=true/);
 });
 
 test('hstack stack auth <name> login --identity=<name> --print prints identity-scoped HAPPIER_HOME_DIR', async (t) => {

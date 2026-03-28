@@ -19,6 +19,7 @@ function buildStubHappyCliScript({ message }) {
       `  homeDir: process.env.HAPPIER_HOME_DIR || null,`,
       `  serverUrl: process.env.HAPPIER_SERVER_URL || null,`,
       `  webappUrl: process.env.HAPPIER_WEBAPP_URL || null,`,
+      `  activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID || null,`,
       `}));`,
     ].join('\n');
 }
@@ -222,6 +223,51 @@ test('hstack happier (HAPPIER_STACK_STACK set) uses stack.runtime.json ports whe
   assert.equal(out.stack, fixture.stackName);
   assert.equal(out.serverUrl, 'http://127.0.0.1:4888');
   assert.equal(out.webappUrl, 'http://localhost:4888');
+});
+
+test('hstack happier prefers the matching stack server profile id over the stable scope id', async (t) => {
+  const fixture = await createHappyStackFixture(t, {
+    prefix: 'happier-stack-explicit-stack-scope-',
+    message: 'explicit-stack-scope',
+    serverPort: 5123,
+    stackCliSettings: {
+      schemaVersion: 6,
+      onboardingCompleted: true,
+      activeServerId: 'stack-local',
+      servers: {
+        'stack-local': {
+          id: 'stack-local',
+          name: 'Stack Local',
+          serverUrl: 'http://127.0.0.1:5123',
+          webappUrl: 'http://localhost:5123',
+          createdAt: 0,
+          updatedAt: 0,
+          lastUsedAt: 0,
+        },
+      },
+    },
+  });
+
+  const env = {
+    ...fixture.baseEnv,
+    HAPPIER_STACK_STACK: fixture.stackName,
+  };
+  delete env.HAPPIER_STACK_ENV_FILE;
+
+  const res = await runNodeCapture([join(rootDir, 'bin', 'happier.mjs')], {
+    cwd: rootDir,
+    env,
+  });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim());
+  assert.equal(out.message, 'explicit-stack-scope');
+  assert.equal(out.stack, fixture.stackName);
+  assert.ok(String(out.envFile).endsWith(`/${fixture.stackName}/env`), `expected envFile to end with /${fixture.stackName}/env, got: ${out.envFile}`);
+  assert.equal(out.homeDir, join(fixture.storageDir, fixture.stackName, 'cli'));
+  assert.equal(out.serverUrl, 'http://127.0.0.1:5123');
+  assert.equal(out.webappUrl, 'http://localhost:5123');
+  assert.equal(out.activeServerId, 'stack-local');
 });
 
 test('hstack stack happier <name> --identity=<name> uses identity-scoped HAPPIER_HOME_DIR', async (t) => {

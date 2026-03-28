@@ -127,7 +127,7 @@ test('readStackInfoSnapshot marks UI as down when expo runtime metadata is stale
     assert.equal(out.runtime.components.server.running, true);
     assert.equal(out.runtime.components.ui.running, false);
     assert.equal(out.runtime.health.status, 'degraded');
-    assert.deepEqual(out.runtime.health.issues, ['ui_down']);
+    assert.deepEqual(out.runtime.health.issues, ['ui_down', 'daemon_down']);
   } finally {
     restore();
     await serverListener.close();
@@ -166,7 +166,7 @@ test('readStackInfoSnapshot requires UI port reachability even when expo pid is 
     assert.equal(out.runtime.components.ui.pidAlive, true);
     assert.equal(out.runtime.components.ui.running, false);
     assert.equal(out.runtime.health.status, 'degraded');
-    assert.deepEqual(out.runtime.health.issues, ['ui_down']);
+    assert.deepEqual(out.runtime.health.issues, ['ui_down', 'daemon_down']);
   } finally {
     restore();
     await serverListener.close();
@@ -206,6 +206,43 @@ test('readStackInfoSnapshot refreshes stale runtime daemonPid from daemon.state.
     assert.equal(out.runtime.processes?.daemonPid, process.pid);
   } finally {
     restore();
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('readStackInfoSnapshot marks daemon as down when stack runtime is otherwise running and daemon is expected', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-daemon-down-'));
+  const storageDir = join(tmp, 'storage');
+  const stackName = 'dev-auth';
+  const baseDir = join(storageDir, stackName);
+
+  await mkdir(baseDir, { recursive: true });
+
+  const serverListener = await withListeningServer();
+  await writeFile(join(baseDir, 'env'), `HAPPIER_STACK_SERVER_PORT=${serverListener.port}\n`, 'utf-8');
+  await writeFile(
+    join(baseDir, 'stack.runtime.json'),
+    JSON.stringify({
+      version: 1,
+      stackName,
+      ownerPid: 999_999_999,
+      processes: { serverPid: process.pid },
+      ports: { server: serverListener.port },
+    }) + '\n',
+    'utf-8'
+  );
+
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+  try {
+    const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+    assert.equal(out.runtime.running, true);
+    assert.equal(out.runtime.components.server.running, true);
+    assert.equal(out.runtime.components.daemon.running, false);
+    assert.equal(out.runtime.health.status, 'degraded');
+    assert.deepEqual(out.runtime.health.issues, ['daemon_down']);
+  } finally {
+    restore();
+    await serverListener.close();
     await rm(tmp, { recursive: true, force: true });
   }
 });

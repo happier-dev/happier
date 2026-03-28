@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createAuthStackFixture, getStackRootFromMeta, hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 
 const BASE_ENV_LINES = [
@@ -48,6 +50,62 @@ test('hstack auth login --print --json includes configure-server links and publi
     parsed.configureServer.mobileUrl,
     `happier://server`
   );
+});
+
+test('hstack stack auth login --print --json prefers the canonical settings server id over the stable stack scope alias', async () => {
+  const rootDir = getStackRootFromMeta(import.meta.url);
+  const fixture = await createAuthStackFixture({
+    prefix: 'hstack-auth-canonical-server-id-',
+    stackName: 'qa-external-mcp-qa-20260327',
+    stackEnvLines: [
+      'HAPPIER_STACK_STACK=qa-external-mcp-qa-20260327',
+      'HAPPIER_STACK_SERVER_PORT=4102',
+      'HAPPIER_STACK_TAILSCALE_PREFER_PUBLIC_URL=0',
+      'HAPPIER_STACK_TAILSCALE_SERVE=0',
+    ],
+  });
+
+  try {
+    const env = fixture.buildEnv();
+    const cliHomeDir = join(fixture.storageDir, 'qa-external-mcp-qa-20260327', 'cli');
+    const canonicalServerId = 'stack-qa-external-mcp';
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(
+      join(cliHomeDir, 'settings.json'),
+      JSON.stringify(
+        {
+          schemaVersion: 6,
+          activeServerId: canonicalServerId,
+          servers: {
+            [canonicalServerId]: {
+              id: canonicalServerId,
+              name: canonicalServerId,
+              serverUrl: 'http://127.0.0.1:4102',
+              webappUrl: 'http://happier-qa-external-mcp-qa-20260327.localhost:4102',
+              createdAt: 1,
+              updatedAt: 1,
+              lastUsedAt: 1,
+            },
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+      'utf-8',
+    );
+
+    const res = await runNodeCapture(
+      [hstackBinPath(rootDir), 'stack', 'auth', 'qa-external-mcp-qa-20260327', 'login', '--print', '--no-open', '--json'],
+      { cwd: rootDir, env }
+    );
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+
+    const parsed = JSON.parse(res.stdout.trim());
+    assert.match(parsed.cmd, /HAPPIER_ACTIVE_SERVER_ID="stack-qa-external-mcp"/);
+    assert.doesNotMatch(parsed.cmd, /stack_qa-external-mcp-qa-20260327__id_default/);
+  } finally {
+    await fixture.cleanup();
+  }
 });
 
 test('hstack auth login --print --json webapp precedence variants', async (t) => {

@@ -8,6 +8,7 @@ import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/provide
 import {
   findAnyCredentialPathInCliHome,
   findExistingStackCredentialPath,
+  resolvePreferredStackServerIdFromCliSettings,
   resolvePreferredStackDaemonStatePaths,
   resolveStackDaemonStatePaths,
   resolveStackCredentialPaths,
@@ -22,6 +23,7 @@ import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
+import { ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { getCliHomeDirFromEnvOrDefault } from './utils/stack/dirs.mjs';
 import {
   isCliDirectExecutableCommand,
@@ -40,6 +42,14 @@ import { recordStackRuntimeDaemonPid, syncStackRuntimeDaemonPidFromDaemonState }
  * - printing actionable diagnostics
  */
 
+const STACK_DAEMON_MACHINE_TRANSFER_ENV_KEYS = [
+  'HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES',
+  'HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED',
+  'HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED',
+  'HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT',
+  'HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS',
+];
+
 function resolveServerUrlFromOptions(options) {
   if (typeof options === 'string') {
     return options.trim();
@@ -56,6 +66,38 @@ function resolveEnvFromOptions(options) {
 
 function hasExplicitServerContext({ serverUrl = '', env = process.env }) {
   return String(serverUrl ?? '').trim() !== '' || String(env?.HAPPIER_ACTIVE_SERVER_ID ?? '').trim() !== '';
+}
+
+async function persistStackDaemonMachineTransferEnv({ stackName, env = process.env } = {}) {
+  const name = String(stackName ?? '').trim();
+  if (!name) return { ok: false, changed: false, reason: 'missing_stack_name' };
+
+  const { envPath } = resolveStackEnvPath(name, env);
+  let existing = {};
+  try {
+    if (existsSync(envPath)) {
+      existing = parseEnvToObject(readFileSync(envPath, 'utf-8'));
+    }
+  } catch {
+    existing = {};
+  }
+
+  const updates = [];
+  for (const key of STACK_DAEMON_MACHINE_TRANSFER_ENV_KEYS) {
+    const rawValue = env?.[key];
+    if (rawValue == null) continue;
+    const value = String(rawValue).trim();
+    if (!value) continue;
+    if (String(existing?.[key] ?? '').trim() === value) continue;
+    updates.push({ key, value });
+  }
+
+  if (!updates.length) {
+    return { ok: true, changed: false, envPath, updatedKeys: [] };
+  }
+
+  await ensureEnvFileUpdated({ envPath, updates });
+  return { ok: true, changed: true, envPath, updatedKeys: updates.map(({ key }) => key) };
 }
 
 export async function cleanupStaleDaemonState(homeDir, options = {}) {
@@ -977,6 +1019,16 @@ export function getDaemonEnv({
     stackName,
     cliIdentity,
   });
+  // Prefer the canonical server id from the CLI settings when it matches this stack's server URL.
+  // This keeps daemon state/locks aligned with the active stack server profile (and avoids leaking
+  // the stable-scope id into the daemon's persisted server-scoped directories).
+  const settingsServerId = resolvePreferredStackServerIdFromCliSettings({
+    cliHomeDir,
+    serverUrl: internalServerUrl,
+  });
+  if (settingsServerId) {
+    scopedEnv.HAPPIER_ACTIVE_SERVER_ID = settingsServerId;
+  }
   return {
     ...scopedEnv,
     HAPPIER_SERVER_URL: internalServerUrl,
@@ -1085,6 +1137,10 @@ export async function startLocalDaemonWithAuth({
     (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() ||
     'default';
   const baseEnv = { ...env };
+  await persistStackDaemonMachineTransferEnv({
+    stackName: resolvedStackName,
+    env: baseEnv,
+  }).catch(() => {});
   const daemonEnv = getDaemonEnv({
     baseEnv,
     cliHomeDir,

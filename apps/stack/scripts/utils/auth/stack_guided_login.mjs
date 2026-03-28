@@ -13,6 +13,7 @@ import { readEnvObjectFromFile } from '../env/read.mjs';
 import { getWebappUrlEnvOverride, resolveServerUrls } from '../server/urls.mjs';
 import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { resolveRuntimeManifestEntrypoint } from '../../runtime/shared/runtime_manifest.mjs';
+import { resolveStackCredentialPaths } from './credentials_paths.mjs';
 
 function extractEnvVar(cmd, key) {
   const re = new RegExp(`${key}="([^"]+)"`);
@@ -454,6 +455,11 @@ async function prepareCoreAuthEnv({ stackName, webappUrl, env = process.env } = 
     String(merged.HAPPIER_HOME_DIR ?? '').trim() ||
     String(merged.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim() ||
     join(baseDir, 'cli');
+  const credentialPaths = resolveStackCredentialPaths({
+    cliHomeDir,
+    serverUrl: internalServerUrl,
+    env: merged,
+  });
 
   return {
     ...merged,
@@ -461,6 +467,7 @@ async function prepareCoreAuthEnv({ stackName, webappUrl, env = process.env } = 
     HAPPIER_SERVER_URL: internalServerUrl,
     HAPPIER_PUBLIC_SERVER_URL: publicServerUrl,
     HAPPIER_WEBAPP_URL: webappUrl,
+    ...(credentialPaths.activeServerId ? { HAPPIER_ACTIVE_SERVER_ID: credentialPaths.activeServerId } : {}),
   };
 }
 

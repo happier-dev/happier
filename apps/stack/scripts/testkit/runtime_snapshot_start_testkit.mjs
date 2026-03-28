@@ -70,6 +70,10 @@ if (sub === 'start') {
   ${includeServerUrlInStartLog
     ? "append('start:' + String(process.env.HAPPIER_SERVER_URL || ''));"
     : `append(${JSON.stringify(startLogLine)});`}
+  append('direct_peer_bind_port=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT || ''));
+  append('direct_peer_advertised_hosts=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS || ''));
+  append('direct_peer_feature_enabled=' + String(process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED || ''));
+  append('direct_peer_server_enabled=' + String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED || ''));
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
   child.unref();
   writeState(JSON.stringify({ pid: child.pid, httpPort: 0, startedAt: new Date().toISOString() }) + '\\n');
