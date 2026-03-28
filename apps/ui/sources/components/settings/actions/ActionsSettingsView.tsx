@@ -249,10 +249,6 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                                                     return null;
                                                 }
 
-                                                if (getActionSpec(entry.actionId).requiresApprovalQueue !== true) {
-                                                    return null;
-                                                }
-
                                                 const approvalRequired = getActionTargetApprovalRequired({
                                                     settings,
                                                     actionId: entry.actionId,

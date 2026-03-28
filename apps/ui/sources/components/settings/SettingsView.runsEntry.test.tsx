@@ -294,7 +294,7 @@ describe('SettingsView (runs entry)', () => {
 
         await screen.pressRowByTitle('common.actions');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/actions');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/actions');
     });
 
     it("omits the What's New entry when changelog UI is disabled by build policy", async () => {
