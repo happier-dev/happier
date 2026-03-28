@@ -1,8 +1,10 @@
 import { resolve as resolvePath } from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 import { createRunDirs } from '../runDir';
+import { resolveExpoDevClientDeepLink } from '../mobile/expoDevClientDeepLink';
+import { resolveTerminalConnectDeepLink } from '../mobile/terminalConnectDeepLink';
 import { resolveDeviceVisibleBaseUrl } from '../mobile/resolveDeviceHost';
 import { parseMaestroArgs as defaultParseMaestroArgs } from '../../../scripts/runMaestroWithHeartbeat.shared.mjs';
 import { defaultPrimePlatformAppLaunch } from './primePlatformAppLaunch';
@@ -20,6 +22,16 @@ export type StartedDevClientMetroLike = Readonly<{
   stop?: () => Promise<void>;
 }>;
 
+export type StartedCliTerminalConnectLike = Readonly<{
+  connectUrl: string;
+  waitForSuccess: () => Promise<void>;
+  stop: () => Promise<void>;
+}>;
+
+export type StartedDaemonLike = Readonly<{
+  stop: () => Promise<void>;
+}>;
+
 export type MobileMaestroRunResult = Readonly<{
   exitCode: number;
   runDir: string;
@@ -35,7 +47,21 @@ export type MobileMaestroDeps = Readonly<{
     testDir: string;
     extraEnv?: NodeJS.ProcessEnv;
     port?: number;
+    host?: string;
   }) => Promise<StartedDevClientMetroLike>;
+  startCliTerminalConnect: (params: {
+    testDir: string;
+    cliHomeDir: string;
+    serverUrl: string;
+    webappUrl: string;
+    env: NodeJS.ProcessEnv;
+  }) => Promise<StartedCliTerminalConnectLike>;
+  startTestDaemon: (params: {
+    testDir: string;
+    happyHomeDir: string;
+    env: NodeJS.ProcessEnv;
+    startupTimeoutMs?: number;
+  }) => Promise<StartedDaemonLike>;
   runMaestro: (params: {
     cwd: string;
     env: NodeJS.ProcessEnv;
@@ -97,6 +123,38 @@ function stripTrailingSlash(url: string): string {
   return url.replace(/\/$/, '');
 }
 
+type ConnectedMachineMode = 'cli-terminal-daemon' | null;
+
+function resolveConnectedMachineMode(env: NodeJS.ProcessEnv): ConnectedMachineMode {
+  const mode = String(env.HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE ?? '').trim().toLowerCase();
+  return mode === 'cli-terminal-daemon' ? 'cli-terminal-daemon' : null;
+}
+
+function resolveConnectedMachineBootstrapFlow(env: NodeJS.ProcessEnv): string {
+  const configured = String(env.HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_BOOTSTRAP_FLOW ?? '').trim();
+  return configured || 'suites/mobile-e2e/flows/_bootstrap/connectedMachineTerminalAuth.yaml';
+}
+
+function shouldWarmExpoDevClientBundle(params: Readonly<{
+  env: NodeJS.ProcessEnv;
+  platform: 'android' | 'ios' | null;
+  hasWarmableMetro: boolean;
+}>): boolean {
+  if (!params.platform || !params.hasWarmableMetro) return false;
+  const configured = params.env.HAPPIER_E2E_MOBILE_WARM_DEV_CLIENT_BUNDLE;
+  if (configured !== undefined) return isTruthyEnv(configured);
+  return params.platform === 'android';
+}
+
+function resolveWarmExpoDevClientBundleTimeoutMs(params: Readonly<{
+  env: NodeJS.ProcessEnv;
+  platform: 'android' | 'ios' | null;
+}>): number {
+  const explicit = Number.parseInt(params.env.HAPPIER_E2E_MOBILE_WARM_DEV_CLIENT_BUNDLE_TIMEOUT_MS ?? '', 10);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  return params.platform === 'android' ? 300_000 : 60_000;
+}
+
 async function warmExpoDevClientBundle(params: Readonly<{
   platform: 'android' | 'ios';
   hostMetroUrl: string;
@@ -131,7 +189,7 @@ async function warmExpoDevClientBundle(params: Readonly<{
     throw new Error(`Failed to warm Expo Dev Client bundle: bundle not ok (${bundleRes.status})`);
   }
 
-  await bundleRes.arrayBuffer().catch(() => {});
+  await bundleRes.body?.cancel().catch(() => {});
 }
 
 async function withHardTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -261,7 +319,10 @@ export async function runMobileMaestro(
 
   const isAppInstalled = deps.isAppInstalled ?? defaultIsAppInstalled;
   if (mobilePlatform) {
-    const installed = await isAppInstalled({ env: params.env, platform: mobilePlatform, appId });
+    let installed = await isAppInstalled({ env: params.env, platform: mobilePlatform, appId });
+    if (!installed) {
+      installed = await isAppInstalled({ env: params.env, platform: mobilePlatform, appId });
+    }
     if (!installed) {
       throw new Error(
         `Mobile e2e cannot run: app "${appId}" is not installed on the target ${mobilePlatform} device/simulator. Install a development build first (see packages/tests/suites/mobile-e2e/README.md).`,
@@ -293,22 +354,15 @@ export async function runMobileMaestro(
     if (!deps.startDevClientMetro) {
       throw new Error('Missing startDevClientMetro dependency.');
     }
-    const deviceHostOverride = String(params.env.HAPPIER_E2E_MOBILE_DEVICE_HOST ?? '').trim();
-    // We default to `adb reverse` on Android, so Metro is reachable on loopback.
-    // Prefer `127.0.0.1` unless the caller overrides the device host.
-    const androidPackagerHost = deviceHostOverride || '127.0.0.1';
     const metroEnv: NodeJS.ProcessEnv = {
       ...params.env,
-      ...(platform === 'android'
-        ? {
-            EXPO_PACKAGER_HOSTNAME: androidPackagerHost,
-            REACT_NATIVE_PACKAGER_HOSTNAME: androidPackagerHost,
-          }
-        : null),
     };
+    metroEnv.HAPPIER_E2E_EXPO_CLEAR ??= '1';
+    const metroHost = String(params.env.HAPPIER_E2E_DEV_CLIENT_HOST ?? '').trim() || (platform === 'android' ? 'lan' : 'localhost');
     metro = await deps.startDevClientMetro({
       testDir: run.testDir('expo-metro'),
       extraEnv: metroEnv,
+      host: metroHost,
       port: explicitHostMetroUrl ? extractUrlPort(hostMetroUrlFromEnv) ?? undefined : undefined,
     });
   }
@@ -337,7 +391,7 @@ export async function runMobileMaestro(
   const adbReversePorts =
     deps.adbReversePorts
       ? deps.adbReversePorts
-      : (reverseParams) => runAdbReverseIfEnabled(reverseParams);
+      : (reverseParams: Parameters<typeof runAdbReverseIfEnabled>[0]) => runAdbReverseIfEnabled(reverseParams);
 
   const adbReverse = adbReversePorts({
     env: params.env,
@@ -381,23 +435,37 @@ export async function runMobileMaestro(
     }
   })();
 
+  const devClientLaunchUrl = deviceMetroUrl
+    ? resolveExpoDevClientDeepLink({
+        env: params.env,
+        metroUrl: deviceMetroUrl,
+      })
+    : '';
+
   const maestroBin = deps.resolveMaestroBin
     ? deps.resolveMaestroBin(params.env)
     : defaultDeps.resolveMaestroBin(params.env);
 
-  const warmBundleEnabled = isTruthyEnv(params.env.HAPPIER_E2E_MOBILE_WARM_DEV_CLIENT_BUNDLE ?? '0');
-  if (warmBundleEnabled && metro && (platform === 'android' || platform === 'ios')) {
+  const hasWarmableMetro = Boolean(hostMetroUrl && (metro || explicitHostMetroUrl));
+  const warmBundleEnabled = shouldWarmExpoDevClientBundle({
+    env: params.env,
+    platform: mobilePlatform,
+    hasWarmableMetro,
+  });
+  if (warmBundleEnabled && mobilePlatform) {
     // eslint-disable-next-line no-console
-    console.log(`[tests] warming Expo Dev Client bundle (${platform})`);
-    const warmTimeoutMs =
-      Number.parseInt(params.env.HAPPIER_E2E_MOBILE_WARM_DEV_CLIENT_BUNDLE_TIMEOUT_MS ?? '60000', 10) || 60000;
+    console.log(`[tests] warming Expo Dev Client bundle (${mobilePlatform})`);
+    const warmTimeoutMs = resolveWarmExpoDevClientBundleTimeoutMs({
+      env: params.env,
+      platform: mobilePlatform,
+    });
     const abortController = new AbortController();
     const hardTimeoutMs = Math.max(50, warmTimeoutMs + 50);
     const hardTimeoutId = setTimeout(() => abortController.abort(), warmTimeoutMs);
     try {
       await withHardTimeout(
         warmExpoDevClientBundle({
-          platform,
+          platform: mobilePlatform,
           hostMetroUrl,
           timeoutMs: warmTimeoutMs,
           signal: abortController.signal,
@@ -408,7 +476,9 @@ export async function runMobileMaestro(
       // Best-effort optimization only: warming reduces Dev Client flake from first-load
       // bundling delays, but failures should not prevent the actual Maestro run.
       // eslint-disable-next-line no-console
-      console.warn(`[tests] warm Expo Dev Client bundle failed (${platform}): ${String((err as any)?.message ?? err)}`);
+      console.warn(
+        `[tests] warm Expo Dev Client bundle failed (${mobilePlatform}): ${String((err as any)?.message ?? err)}`,
+      );
     } finally {
       clearTimeout(hardTimeoutId);
     }
@@ -422,6 +492,8 @@ export async function runMobileMaestro(
       appId,
     });
   }
+
+  const connectedMachineMode = resolveConnectedMachineMode(params.env);
 
   writeFileSync(
     manifestPath,
@@ -437,6 +509,8 @@ export async function runMobileMaestro(
         serverUrlDevice: deviceServerUrl ?? null,
         metroUrlHost: hostMetroUrl ?? null,
         metroUrlDevice: deviceMetroUrl ?? null,
+        devClientLaunchUrl: devClientLaunchUrl || null,
+        connectedMachineMode,
         passThrough: parsed.passThrough ?? [],
         env: {
           APP_ENV: params.env.APP_ENV ?? null,
@@ -455,45 +529,112 @@ export async function runMobileMaestro(
     throw new Error('Missing runMaestro dependency.');
   }
 
-  const childEnv: NodeJS.ProcessEnv = {
+  const buildMaestroEnv = (extraEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
     ...params.env,
     // Disable analytics prompts for deterministic local runs.
     MAESTRO_CLI_NO_ANALYTICS: String(params.env.MAESTRO_CLI_NO_ANALYTICS ?? '1'),
     ...(deviceServerUrl ? { HAPPIER_E2E_SERVER_URL: deviceServerUrl } : {}),
     ...(server?.baseUrl ? { HAPPIER_E2E_SERVER_URL_HOST: server.baseUrl } : {}),
     ...(platform ? { HAPPIER_E2E_MOBILE_PLATFORM: platform } : {}),
+    ...(devClientLaunchUrl ? { HAPPIER_E2E_DEV_CLIENT_LAUNCH_URL: devClientLaunchUrl } : {}),
     HAPPIER_E2E_MOBILE_APP_ID: appId,
-  };
+    ...(extraEnv ?? {}),
+  });
 
-  const childArgs = [
-    // Force Maestro to select the intended device platform. Without this,
-    // Maestro may pick an iOS Simulator even when an Android Emulator is
-    // available (or vice-versa), which makes runs flaky and non-deterministic.
+  const buildMaestroArgs = (flowPath: string, extraArgs?: string[]): string[] => [
     ...(platform ? ['-p', platform] : []),
     'test',
-    flows,
+    flowPath,
     '--debug-output',
     debugOutputDir,
-    // Pass values both via `-e` and env, so flows are explicit and runner logs are easy to inspect.
     '-e',
     `HAPPIER_E2E_MOBILE_APP_ID=${appId}`,
     ...(deviceServerUrl ? ['-e', `HAPPIER_E2E_SERVER_URL=${deviceServerUrl}`] : []),
     ...(server?.baseUrl ? ['-e', `HAPPIER_E2E_SERVER_URL_HOST=${server.baseUrl}`] : []),
     ...(platform ? ['-e', `HAPPIER_E2E_MOBILE_PLATFORM=${platform}`] : []),
     ...(deviceMetroUrl ? ['-e', `HAPPIER_E2E_DEV_CLIENT_METRO_URL=${deviceMetroUrl}`] : []),
+    ...(devClientLaunchUrl ? ['-e', `HAPPIER_E2E_DEV_CLIENT_LAUNCH_URL=${devClientLaunchUrl}`] : []),
+    ...(extraArgs ?? []),
     ...(parsed.passThrough ?? []),
   ];
 
-  let exitCode = 1;
-  try {
-    const result = await deps.runMaestro({
+  const runMaestroFlow = async (flowPath: string, extraEnv?: NodeJS.ProcessEnv, extraArgs?: string[]) => {
+    return await deps.runMaestro!({
       cwd: params.cwd,
-      env: childEnv,
+      env: buildMaestroEnv(extraEnv),
       maestroBin: maestroBin || maestroCommand(params.env),
-      args: childArgs,
+      args: buildMaestroArgs(flowPath, extraArgs),
     });
-    exitCode = result.exitCode;
+  };
+
+  let exitCode = 1;
+  let startedCliTerminalConnect: StartedCliTerminalConnectLike | null = null;
+  let startedDaemon: StartedDaemonLike | null = null;
+  try {
+    if (connectedMachineMode === 'cli-terminal-daemon') {
+      if (!deps.startCliTerminalConnect) {
+        throw new Error('Missing startCliTerminalConnect dependency.');
+      }
+      if (!deps.startTestDaemon) {
+        throw new Error('Missing startTestDaemon dependency.');
+      }
+
+      const cliHomeDir = run.testDir('cli-home');
+      mkdirSync(cliHomeDir, { recursive: true });
+
+      startedCliTerminalConnect = await deps.startCliTerminalConnect({
+        testDir: run.testDir('cli-terminal-connect'),
+        cliHomeDir,
+        serverUrl: server.baseUrl,
+        webappUrl: server.baseUrl,
+        env: params.env,
+      });
+
+      const terminalConnectDeepLink = resolveTerminalConnectDeepLink(startedCliTerminalConnect.connectUrl, {
+        env: params.env,
+        serverUrl: deviceServerUrl,
+      });
+      if (!terminalConnectDeepLink) {
+        throw new Error(`Failed to build terminal connect deep link from ${JSON.stringify(startedCliTerminalConnect.connectUrl)}`);
+      }
+
+      const bootstrapFlow = resolveConnectedMachineBootstrapFlow(params.env);
+      const bootstrapResult = await runMaestroFlow(
+        bootstrapFlow,
+        { HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK: terminalConnectDeepLink },
+        ['-e', `HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK=${terminalConnectDeepLink}`],
+      );
+      if (bootstrapResult.exitCode !== 0) {
+        exitCode = bootstrapResult.exitCode;
+      } else {
+        await startedCliTerminalConnect.waitForSuccess();
+        startedDaemon = await deps.startTestDaemon({
+          testDir: run.testDir('daemon'),
+          happyHomeDir: cliHomeDir,
+          env: {
+            ...params.env,
+            HAPPIER_SERVER_URL: server.baseUrl,
+            HAPPIER_WEBAPP_URL: server.baseUrl,
+          },
+        });
+        const result = await runMaestroFlow(
+          flows,
+          { HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK: terminalConnectDeepLink },
+          ['-e', `HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK=${terminalConnectDeepLink}`],
+        );
+        exitCode = result.exitCode;
+      }
+    } else {
+      const result = await runMaestroFlow(flows);
+      exitCode = result.exitCode;
+    }
   } finally {
+    if (startedDaemon?.stop) {
+      await startedDaemon.stop();
+    }
+    if (startedCliTerminalConnect?.stop) {
+      await startedCliTerminalConnect.stop();
+    }
     if (server?.stop) {
       await server.stop();
     }

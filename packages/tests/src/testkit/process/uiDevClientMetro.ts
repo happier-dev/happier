@@ -49,6 +49,7 @@ export async function startUiDevClientMetro(params: {
   testDir: string;
   env: NodeJS.ProcessEnv;
   port?: number;
+  host?: string;
 }): Promise<StartedUiDevClientMetro> {
   const currentOwnerInspection = inspectOwnedProcess(process.pid);
   if (currentOwnerInspection.ok) {
@@ -76,6 +77,7 @@ export async function startUiDevClientMetro(params: {
     typeof params.port === 'number' && Number.isFinite(params.port) && params.port > 0
       ? params.port
       : await reserveAvailablePort();
+  const metroHost = String(params.host ?? '').trim() || 'localhost';
 
   const proc = spawnLoggedProcess({
     command: process.execPath,
@@ -84,7 +86,7 @@ export async function startUiDevClientMetro(params: {
       'start',
       '--dev-client',
       '--host',
-      'localhost',
+      metroHost,
       '--port',
       String(metroPort),
       ...(clearCache ? ['--clear'] : []),

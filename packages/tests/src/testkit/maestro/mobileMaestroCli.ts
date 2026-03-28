@@ -1,6 +1,8 @@
 import { runManagedChildCommand, resolveSignalExitCode } from '../../../scripts/managedChildLifecycle.mjs';
+import { startTestDaemon } from '../daemon/daemon';
 import { startServerLight } from '../process/serverLight';
 import { startUiDevClientMetro } from '../process/uiDevClientMetro';
+import { startCliAuthLoginForTerminalConnect } from '../uiE2e/cliTerminalConnect';
 
 import { runMobileMaestro } from './mobileMaestroRunner';
 
@@ -16,12 +18,12 @@ async function main() {
       env: process.env,
     },
     {
-      startDevClientMetro: async ({ testDir, extraEnv, port }) => {
+      startDevClientMetro: async ({ testDir, extraEnv, port, host }) => {
         const mergedEnv: NodeJS.ProcessEnv = {
           ...process.env,
           ...extraEnv,
         };
-        const started = await startUiDevClientMetro({ testDir, env: mergedEnv, port });
+        const started = await startUiDevClientMetro({ testDir, env: mergedEnv, port, host });
         return {
           baseUrl: started.baseUrl,
           port: started.port,
@@ -36,6 +38,23 @@ async function main() {
           dataDir: started.dataDir,
           stop: started.stop,
         };
+      },
+      startCliTerminalConnect: async ({ testDir, cliHomeDir, serverUrl, webappUrl, env }) => {
+        return await startCliAuthLoginForTerminalConnect({
+          testDir,
+          cliHomeDir,
+          serverUrl,
+          webappUrl,
+          env,
+        });
+      },
+      startTestDaemon: async ({ testDir, happyHomeDir, env, startupTimeoutMs }) => {
+        return await startTestDaemon({
+          testDir,
+          happyHomeDir,
+          env,
+          startupTimeoutMs,
+        });
       },
       runMaestro: async ({ cwd, env, maestroBin, args }) => {
         const startedAt = Date.now();

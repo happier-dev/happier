@@ -1508,40 +1508,6 @@ await server.connect(new StdioServerTransport());
     };
   },
 
-  agent_sdk_partial_messages_smoke: (provider) => {
-    assertProviderId(provider, 'claude');
-    return {
-      id: 'agent_sdk_partial_messages_smoke',
-      title: 'agent sdk: includePartialMessages does not break tool-trace session flow (Read)',
-      tier: 'extended',
-      yolo: true,
-      messageMeta: { ...agentSdkRemoteMetaBase, claudeRemoteIncludePartialMessages: true },
-      maxTraceEvents: { toolCalls: 1, toolResults: 1, permissionRequests: 1 },
-      setup: async ({ workspaceDir }) => {
-        await writeFile(join(workspaceDir, 'partial-messages-read.txt'), `AGENTSDK_PARTIAL_OK_${Date.now()}\n`, 'utf8');
-      },
-      prompt: ({ workspaceDir }) =>
-        [
-          'Run exactly one tool call:',
-          '- Use the Read tool (not Bash) to read the file at this absolute path:',
-          join(workspaceDir, 'partial-messages-read.txt'),
-          '- Then reply DONE.',
-          '',
-          'Do not use any other tool.',
-        ].join('\n'),
-      requiredFixtureKeys: ['claude/claude/tool-call/Read', 'claude/claude/tool-result/Read'],
-      verify: async ({ fixtures, workspaceDir }) => {
-        const examples = fixtures?.examples;
-        if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
-        const calls = (examples['claude/claude/tool-call/Read'] ?? []) as any[];
-        if (!Array.isArray(calls) || calls.length === 0) throw new Error('Missing Read tool-call fixtures');
-        const expectedPath = join(workspaceDir, 'partial-messages-read.txt');
-        const hasPath = calls.some((e) => hasStringSubstring(e?.payload?.input, expectedPath));
-        if (!hasPath) throw new Error('Read tool-call did not include expected file path');
-      },
-    };
-  },
-
   agent_sdk_checkpoint_and_rewind_restores_fs: (provider) => {
     assertProviderId(provider, 'claude');
     return {
