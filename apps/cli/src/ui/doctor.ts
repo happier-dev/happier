@@ -21,7 +21,6 @@ import {
     formatDoctorRuntimeLabel,
     formatDoctorSpawnPathLabel,
 } from '@/ui/doctorRuntimeDiagnostics'
-import { runChannelBridgeDoctorSection } from '@/ui/doctor/channelBridgesDoctor'
 
 export function maskValue(value: string): string;
 export function maskValue(value: string | undefined): string | undefined;
@@ -312,18 +311,6 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         }
     } catch (error) {
         console.log(chalk.red('❌ Error checking daemon status'));
-    }
-
-    try {
-        const settings = await readSettings();
-        const credentials = await readCredentials();
-        await runChannelBridgeDoctorSection({
-            settings,
-            credentialsToken: credentials?.token ?? null,
-        });
-    } catch (error) {
-        console.log(chalk.yellow('\n🔌 Channel Bridges'));
-        console.log(chalk.yellow('⚠️  Failed to gather channel bridge diagnostics'));
     }
 
     // Log files - only show for 'all' filter

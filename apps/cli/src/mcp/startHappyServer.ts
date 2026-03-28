@@ -35,7 +35,7 @@ export async function startHappyServer(
 ) {
     // Do not eagerly construct an MCP server on startup; only snapshot the names.
     // Full server creation is done per request inside the handler.
-    const toolNamesSnapshot = listBuiltInHappierTools({ surface: 'session_agent' }).map((tool) => tool.name);
+    const toolNamesSnapshot = listBuiltInHappierTools({ surface: 'mcp' }).map((tool) => tool.name);
     const keepAliveIntervalMs = configuration.mcpSseKeepAliveIntervalMs;
 
     //

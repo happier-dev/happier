@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { ApiClient, isMachineContentPublicKeyMismatchError } from '@/api/api';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
-import { startChannelBridgeFromEnv, type ChannelBridgeRuntimeHandle } from '@/channels/startChannelBridgeWorker';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { TrackedSession } from './types';
 import { MachineMetadata, DaemonState, type Metadata } from '@/api/types';
@@ -107,7 +106,6 @@ import {
 import { parseBooleanEnv, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { CatalogAgentId } from '@/backends/types';
 import { writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
-import { resolveChannelBridgesDaemonEnabled } from './channels/resolveChannelBridgesDaemonEnabled';
 
 function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
   const value = (raw ?? '').trim();
@@ -285,7 +283,6 @@ export async function startDaemon(): Promise<void> {
       let connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null = null;
       let apiMachineForSessions: ApiMachineClient | null = null;
       let automationWorker: AutomationWorkerHandle | null = null;
-      let channelBridgeRuntime: ChannelBridgeRuntimeHandle | null = null;
       let memoryWorker: MemoryWorkerHandle | null = null;
       let apiMachine: ApiMachineClient | null = null;
       let machineConnectionStateCleanup: (() => void) | null = null;
@@ -1403,39 +1400,6 @@ export async function startDaemon(): Promise<void> {
     };
     writeDaemonStateOnce();
 
-    try {
-      const settings = await readSettings().catch((error) => {
-        logger.warn('[DAEMON RUN] Failed to read settings before starting channel bridges', error);
-        return {};
-      });
-      const channelBridgesEnabled = await resolveChannelBridgesDaemonEnabled({
-        env: process.env,
-        serverUrl: configuration.serverUrl,
-        settings,
-      });
-      if (channelBridgesEnabled) {
-        const credentialsPayload = decodeJwtPayload(credentials.token);
-        const accountId =
-          credentialsPayload && typeof credentialsPayload.sub === 'string'
-            ? credentialsPayload.sub.trim() || null
-            : null;
-
-        channelBridgeRuntime = await startChannelBridgeFromEnv({
-          credentials,
-          env: process.env,
-          settings,
-          serverId: configuration.activeServerId ?? null,
-          accountId,
-        });
-      }
-    } catch (error) {
-      logger.warn(
-        '[DAEMON RUN] Failed to start channel bridge runtime (continuing without channel bridges)',
-        serializeAxiosErrorForLog(error),
-      );
-      channelBridgeRuntime = null;
-    }
-
         // Prepare initial daemon state
         const initialDaemonState: DaemonState = {
           status: 'offline',
@@ -1853,12 +1817,6 @@ export async function startDaemon(): Promise<void> {
       }
       if (automationWorker) {
         automationWorker.stop();
-      }
-      if (channelBridgeRuntime) {
-        await channelBridgeRuntime.stop().catch((error) => {
-          logger.warn('[DAEMON RUN] Failed to stop channel bridge runtime during shutdown', error);
-        });
-        channelBridgeRuntime = null;
       }
       if (memoryWorker) {
         memoryWorker.stop();

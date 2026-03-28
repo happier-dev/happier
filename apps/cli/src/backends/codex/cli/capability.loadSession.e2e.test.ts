@@ -60,66 +60,68 @@ function makeUnavailableCliEntry(): DetectCliEntry {
 
 describe('cli.codex capability (ACP)', () => {
   const gate = resolveProbeGate();
-  const probeIt = gate.enabled ? it : it.skip;
+  if (gate.enabled) {
+    it(`detects session/load support when codex ACP is available [${gate.reason}]`, async () => {
+      const originalAcpBin = process.env.HAPPIER_CODEX_ACP_BIN;
 
-  probeIt(`detects session/load support when codex ACP is available [${gate.reason}]`, async () => {
-    const originalAcpBin = process.env.HAPPIER_CODEX_ACP_BIN;
+      // This is a real binary probe. Keep it opt-in (mirrors provider harness gating).
+      try {
+        const envAcpBinRaw = process.env.HAPPIER_E2E_PROVIDER_CODEX_ACP_BIN ?? process.env.HAPPY_E2E_PROVIDER_CODEX_ACP_BIN;
+        const envAcpBin = typeof envAcpBinRaw === 'string'
+          ? envAcpBinRaw.trim()
+          : '';
+        if (envAcpBin) {
+          process.env.HAPPIER_CODEX_ACP_BIN = envAcpBin;
+        }
 
-    // This is a real binary probe. Keep it opt-in (mirrors provider harness gating).
-    try {
-      const envAcpBinRaw = process.env.HAPPIER_E2E_PROVIDER_CODEX_ACP_BIN ?? process.env.HAPPY_E2E_PROVIDER_CODEX_ACP_BIN;
-      const envAcpBin = typeof envAcpBinRaw === 'string'
-        ? envAcpBinRaw.trim()
-        : '';
-      if (envAcpBin) {
-        process.env.HAPPIER_CODEX_ACP_BIN = envAcpBin;
+        const resolvedCodexPath = resolveBinaryOnPath('codex');
+        expect(resolvedCodexPath).toBeTruthy();
+
+        const resolvedAcpPath = resolveCodexAcpIfAvailable();
+        expect(resolvedAcpPath).toBeTruthy();
+
+        const request: DetectArgs['request'] = { id: 'cli.codex', params: { includeAcpCapabilities: true } };
+        const context: DetectArgs['context'] = {
+          cliSnapshot: {
+            path: process.env.PATH ?? null,
+            clis: {
+              claude: makeUnavailableCliEntry(),
+              codex: { available: true, resolvedPath: resolvedCodexPath as string },
+              opencode: makeUnavailableCliEntry(),
+              gemini: makeUnavailableCliEntry(),
+              auggie: makeUnavailableCliEntry(),
+              qwen: makeUnavailableCliEntry(),
+              kimi: makeUnavailableCliEntry(),
+              kilo: makeUnavailableCliEntry(),
+              kiro: makeUnavailableCliEntry(),
+              customAcp: makeUnavailableCliEntry(),
+              pi: makeUnavailableCliEntry(),
+              copilot: makeUnavailableCliEntry(),
+            },
+            tmux: { available: false },
+            windowsTerminal: { available: false },
+          } satisfies DetectCliSnapshot,
+        };
+
+        const rawResult = await codexCliCapability.detect({ request, context });
+        const res = rawResult as {
+          available: boolean;
+          resolvedPath: string | null;
+          acp?: { ok: boolean; loadSession?: boolean };
+        };
+        expect(res.available).toBe(true);
+        expect(res.resolvedPath).toBe(resolvedCodexPath);
+        expect(res.acp).toMatchObject({ ok: true, loadSession: true });
+      } finally {
+        if (originalAcpBin === undefined) {
+          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+          delete process.env.HAPPIER_CODEX_ACP_BIN;
+        } else {
+          process.env.HAPPIER_CODEX_ACP_BIN = originalAcpBin;
+        }
       }
-
-      const resolvedCodexPath = resolveBinaryOnPath('codex');
-      expect(resolvedCodexPath).toBeTruthy();
-
-      const resolvedAcpPath = resolveCodexAcpIfAvailable();
-      expect(resolvedAcpPath).toBeTruthy();
-
-      const request: DetectArgs['request'] = { id: 'cli.codex', params: { includeAcpCapabilities: true } };
-      const context: DetectArgs['context'] = {
-        cliSnapshot: {
-          path: process.env.PATH ?? null,
-          clis: {
-            claude: makeUnavailableCliEntry(),
-            codex: { available: true, resolvedPath: resolvedCodexPath as string },
-            opencode: makeUnavailableCliEntry(),
-            gemini: makeUnavailableCliEntry(),
-            auggie: makeUnavailableCliEntry(),
-            qwen: makeUnavailableCliEntry(),
-            kimi: makeUnavailableCliEntry(),
-            kilo: makeUnavailableCliEntry(),
-            kiro: makeUnavailableCliEntry(),
-            customAcp: makeUnavailableCliEntry(),
-            pi: makeUnavailableCliEntry(),
-            copilot: makeUnavailableCliEntry(),
-          },
-          tmux: { available: false },
-          windowsTerminal: { available: false },
-        } satisfies DetectCliSnapshot,
-      };
-
-      const rawResult = await codexCliCapability.detect({ request, context });
-      const res = rawResult as {
-        available: boolean;
-        resolvedPath: string | null;
-        acp?: { ok: boolean; loadSession?: boolean };
-      };
-      expect(res.available).toBe(true);
-      expect(res.resolvedPath).toBe(resolvedCodexPath);
-      expect(res.acp).toMatchObject({ ok: true, loadSession: true });
-    } finally {
-      if (originalAcpBin === undefined) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-        delete process.env.HAPPIER_CODEX_ACP_BIN;
-      } else {
-        process.env.HAPPIER_CODEX_ACP_BIN = originalAcpBin;
-      }
-    }
-  }, 60_000);
+    }, 60_000);
+  } else {
+    it.skip(`detects session/load support when codex ACP is available [${gate.reason}]`, () => {});
+  }
 });

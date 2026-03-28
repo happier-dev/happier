@@ -27,7 +27,10 @@ export function createHappierMcpServer(
   client: HappyMcpSessionClient,
   opts?: Readonly<{ credentials?: Credentials | null }>,
 ): { mcp: McpServer; toolNames: string[] } {
-  const toolSurface = 'session_agent' as const;
+  // This server is used as the HTTP MCP backend for provider bridges (e.g. Claude Code via stdio).
+  // Those clients expect the `mcp` surface, not `session_agent` (which is fail-closed for
+  // session-control actions by default via account settings).
+  const toolSurface = 'mcp' as const;
   const credentials = opts?.credentials ?? null;
   const ctx = credentials
     ? resolveSessionEncryptionContextFromCredentials(credentials)
@@ -123,6 +126,7 @@ export function createHappierMcpServer(
   const executor = harness.executor;
 
   registerHappierMcpResources(mcp as any, {
+    surface: toolSurface,
     isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: toolSurface }),
   });
 
