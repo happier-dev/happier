@@ -5,14 +5,6 @@ import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId, StartS
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createOpenCodeServerRuntime } from '@/backends/opencode/server/runtime';
 
-type DraftDeltaParams = Readonly<{
-    localId: string;
-    segmentKind: 'assistant' | 'thinking';
-    sidechainId?: string | null;
-    deltaText: string;
-    createdAtMs?: number;
-}>;
-
 type ToolMessageBody = Readonly<{
     type: 'tool-call' | 'tool-result';
     callId?: string;
@@ -31,7 +23,6 @@ type ExecutionRunSessionAdapter = Pick<ApiSessionClient,
     | 'updateMetadata'
     | 'sendAgentMessage'
     | 'sendAgentMessageCommitted'
-    | 'sendTranscriptDraftDelta'
 >;
 
 function isOpenCodeProvider(provider: ACPProvider): boolean {
@@ -148,13 +139,6 @@ export function createOpenCodeServerExecutionRunBackend(args: Readonly<{
             if (isToolMessageBody(body)) {
                 emitToolMessage(body);
             }
-        },
-        sendTranscriptDraftDelta: (provider: ACPProvider, params: Parameters<ApiSessionClient['sendTranscriptDraftDelta']>[1]) => {
-            if (!isOpenCodeProvider(provider) || params.segmentKind !== 'assistant' || !params.deltaText) return;
-            const assistantKey = params.localId || '__main__';
-            const previousText = assistantTextByLocalId.get(assistantKey) ?? '';
-            assistantTextByLocalId.set(assistantKey, `${previousText}${params.deltaText}`);
-            emit({ type: 'model-output', textDelta: params.deltaText });
         },
     };
 

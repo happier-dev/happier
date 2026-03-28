@@ -552,12 +552,6 @@ export function createOpenCodeServerRuntime(params: {
     return Math.max(0, Math.min(300_000, configured));
   })();
 
-  const streamDeltaFlushIntervalMs = (() => {
-    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS ?? ''), 10);
-    const configured = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 50;
-    return Math.max(0, Math.min(2_000, configured));
-  })();
-
   const streamDeltaMaxChars = (() => {
     const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_MAX_CHARS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 8_000;
@@ -1192,7 +1186,6 @@ export function createOpenCodeServerRuntime(params: {
   const transcriptStreamBridge = createOpenCodeTranscriptStreamBridge({
     provider,
     session: params.session,
-    draftFlushIntervalMs: streamDeltaFlushIntervalMs,
   });
 
   const clearStreamWriters = () => {

@@ -80,7 +80,6 @@ function createFakeSession() {
   return {
     keepAlive: vi.fn(),
     sendAgentMessage: vi.fn(),
-    sendTranscriptDraftDelta: vi.fn(),
     sendUserTextMessageCommitted: vi.fn(async () => {}),
     sendAgentMessageCommitted: vi.fn(async () => {}),
     ensureMetadataSnapshot: vi.fn(async () => ({ ok: true })),
@@ -97,15 +96,6 @@ function createFakeSession() {
     __getMetadata: () => meta,
   } as any;
 }
-
-type DraftTranscriptRow = Readonly<{
-  provider: unknown;
-  localId: string | undefined;
-  segmentKind: 'assistant' | 'thinking' | undefined;
-  sidechainId: string | null;
-  deltaText: string;
-  createdAtMs: number | undefined;
-}>;
 
 type CommittedTranscriptBody = Readonly<Record<string, unknown> & {
   type?: 'message' | 'thinking';
@@ -133,30 +123,11 @@ function readOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-function readOptionalNumber(value: unknown): number | undefined {
-  return typeof value === 'number' ? value : undefined;
-}
-
-function readSegmentKind(value: unknown): DraftTranscriptRow['segmentKind'] {
-  return value === 'assistant' || value === 'thinking' ? value : undefined;
-}
-
-function getDraftTranscriptRows(
-  session: ReturnType<typeof createFakeSession>,
-  opts?: { segmentKind?: 'assistant' | 'thinking'; sidechainId?: string | null },
-): DraftTranscriptRow[] {
-  const rows = (session.sendTranscriptDraftDelta as any).mock.calls
-    .map((call: any[]) => ({
-      provider: call?.[0],
-      localId: readOptionalString(call?.[1]?.localId),
-      segmentKind: readSegmentKind(call?.[1]?.segmentKind),
-      sidechainId: readOptionalString(call?.[1]?.sidechainId) ?? null,
-      deltaText: call?.[1]?.deltaText ?? '',
-      createdAtMs: readOptionalNumber(call?.[1]?.createdAtMs),
-    })) as DraftTranscriptRow[];
-  return rows
-    .filter((row) => (opts?.segmentKind ? row.segmentKind === opts.segmentKind : true))
-    .filter((row) => (opts?.sidechainId !== undefined ? row.sidechainId === opts.sidechainId : true));
+function readOptionalRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
 }
 
 function getCommittedTranscriptRows(
@@ -2091,9 +2062,9 @@ describe('createOpenCodeServerRuntime', () => {
   });
 
   it('dedupes cumulative text deltas and streams transcript-vNext updates with a stable happierStreamKey per OpenCode message', async () => {
-    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
-    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '0';
     vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
     try {
       const client = createFakeClient();
       const session = createFakeSession();
@@ -2155,11 +2126,6 @@ describe('createOpenCodeServerRuntime', () => {
       await flushTranscriptCommitMicrotasks();
       await flushTranscriptCommitMicrotasks();
 
-      const draftCalls = getDraftTranscriptRows(session, { segmentKind: 'assistant' });
-      expect(draftCalls.map((c) => c.deltaText)).toEqual(['Hello', '.']);
-      expect(draftCalls[0]?.localId).toBeTruthy();
-      expect(draftCalls[1]?.localId).toBe(draftCalls[0]?.localId);
-
       const committedCalls = getCommittedTranscriptRows(session, { type: 'message' });
       expect(committedCalls.map((c) => c.body?.message)).toEqual(['Hello', 'Hello.']);
       expect(committedCalls[0]?.localId).toBeTruthy();
@@ -2168,20 +2134,19 @@ describe('createOpenCodeServerRuntime', () => {
       expect(committedCalls[1]?.meta?.happierStreamKey).toBe(committedCalls[0]?.meta?.happierStreamKey);
       expect(committedCalls[1]?.meta?.happierStreamSegmentV1).toMatchObject({
         segmentKind: 'assistant',
-        segmentLocalId: draftCalls[0]?.localId,
+        segmentLocalId: committedCalls[0]?.localId,
         segmentState: 'complete',
       });
     } finally {
       vi.useRealTimers();
-      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
-      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+      vi.unstubAllEnvs();
     }
   });
 
   it('buffers tiny text deltas into fewer transcript messages by default (prevents per-token transcript spam)', async () => {
-    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
-    delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
     vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
     try {
       const client = createFakeClient();
       const session = createFakeSession();
@@ -2226,14 +2191,15 @@ describe('createOpenCodeServerRuntime', () => {
       }
 
       await queuedEvent;
-      expect(getDraftTranscriptRows(session, { segmentKind: 'assistant' })).toHaveLength(0);
+      const commitsAfterDeltas = getCommittedTranscriptRows(session, { type: 'message' });
+      expect(commitsAfterDeltas).toHaveLength(1);
+      expect(commitsAfterDeltas[0]?.body?.message).toBe('a');
 
       await vi.advanceTimersByTimeAsync(60);
       await flushTranscriptCommitMicrotasks();
-
-      const draftCallsAfterFlush = getDraftTranscriptRows(session, { segmentKind: 'assistant' });
-      expect(draftCallsAfterFlush.map((c) => c.deltaText)).toEqual(['abcdefghij']);
-      expect(typeof draftCallsAfterFlush[0]?.localId).toBe('string');
+      const commitsAfterTimerAdvance = getCommittedTranscriptRows(session, { type: 'message' });
+      expect(commitsAfterTimerAdvance.length).toBeGreaterThanOrEqual(1);
+      expect(commitsAfterTimerAdvance.length).toBeLessThanOrEqual(2);
 
       await client.__emit({
         directory: '/tmp',
@@ -2243,21 +2209,23 @@ describe('createOpenCodeServerRuntime', () => {
       await expect(promptPromise).resolves.toBeUndefined();
 
       const committedCalls = getCommittedTranscriptRows(session, { type: 'message' });
+      expect(committedCalls.map((c) => c.body?.message)).toEqual(['a', 'abcdefghij']);
+      expect(committedCalls[1]?.localId).toBe(committedCalls[0]?.localId);
       expect(committedCalls[committedCalls.length - 1]?.body?.message).toBe('abcdefghij');
       expect(committedCalls[committedCalls.length - 1]?.meta?.happierStreamSegmentV1).toMatchObject({
         segmentState: 'complete',
       });
     } finally {
       vi.useRealTimers();
-      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
-      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+      vi.unstubAllEnvs();
     }
   });
 
   it('flushes buffered text chunks repeatedly while a turn is streaming (does not stall after the first flush)', async () => {
-    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
-    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '50';
     vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '50');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1');
     try {
       const client = createFakeClient();
       const session = createFakeSession();
@@ -2299,23 +2267,33 @@ describe('createOpenCodeServerRuntime', () => {
         });
       }
 
-      await vi.advanceTimersByTimeAsync(60);
-      const firstFlushCalls = getDraftTranscriptRows(session, { segmentKind: 'assistant' }).map((call) => call.deltaText);
-      expect(firstFlushCalls).toEqual(['abcde']);
-
-      for (const ch of ['f', 'g', 'h', 'i', 'j']) {
-        client.__emit({
-          directory: '/tmp',
-          payload: {
-            type: 'message.part.delta',
-            properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: ch },
-          },
-        });
-      }
+      await flushTranscriptCommitMicrotasks();
+      const commitsAfterFirstBatch = getCommittedTranscriptRows(session, { type: 'message' }).map((call) => call.body?.message);
+      expect(commitsAfterFirstBatch).toEqual(['a']);
 
       await vi.advanceTimersByTimeAsync(60);
-      const secondFlushCalls = getDraftTranscriptRows(session, { segmentKind: 'assistant' }).map((call) => call.deltaText);
-      expect(secondFlushCalls).toEqual(['abcde', 'fghij']);
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.delta',
+          properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'f' },
+        },
+      });
+      await flushTranscriptCommitMicrotasks();
+      expect(getCommittedTranscriptRows(session, { type: 'message' }).map((call) => call.body?.message)).toContain('abcdef');
+
+      await vi.advanceTimersByTimeAsync(60);
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.delta',
+          properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'g' },
+        },
+      });
+      await flushTranscriptCommitMicrotasks();
+      const commitsAfterSecondFlush = getCommittedTranscriptRows(session, { type: 'message' });
+      expect(commitsAfterSecondFlush.length).toBeGreaterThanOrEqual(3);
+      expect(commitsAfterSecondFlush[commitsAfterSecondFlush.length - 1]?.body?.message).toBe('abcdefg');
 
       client.__emit({
         directory: '/tmp',
@@ -2325,14 +2303,13 @@ describe('createOpenCodeServerRuntime', () => {
       await expect(promptPromise).resolves.toBeUndefined();
     } finally {
       vi.useRealTimers();
-      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
-      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+      vi.unstubAllEnvs();
     }
   });
 
   it('does not mix transcript-vNext localIds across different OpenCode messageIDs in the same turn', async () => {
-    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
-    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '0';
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
     try {
       const client = createFakeClient();
       const session = createFakeSession();
@@ -2383,22 +2360,20 @@ describe('createOpenCodeServerRuntime', () => {
 
       await expect(promptPromise).resolves.toBeUndefined();
 
-      const draftCalls = getDraftTranscriptRows(session, { segmentKind: 'assistant' })
-        .filter((c) => c.deltaText === 'A' || c.deltaText === 'B');
-
-      expect(draftCalls).toHaveLength(2);
-      expect(draftCalls[0]?.localId).toBeTruthy();
-      expect(draftCalls[1]?.localId).toBeTruthy();
-      expect(draftCalls[1]?.localId).not.toBe(draftCalls[0]?.localId);
-
       const committedCalls = getCommittedTranscriptRows(session, { type: 'message' })
         .filter((c) => c.body?.message === 'A' || c.body?.message === 'B');
-      expect(committedCalls[0]?.meta?.happierStreamKey).toBeTruthy();
-      expect(committedCalls[1]?.meta?.happierStreamKey).toBeTruthy();
-      expect(committedCalls[1]?.meta?.happierStreamKey).not.toBe(committedCalls[0]?.meta?.happierStreamKey);
+      expect(committedCalls).toHaveLength(4);
+      const uniqueLocalIds = new Set(committedCalls.map((row) => row.localId).filter((id): id is string => typeof id === 'string' && id.length > 0));
+      expect(uniqueLocalIds.size).toBe(2);
+
+      const uniqueStreamKeys = new Set(
+        committedCalls
+          .map((row) => row.meta?.happierStreamKey)
+          .filter((key): key is string => typeof key === 'string' && key.length > 0),
+      );
+      expect(uniqueStreamKeys.size).toBe(2);
     } finally {
-      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
-      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+      vi.unstubAllEnvs();
     }
   });
 
@@ -2459,15 +2434,15 @@ describe('createOpenCodeServerRuntime', () => {
     });
 
     await expect(promptPromise).resolves.toBeUndefined();
-
-    const deltas = getDraftTranscriptRows(session, { segmentKind: 'assistant' }).map((row) => row.deltaText);
-
-    expect(deltas).toEqual(['OK']);
+    const committedCalls = getCommittedTranscriptRows(session, { type: 'message' });
+    expect(committedCalls.map((row) => row.body?.message)).toEqual(['OK', 'OK']);
+    expect(committedCalls[1]?.localId).toBe(committedCalls[0]?.localId);
+    expect(committedCalls[committedCalls.length - 1]?.body?.message).toBe('OK');
   });
 
   it('streams reasoning deltas through transcript-vNext with a stable happierStreamKey', async () => {
-    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
-    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '0';
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
     try {
       const client = createFakeClient();
       const session = createFakeSession();
@@ -2518,11 +2493,6 @@ describe('createOpenCodeServerRuntime', () => {
 
       await expect(promptPromise).resolves.toBeUndefined();
 
-      const draftCalls = getDraftTranscriptRows(session, { segmentKind: 'thinking' });
-      expect(draftCalls.map((c) => c.deltaText)).toEqual(['A', 'B']);
-      expect(draftCalls[0]?.localId).toBeTruthy();
-      expect(draftCalls[1]?.localId).toBe(draftCalls[0]?.localId);
-
       const committedCalls = getCommittedTranscriptRows(session, { type: 'thinking' });
       expect(committedCalls.map((c) => c.body?.text)).toEqual(['A', 'AB']);
       expect(committedCalls[0]?.localId).toBeTruthy();
@@ -2530,18 +2500,17 @@ describe('createOpenCodeServerRuntime', () => {
       expect(committedCalls[0]?.meta?.happierStreamKey).toBeTruthy();
       expect(committedCalls[1]?.meta?.happierStreamKey).toBe(committedCalls[0]?.meta?.happierStreamKey);
       expect(committedCalls[1]?.meta?.happierStreamSegmentV1).toMatchObject({
-        segmentLocalId: draftCalls[0]?.localId,
+        segmentLocalId: committedCalls[0]?.localId,
       });
     } finally {
-      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
-      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+      vi.unstubAllEnvs();
     }
   });
 
   it('flushes streamed assistant text before emitting an OpenCode tool-call boundary', async () => {
-    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
-    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '5000';
     vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
     let runtime: ReturnType<typeof createOpenCodeServerRuntime> | null = null;
     try {
       const client = createFakeClient();
@@ -2576,8 +2545,10 @@ describe('createOpenCodeServerRuntime', () => {
         directory: '/tmp',
         payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_tool_boundary_1', partID: 'part_text_1', delta: 'HELLO' } },
       });
-
-      expect(getDraftTranscriptRows(session, { segmentKind: 'assistant' })).toHaveLength(0);
+      const commitsBeforeToolCall = getCommittedTranscriptRows(session, { type: 'message' }).filter(
+        (row) => String(row.meta?.happierStreamKey ?? '').includes('msg_asst_tool_boundary_1'),
+      );
+      expect(commitsBeforeToolCall.map((row) => row.body?.message)).toEqual(['HELLO']);
 
       await client.__emit({
         directory: '/tmp',
@@ -2597,8 +2568,6 @@ describe('createOpenCodeServerRuntime', () => {
         },
       });
       await flushTranscriptCommitMicrotasks();
-
-      expect(getDraftTranscriptRows(session, { segmentKind: 'assistant' }).map((row) => row.deltaText)).toEqual(['HELLO']);
 
       const committedCalls = getCommittedTranscriptRows(session, { type: 'message' }).filter(
         (row) => String(row.meta?.happierStreamKey ?? '').includes('msg_asst_tool_boundary_1'),
@@ -2625,8 +2594,7 @@ describe('createOpenCodeServerRuntime', () => {
       await runtime?.cancel().catch(() => {});
       await runtime?.reset().catch(() => {});
       vi.useRealTimers();
-      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
-      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+      vi.unstubAllEnvs();
     }
   });
 
@@ -4234,9 +4202,10 @@ describe('createOpenCodeServerRuntime', () => {
   });
 
   it('streams sidechain text as incremental deltas (avoids duplicate prefixes when OpenCode emits cumulative deltas)', async () => {
-    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
-    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '50';
     vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '0');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1');
     try {
       const client = createFakeClient() as any;
       client.sessionMessagesList = vi.fn(async () => ([] as unknown[]));
@@ -4291,17 +4260,19 @@ describe('createOpenCodeServerRuntime', () => {
         payload: { type: 'message.part.delta', properties: { sessionID: 'ses_child_1', messageID: 'msg_child_asst_1', partID: 'part_child_text_1', delta: 'H' } },
       });
       await vi.advanceTimersByTimeAsync(60);
+      await flushTranscriptCommitMicrotasks();
 
       client.__emit({
         directory: '/tmp',
         payload: { type: 'message.part.delta', properties: { sessionID: 'ses_child_1', messageID: 'msg_child_asst_1', partID: 'part_child_text_1', delta: 'HE' } },
       });
       await vi.advanceTimersByTimeAsync(60);
+      await flushTranscriptCommitMicrotasks();
 
-      const sidechainChunks = getDraftTranscriptRows(session, { segmentKind: 'assistant', sidechainId: 'call_task_1' })
-        .map((c) => String(c.deltaText ?? ''));
-
-      expect(sidechainChunks).toEqual(['H', 'E']);
+      const sidechainCommitted = getCommittedTranscriptRows(session, { type: 'message', sidechainId: 'call_task_1' })
+        .map((row) => row.body?.message ?? '');
+      expect(sidechainCommitted).toContain('H');
+      expect(sidechainCommitted).toContain('HE');
 
       client.__emit({
         directory: '/tmp',
@@ -4319,8 +4290,7 @@ describe('createOpenCodeServerRuntime', () => {
       await expect(promptPromise).resolves.toBeUndefined();
     } finally {
       vi.useRealTimers();
-      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
-      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+      vi.unstubAllEnvs();
     }
   });
 
@@ -4719,10 +4689,9 @@ describe('createOpenCodeServerRuntime', () => {
     await expect(promptPromise).resolves.toBeUndefined();
     await flushTranscriptCommitMicrotasks();
 
-    const sidechainChunks = getDraftTranscriptRows(session, { segmentKind: 'assistant', sidechainId: 'call_task_live_stream' })
-      .map((row) => row.deltaText);
-    expect(sidechainChunks.length).toBeGreaterThan(0);
-    expect(sidechainChunks.join('')).toBe('CHILD_OK');
+    const sidechainCommits = getCommittedTranscriptRows(session, { type: 'message', sidechainId: 'call_task_live_stream' });
+    expect(sidechainCommits.length).toBeGreaterThan(0);
+    expect(sidechainCommits[sidechainCommits.length - 1]?.body?.message).toBe('CHILD_OK');
   });
 
   it('waits to emit task_complete until in-flight tool forwarding finishes after idle', async () => {

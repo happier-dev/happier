@@ -31,8 +31,9 @@ function buildSidechainMeta(params: {
 
 export function createOpenCodeTranscriptStreamBridge(params: {
   provider: ACPProvider;
-  session: Pick<ApiSessionClient, 'sendAgentMessage' | 'sendAgentMessageCommitted' | 'sendTranscriptDraftDelta'>;
-  draftFlushIntervalMs: number;
+  session: Pick<ApiSessionClient, 'sendAgentMessage' | 'sendAgentMessageCommitted'>;
+  checkpointIntervalMs?: number | null;
+  checkpointMinChars?: number | null;
 }) {
   return createKeyedStreamedTranscriptBridge<{
     streamKey: string;
@@ -41,11 +42,11 @@ export function createOpenCodeTranscriptStreamBridge(params: {
     sidechainId: string | null;
   }>({
     provider: params.provider,
-    draftFlushIntervalMs: params.draftFlushIntervalMs,
+    checkpointIntervalMs: params.checkpointIntervalMs,
+    checkpointMinChars: params.checkpointMinChars,
     createSessionForStream: (args) => {
       const baseMeta = buildSidechainMeta(args);
       return {
-        sendTranscriptDraftDelta: (provider, draftParams) => params.session.sendTranscriptDraftDelta(provider, draftParams),
         sendAgentMessage: (provider, body, opts) =>
           params.session.sendAgentMessage(provider, body, {
             ...opts,

@@ -32,26 +32,20 @@ describe('createOpenCodeServerExecutionRunBackend', () => {
       if (!runtimeSession) {
         throw new Error('Expected runtime session adapter to be captured');
       }
-      const sendTranscriptDraftDelta = runtimeSession.sendTranscriptDraftDelta as ((provider: string, params: {
-        localId: string;
-        segmentKind: 'assistant' | 'thinking';
-        sidechainId: string | null;
-        deltaText: string;
-        createdAtMs: number;
-      }) => void);
       const sendAgentMessage = runtimeSession.sendAgentMessage as ((provider: string, body: Record<string, unknown>) => void);
       const sendAgentMessageCommitted = runtimeSession.sendAgentMessageCommitted as ((provider: string, body: Record<string, unknown>, opts: {
         localId: string;
         meta?: Record<string, unknown>;
       }) => Promise<void>);
 
-      sendTranscriptDraftDelta('opencode', {
-        localId: 'assistant-1',
-        segmentKind: 'assistant',
-        sidechainId: null,
-        deltaText: 'Hello',
-        createdAtMs: 1,
-      });
+      await sendAgentMessageCommitted(
+        'opencode',
+        {
+          type: 'message',
+          message: 'Hello',
+        },
+        { localId: 'assistant-1' },
+      );
       sendAgentMessage('opencode', {
         type: 'tool-call',
         callId: 'tool-1',
@@ -122,7 +116,7 @@ describe('createOpenCodeServerExecutionRunBackend', () => {
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(reset).toHaveBeenCalledTimes(1);
     expect(observedMessages).toEqual(expect.arrayContaining([
-      { type: 'model-output', textDelta: 'Hello' },
+      { type: 'model-output', fullText: 'Hello' },
       { type: 'tool-call', toolName: 'Bash', args: { command: 'pwd' }, callId: 'tool-1' },
       { type: 'tool-result', toolName: 'Bash', result: { output: '/tmp/demo' }, callId: 'tool-1', isError: false },
       { type: 'model-output', fullText: 'Hello world' },

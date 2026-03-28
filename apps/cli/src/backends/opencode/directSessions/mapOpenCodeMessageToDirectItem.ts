@@ -28,10 +28,28 @@ function extractTextFromParts(parts: unknown): string {
 }
 
 export function mapOpenCodeMessageToDirectItem(message: unknown, index: number): DirectTranscriptRawMessageV1 | null {
-  if (!message || typeof message !== 'object' || Array.isArray(message)) return null;
+  const fallbackId = `opencode:${Math.max(0, Math.trunc(index))}`;
+  if (!message || typeof message !== 'object' || Array.isArray(message)) {
+    return {
+      id: fallbackId,
+      localId: fallbackId,
+      createdAtMs: 0,
+      raw: {
+        role: 'agent',
+        content: {
+          type: 'output',
+          data: {
+            type: 'opaque',
+            reason: 'invalid_message',
+            original: message,
+          },
+        },
+      },
+    };
+  }
   const m: any = message;
   const idRaw = typeof m.id === 'string' ? m.id.trim() : '';
-  const stableId = idRaw || `opencode:${Math.max(0, Math.trunc(index))}`;
+  const stableId = idRaw || fallbackId;
   const createdAtMs =
     parseMaybeTimestampMs(m.createdAtMs) ||
     parseMaybeTimestampMs(m.createdAt) ||
@@ -63,4 +81,3 @@ export function mapOpenCodeMessageToDirectItem(message: unknown, index: number):
     },
   };
 }
-
