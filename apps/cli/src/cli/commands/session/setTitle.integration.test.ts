@@ -188,9 +188,9 @@ describe('happier session set-title (integration)', () => {
     }
   });
 
-  it('creates an approval request when account settings require approval for the CLI surface', async () => {
+  it('ignores approval settings and still updates the title immediately', async () => {
     requireApprovalForCliSurface = true;
-    allowMetadataUpdate = false;
+    allowMetadataUpdate = true;
 
     const { handleSessionCommand } = await import('./index');
 
@@ -207,10 +207,9 @@ describe('happier session set-title (integration)', () => {
       const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_set_title');
-      expect(parsed.data?.kind).toBe('approval_request_created');
-      expect(typeof parsed.data?.artifactId).toBe('string');
-      expect(String(parsed.data?.artifactId)).not.toBe('');
-      expect(createdArtifacts.length).toBe(1);
+      expect(parsed.data?.kind).toBeUndefined();
+      expect(parsed.data?.title).toBe('New Title');
+      expect(createdArtifacts.length).toBe(0);
     } finally {
       output.restore();
     }

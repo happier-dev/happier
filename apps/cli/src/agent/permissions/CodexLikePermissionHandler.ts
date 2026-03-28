@@ -21,13 +21,14 @@ import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/per
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol';
+import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 import { isDefaultWriteLikeToolName } from './writeLikeToolNameHeuristics';
 import { extractShellCommand } from './permissionToolIdentifier';
 import { resolveAgentRequestKind } from './requestKind';
 
 export type { PermissionResult, PendingRequest };
 
-const ALWAYS_AUTO_APPROVE_TOKENS = ['change_title', 'save_memory', 'think'] as const;
+const ALWAYS_AUTO_APPROVE_TOKENS = ['change_title', 'session_title_set', 'save_memory', 'think'] as const;
 const AUTO_APPROVE_HAPPIER_SHELL_BRIDGE_TOOLS = new Set<string>(ALWAYS_AUTO_APPROVE_TOKENS);
 export { isDefaultWriteLikeToolName };
 
@@ -169,6 +170,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
   }
 
   private isAlwaysAutoApproveTool(toolName: string, toolCallId: string): boolean {
+    if (isChangeTitleToolLikeName(toolName)) return true;
     const lowerToolName = toolName.toLowerCase();
     const lowerToolCallId = toolCallId.toLowerCase();
     return (

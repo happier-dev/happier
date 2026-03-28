@@ -28,8 +28,8 @@ describe('Claude PermissionHandler - mode change auto-approve', () => {
     const mode: EnhancedMode = { permissionMode: 'default' };
 
     const pending = handler.handleToolCall(
-      'Change Title',
-      { title: 'x' },
+      'Write',
+      { file_path: join(tmpdir(), 'permission-handler-mode-change.txt'), content: 'x' },
       mode,
       { signal: signal.signal, toolUseId: 'toolu_mode_change_1' },
     );

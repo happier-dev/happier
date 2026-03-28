@@ -151,6 +151,23 @@ describe('CodexLikePermissionHandler', () => {
     expect(result.decision).toBe('approved_for_session');
   });
 
+  it('auto-approves session_title_set in default mode without prompting', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+
+    const result = await handler.handleToolCall('tool-1', 'mcp__happier__session_title_set', { title: 'Renamed' });
+
+    expect(result.decision).toBe('approved');
+    expect(session.agentState.requests['tool-1']).toBeUndefined();
+    expect(session.agentState.completedRequests['tool-1']).toEqual(
+      expect.objectContaining({
+        tool: 'mcp__happier__session_title_set',
+        status: 'approved',
+        decision: 'approved',
+      }),
+    );
+  });
+
   it('treats setPermissionMode without updatedAt as provisional when newer metadata exists', async () => {
     const session = new FakeSession();
     session.setMetadataSnapshot({ permissionMode: 'yolo', permissionModeUpdatedAt: 10 });

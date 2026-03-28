@@ -29,6 +29,7 @@ import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdent
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
 import { computeNextMetadataStringOverrideV1, SESSION_MODE_OVERRIDE_KEY } from '@happier-dev/agents';
 import { isClaudeLocalPermissionBridgeAgentStateRequest } from '@happier-dev/agents';
+import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 
 type PermissionResponse = PermissionRpcPayload;
 
@@ -604,6 +605,10 @@ export class PermissionHandler {
 
         // Check if tool is explicitly allowed
         if (this.isToolExplicitlyAllowed(toolName, rewrittenInput)) {
+            return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
+        }
+
+        if (isChangeTitleToolLikeName(toolName)) {
             return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
         }
 

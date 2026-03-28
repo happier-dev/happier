@@ -6,6 +6,7 @@ import {
   searchSerializedActionSpecsForSurface,
   serializeActionFieldOptions,
 } from './actionCatalog.js';
+import { isActionAlwaysAutoApproved } from './actionApprovalPolicy.js';
 import { resolveRequestedSessionModeId } from './sessionModeIds.js';
 import { ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, type ActionSpec, type ActionSurfaces } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
@@ -562,7 +563,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const ctx: ActionExecutorContext = context ?? {};
 
     const spec = getActionSpec(actionId);
-    const approvalRequired = ctx.bypassApprovals
+    const approvalRequired = ctx.bypassApprovals || isActionAlwaysAutoApproved(actionId)
       ? false
       : deps.isActionApprovalRequired?.(actionId, ctx) === true;
     const isApprovalAction = actionId === 'approval.request.create' || actionId === 'approval.request.decide';

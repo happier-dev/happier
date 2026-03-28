@@ -141,6 +141,29 @@ describe('ClaudeLocalPermissionBridge', () => {
     expect(client.agentState.requests.toolu_yolo_1).toBeUndefined();
   });
 
+  it('auto-approves session title tools immediately in default mode', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-default-title-auto-approve');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const res = await bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Set session title',
+      tool_input: { title: 'QA Agent Team Setup' },
+      tool_use_id: 'toolu_default_title_1',
+    });
+
+    expect(res).toMatchObject({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'allow' },
+      },
+    });
+    expect(client.agentState.requests.toolu_default_title_1).toBeUndefined();
+  });
+
   it('auto-approves a pending request when metadata permissionMode flips to yolo', async () => {
     const { session, client } = createPermissionHandlerSessionStub('session-yolo-auto-approve-pending');
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
@@ -148,8 +171,8 @@ describe('ClaudeLocalPermissionBridge', () => {
 
     const pending = bridge.handlePermissionHook({
       hook_event_name: 'PermissionRequest',
-      tool_name: 'mcp__happier__change_title',
-      tool_input: { title: 'QA Agent Team Setup' },
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/qa-agent-team-setup.txt', content: 'hello' },
       tool_use_id: 'toolu_yolo_pending_1',
     });
 

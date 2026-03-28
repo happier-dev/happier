@@ -26,8 +26,8 @@ describe('Claude PermissionHandler - metadata updates while waiting for permissi
     const mode: EnhancedMode = { permissionMode: 'default' };
 
     const pending = handler.handleToolCall(
-      'Change Title',
-      { title: 'x' },
+      'Write',
+      { file_path: '/tmp/metadata-update-auto-approve.txt', content: 'x' },
       mode,
       { signal: signal.signal, toolUseId: 'toolu_metadata_change_1' },
     );

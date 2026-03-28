@@ -17,7 +17,12 @@ export {
   type ToolNormalizationProtocol,
 } from './meta.js';
 
-export { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias, type ChangeTitleToolNameAlias } from './aliases.js';
+export {
+  CHANGE_TITLE_TOOL_NAME_ALIASES,
+  isChangeTitleToolLikeName,
+  isChangeTitleToolNameAlias,
+  type ChangeTitleToolNameAlias,
+} from './aliases.js';
 export {
   LEGACY_SUBAGENT_TOOL_NAME_ALIASES,
   GENERIC_SUBAGENT_TOOL_NAME_ALIASES,

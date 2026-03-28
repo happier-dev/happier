@@ -19,6 +19,7 @@ import {
 } from '@/agent/permissions/BasePermissionHandler';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import type { AccountSettings } from '@happier-dev/protocol';
+import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 
 export type { PermissionResult, PendingRequest };
 
@@ -34,6 +35,7 @@ type HandlerOpts = Readonly<{
 
 const DEFAULT_ALWAYS_AUTO_APPROVE_TOOL_NAME_INCLUDES = [
   'change_title',
+  'session_title_set',
   'save_memory',
   'think',
   // ACP fs bridge operations are host-side capability calls; provider policy decides when these occur.
@@ -46,6 +48,7 @@ const DEFAULT_ALWAYS_AUTO_APPROVE_TOOL_NAME_INCLUDES = [
 
 const DEFAULT_ALWAYS_AUTO_APPROVE_TOOL_CALL_ID_INCLUDES = [
   'change_title',
+  'session_title_set',
   'save_memory',
 ] as const;
 
@@ -103,8 +106,10 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
   }
 
   private isAlwaysAutoApprove(toolName: string, toolCallId: string): boolean {
+    if (isChangeTitleToolLikeName(toolName)) return true;
     const toolNameTokens = this.splitNameTokens(toolName);
     const toolCallIdTokens = this.splitNameTokens(toolCallId);
+    if (this.alwaysAutoApproveToolCallIdIncludes.some((n) => toolCallId.toLowerCase().includes(n.toLowerCase()))) return true;
     if (this.alwaysAutoApproveToolNameIncludes.some((n) => toolNameTokens.includes(n.toLowerCase()))) return true;
     if (this.alwaysAutoApproveToolCallIdIncludes.some((n) => toolCallIdTokens.includes(n.toLowerCase()))) return true;
     if (this.alwaysAutoApproveToolNameIncludes.some((n) => this.matchesSafeToolSegment(toolName, n))) return true;

@@ -38,4 +38,22 @@ describe('isActionApprovalRequiredByEnv', () => {
     expect(isActionApprovalRequiredByEnv('session.message.send', { surface: 'cli' })).toBe(false);
     env.restore();
   });
+
+  it('returns false for session.title.set even when the surface is configured', () => {
+    const env = createEnvKeyScope(['HAPPIER_ACTIONS_SETTINGS_V1']);
+    env.patch({
+      HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify({
+        v: 1,
+        actions: {
+          'session.title.set': {
+            approvalRequiredSurfaces: ['cli', 'mcp'],
+          },
+        },
+      }),
+    });
+
+    expect(isActionApprovalRequiredByEnv('session.title.set', { surface: 'cli' })).toBe(false);
+    expect(isActionApprovalRequiredByEnv('session.title.set', { surface: 'mcp' })).toBe(false);
+    env.restore();
+  });
 });

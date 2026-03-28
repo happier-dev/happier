@@ -22,6 +22,7 @@ import {
     CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
     isClaudeLocalPermissionBridgeAgentStateRequest,
 } from '@happier-dev/agents';
+import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 
 type PendingPermissionRequest = {
     id: string;
@@ -223,6 +224,7 @@ export class ClaudeLocalPermissionBridge {
     }
 
     private computePolicyDecision(toolName: string): 'prompt' | 'allow' | 'deny' {
+        if (isChangeTitleToolLikeName(toolName)) return 'allow';
         const mode = this.permissionMode;
         if (mode === 'yolo') return 'allow';
         if (mode === 'safe-yolo') {

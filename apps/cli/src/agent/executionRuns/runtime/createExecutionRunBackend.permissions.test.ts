@@ -47,14 +47,14 @@ describe('createExecutionRunPermissionHandler', () => {
     });
   });
 
-  it('still denies internal auto-approved tool names for no_tools execution runs', async () => {
+  it('still auto-approves session_title_set for no_tools execution runs', async () => {
     const handler = createExecutionRunPermissionHandler({
       backendId: 'opencode',
       permissionMode: 'no_tools',
     });
 
-    await expect(handler.handleToolCall('tool-5', 'change_title', {})).resolves.toEqual({
-      decision: 'denied',
+    await expect(handler.handleToolCall('tool-5', 'session_title_set', {})).resolves.toEqual({
+      decision: 'approved_for_session',
     });
   });
 });
