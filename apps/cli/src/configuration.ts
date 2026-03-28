@@ -116,6 +116,9 @@ class Configuration {
   // Pending queue V2: idle wake polling (ensures queued prompts are materialized even if socket wakeups are missed).
   public readonly pendingQueueIdleWakePollIntervalMs: number
 
+  // Codex app-server terminal notification settle time (allows slightly late item notifications to land before flushing).
+  public readonly codexAppServerTurnCompletionSettleMs: number
+
   // MCP server SSE keepalive (prevents client idle timeouts on long-lived streams).
   public readonly mcpSseKeepAliveIntervalMs: number | null
 
@@ -410,6 +413,11 @@ class Configuration {
         : (Number.isFinite(pendingWakeMs) && pendingWakeMs >= 50
             ? Math.min(pendingWakeMs, 60_000)
             : 1_000);
+
+    this.codexAppServerTurnCompletionSettleMs = resolveIntEnvWithBounds(
+      'HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS',
+      { min: 0, max: 5_000, default: 25 },
+    );
 
     const mcpKeepAliveRaw = String(process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS ?? '').trim();
     const mcpKeepAliveMs = Number.parseInt(mcpKeepAliveRaw, 10);
