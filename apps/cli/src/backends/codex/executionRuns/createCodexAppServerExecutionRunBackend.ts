@@ -4,14 +4,6 @@ import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId, StartS
 import type { PermissionMode } from '@/api/types';
 import { createCodexAppServerRuntime } from '@/backends/codex/appServer/runtime';
 
-type DraftDeltaParams = Readonly<{
-  localId: string;
-  segmentKind: 'assistant' | 'thinking';
-  sidechainId?: string | null;
-  deltaText: string;
-  createdAtMs?: number;
-}>;
-
 function isCodexProvider(provider: ACPProvider): boolean {
   return String(provider ?? '').trim().toLowerCase() === 'codex';
 }
@@ -104,7 +96,7 @@ export function createCodexAppServerExecutionRunBackend(args: Readonly<{
   };
 
   const sessionAdapter: Pick<ApiSessionClient,
-    'sessionId' | 'getLastObservedMessageSeq' | 'updateMetadata' | 'sendAgentMessage' | 'sendAgentMessageCommitted' | 'sendTranscriptDraftDelta' | 'sendCodexMessage'
+    'sessionId' | 'getLastObservedMessageSeq' | 'updateMetadata' | 'sendAgentMessage' | 'sendAgentMessageCommitted' | 'sendCodexMessage'
   > = {
     sessionId: 'codex-app-server-execution-run',
     getLastObservedMessageSeq: () => lastObservedMessageSeq,
@@ -114,12 +106,6 @@ export function createCodexAppServerExecutionRunBackend(args: Readonly<{
     },
     sendAgentMessageCommitted: async (provider, body, opts) => {
       emitCommittedTranscriptBody(provider, body, opts.localId);
-    },
-    sendTranscriptDraftDelta: (provider: ACPProvider, params: DraftDeltaParams) => {
-      if (!isCodexProvider(provider) || params.segmentKind !== 'assistant' || !params.deltaText) return;
-      const previousText = assistantTextByLocalId.get(params.localId) ?? '';
-      assistantTextByLocalId.set(params.localId, `${previousText}${params.deltaText}`);
-      emit({ type: 'model-output', textDelta: params.deltaText });
     },
     sendCodexMessage: (body: unknown) => {
       if (!body || typeof body !== 'object' || Array.isArray(body)) return;

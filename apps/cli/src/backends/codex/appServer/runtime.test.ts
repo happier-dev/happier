@@ -612,7 +612,6 @@ describe('createCodexAppServerRuntime', () => {
         const session = {
             updateMetadata: vi.fn(),
             sendAgentMessageCommitted: vi.fn(async () => {}),
-            sendTranscriptDraftDelta: vi.fn(),
             sendCodexMessage: vi.fn(),
         };
         const runtime = createCodexAppServerRuntime({
@@ -624,21 +623,18 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
         await runtime.sendPrompt('bridge-streams');
 
-        const streamDeltas = session.sendTranscriptDraftDelta.mock.calls.map((call) => call[1]);
-        expect(streamDeltas).toEqual(expect.arrayContaining([
-            expect.objectContaining({ segmentKind: 'assistant', deltaText: 'Hello ', sidechainId: null }),
-            expect.objectContaining({ segmentKind: 'assistant', deltaText: 'world', sidechainId: null }),
-            expect.objectContaining({ segmentKind: 'thinking', deltaText: 'thinking', sidechainId: null }),
-            expect.objectContaining({ segmentKind: 'thinking', deltaText: ' hard', sidechainId: null }),
-        ]));
-        expect(session.sendAgentMessageCommitted.mock.calls).toEqual(
-            expect.arrayContaining([
-                ['codex', expect.objectContaining({ type: 'message', message: 'Hello ' }), expect.any(Object)],
-                ['codex', expect.objectContaining({ type: 'message', message: 'world' }), expect.any(Object)],
-                ['codex', expect.objectContaining({ type: 'thinking', text: 'thinking' }), expect.any(Object)],
-                ['codex', expect.objectContaining({ type: 'thinking', text: ' hard' }), expect.any(Object)],
-            ]),
-        );
+        const committedBodies = (session.sendAgentMessageCommitted.mock.calls as unknown as unknown[][]).map((call) => call[1] ?? {});
+        const assistantMessages = committedBodies
+            .filter((body: any) => body?.type === 'message' && !body?.sidechainId)
+            .map((body: any) => String(body.message ?? ''));
+        const thinkingMessages = committedBodies
+            .filter((body: any) => body?.type === 'thinking' && !body?.sidechainId)
+            .map((body: any) => String(body.text ?? ''));
+
+        expect(assistantMessages.some((msg) => msg.includes('Hello'))).toBe(true);
+        expect(assistantMessages.some((msg) => msg.includes('world'))).toBe(true);
+        expect(thinkingMessages.some((msg) => msg.includes('thinking'))).toBe(true);
+        expect(thinkingMessages.some((msg) => msg.includes('hard'))).toBe(true);
         expect(session.sendCodexMessage.mock.calls).toEqual(
             expect.arrayContaining([
                 [expect.objectContaining({ type: 'tool-call', callId: 'cmd_1', name: 'CodexBash', input: { command: 'ls -la', cwd: '/repo' } })],
@@ -657,7 +653,6 @@ describe('createCodexAppServerRuntime', () => {
         const session = {
             updateMetadata: vi.fn(),
             sendAgentMessageCommitted: vi.fn(async () => {}),
-            sendTranscriptDraftDelta: vi.fn(),
             sendCodexMessage: vi.fn(),
         };
         const runtime = createCodexAppServerRuntime({
@@ -669,16 +664,13 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
         await runtime.sendPrompt('bridge-streams-divergent-final');
 
-        const streamDeltas = session.sendTranscriptDraftDelta.mock.calls.map((call) => call[1]);
-        expect(streamDeltas).toEqual(expect.arrayContaining([
-            expect.objectContaining({ segmentKind: 'assistant', deltaText: 'READY ', sidechainId: null }),
-        ]));
-        expect(streamDeltas.some((delta) => String(delta?.deltaText ?? '').includes('READY_FOR_FOLLOWUP'))).toBe(false);
-        expect(session.sendAgentMessageCommitted.mock.calls).toEqual(
-            expect.arrayContaining([
-                ['codex', expect.objectContaining({ type: 'message', message: 'READY_FOR_FOLLOWUP' }), expect.any(Object)],
-            ]),
-        );
+        const committedBodies = (session.sendAgentMessageCommitted.mock.calls as unknown as unknown[][]).map((call) => call[1] ?? {});
+        const assistantMessages = committedBodies
+            .filter((body: any) => body?.type === 'message' && !body?.sidechainId)
+            .map((body: any) => String(body.message ?? ''));
+        expect(assistantMessages.some((msg) => msg === 'READY ')).toBe(true);
+        expect(assistantMessages.some((msg) => msg === 'READY_FOR_FOLLOWUP')).toBe(true);
+        expect(assistantMessages.some((msg) => msg.includes('READY_FOR_FOLLOWUP') && msg !== 'READY_FOR_FOLLOWUP')).toBe(false);
     });
 
     it('keeps multiple assistant and reasoning item streams isolated within one turn', async () => {
@@ -687,7 +679,6 @@ describe('createCodexAppServerRuntime', () => {
         const session = {
             updateMetadata: vi.fn(),
             sendAgentMessageCommitted: vi.fn(async () => {}),
-            sendTranscriptDraftDelta: vi.fn(),
             sendCodexMessage: vi.fn(),
         };
         const runtime = createCodexAppServerRuntime({
@@ -728,7 +719,6 @@ describe('createCodexAppServerRuntime', () => {
         const session = {
             updateMetadata: vi.fn(),
             sendAgentMessageCommitted: vi.fn(async () => {}),
-            sendTranscriptDraftDelta: vi.fn(),
             sendCodexMessage: vi.fn(),
         };
         const runtime = createCodexAppServerRuntime({
@@ -770,7 +760,6 @@ describe('createCodexAppServerRuntime', () => {
         const session = {
             updateMetadata: vi.fn(),
             sendAgentMessageCommitted: vi.fn(async () => {}),
-            sendTranscriptDraftDelta: vi.fn(),
             sendCodexMessage: vi.fn(),
         };
         const runtime = createCodexAppServerRuntime({
@@ -809,7 +798,6 @@ describe('createCodexAppServerRuntime', () => {
             updateMetadata: vi.fn(),
             sendAgentMessage: vi.fn(),
             sendAgentMessageCommitted: vi.fn(async () => {}),
-            sendTranscriptDraftDelta: vi.fn(),
             sendCodexMessage: vi.fn(),
         };
         const runtime = createCodexAppServerRuntime({
@@ -821,17 +809,21 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
         await runtime.sendPrompt('bridge-foreign-thread-streams');
 
-        const draftAssistantTexts = session.sendTranscriptDraftDelta.mock.calls
-            .map((call) => call[1]?.sidechainId ? null : call[1]?.deltaText)
-            .filter((value): value is string => typeof value === 'string');
-        const childDraftCalls = session.sendTranscriptDraftDelta.mock.calls.filter(
-            (call) => call[1]?.sidechainId === 'thread-child',
-        );
-        expect(draftAssistantTexts.some((value) => value.includes('Child'))).toBe(false);
-        expect(childDraftCalls).toEqual(expect.arrayContaining([
-            ['codex', expect.objectContaining({ sidechainId: 'thread-child', segmentKind: 'assistant', deltaText: 'Child ' })],
-            ['codex', expect.objectContaining({ sidechainId: 'thread-child', segmentKind: 'assistant', deltaText: 'final' })],
-        ]));
+        const committedCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
+            [string, { type?: string; message?: string; sidechainId?: string | null }, { localId: string; meta?: Record<string, any> }]
+        >;
+        const parentAssistantMessages = committedCalls
+            .map(([, body]) => body)
+            .filter((body) => body?.type === 'message' && !body.sidechainId)
+            .map((body) => String(body.message ?? ''));
+        expect(parentAssistantMessages.some((value) => value.includes('Child'))).toBe(false);
+
+        const childAssistantMessages = committedCalls
+            .map(([, body]) => body)
+            .filter((body) => body?.type === 'message' && body.sidechainId === 'thread-child')
+            .map((body) => String(body.message ?? ''));
+        expect(childAssistantMessages.some((value) => value.includes('Child'))).toBe(true);
+        expect(childAssistantMessages.some((value) => value.includes('final'))).toBe(true);
         expect(session.sendAgentMessageCommitted.mock.calls).toEqual(
             expect.arrayContaining([
                 ['codex', expect.objectContaining({ type: 'message', message: 'Parent final' }), expect.any(Object)],
@@ -892,7 +884,6 @@ describe('createCodexAppServerRuntime', () => {
             session: {
                 updateMetadata: vi.fn(),
                 sendAgentMessageCommitted: vi.fn(async () => {}),
-                sendTranscriptDraftDelta: vi.fn(),
                 sendCodexMessage: vi.fn(),
             } as any,
             permissionHandler: permissionHandler as any,
@@ -969,7 +960,6 @@ describe('createCodexAppServerRuntime', () => {
             session: {
                 updateMetadata: vi.fn(),
                 sendAgentMessageCommitted: vi.fn(async () => {}),
-                sendTranscriptDraftDelta: vi.fn(),
                 sendCodexMessage: vi.fn(),
             } as any,
             permissionHandler: permissionHandler as any,
@@ -1223,7 +1213,6 @@ describe('createCodexAppServerRuntime', () => {
                 sendAgentMessageCommitted: vi.fn(async () => {
                     lastObservedMessageSeq = 11;
                 }),
-                sendTranscriptDraftDelta: vi.fn(),
                 sendCodexMessage: vi.fn(),
             } as any,
         });
@@ -1278,7 +1267,6 @@ describe('createCodexAppServerRuntime', () => {
                     lastObservedMessageSeq = 3;
                     lastObservedUserMessageSeq = 1;
                 }),
-                sendTranscriptDraftDelta: vi.fn(),
                 sendCodexMessage: vi.fn(),
             } as any,
         });
@@ -1325,7 +1313,6 @@ describe('createCodexAppServerRuntime', () => {
                 sendAgentMessageCommitted: vi.fn(async () => {
                     lastObservedMessageSeq = nextTurnEndSeq;
                 }),
-                sendTranscriptDraftDelta: vi.fn(),
                 sendCodexMessage: vi.fn(),
             } as any,
         });
@@ -1387,7 +1374,6 @@ describe('createCodexAppServerRuntime', () => {
                 updateMetadata: vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) => updater({ machineId: 'machine_1' })),
                 getLastObservedMessageSeq: vi.fn(() => 11),
                 sendAgentMessageCommitted: vi.fn(async () => undefined),
-                sendTranscriptDraftDelta: vi.fn(),
                 sendCodexMessage: vi.fn(),
             } as any,
         });

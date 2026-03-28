@@ -120,6 +120,28 @@ export async function materializeCodexDirectTranscriptItems(params: Readonly<{
             try {
                 value = JSON.parse(line.raw) as unknown;
             } catch {
+                const padded = Math.max(0, Math.trunc(line.startOffsetBytes)).toString().padStart(12, '0');
+                const stableId = `codex:${stream.fileRelPath}:${padded}`;
+                items.push({
+                    id: stableId,
+                    localId: stableId,
+                    createdAtMs: Math.max(0, Math.trunc(stream.sortMs)),
+                    raw: {
+                        role: 'agent',
+                        content: {
+                            type: 'output',
+                            data: {
+                                type: 'opaque',
+                                reason: 'invalid_json',
+                                source: {
+                                    fileRelPath: stream.fileRelPath,
+                                    lineStartOffsetBytes: line.startOffsetBytes,
+                                },
+                                original: line.raw,
+                            },
+                        },
+                    },
+                });
                 continue;
             }
             const normalizedActions = mapCodexRolloutEventToActions(value, { debug: true })

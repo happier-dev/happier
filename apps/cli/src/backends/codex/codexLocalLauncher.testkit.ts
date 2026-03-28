@@ -219,7 +219,6 @@ export function createLocalSessionHarness(): LocalSessionHarness {
     sendAgentMessageCommitted: async (_provider: string, body: unknown) => {
       codexMessages.push(body as CodexBody);
     },
-    sendTranscriptDraftDelta: () => {},
     sendCodexMessage: (body: unknown) => {
       codexMessages.push(body as CodexBody);
     },

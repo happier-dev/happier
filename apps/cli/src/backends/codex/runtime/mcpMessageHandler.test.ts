@@ -63,7 +63,6 @@ describe('createCodexMcpMessageHandler', () => {
     const session = {
       sendAgentMessage: vi.fn(),
       sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendTranscriptDraftDelta: vi.fn(),
       sendCodexMessage: vi.fn(),
       sendSessionEvent: vi.fn(),
       keepAlive: vi.fn(),
@@ -113,7 +112,6 @@ describe('createCodexMcpMessageHandler', () => {
           });
         }
       }),
-      sendTranscriptDraftDelta: vi.fn(),
       sendCodexMessage: vi.fn(),
       sendSessionEvent: vi.fn(),
       keepAlive,
@@ -163,7 +161,6 @@ describe('createCodexMcpMessageHandler', () => {
   });
 
   it('streams agent_message text through transcript-vNext instead of creating standalone Codex rows', () => {
-    vi.stubEnv('HAPPIER_STREAM_DRAFT_FLUSH_MS', '0');
     vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
     vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
 
@@ -172,7 +169,6 @@ describe('createCodexMcpMessageHandler', () => {
       const session = {
         sendAgentMessage: vi.fn(),
         sendAgentMessageCommitted: vi.fn(async () => {}),
-        sendTranscriptDraftDelta: vi.fn(),
         sendCodexMessage: vi.fn(),
         sendSessionEvent: vi.fn(),
         keepAlive: vi.fn(),
@@ -214,18 +210,10 @@ describe('createCodexMcpMessageHandler', () => {
           }),
         }),
       );
-      expect(session.sendTranscriptDraftDelta).toHaveBeenCalledWith(
-        'codex',
-        expect.objectContaining({
-          segmentKind: 'assistant',
-          deltaText: 'Hello from Codex',
-        }),
-      );
       expect(session.sendCodexMessage).not.toHaveBeenCalled();
   });
 
   it('streams agent_reasoning deltas as ACP thinking messages (not tool calls)', () => {
-    vi.stubEnv('HAPPIER_STREAM_DRAFT_FLUSH_MS', '0');
     vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
     vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
 
@@ -236,7 +224,6 @@ describe('createCodexMcpMessageHandler', () => {
       const session = {
         sendAgentMessage: vi.fn(),
         sendAgentMessageCommitted: vi.fn(async () => {}),
-        sendTranscriptDraftDelta: vi.fn(),
         sendCodexMessage: vi.fn(),
         sendSessionEvent: vi.fn(),
         keepAlive,
@@ -276,13 +263,6 @@ describe('createCodexMcpMessageHandler', () => {
               segmentState: 'streaming',
             }),
           }),
-        }),
-      );
-      expect(session.sendTranscriptDraftDelta).toHaveBeenCalledWith(
-        'codex',
-        expect.objectContaining({
-          segmentKind: 'thinking',
-          deltaText: '**Title**\n\nHello',
         }),
       );
       expect(session.sendCodexMessage).not.toHaveBeenCalled();

@@ -72,7 +72,6 @@ describe('CodexRolloutMirror', () => {
             meta: opts.meta,
           });
         },
-        sendTranscriptDraftDelta: () => {},
         sendSessionEvent: (event: unknown) => sessionEvents.push(event as SessionEvent),
       } as any,
     });
@@ -198,7 +197,6 @@ describe('CodexRolloutMirror', () => {
             localId: opts.localId,
           });
         },
-        sendTranscriptDraftDelta: () => {},
         sendSessionEvent: () => {},
       } as any,
     });
@@ -255,7 +253,6 @@ describe('CodexRolloutMirror', () => {
             meta: opts.meta,
           });
         },
-        sendTranscriptDraftDelta: () => {},
         sendSessionEvent: () => {},
       } as any,
     });
@@ -396,7 +393,6 @@ describe('CodexRolloutMirror', () => {
             meta: opts.meta,
           });
         },
-        sendTranscriptDraftDelta: () => {},
         sendSessionEvent: () => {},
       } as any,
     });

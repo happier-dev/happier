@@ -13,7 +13,6 @@ type SessionSubset = Pick<
   ApiSessionClient,
   | 'sendAgentMessage'
   | 'sendAgentMessageCommitted'
-  | 'sendTranscriptDraftDelta'
   | 'sendCodexMessage'
   | 'sendSessionEvent'
   | 'keepAlive'

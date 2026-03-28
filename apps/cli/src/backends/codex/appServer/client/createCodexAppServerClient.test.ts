@@ -370,14 +370,14 @@ describe('createCodexAppServerClient', () => {
             const fakeAppServer = await writeFakeCodexAppServerScript({
                 dir: root,
                 bodyLines: [
-                    `await writeFile(${JSON.stringify(pidFile)}, String(process.pid), 'utf8');`,
+                    `writeFileSync(${JSON.stringify(pidFile)}, String(process.pid), 'utf8');`,
                     'for await (const line of rl) {',
                     '  if (!line.trim()) continue;',
                     '  const msg = JSON.parse(line);',
                     '  if (msg.method === "initialize") { continue; }',
                     '}',
                 ],
-                importLines: ['import { writeFile } from "node:fs/promises";'],
+                importLines: ['import { writeFileSync } from "node:fs";'],
             });
 
             await expect(createCodexAppServerClient({
