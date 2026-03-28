@@ -14,28 +14,30 @@ const screenState = vi.hoisted(() => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            get OS() {
-                return screenState.platformOS;
-            },
-            select: (options: any) => options?.[screenState.platformOS] ?? options?.default ?? options?.ios ?? options?.android,
-        },
-        Dimensions: {
-            get: () => ({
-                width: screenState.staticDims.width,
-                height: screenState.staticDims.height,
-                scale: 2,
-                fontScale: 1,
-            }),
-        },
-        useWindowDimensions: () => ({
-            width: screenState.hookDims.width,
-            height: screenState.hookDims.height,
-            scale: 2,
-            fontScale: 1,
-        }),
-    });
+    return createReactNativeWebMock(
+        {
+                Platform: {
+                    get OS() {
+                        return screenState.platformOS;
+                    },
+                    select: (options: any) => options?.[screenState.platformOS] ?? options?.default ?? options?.ios ?? options?.android,
+                },
+                Dimensions: {
+                    get: () => ({
+                        width: screenState.staticDims.width,
+                        height: screenState.staticDims.height,
+                        scale: 2,
+                        fontScale: 1,
+                    }),
+                },
+                useWindowDimensions: () => ({
+                    width: screenState.hookDims.width,
+                    height: screenState.hookDims.height,
+                    scale: 2,
+                    fontScale: 1,
+                }),
+            }
+    );
 });
 
 function DeviceTypeLabel() {

@@ -10,9 +10,16 @@ describe('deferOnWeb', () => {
     });
 
     it('defers execution on web', async () => {
-        vi.doMock('react-native', () => ({
-            Platform: { OS: 'web' },
-        }));
+        vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+            },
+        }
+    );
+});
 
         const { deferOnWeb } = await import('./deferOnWeb');
         const action = vi.fn();
@@ -38,9 +45,16 @@ describe('deferOnWeb', () => {
     });
 
     it('runs immediately off web', async () => {
-        vi.doMock('react-native', () => ({
-            Platform: { OS: 'ios' },
-        }));
+        vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+            },
+        }
+    );
+});
 
         const { deferOnWeb } = await import('./deferOnWeb');
         const action = vi.fn();
@@ -50,9 +64,16 @@ describe('deferOnWeb', () => {
 
     it('blurs the active element before navigating on web', async () => {
         const blurSpy = vi.fn();
-        vi.doMock('react-native', () => ({
-            Platform: { OS: 'web' },
-        }));
+        vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+            },
+        }
+    );
+});
         vi.stubGlobal('document', {
             activeElement: { blur: blurSpy },
         });

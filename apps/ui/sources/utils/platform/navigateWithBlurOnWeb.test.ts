@@ -3,9 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 describe('navigateWithBlurOnWeb', () => {
     it('blurs the active element before running the navigation action on web', async () => {
         vi.resetModules();
-        vi.doMock('react-native', () => ({
-            Platform: { OS: 'web' },
-        }));
+        vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+            },
+        }
+    );
+});
 
         const blurSpy = vi.fn();
         const originalDocument = globalThis.document;
@@ -29,9 +36,16 @@ describe('navigateWithBlurOnWeb', () => {
 
     it('runs the navigation action without trying to blur on native', async () => {
         vi.resetModules();
-        vi.doMock('react-native', () => ({
-            Platform: { OS: 'ios' },
-        }));
+        vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+            },
+        }
+    );
+});
 
         const { navigateWithBlurOnWeb } = await import('./navigateWithBlurOnWeb');
         const actionSpy = vi.fn();

@@ -6,13 +6,13 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            Platform: {
-                OS: 'ios',
-            },
-            Linking: {
-                openURL: openUrlSpy,
-            },
-        }
+                    Platform: {
+                        OS: 'ios',
+                    },
+                    Linking: {
+                        openURL: openUrlSpy,
+                    },
+                }
     );
 });
 
