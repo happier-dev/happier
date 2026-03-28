@@ -18,6 +18,10 @@ For core bridge architecture, ingress mode matrix, and relay deployment model, s
   - **DM** = `thread_id = null`
   - **Topic** = `thread_id = <topic id>`
 - Outbound agent replies are forwarded back into the mapped DM/topic.
+- Inbound forwarding policy is configured **per binding** at attach-time:
+  - Default is **owner-only** (only the user who ran `/attach` can forward messages into the session from that conversation).
+  - Use `/attach ... --anyone` to allow any member of a shared chat/topic to forward messages (only recommended for fully-trusted chats).
+  - If sender identity is missing, `/attach` and forwarding are **denied by default** (safe-by-default). You can override with `--allow-missing-sender-id` (unsafe).
 
 ## BotFather + Telegram Setup
 
@@ -116,15 +120,20 @@ Channel bridges are gated in three places:
 
 Note: `happier bridge telegram set ...` automatically enables the local experimental toggle (`channelBridges`).
 
-## Environment Variables (`.env.local`)
+Server env keys (v1):
+- `HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED=0|1`
+- `HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED=0|1`
 
-Set these to override `settings.json` or run env-only:
+## Environment Variables (daemon process env)
+
+Set these on the daemon process to override `settings.json` (or to run env-only). Environment variables are read directly from `process.env` (there is no automatic `.env.local` loading for the CLI/daemon).
 
 ```bash
 HAPPIER_TELEGRAM_BOT_TOKEN=<bot-token>
 
 # Optional hardening:
 HAPPIER_TELEGRAM_ALLOWED_CHAT_IDS=-1001234567890,-10055555555
+HAPPIER_TELEGRAM_ALLOW_ALL_SHARED_CHATS=0
 HAPPIER_TELEGRAM_REQUIRE_TOPICS=1
 
 # Bridge tick cadence (ms)
@@ -194,6 +203,7 @@ HAPPIER_TELEGRAM_WEBHOOK_PORT=8787
 ```
 
 `HAPPIER_TELEGRAM_WEBHOOK_SECRET` is used for Telegram `secret_token` header validation (`X-Telegram-Bot-Api-Secret-Token`).
+The token must match Telegram’s webhook `secret_token` constraints: `[A-Za-z0-9_-]` and a max length of 256 characters.
 
 The webhook endpoint path is fixed (`POST /telegram/webhook`) and does not include any secrets.
 
@@ -216,10 +226,14 @@ https://your-public-host/telegram/webhook
 Set Telegram webhook:
 
 ```bash
-curl "https://api.telegram.org/bot<token>/setWebhook?url=https://your-public-host/telegram/webhook&secret_token=<secret>"
+# Recommended: use a POST body so the secret does not end up in URLs (shell history, proxy logs, etc.)
+curl -X POST "https://api.telegram.org/bot<token>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://your-public-host/telegram/webhook","secret_token":"<secret>"}'
 ```
 
 Use a high-entropy random value and avoid sharing/logging webhook secrets.
+Ensure your public reverse proxy/tunnel forwards the `X-Telegram-Bot-Api-Secret-Token` header unchanged to the daemon relay.
 
 If you switch back to polling mode, clear webhook first:
 
@@ -231,11 +245,17 @@ curl "https://api.telegram.org/bot<token>/deleteWebhook"
 
 - `/help` — command list
 - `/sessions` — list active Happier sessions
-- `/attach <session-id-or-prefix>` — bind current DM/topic to a session
+- `/attach <session-id-or-prefix> [--anyone] [--allow-missing-sender-id]` — bind current DM/topic to a session
 - `/session` — show current binding
 - `/detach` — remove binding
 
 After `/attach`, normal messages in that DM/topic are forwarded into the mapped session, and agent replies flow back into that same DM/topic.
+
+Authorization notes:
+- By default, inbound forwarding is **owner-only** (the user who attached the conversation).
+- In shared chats, other users who try to send messages will receive a denial reply (and the message will not be forwarded).
+- `--anyone` opts a binding into allowing messages from any sender in that conversation.
+- `--allow-missing-sender-id` disables sender-based safety checks for that binding (unsafe; only use if the platform/conversation does not provide stable sender identities).
 
 ## Extending Beyond Telegram
 

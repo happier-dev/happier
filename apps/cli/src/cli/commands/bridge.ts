@@ -16,6 +16,7 @@ import { ensureExperimentalSettingsFeatureToggleEnabled } from '@/features/setti
 import { readCredentials, readSettings, updateSettings } from '@/persistence';
 import { argvValue } from '@/cli/commands/server/commandUtilities';
 import { join } from 'node:path';
+import { TELEGRAM_WEBHOOK_SECRET_TOKEN_MAX_LENGTH } from '@/channels/providers/telegram/telegramWebhookSecretToken';
 
 function parseBooleanInput(raw: string, flagName: string): boolean {
   const value = raw.trim().toLowerCase();
@@ -44,6 +45,9 @@ function parseCsvList(raw: string): string[] {
 }
 
 function validateTelegramWebhookSecretToken(raw: string, flagName: string): void {
+  if (raw.trim().length > TELEGRAM_WEBHOOK_SECRET_TOKEN_MAX_LENGTH) {
+    throw new Error('Webhook secret token is too long');
+  }
   if (!/^[A-Za-z0-9_-]+$/.test(raw)) {
     throw new Error(`Invalid ${flagName} value: must match [A-Za-z0-9_-] (Telegram webhook token restriction)`);
   }

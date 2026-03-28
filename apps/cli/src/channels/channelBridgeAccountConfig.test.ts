@@ -20,6 +20,19 @@ describe('channelBridgeAccountConfig', () => {
     ).toThrow('Invalid webhookSecret: must match [A-Za-z0-9_-]');
   });
 
+  it('rejects webhook secrets that exceed Telegram maximum length', () => {
+    expect(() =>
+      upsertScopedTelegramBridgeConfig({
+        settings: {},
+        serverId: 'local-3005',
+        accountId: 'acct-1',
+        update: {
+          webhookSecret: 'x'.repeat(257),
+        },
+      })
+    ).toThrow('Webhook secret token is too long');
+  });
+
   it('writes scoped telegram config under server/account with secrets in local-only block', () => {
     const next = upsertScopedTelegramBridgeConfig({
       settings: {},

@@ -124,6 +124,28 @@ describe('happier bridge command (local-only v1)', () => {
     }
   });
 
+  it('rejects overlong webhook secret values before persisting settings', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'set', '--webhook-secret', 'x'.repeat(257)],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(updateSettingsMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Webhook secret token is too long'),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('rejects explicitly passed empty --bot-token values', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {

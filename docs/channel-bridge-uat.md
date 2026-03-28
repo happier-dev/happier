@@ -90,6 +90,10 @@ Expected:
 
 - Set `allowedChatIds` to a different chat and verify current chat is blocked.
 - Revert to `--allow-all` and verify chat works again.
+- In a shared chat/topic, validate inbound authorization:
+  - User A runs `/attach <session-id>` (default owner-only).
+  - User B sends a normal message and verify the bot replies with an authorization error and does **not** forward into the session.
+  - User A runs `/attach <session-id> --anyone`, then User B sends a message again and verify it **is** forwarded.
 - If using webhook mode, verify secret mismatch returns a non-200 response:
   - `404` when the URL path is wrong (route mismatch)
   - `401` when `X-Telegram-Bot-Api-Secret-Token` is missing/invalid
