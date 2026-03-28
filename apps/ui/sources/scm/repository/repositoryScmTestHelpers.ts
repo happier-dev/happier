@@ -13,11 +13,6 @@ const repositoryScmModuleState = vi.hoisted(() => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {
-    const activeOptions = repositoryScmModuleState.options;
-    if (activeOptions.storage) {
-        return await activeOptions.storage();
-    }
-
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({});
 });

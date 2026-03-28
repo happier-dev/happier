@@ -16,11 +16,11 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            AppState: {
-                currentState: 'active',
-                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-            },
-        }
+                    AppState: {
+                        currentState: 'active',
+                        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                    },
+                }
     );
 });
 
