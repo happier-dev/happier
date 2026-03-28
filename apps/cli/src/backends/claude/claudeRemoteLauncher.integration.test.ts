@@ -260,6 +260,111 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(blocks.some((b: any) => b?.type === 'thinking' && b?.thinking === 'Thinking...')).toBe(true);
   });
 
+  it('does not strip assistant text/thinking blocks when the Agent SDK runner is selected', async () => {
+    const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(label)), ms);
+          timer.unref?.();
+        }),
+      ]);
+    };
+
+    const harness = createRemoteHarness();
+    (harness.client as any).sendAgentMessageCommitted = vi.fn(async () => {});
+    harness.session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
+
+    const dispatchObserved = createDeferred<void>();
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+      opts.onRunnerSelected?.('agentSdk');
+      const first = await opts.nextMessage();
+      expect(first?.mode?.claudeRemoteAgentSdkEnabled).toBe(true);
+
+      opts.onSessionFound?.('sess_agentsdk', hookWithTranscript('/tmp/sess_agentsdk.jsonl'));
+      opts.onMessage?.({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'Agent SDK thinking...' },
+            { type: 'text', text: 'Hello from Agent SDK.' },
+          ],
+        },
+      });
+
+      dispatchObserved.resolve(undefined);
+      await waitForAbort(opts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(harness.session);
+
+    const switchHandler = await waitWithin(harness.switchHandlerReady, 'switch handler was not registered');
+    await waitWithin(dispatchObserved.promise, 'remote dispatch mock did not run');
+
+    await waitWithin(Promise.resolve(switchHandler({ to: 'local' })), 'switch handler did not resolve');
+    await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
+
+    const convertedArg = mockConvert.mock.calls[0]?.[0] as any;
+    const blocks = Array.isArray(convertedArg?.message?.content) ? convertedArg.message.content : [];
+    expect(blocks.some((b: any) => b?.type === 'text' && b?.text === 'Hello from Agent SDK.')).toBe(true);
+    expect(blocks.some((b: any) => b?.type === 'thinking' && b?.thinking === 'Agent SDK thinking...')).toBe(true);
+  });
+
+  it('does not strip assistant text/thinking blocks in the launcher when the Agent SDK runner is selected', async () => {
+    const waitWithin = async <T,>(promise: Promise<T>, label: string, ms: number = 5000): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(label)), ms);
+          timer.unref?.();
+        }),
+      ]);
+    };
+
+    const harness = createRemoteHarness();
+    (harness.client as any).sendAgentMessageCommitted = vi.fn(async () => {});
+
+    harness.session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any);
+
+    const dispatchObserved = createDeferred<void>();
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: any) => {
+      opts.onRunnerSelected?.('agentSdk');
+      const first = await opts.nextMessage();
+      expect(first?.mode?.claudeRemoteAgentSdkEnabled).toBe(true);
+      opts.onSessionFound?.('sess_agent_sdk', hookWithTranscript('/tmp/sess_agent_sdk.jsonl'));
+      opts.onMessage?.({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'Thinking...' },
+            { type: 'text', text: 'Hello from agent sdk.' },
+          ],
+        },
+      });
+      dispatchObserved.resolve(undefined);
+      await waitForAbort(opts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(harness.session);
+
+    const switchHandler = await waitWithin(harness.switchHandlerReady, 'switch handler was not registered');
+    await waitWithin(dispatchObserved.promise, 'remote dispatch mock did not run');
+
+    await waitWithin(Promise.resolve(switchHandler({ to: 'local' })), 'switch handler did not resolve');
+    await expect(waitWithin(launcherPromise, 'launcher did not terminate')).resolves.toBe('switch');
+
+    const convertedArg = mockConvert.mock.calls[0]?.[0] as any;
+    const blocks = Array.isArray(convertedArg?.message?.content) ? convertedArg.message.content : [];
+    expect(blocks.some((b: any) => b?.type === 'text' && b?.text === 'Hello from agent sdk.')).toBe(true);
+    expect(blocks.some((b: any) => b?.type === 'thinking' && b?.thinking === 'Thinking...')).toBe(true);
+  });
+
   afterEach(() => {
     for (const session of createdSessions.splice(0)) {
       session.cleanup();

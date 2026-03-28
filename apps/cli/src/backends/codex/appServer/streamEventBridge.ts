@@ -1,4 +1,5 @@
 import { extractMcpToolCallResultOutput } from '../runtime/sessionTurnLifecycle';
+import { readCodexMessageContentText } from '../utils/readCodexMessageContentText';
 
 type RecordLike = Record<string, unknown>;
 
@@ -23,6 +24,7 @@ type ToolContext = Readonly<{
 export type CodexAppServerStreamUpdate =
     | Readonly<{ type: 'assistant-text-delta'; itemId: string; text: string }>
     | Readonly<{ type: 'assistant-text-final'; itemId: string; text: string }>
+    | Readonly<{ type: 'assistant-raw-final'; text: string }>
     | Readonly<{ type: 'reasoning-delta'; itemId: string; text: string }>
     | Readonly<{ type: 'reasoning-final'; itemId: string; text: string }>
     | Readonly<{ type: 'turn-diff-updated'; turnId: string | null; unifiedDiff: string }>
@@ -213,6 +215,16 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
                 }];
             }
 
+            if (notification.method === 'rawResponseItem/completed') {
+                const item = readItem(params);
+                if (!item) return [];
+                const itemType = readItemType(item);
+                const role = readString(item.role);
+                if (itemType !== 'message' || role !== 'assistant') return [];
+                const text = readText(item, ['text', 'message']) ?? readCodexMessageContentText(item.content);
+                return text ? [{ type: 'assistant-raw-final', text }] : [];
+            }
+
             if (notification.method !== 'item/completed') return [];
 
             const item = readItem(params);
@@ -222,7 +234,7 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
             if (!itemId || !itemType) return [];
 
             if (itemType === 'agentmessage' || itemType === 'plan') {
-                const text = readText(item, ['text', 'message', 'content']);
+                const text = readText(item, ['text', 'message']) ?? readCodexMessageContentText(item.content);
                 return text ? [{ type: 'assistant-text-final', itemId, text }] : [];
             }
 

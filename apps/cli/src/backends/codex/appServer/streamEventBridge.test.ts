@@ -41,6 +41,21 @@ describe('createCodexAppServerStreamEventBridge', () => {
 
         expect(
             bridge.onNotification({
+                method: 'rawResponseItem/completed',
+                params: {
+                    item: {
+                        type: 'message',
+                        role: 'assistant',
+                        content: [
+                            { type: 'output_text', text: 'Raw assistant final' },
+                        ],
+                    },
+                },
+            }),
+        ).toEqual([{ type: 'assistant-raw-final', text: 'Raw assistant final' }]);
+
+        expect(
+            bridge.onNotification({
                 method: 'item/reasoning/summaryTextDelta',
                 params: {
                     itemId: 'reason_1',

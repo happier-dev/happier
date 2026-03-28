@@ -65,6 +65,11 @@ export function createStreamedTranscriptWriter(params: {
     return created;
   };
 
+  const getExistingSegment = (kind: SegmentKind, sidechainId: string | null): SegmentRuntime | null => {
+    const key = buildStreamedTranscriptSegmentKey(kind, sidechainId);
+    return segments.get(key) ?? null;
+  };
+
   const appendDelta = (kind: SegmentKind, deltaText: string, sidechainId: string | null) => {
     if (!deltaText) return;
 
@@ -89,9 +94,11 @@ export function createStreamedTranscriptWriter(params: {
     commitDurableSnapshot(segment, { state: 'streaming' });
   };
 
-  const overrideSegmentText = (kind: SegmentKind, text: string, sidechainId: string | null) => {
-    const segment = getOrCreateSegment(kind, sidechainId);
+  const overrideSegmentText = (kind: SegmentKind, text: string, sidechainId: string | null): boolean => {
+    const segment = getExistingSegment(kind, sidechainId);
+    if (!segment) return false;
     segment.accumulatedText = text;
+    return true;
   };
 
   const flushAll = async (opts: {

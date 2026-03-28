@@ -13,6 +13,13 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { createCodexAppServerRuntime } from './runtime';
 import { createCodexAppServerProcessEnv, createCodexAppServerTestEnvScope } from './testkit/fakeCodexAppServer';
 
+type CommittedSnapshotBody = Readonly<{
+    type?: string;
+    message?: string;
+    text?: string;
+    sidechainId?: string | null;
+}>;
+
 async function writeFakeCodexAppServerScript(params: Readonly<{
     dir: string;
     requestLogPath: string;
@@ -146,6 +153,39 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "reason_b", type: "reasoning", content: ["think-b done"] } } }) + "\\n");',
         '            }, 13);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 18);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-late-final-after-turn-completed") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 8);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "msg_late", type: "agentMessage", text: "Late final answer" } } }) + "\\n");',
+        '            }, 12);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-raw-final-only") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "rawResponseItem/completed", params: { item: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Raw final answer" }] } } }) + "\\n");',
+        '            }, 8);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 14);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-raw-and-normalized-final") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "rawResponseItem/completed", params: { item: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Raw fallback answer" }] } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { itemId: "msg_raw_normalized", delta: "Normalized " } }) + "\\n");',
+        '            }, 8);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "msg_raw_normalized", type: "agentMessage", text: "Normalized final answer" } } }) + "\\n");',
+        '            }, 12);',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
         '            }, 18);',
@@ -623,11 +663,15 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
         await runtime.sendPrompt('bridge-streams');
 
-        const committedBodies = (session.sendAgentMessageCommitted.mock.calls as unknown as unknown[][]).map((call) => call[1] ?? {});
-        const assistantMessages = committedBodies
-            .filter((body: any) => body?.type === 'message' && !body?.sidechainId)
-            .map((body: any) => String(body.message ?? ''));
-        const thinkingMessages = committedBodies
+        const committedCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
+            [string, { type?: string; message?: string; text?: string }, { localId: string; meta?: Record<string, any> }]
+        >;
+        const assistantMessages = committedCalls
+            .map(([, body, opts]) => ({ body: body as CommittedSnapshotBody, opts }))
+            .filter((call) => call.body.type === 'message' && !call.body.sidechainId)
+            .map((call) => String(call.body?.message ?? ''));
+        const thinkingMessages = committedCalls
+            .map(([, body]) => body)
             .filter((body: any) => body?.type === 'thinking' && !body?.sidechainId)
             .map((body: any) => String(body.text ?? ''));
 
@@ -664,10 +708,13 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
         await runtime.sendPrompt('bridge-streams-divergent-final');
 
-        const committedBodies = (session.sendAgentMessageCommitted.mock.calls as unknown as unknown[][]).map((call) => call[1] ?? {});
-        const assistantMessages = committedBodies
-            .filter((body: any) => body?.type === 'message' && !body?.sidechainId)
-            .map((body: any) => String(body.message ?? ''));
+        const committedCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
+            [string, { type?: string; message?: string; text?: string }, { localId: string; meta?: Record<string, any> }]
+        >;
+        const assistantMessages = committedCalls
+            .map(([, body, opts]) => ({ body: body as CommittedSnapshotBody, opts }))
+            .filter((call) => call.body.type === 'message' && !call.body.sidechainId)
+            .map((call) => String(call.body?.message ?? ''));
         expect(assistantMessages.some((msg) => msg === 'READY ')).toBe(true);
         expect(assistantMessages.some((msg) => msg === 'READY_FOR_FOLLOWUP')).toBe(true);
         expect(assistantMessages.some((msg) => msg.includes('READY_FOR_FOLLOWUP') && msg !== 'READY_FOR_FOLLOWUP')).toBe(false);
@@ -711,6 +758,96 @@ describe('createCodexAppServerRuntime', () => {
             expect.objectContaining({ body: expect.objectContaining({ text: 'think-b done' }) }),
         ]));
         expect(new Set(finalThinkingMessages.map((call) => call.opts.localId)).size).toBe(2);
+    });
+
+    it('commits a late final assistant item that arrives after turn/completed', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-late-final-');
+
+        const session = {
+            updateMetadata: vi.fn(),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendCodexMessage: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-late-final-after-turn-completed');
+
+        const committedCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
+            [string, { type?: string; message?: string; text?: string }, { localId: string; meta?: Record<string, any> }]
+        >;
+        const assistantMessages = committedCalls
+            .map(([, body, opts]) => ({ body: body as CommittedSnapshotBody, opts }))
+            .filter((call) => call.body.type === 'message'
+                && !call.body.sidechainId
+                && call.opts?.meta?.happierStreamSegmentV1?.segmentState === 'complete')
+            .map((call) => String(call.body?.message ?? ''));
+
+        expect(assistantMessages).toContain('Late final answer');
+    });
+
+    it('commits a raw assistant final when no normalized assistant final arrives', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-raw-final-only-');
+
+        const session = {
+            updateMetadata: vi.fn(),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendCodexMessage: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-raw-final-only');
+
+        const committedCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
+            [string, { type?: string; message?: string; text?: string }, { localId: string; meta?: Record<string, any> }]
+        >;
+        const assistantMessages = committedCalls
+            .map(([, body, opts]) => ({ body: body as CommittedSnapshotBody, opts }))
+            .filter((call) => call.body.type === 'message'
+                && !call.body.sidechainId
+                && call.opts?.meta?.happierStreamSegmentV1?.segmentState === 'complete')
+            .map((call) => String(call.body?.message ?? ''));
+
+        expect(assistantMessages).toEqual(['Raw final answer']);
+    });
+
+    it('does not duplicate the assistant message when a raw final and normalized final both arrive', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-raw-and-normalized-final-');
+
+        const session = {
+            updateMetadata: vi.fn(),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendCodexMessage: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-raw-and-normalized-final');
+
+        const committedCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
+            [string, { type?: string; message?: string; text?: string }, { localId: string; meta?: Record<string, any> }]
+        >;
+        const assistantMessages = committedCalls
+            .map(([, body, opts]) => ({ body: body as CommittedSnapshotBody, opts }))
+            .filter((call) => call.body.type === 'message'
+                && !call.body.sidechainId
+                && call.opts?.meta?.happierStreamSegmentV1?.segmentState === 'complete')
+            .map((call) => String(call.body?.message ?? ''));
+
+        expect(assistantMessages).toEqual(['Normalized final answer']);
     });
 
     it('emits a canonical Diff tool when the app-server publishes turn diff updates', async () => {

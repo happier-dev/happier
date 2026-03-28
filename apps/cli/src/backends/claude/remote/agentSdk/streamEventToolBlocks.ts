@@ -16,6 +16,22 @@ export function extractTextDeltaFromStreamEvent(message: unknown): string | null
   return typeof delta.text === 'string' ? delta.text : null;
 }
 
+export function extractTextStartFromStreamEvent(message: unknown): string | null {
+  if (!message || typeof message !== 'object') return null;
+  const m = message as any;
+  if (m.type !== 'stream_event') return null;
+
+  const event = m.event;
+  if (!event || typeof event !== 'object') return null;
+  if (event.type !== 'content_block_start') return null;
+
+  const block = (event as any).content_block;
+  if (!block || typeof block !== 'object') return null;
+  if (block.type !== 'text') return null;
+
+  return typeof block.text === 'string' ? block.text : null;
+}
+
 export function extractThinkingDeltaFromStreamEvent(message: unknown): string | null {
   if (!message || typeof message !== 'object') return null;
   const m = message as any;
@@ -30,6 +46,22 @@ export function extractThinkingDeltaFromStreamEvent(message: unknown): string | 
   if (delta.type !== 'thinking_delta') return null;
 
   return typeof (delta as any).thinking === 'string' ? (delta as any).thinking : null;
+}
+
+export function extractThinkingStartFromStreamEvent(message: unknown): string | null {
+  if (!message || typeof message !== 'object') return null;
+  const m = message as any;
+  if (m.type !== 'stream_event') return null;
+
+  const event = m.event;
+  if (!event || typeof event !== 'object') return null;
+  if (event.type !== 'content_block_start') return null;
+
+  const block = (event as any).content_block;
+  if (!block || typeof block !== 'object') return null;
+  if (block.type !== 'thinking') return null;
+
+  return typeof block.thinking === 'string' ? block.thinking : null;
 }
 
 export type StreamEventToolUseStart = { id: string; name: string; input: unknown };
@@ -117,6 +149,15 @@ export function isContentBlockStopStreamEvent(message: unknown): boolean {
   const event = m.event;
   if (!event || typeof event !== 'object') return false;
   return event.type === 'content_block_stop';
+}
+
+export function isMessageStopStreamEvent(message: unknown): boolean {
+  if (!message || typeof message !== 'object') return false;
+  const m = message as any;
+  if (m.type !== 'stream_event') return false;
+  const event = m.event;
+  if (!event || typeof event !== 'object') return false;
+  return event.type === 'message_stop';
 }
 
 export function messageContainsToolUseId(message: unknown, toolUseId: string): boolean {

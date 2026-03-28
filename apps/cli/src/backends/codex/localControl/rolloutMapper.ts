@@ -2,6 +2,7 @@ import {
     canonicalizeCodexRolloutToolName,
     normalizeCodexRolloutToolInput,
 } from './rolloutToolNameMapping';
+import { readCodexMessageContentText } from '../utils/readCodexMessageContentText';
 
 export type CodexRolloutAction =
     | { type: 'codex-session-id'; id: string }
@@ -20,19 +21,6 @@ type RolloutEnvelope = { timestamp?: string; type?: string; payload?: any };
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
-}
-
-function coerceTextFromMessageContent(content: unknown): string {
-    if (typeof content === 'string') return content;
-    if (!Array.isArray(content)) return '';
-    const parts: string[] = [];
-    for (const item of content) {
-        const rec = asRecord(item);
-        if (!rec) continue;
-        const text = typeof rec.text === 'string' ? rec.text : null;
-        if (text && text.trim().length > 0) parts.push(text);
-    }
-    return parts.join('\n');
 }
 
 function shouldFilterHarnessBlob(text: string): boolean {
@@ -188,8 +176,8 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
 
     if (payloadType === 'message') {
         const role = typeof (payload as any).role === 'string' ? String((payload as any).role) : '';
-        const content = coerceTextFromMessageContent((payload as any).content);
-        if (!content.trim()) return [];
+        const content = readCodexMessageContentText((payload as any).content);
+        if (!content) return [];
 
         if (role === 'developer') {
             return opts.debug ? [{ type: 'debug', message: 'developer message', value: payload }] : [];

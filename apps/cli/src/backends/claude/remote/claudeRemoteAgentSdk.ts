@@ -31,12 +31,15 @@ import { buildClaudeAgentSdkHooks } from './agentSdk/buildClaudeAgentSdkHooks';
 import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
 import { parseExplicitSpawnEnvKeysFromProcessEnv } from './agentSdk/explicitSpawnEnvKeysMarker';
 import {
+    extractTextStartFromStreamEvent,
     extractTextDeltaFromStreamEvent,
+    extractThinkingStartFromStreamEvent,
     extractThinkingDeltaFromStreamEvent,
     extractToolResultStartFromStreamEvent,
     extractToolUseInputJsonDeltaFromStreamEvent,
     extractToolUseStartFromStreamEvent,
     isContentBlockStopStreamEvent,
+    isMessageStopStreamEvent,
     messageContainsToolResultForToolUseId,
     messageContainsToolUseId,
     recordSeenToolBlocks,
@@ -595,6 +598,7 @@ export async function claudeRemoteAgentSdk(opts: {
     };
 
     const streamedTranscriptWriter = opts.streamedTranscriptWriter ?? null;
+    let cleanupBufferedAssistantMessages: ((incoming: unknown) => void) | null = null;
 
     const flushStreamedTranscriptWriter = async (
         reason: 'tool-call-boundary' | 'turn-end' | 'abort',
@@ -648,6 +652,35 @@ export async function claudeRemoteAgentSdk(opts: {
         };
     };
 
+    const stripCoveredAssistantBlocks = (params: Readonly<{
+        message: SDKMessage;
+        stripAssistantText: boolean;
+        stripThinkingText: boolean;
+    }>): SDKMessage => {
+        if (params.message.type !== 'assistant') return params.message;
+        const content = Array.isArray((params.message as any)?.message?.content)
+            ? ((params.message as any).message.content as unknown[])
+            : null;
+        if (!content) return params.message;
+        if (!params.stripAssistantText && !params.stripThinkingText) return params.message;
+
+        const stripped = content.filter((block) => {
+            if (!block || typeof block !== 'object') return true;
+            if (params.stripAssistantText && (block as any).type === 'text') return false;
+            if (params.stripThinkingText && (block as any).type === 'thinking') return false;
+            return true;
+        });
+
+        if (stripped.length === content.length) return params.message;
+        return {
+            ...(params.message as any),
+            message: {
+                ...((params.message as any).message ?? {}),
+                content: stripped,
+            },
+        } as SDKMessage;
+    };
+
     try {
         response = createQuery({
             prompt: messages,
@@ -655,14 +688,21 @@ export async function claudeRemoteAgentSdk(opts: {
         });
 
         updateThinking(true);
-        let streamingToolUse:
-            | { sessionId: string; id: string; name: string; inputJson: string; initialInput: unknown }
-            | null = null;
-        let streamingToolResult: { sessionId: string; toolUseId: string; content: string; isError: boolean } | null = null;
-        let pendingToolUseMessage: { toolUseId: string; message: SDKMessage } | null = null;
-        let pendingToolResultMessage: { toolUseId: string; message: SDKMessage } | null = null;
-        let streamingAssistantText: { sessionId: string; text: string; lastUuid: string | null } | null = null;
-        let pendingStreamEventAssistantTextFlushes: { sessionId: string; text: string; uuid: string | null }[] = [];
+        const streamingToolUses = new Map<
+            string,
+            { sessionId: string; parentToolUseId: string | null; id: string; name: string; inputJson: string; initialInput: unknown }
+        >();
+        const streamingToolResults = new Map<
+            string,
+            { sessionId: string; parentToolUseId: string | null; toolUseId: string; content: string; isError: boolean }
+        >();
+        const pendingToolUseMessages = new Map<string, { toolUseId: string; message: SDKMessage }>();
+        const pendingToolResultMessages = new Map<string, { toolUseId: string; message: SDKMessage }>();
+        const bufferedStreamEventAssistantMessages = new Map<
+            string,
+            { sessionId: string; parentToolUseId: string | null; text: string; thinking: string; lastUuid: string | null }
+        >();
+        let didPublishAssistantTextThisTurn = false;
         const seen = { toolUseIds: new Set<string>(), toolResultIds: new Set<string>() };
         let lastCheckpointId: string | null = null;
         const checkpointIds: string[] = [];
@@ -689,45 +729,123 @@ export async function claudeRemoteAgentSdk(opts: {
         };
 
         const extractAssistantText = (message: unknown): string | null => {
-            const msg: any = message;
-            if (!msg || typeof msg !== 'object') return null;
-            if (msg.type !== 'assistant') return null;
-            const content = msg?.message?.content;
-            if (!Array.isArray(content)) return null;
-            const text = content
-                .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
-                .map((block: any) => String(block.text))
-                .join('');
-            return text.trim().length > 0 ? text : null;
+            return extractAssistantAndThinkingTextFromAssistantMessage(message).assistantText;
         };
 
-        const flushPendingStreamEventAssistantText = (incoming: unknown) => {
-            if (pendingStreamEventAssistantTextFlushes.length === 0) return;
+        const extractResultText = (message: unknown): string | null => {
+            const msg: any = message;
+            if (!msg || typeof msg !== 'object') return null;
+            if (msg.type !== 'result') return null;
+            return typeof msg.result === 'string' && msg.result.trim().length > 0 ? msg.result : null;
+        };
 
-            const incomingAssistantText = extractAssistantText(incoming);
-            if (incomingAssistantText) {
-                pendingStreamEventAssistantTextFlushes = pendingStreamEventAssistantTextFlushes.filter(
-                    (pending) => pending.text.trim() !== incomingAssistantText,
-                );
-                if (pendingStreamEventAssistantTextFlushes.length === 0) return;
+        const markAssistantTextPublished = (text: string | null | undefined) => {
+            if (typeof text !== 'string' || text.trim().length === 0) return;
+            didPublishAssistantTextThisTurn = true;
+        };
+
+        const buildBufferedStreamEventAssistantMessageKey = (message: unknown) => {
+            const sessionId = typeof (message as any)?.session_id === 'string' ? (message as any).session_id : '';
+            const parentToolUseId = normalizeSidechainIdForStream(message);
+            return {
+                key: `${sessionId}::${parentToolUseId ?? ''}`,
+                sessionId,
+                parentToolUseId,
+            };
+        };
+
+        const ensureBufferedStreamEventAssistantMessage = (message: unknown) => {
+            const { key, sessionId, parentToolUseId } = buildBufferedStreamEventAssistantMessageKey(message);
+            const uuid = typeof (message as any)?.uuid === 'string' ? (message as any).uuid : null;
+            const existing = bufferedStreamEventAssistantMessages.get(key);
+            if (!existing) {
+                const created = {
+                    sessionId,
+                    parentToolUseId,
+                    text: '',
+                    thinking: '',
+                    lastUuid: uuid,
+                };
+                bufferedStreamEventAssistantMessages.set(key, created);
+                return created;
             }
+            existing.lastUuid = uuid;
+            return existing;
+        };
 
-            for (const pending of pendingStreamEventAssistantTextFlushes) {
-                if (!pending.text.trim()) continue;
+        const flushBufferedStreamEventAssistantMessage = (incoming: unknown) => {
+            const flushOne = (pending: {
+                sessionId: string;
+                parentToolUseId: string | null;
+                text: string;
+                thinking: string;
+                lastUuid: string | null;
+            }) => {
+                const pendingAssistantText = pending.text.trim();
+                const pendingThinkingText = pending.thinking.trim();
+                if (pendingAssistantText.length === 0 && pendingThinkingText.length === 0) return;
+
+                const incomingAssistant = extractAssistantAndThinkingTextFromAssistantMessage(incoming);
+                const incomingAssistantText = incomingAssistant.assistantText?.trim() ?? '';
+                const incomingThinkingText = incomingAssistant.thinkingText?.trim() ?? '';
+
+                if (
+                    incoming &&
+                    typeof incoming === 'object' &&
+                    (incoming as any).type === 'assistant' &&
+                    incomingAssistantText === pendingAssistantText &&
+                    incomingThinkingText === pendingThinkingText
+                ) {
+                    markAssistantTextPublished(pendingAssistantText);
+                    return;
+                }
+
                 const defaultUuid =
-                    typeof pending.uuid === 'string' && pending.uuid.trim().length > 0 ? pending.uuid.trim() : null;
+                    typeof pending.lastUuid === 'string' && pending.lastUuid.trim().length > 0
+                        ? pending.lastUuid.trim()
+                        : null;
+                const content = [
+                    ...(pendingThinkingText.length > 0 ? [{ type: 'thinking' as const, thinking: pending.thinking }] : []),
+                    ...(pendingAssistantText.length > 0 ? [{ type: 'text' as const, text: pending.text }] : []),
+                ];
                 emitMessage({
                     type: 'assistant',
                     session_id: pending.sessionId,
-                    parent_tool_use_id: null,
+                    parent_tool_use_id: pending.parentToolUseId,
                     ...(defaultUuid ? { uuid: defaultUuid } : null),
                     message: {
                         role: 'assistant',
-                        content: [{ type: 'text', text: pending.text }],
+                        content,
                     },
                 } as any, { defaultUuid });
+                markAssistantTextPublished(pendingAssistantText);
+            };
+
+            if (!incoming) {
+                const pendingEntries = Array.from(bufferedStreamEventAssistantMessages.values());
+                bufferedStreamEventAssistantMessages.clear();
+                for (const pending of pendingEntries) {
+                    flushOne(pending);
+                }
+                return;
             }
-            pendingStreamEventAssistantTextFlushes = [];
+
+            const { key } = buildBufferedStreamEventAssistantMessageKey(incoming);
+            const pending = bufferedStreamEventAssistantMessages.get(key);
+            if (!pending) return;
+            bufferedStreamEventAssistantMessages.delete(key);
+            flushOne(pending);
+        };
+        cleanupBufferedAssistantMessages = flushBufferedStreamEventAssistantMessage;
+
+        const buildStreamEventToolBlockKey = (message: unknown) => {
+            const sessionId = typeof (message as any)?.session_id === 'string' ? (message as any).session_id : '';
+            const parentToolUseId = normalizeSidechainIdForStream(message);
+            return {
+                key: `${sessionId}::${parentToolUseId ?? ''}`,
+                sessionId,
+                parentToolUseId,
+            };
         };
 
         const ABORTED = Symbol('aborted');
@@ -861,6 +979,7 @@ export async function claudeRemoteAgentSdk(opts: {
                             opts.onCompletionEvent?.('Failed to update runtime settings (non-fatal); continuing.');
                         }
 
+                        didPublishAssistantTextThisTurn = false;
                         messages.push({
                             type: 'user',
                             session_id: '',
@@ -949,78 +1068,99 @@ export async function claudeRemoteAgentSdk(opts: {
                 if (toolUseStart) {
                     clearFinalizeGuardForNextTurnStart();
                     await flushStreamedTranscriptWriter('tool-call-boundary');
-                    streamingToolUse = {
-                        sessionId: typeof (message as any).session_id === 'string' ? (message as any).session_id : '',
+                    flushBufferedStreamEventAssistantMessage(message);
+                    const { key, sessionId, parentToolUseId } = buildStreamEventToolBlockKey(message);
+                    streamingToolUses.set(key, {
+                        sessionId,
+                        parentToolUseId,
                         id: toolUseStart.id,
                         name: toolUseStart.name,
                         inputJson: '',
                         initialInput: toolUseStart.input,
-                    };
+                    });
                     continue;
                 }
 
                 const toolResultStart = extractToolResultStartFromStreamEvent(message);
                 if (toolResultStart) {
                     clearFinalizeGuardForNextTurnStart();
-                    streamingToolResult = {
-                        sessionId: typeof (message as any).session_id === 'string' ? (message as any).session_id : '',
+                    flushBufferedStreamEventAssistantMessage(message);
+                    const { key, sessionId, parentToolUseId } = buildStreamEventToolBlockKey(message);
+                    streamingToolResults.set(key, {
+                        sessionId,
+                        parentToolUseId,
                         toolUseId: toolResultStart.toolUseId,
                         content: toolResultStart.content ?? '',
                         isError: toolResultStart.isError ?? false,
-                    };
+                    });
+                    continue;
+                }
+
+                const thinkingStart = extractThinkingStartFromStreamEvent(message);
+                if (thinkingStart) {
+                    clearFinalizeGuardForNextTurnStart();
+                    const buffered = ensureBufferedStreamEventAssistantMessage(message);
+                    buffered.thinking += thinkingStart;
+                    streamedTranscriptWriter?.appendThinkingDelta(thinkingStart, { sidechainId: normalizeSidechainIdForStream(message) });
+                    continue;
+                }
+
+                const textStart = extractTextStartFromStreamEvent(message);
+                if (textStart) {
+                    clearFinalizeGuardForNextTurnStart();
+                    const { key } = buildStreamEventToolBlockKey(message);
+                    const streamingToolResult = streamingToolResults.get(key) ?? null;
+                    if (!streamingToolResult) {
+                        const buffered = ensureBufferedStreamEventAssistantMessage(message);
+                        buffered.text += textStart;
+                        streamedTranscriptWriter?.appendAssistantDelta(textStart, { sidechainId: normalizeSidechainIdForStream(message) });
+                    } else {
+                        streamingToolResult.content += textStart;
+                    }
                     continue;
                 }
 
                 const toolUseInputDelta = extractToolUseInputJsonDeltaFromStreamEvent(message);
-                if (toolUseInputDelta && streamingToolUse) {
+                if (toolUseInputDelta) {
                     clearFinalizeGuardForNextTurnStart();
-                    streamingToolUse.inputJson += toolUseInputDelta;
-                    continue;
+                    const { key } = buildStreamEventToolBlockKey(message);
+                    const streamingToolUse = streamingToolUses.get(key);
+                    if (streamingToolUse) {
+                        streamingToolUse.inputJson += toolUseInputDelta;
+                        continue;
+                    }
                 }
 
                 const thinkingDelta = extractThinkingDeltaFromStreamEvent(message);
                 if (thinkingDelta) {
                     clearFinalizeGuardForNextTurnStart();
+                    const buffered = ensureBufferedStreamEventAssistantMessage(message);
+                    buffered.thinking += thinkingDelta;
                     streamedTranscriptWriter?.appendThinkingDelta(thinkingDelta, { sidechainId: normalizeSidechainIdForStream(message) });
                     continue;
                 }
 
-	                const textDelta = extractTextDeltaFromStreamEvent(message);
-	                if (textDelta) {
-	                    clearFinalizeGuardForNextTurnStart();
-                        if (!streamingToolResult) {
-                            const sessionId = typeof (message as any).session_id === 'string' ? (message as any).session_id : '';
-                            const uuid = typeof (message as any).uuid === 'string' ? (message as any).uuid : null;
-                            if (!streamingAssistantText) {
-                                streamingAssistantText = { sessionId, text: '', lastUuid: null };
-                            }
-                            if (streamingAssistantText.sessionId !== sessionId) {
-                                streamingAssistantText.sessionId = sessionId;
-                            }
-                            streamingAssistantText.text += textDelta;
-                            streamingAssistantText.lastUuid = uuid;
-                            streamedTranscriptWriter?.appendAssistantDelta(textDelta, { sidechainId: normalizeSidechainIdForStream(message) });
-                        }
-	                    if (streamingToolResult) {
-	                        streamingToolResult.content += textDelta;
-	                        continue;
-	                    }
-	                    continue;
-	                }
+                const textDelta = extractTextDeltaFromStreamEvent(message);
+                if (textDelta) {
+                    clearFinalizeGuardForNextTurnStart();
+                    const { key } = buildStreamEventToolBlockKey(message);
+                    const streamingToolResult = streamingToolResults.get(key) ?? null;
+                    if (!streamingToolResult) {
+                        const buffered = ensureBufferedStreamEventAssistantMessage(message);
+                        buffered.text += textDelta;
+                        streamedTranscriptWriter?.appendAssistantDelta(textDelta, { sidechainId: normalizeSidechainIdForStream(message) });
+                    } else {
+                        streamingToolResult.content += textDelta;
+                    }
+                    continue;
+                }
 
                 if (isContentBlockStopStreamEvent(message)) {
-                    if (streamingAssistantText && streamingAssistantText.text.trim().length > 0) {
-                        pendingStreamEventAssistantTextFlushes.push({
-                            sessionId: streamingAssistantText.sessionId,
-                            text: streamingAssistantText.text,
-                            uuid: streamingAssistantText.lastUuid,
-                        });
-                        streamingAssistantText = null;
-                    }
-
+                    const { key } = buildStreamEventToolBlockKey(message);
+                    const streamingToolUse = streamingToolUses.get(key) ?? null;
                     if (streamingToolUse) {
                         if (seen.toolUseIds.has(streamingToolUse.id)) {
-                            streamingToolUse = null;
+                            streamingToolUses.delete(key);
                             continue;
                         }
                         const inputFromJson = (() => {
@@ -1033,18 +1173,18 @@ export async function claudeRemoteAgentSdk(opts: {
                             }
                         })();
 
-	                        pendingToolUseMessage = {
-	                            toolUseId: streamingToolUse.id,
-	                            message: {
-	                            type: 'assistant',
-	                            session_id: streamingToolUse.sessionId,
-	                            parent_tool_use_id: null,
-	                            uuid: streamingToolUse.id,
-	                            message: {
-	                                role: 'assistant',
-	                                content: [
-	                                    {
-	                                        type: 'tool_use',
+                        pendingToolUseMessages.set(key, {
+                            toolUseId: streamingToolUse.id,
+                            message: {
+                                type: 'assistant',
+                                session_id: streamingToolUse.sessionId,
+                                parent_tool_use_id: streamingToolUse.parentToolUseId,
+                                uuid: streamingToolUse.id,
+                                message: {
+                                    role: 'assistant',
+                                    content: [
+                                        {
+                                            type: 'tool_use',
                                         id: streamingToolUse.id,
                                         name: streamingToolUse.name,
                                         input: inputFromJson ?? streamingToolUse.initialInput ?? {},
@@ -1052,28 +1192,29 @@ export async function claudeRemoteAgentSdk(opts: {
                                 ],
                             },
                         } as any,
-                        };
+                        });
 
-                        streamingToolUse = null;
+                        streamingToolUses.delete(key);
                         continue;
                     }
 
+                    const streamingToolResult = streamingToolResults.get(key) ?? null;
                     if (streamingToolResult) {
                         if (seen.toolResultIds.has(streamingToolResult.toolUseId)) {
-                            streamingToolResult = null;
+                            streamingToolResults.delete(key);
                             continue;
                         }
-	                        pendingToolResultMessage = {
-	                            toolUseId: streamingToolResult.toolUseId,
-	                            message: {
-	                                type: 'user',
-	                            session_id: streamingToolResult.sessionId,
-	                            parent_tool_use_id: null,
-	                            uuid: streamingToolResult.toolUseId,
-	                            message: {
-	                                role: 'user',
-	                                content: [
-	                                    {
+                        pendingToolResultMessages.set(key, {
+                            toolUseId: streamingToolResult.toolUseId,
+                            message: {
+                                type: 'user',
+                                session_id: streamingToolResult.sessionId,
+                                parent_tool_use_id: streamingToolResult.parentToolUseId,
+                                uuid: streamingToolResult.toolUseId,
+                                message: {
+                                    role: 'user',
+                                    content: [
+                                        {
                                         type: 'tool_result',
                                         tool_use_id: streamingToolResult.toolUseId,
                                         content: streamingToolResult.content,
@@ -1082,10 +1223,14 @@ export async function claudeRemoteAgentSdk(opts: {
                                 ],
                             },
                         } as any,
-                        };
-                        streamingToolResult = null;
+                        });
+                        streamingToolResults.delete(key);
                         continue;
                     }
+                }
+
+                if (isMessageStopStreamEvent(message)) {
+                    flushBufferedStreamEventAssistantMessage(message);
                 }
 
                 continue;
@@ -1098,54 +1243,70 @@ export async function claudeRemoteAgentSdk(opts: {
             // assembled assistant/user message. Do not flush pending tool blocks on those intermediary messages.
             const incomingMessageType = (message as any)?.type;
             if (incomingMessageType === 'assistant' || incomingMessageType === 'user' || incomingMessageType === 'result') {
-                flushPendingStreamEventAssistantText(message);
+                flushBufferedStreamEventAssistantMessage(message);
             }
-            if (pendingToolUseMessage && (incomingMessageType === 'assistant' || incomingMessageType === 'user' || incomingMessageType === 'result')) {
-                if (messageContainsToolUseId(message, pendingToolUseMessage.toolUseId)) {
-                    pendingToolUseMessage = null;
-                } else if (incomingMessageType === 'user' && !messageContainsToolResultForToolUseId(message, pendingToolUseMessage.toolUseId)) {
+            if (incomingMessageType === 'assistant' || incomingMessageType === 'user' || incomingMessageType === 'result') {
+                for (const [key, pendingToolUseMessage] of Array.from(pendingToolUseMessages.entries())) {
+                    if (messageContainsToolUseId(message, pendingToolUseMessage.toolUseId)) {
+                        pendingToolUseMessages.delete(key);
+                    } else if (incomingMessageType === 'user' && !messageContainsToolResultForToolUseId(message, pendingToolUseMessage.toolUseId)) {
                     // Not a boundary that implies the tool ran (tool_result) and not the assembled tool_use;
                     // keep buffering so we can still dedupe when the assistant tool_use arrives.
-                } else {
-	                        const deduped = stripSeenToolBlocksFromMessage(pendingToolUseMessage.message, seen);
-	                        if (deduped) {
-	                            emitMessage(deduped, { defaultUuid: pendingToolUseMessage.toolUseId });
-	                            recordSeenToolBlocks(deduped, seen);
-	                        }
-	                    pendingToolUseMessage = null;
-	                }
-	            }
+                        continue;
+                    } else {
+                        const deduped = stripSeenToolBlocksFromMessage(pendingToolUseMessage.message, seen);
+                        if (deduped) {
+                            emitMessage(deduped, { defaultUuid: pendingToolUseMessage.toolUseId });
+                            recordSeenToolBlocks(deduped, seen);
+                        }
+                        pendingToolUseMessages.delete(key);
+                    }
+                }
+            }
 
-            if (pendingToolResultMessage && (incomingMessageType === 'assistant' || incomingMessageType === 'user' || incomingMessageType === 'result')) {
-                if (messageContainsToolResultForToolUseId(message, pendingToolResultMessage.toolUseId)) {
-                    pendingToolResultMessage = null;
-                } else {
-	                        const deduped = stripSeenToolBlocksFromMessage(pendingToolResultMessage.message, seen);
-	                        if (deduped) {
-	                            emitMessage(deduped, { defaultUuid: pendingToolResultMessage.toolUseId });
-	                            recordSeenToolBlocks(deduped, seen);
-	                        }
-	                    pendingToolResultMessage = null;
-	                }
-	            }
+            if (incomingMessageType === 'assistant' || incomingMessageType === 'user' || incomingMessageType === 'result') {
+                for (const [key, pendingToolResultMessage] of Array.from(pendingToolResultMessages.entries())) {
+                    if (messageContainsToolResultForToolUseId(message, pendingToolResultMessage.toolUseId)) {
+                        pendingToolResultMessages.delete(key);
+                    } else {
+                        const deduped = stripSeenToolBlocksFromMessage(pendingToolResultMessage.message, seen);
+                        if (deduped) {
+                            emitMessage(deduped, { defaultUuid: pendingToolResultMessage.toolUseId });
+                            recordSeenToolBlocks(deduped, seen);
+                        }
+                        pendingToolResultMessages.delete(key);
+                    }
+                }
+            }
 
                 const sdkMessage = message as SDKMessage;
                 const deduped = stripSeenToolBlocksFromMessage(sdkMessage, seen);
                 if (!deduped) continue;
 
+                let messageToEmit = deduped;
                 if (incomingMessageType === 'assistant' && streamedTranscriptWriter) {
                     const { assistantText, thinkingText } = extractAssistantAndThinkingTextFromAssistantMessage(deduped);
                     const sidechainId = normalizeSidechainIdForStream(deduped);
+                    let stripThinkingText = false;
+                    let stripAssistantText = false;
                     if (typeof thinkingText === 'string' && thinkingText.length > 0) {
-                        streamedTranscriptWriter.overrideThinkingText(thinkingText, { sidechainId });
+                        stripThinkingText = streamedTranscriptWriter.overrideThinkingText(thinkingText, { sidechainId });
                     }
                     if (typeof assistantText === 'string' && assistantText.length > 0) {
-                        streamedTranscriptWriter.overrideAssistantText(assistantText, { sidechainId });
+                        stripAssistantText = streamedTranscriptWriter.overrideAssistantText(assistantText, { sidechainId });
                     }
+                    messageToEmit = stripCoveredAssistantBlocks({
+                        message: deduped,
+                        stripAssistantText,
+                        stripThinkingText,
+                    });
+                    markAssistantTextPublished(assistantText);
+                } else if (incomingMessageType === 'assistant') {
+                    markAssistantTextPublished(extractAssistantText(deduped));
                 }
 
-                emitMessage(deduped);
-                recordSeenToolBlocks(deduped, seen);
+                emitMessage(messageToEmit);
+                recordSeenToolBlocks(messageToEmit, seen);
 
                 if (
                     awaitingNextTurnStart &&
@@ -1196,6 +1357,19 @@ export async function claudeRemoteAgentSdk(opts: {
             }
 
             if (message && message.type === 'result') {
+                const resultText = extractResultText(message);
+                if (!didPublishAssistantTextThisTurn && resultText) {
+                    const { key, sessionId, parentToolUseId } = buildBufferedStreamEventAssistantMessageKey(message);
+                    bufferedStreamEventAssistantMessages.set(key, {
+                        sessionId,
+                        parentToolUseId,
+                        text: resultText,
+                        thinking: '',
+                        lastUuid: typeof (message as any).uuid === 'string' ? (message as any).uuid : null,
+                    });
+                    flushBufferedStreamEventAssistantMessage(message);
+                }
+
                 if (didFinalizeTurn) {
                     continue;
                 }
@@ -1228,6 +1402,7 @@ export async function claudeRemoteAgentSdk(opts: {
     } finally {
         opts.setUserMessageSender?.(null);
         updateThinking(false);
+        cleanupBufferedAssistantMessages?.(null);
         await flushStreamedTranscriptWriter('abort', 'runner-finalize');
         abortController.abort();
         await swallowOptionalPromise(nextMessagePump);

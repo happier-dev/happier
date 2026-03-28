@@ -251,6 +251,28 @@ describe('createStreamedTranscriptWriter', () => {
     });
   });
 
+  it('does not create a new durable segment when overrideAssistantText is called before any streamed delta', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, durableCalls } = createSessionStub();
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'codex' as any,
+      session: session as any,
+      makeLocalId: () => 'segment-1',
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    const didOverride = writer.overrideAssistantText('FINAL');
+    await writer.flushAll({ reason: 'turn-end' });
+    await settleCommittedSnapshot();
+
+    expect(didOverride).toBe(false);
+    expect(durableCalls).toHaveLength(0);
+  });
+
   it('falls back to best-effort commits when sendAgentMessageCommitted fails', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
@@ -280,6 +302,66 @@ describe('createStreamedTranscriptWriter', () => {
     expect(bestEffortCalls[0]!.meta).toMatchObject({
       happierStreamSegmentV1: expect.objectContaining({ segmentKind: 'assistant', segmentState: 'streaming' }),
     });
+  });
+
+  it('does not resolve flushAll until the fallback best-effort commit finishes after a durable commit failure', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, bestEffortCalls } = createSessionStub();
+    let resolveFallback: (() => void) | undefined;
+    let fallbackPersisted = false;
+
+    session.sendAgentMessageCommitted = async () => {
+      throw new Error('boom');
+    };
+    session.sendAgentMessage = vi.fn(async (provider: any, body: any, opts: any) => {
+      bestEffortCalls.push({
+        provider: String(provider),
+        localId: typeof opts?.localId === 'string' ? opts.localId : '',
+        meta: opts?.meta,
+        body,
+      });
+      await new Promise<void>((resolve) => {
+        resolveFallback = () => {
+          fallbackPersisted = true;
+          resolve();
+        };
+      });
+    });
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'codex' as any,
+      session: session as any,
+      makeLocalId: () => 'l1',
+      checkpointIntervalMs: 1_000,
+      checkpointMinChars: 1,
+    });
+
+    writer.appendAssistantDelta('Hello');
+    await Promise.resolve();
+
+    let didResolveFlush = false;
+    const flushPromise = writer.flushAll({ reason: 'turn-end' }).then(() => {
+      didResolveFlush = true;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(bestEffortCalls).toHaveLength(2);
+    expect(fallbackPersisted).toBe(false);
+    expect(didResolveFlush).toBe(false);
+
+    const releaseFallback = resolveFallback;
+    if (!releaseFallback) {
+      throw new Error('expected fallback resolver');
+    }
+    releaseFallback();
+    await flushPromise;
+
+    expect(fallbackPersisted).toBe(true);
+    expect(didResolveFlush).toBe(true);
   });
 
   it('prevents duplicate durable commits when flushAll is called concurrently or repeatedly', async () => {

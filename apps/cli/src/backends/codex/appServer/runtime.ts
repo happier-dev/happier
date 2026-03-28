@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
+import { configuration } from '@/configuration';
 import {
     resolveSessionRollbackPlan,
     type CompletedConversationTurn,
@@ -78,6 +79,11 @@ type PermissionResult = Readonly<{
 type StreamUpdateContext = Readonly<{
     sidechainId: string | null;
     streamScopeId: string;
+}>;
+
+type PendingRawAssistantFinal = Readonly<{
+    text: string;
+    sidechainId: string | null;
 }>;
 
 type PermissionHandlerSubset = Readonly<{
@@ -226,9 +232,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
     let currentModelId: string | null = null;
     let currentReasoningEffort: string | null = null;
     let currentServiceTier: string | null = null;
-        let hasServiceTierOverride = false;
-        let pendingTurnStartSeqInclusive: number | null = null;
-        const completedTurnSeqRanges: CompletedTurnSeqRange[] = [];
+    let hasServiceTierOverride = false;
+    let pendingTurnStartSeqInclusive: number | null = null;
+    const completedTurnSeqRanges: CompletedTurnSeqRange[] = [];
+    let pendingTurnFinalizationTimer: ReturnType<typeof setTimeout> | null = null;
+    let scheduledPendingTurnFlushReason: 'turn-end' | 'abort' | null = null;
     const streamEventBridge = createCodexAppServerStreamEventBridge();
     const turnChangeCollector = new TurnChangeSetCollector({
         provider: 'codex',
@@ -243,6 +251,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
     });
     const assistantTextByItemId = new Map<string, string>();
     const reasoningTextByItemId = new Map<string, string>();
+    const latestAssistantItemIdByStreamScope = new Map<string, string>();
+    const normalizedAssistantFinalSeenByStreamScope = new Set<string>();
+    const rawAssistantFinalByStreamScope = new Map<string, PendingRawAssistantFinal>();
     const syntheticSubagentThreadIds = new Set<string>();
     const syntheticSubagentTracker = createCodexSyntheticSubagentTracker({
         session: params.session,
@@ -338,6 +349,38 @@ export function createCodexAppServerRuntime(params: Readonly<{
         override(text);
     };
 
+    const commitRawAssistantFinal = (streamScopeId: string, pending: PendingRawAssistantFinal): void => {
+        const itemId = latestAssistantItemIdByStreamScope.get(streamScopeId) ?? 'raw-response-item';
+        appendStreamFinal(
+            buildItemStateKey(streamScopeId, itemId),
+            pending.text,
+            assistantTextByItemId,
+            (deltaText) => {
+                itemTranscriptBridge.appendAssistantDelta({
+                    deltaText,
+                    streamKey: buildItemStreamKey(streamScopeId, 'assistant', itemId),
+                    sidechainId: pending.sidechainId,
+                });
+            },
+            (finalText) => {
+                itemTranscriptBridge.overrideAssistantText({
+                    text: finalText,
+                    streamKey: buildItemStreamKey(streamScopeId, 'assistant', itemId),
+                    sidechainId: pending.sidechainId,
+                });
+            },
+        );
+    };
+
+    const commitPendingRawAssistantFinals = (): void => {
+        for (const [streamScopeId, pendingRaw] of rawAssistantFinalByStreamScope.entries()) {
+            if (!normalizedAssistantFinalSeenByStreamScope.has(streamScopeId)) {
+                commitRawAssistantFinal(streamScopeId, pendingRaw);
+            }
+            rawAssistantFinalByStreamScope.delete(streamScopeId);
+        }
+    };
+
     const buildItemStateKey = (scopeId: string, itemId: string): string => `${scopeId}:${itemId}`;
     const buildItemStreamKey = (scopeId: string, kind: 'assistant' | 'reasoning', itemId: string): string =>
         `${scopeId}:${kind}:${itemId}`;
@@ -358,6 +401,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
     const applyStreamUpdate = async (update: CodexAppServerStreamUpdate, context: StreamUpdateContext): Promise<void> => {
         if (update.type === 'assistant-text-delta') {
+            latestAssistantItemIdByStreamScope.set(context.streamScopeId, update.itemId);
             appendStreamDelta(buildItemStateKey(context.streamScopeId, update.itemId), update.text, assistantTextByItemId, (deltaText) => {
                 itemTranscriptBridge.appendAssistantDelta({
                     deltaText,
@@ -369,6 +413,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
 
         if (update.type === 'assistant-text-final') {
+            latestAssistantItemIdByStreamScope.set(context.streamScopeId, update.itemId);
+            normalizedAssistantFinalSeenByStreamScope.add(context.streamScopeId);
+            rawAssistantFinalByStreamScope.delete(context.streamScopeId);
             appendStreamFinal(buildItemStateKey(context.streamScopeId, update.itemId), update.text, assistantTextByItemId, (deltaText) => {
                 itemTranscriptBridge.appendAssistantDelta({
                     deltaText,
@@ -381,6 +428,17 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     streamKey: buildItemStreamKey(context.streamScopeId, 'assistant', update.itemId),
                     sidechainId: context.sidechainId,
                 });
+            });
+            return;
+        }
+
+        if (update.type === 'assistant-raw-final') {
+            if (normalizedAssistantFinalSeenByStreamScope.has(context.streamScopeId)) {
+                return;
+            }
+            rawAssistantFinalByStreamScope.set(context.streamScopeId, {
+                text: update.text,
+                sidechainId: context.sidechainId,
             });
             return;
         }
@@ -486,6 +544,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const flushStreamState = async (reason: 'turn-end' | 'abort'): Promise<void> => {
         assistantTextByItemId.clear();
         reasoningTextByItemId.clear();
+        latestAssistantItemIdByStreamScope.clear();
+        normalizedAssistantFinalSeenByStreamScope.clear();
+        rawAssistantFinalByStreamScope.clear();
         await itemTranscriptBridge.flushAll({
             reason,
             ...(reason === 'abort' ? { interruptedReason: 'app-server-turn-interrupted' } : {}),
@@ -653,6 +714,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
         flushReason?: 'turn-end' | 'abort';
         insideBridgeWork?: boolean;
     }>): Promise<void> => {
+        if (pendingTurnFinalizationTimer) {
+            clearTimeout(pendingTurnFinalizationTimer);
+            pendingTurnFinalizationTimer = null;
+        }
+        scheduledPendingTurnFlushReason = null;
         const activeTurn = pendingTurn;
         const completedTurnStartSeqInclusive = pendingTurnStartSeqInclusive;
         pendingTurn = null;
@@ -661,9 +727,15 @@ export function createCodexAppServerRuntime(params: Readonly<{
         setThinking(false);
         if (options?.flushReason) {
             if (options.insideBridgeWork === true) {
+                if (options.flushReason === 'turn-end') {
+                    commitPendingRawAssistantFinals();
+                }
                 await flushStreamState(options.flushReason);
             } else {
                 await runBridgeWork(async () => {
+                    if (options.flushReason === 'turn-end') {
+                        commitPendingRawAssistantFinals();
+                    }
                     await flushStreamState(options.flushReason!);
                 });
             }
@@ -725,6 +797,31 @@ export function createCodexAppServerRuntime(params: Readonly<{
             return;
         }
         activeTurn.resolve();
+    };
+
+    const schedulePendingTurnFinalization = (flushReason: 'turn-end' | 'abort'): void => {
+        if (!pendingTurn) return;
+        scheduledPendingTurnFlushReason =
+            scheduledPendingTurnFlushReason === 'abort' || flushReason === 'abort'
+                ? 'abort'
+                : 'turn-end';
+        if (pendingTurnFinalizationTimer) {
+            return;
+        }
+        const settleMs = configuration.codexAppServerTurnCompletionSettleMs;
+        pendingTurnFinalizationTimer = setTimeout(() => {
+            pendingTurnFinalizationTimer = null;
+            const nextFlushReason = scheduledPendingTurnFlushReason ?? flushReason;
+            scheduledPendingTurnFlushReason = null;
+            void runBridgeWork(async () => {
+                if (!pendingTurn) return;
+                await finishPendingTurn({
+                    flushReason: nextFlushReason,
+                    insideBridgeWork: true,
+                });
+            });
+        }, settleMs);
+        pendingTurnFinalizationTimer.unref?.();
     };
 
     const notificationMatchesPendingTurn = (notificationParams: unknown): boolean => {
@@ -808,6 +905,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     registerActiveTurnStreamNotificationHandler(client, 'item/reasoning/textDelta');
                     registerActiveTurnStreamNotificationHandler(client, 'item/started');
                     registerActiveTurnStreamNotificationHandler(client, 'item/completed');
+                    registerActiveTurnStreamNotificationHandler(client, 'rawResponseItem/completed');
                     client.registerRequestHandler('item/commandExecution/requestApproval', (requestParams) => {
                         return runBridgeWork(() => handleServerRequest('item/commandExecution/requestApproval', requestParams));
                     });
@@ -821,10 +919,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         client.registerNotificationHandler(method, async (notificationParams) => {
                             await runBridgeWork(async () => {
                                 if (notificationMatchesPendingTurn(notificationParams)) {
-                                    await finishPendingTurn({
-                                        flushReason: method === 'turn/completed' ? 'turn-end' : 'abort',
-                                        insideBridgeWork: true,
-                                    });
+                                    schedulePendingTurnFinalization(
+                                        method === 'turn/completed' ? 'turn-end' : 'abort',
+                                    );
                                     return;
                                 }
                                 const activeTurn = pendingTurn;
