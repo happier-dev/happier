@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { resolveMaxOldSpaceSizeMb, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
@@ -21,27 +21,17 @@ export function resolveVitestConfigPath(argv) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function resolveVitestEntrypoint() {
-  try {
-    const resolved = import.meta.resolve('vitest/vitest.mjs');
-    return { command: process.execPath, argsPrefix: [fileURLToPath(resolved)] };
-  } catch {
-    return { command: 'vitest', argsPrefix: [] };
-  }
-}
-
 function spawnVitestRun({ configPath, shardSpec, nodeOptions }) {
-  const vitest = resolveVitestEntrypoint();
   return runManagedChildCommand({
-    command: vitest.command,
-    args: [...vitest.argsPrefix, 'run', '--config', configPath, '--shard', shardSpec],
+    command: 'vitest',
+    args: ['run', '--config', configPath, '--shard', shardSpec],
     spawnOptions: {
       env: {
         ...process.env,
         NODE_OPTIONS: nodeOptions,
       },
       stdio: 'inherit',
-      shell: vitest.command === 'vitest' && process.platform === 'win32',
+      shell: process.platform === 'win32',
     },
     cleanupPollMs: 25,
     signalCleanupGraceMs: 0,
