@@ -27,10 +27,10 @@ export function createHappierMcpServer(
   client: HappyMcpSessionClient,
   opts?: Readonly<{ credentials?: Credentials | null }>,
 ): { mcp: McpServer; toolNames: string[] } {
-  // This server is used as the HTTP MCP backend for provider bridges (e.g. Claude Code via stdio).
-  // Those clients expect the `mcp` surface, not `session_agent` (which is fail-closed for
-  // session-control actions by default via account settings).
-  const toolSurface = 'mcp' as const;
+  // This server is the per-session MCP bridge that a running session agent uses.
+  // It must use the `session_agent` surface so action enablement + approvals are driven by
+  // the same per-surface action settings as the rest of the session agent runtime.
+  const toolSurface = 'session_agent' as const;
   const credentials = opts?.credentials ?? null;
   const ctx = credentials
     ? resolveSessionEncryptionContextFromCredentials(credentials)
