@@ -124,7 +124,6 @@ export const SubAgentSummarySection = React.memo<{
     const styles = StyleSheet.create({
         container: {
             paddingVertical: 4,
-            paddingBottom: 12,
         },
         summaryItem: {
             paddingVertical: 6,
