@@ -13,6 +13,12 @@ const harness = vi.hoisted(() => {
   const automationWorkerRefreshAssignments = vi.fn(async () => {});
   const automationWorkerPause = vi.fn();
   const automationWorkerResume = vi.fn();
+  const channelBridgeStop = vi.fn(async () => {});
+  const startChannelBridgeFromEnv = vi.fn(async () => ({
+    stop: channelBridgeStop,
+    trigger: vi.fn(),
+  }));
+  const resolveChannelBridgesDaemonEnabled = vi.fn(async () => false);
   const startAutomationWorker = vi.fn(() => {
     if (autoShutdownAfterAutomationStart && requestShutdownRef) {
       setTimeout(() => requestShutdownRef?.('happier-cli'), 0);
@@ -79,13 +85,16 @@ const harness = vi.hoisted(() => {
     automationWorkerRefreshAssignments,
     automationWorkerPause,
     automationWorkerResume,
+    channelBridgeStop,
     apiMachine,
     lockHandle,
+    startChannelBridgeFromEnv,
     startConnectedServiceQuotasLoop,
     connectedServiceQuotasPause,
     connectedServiceQuotasResume,
     connectedServiceQuotasStop,
     createDaemonShutdownController,
+    resolveChannelBridgesDaemonEnabled,
     emitMachineConnectionState: (state: any) => machineConnectionStateListener?.(state),
     setAutoShutdownAfterAutomationStart: (value: boolean) => {
       autoShutdownAfterAutomationStart = value;
@@ -167,6 +176,7 @@ vi.mock('@/persistence', () => ({
   acquireDaemonLock: vi.fn(async () => harness.lockHandle),
   releaseDaemonLock: vi.fn(async () => {}),
   readCredentials: vi.fn(async () => null),
+  readSettings: vi.fn(async () => ({ experiments: true, featureToggles: { channelBridges: true } })),
 }));
 
 vi.mock('./controlClient', () => ({
@@ -231,6 +241,14 @@ vi.mock('@/terminal/runtime/envVarSanitization', () => ({
 vi.mock('./machine/metadata', () => ({
   getPreferredHostName: vi.fn(async () => 'host.local'),
   initialMachineMetadata: {},
+}));
+
+vi.mock('@/channels/startChannelBridgeWorker', () => ({
+  startChannelBridgeFromEnv: harness.startChannelBridgeFromEnv,
+}));
+
+vi.mock('./channels/resolveChannelBridgesDaemonEnabled', () => ({
+  resolveChannelBridgesDaemonEnabled: harness.resolveChannelBridgesDaemonEnabled,
 }));
 
 vi.mock('./lifecycle/shutdown', () => ({
@@ -322,6 +340,10 @@ describe('startDaemon automation wiring (integration)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     harness.setAutoShutdownAfterAutomationStart(true);
+    harness.resolveChannelBridgesDaemonEnabled.mockReset();
+    harness.resolveChannelBridgesDaemonEnabled.mockResolvedValue(false);
+    harness.startChannelBridgeFromEnv.mockClear();
+    harness.channelBridgeStop.mockClear();
   });
 
   it('checks same-version daemon compatibility after auth resolves the current machine id', async () => {
@@ -471,6 +493,26 @@ describe('startDaemon automation wiring (integration)', () => {
       expect(harness.apiMachine.updateMachineMetadata).toHaveBeenCalledTimes(1);
       expect(harness.automationWorkerRefreshAssignments).toHaveBeenCalledTimes(2);
       expect(harness.automationWorkerStop).toHaveBeenCalledTimes(1);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('starts the channel bridge runtime when the daemon gate allows it and stops it on shutdown', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    harness.resolveChannelBridgesDaemonEnabled.mockResolvedValue(true);
+
+    try {
+      const { startDaemon } = await import('./startDaemon');
+      await startDaemon();
+
+      expect(harness.resolveChannelBridgesDaemonEnabled).toHaveBeenCalledTimes(1);
+      expect(harness.startChannelBridgeFromEnv).toHaveBeenCalledWith(expect.objectContaining({
+        credentials: expect.objectContaining({ token: 'token-automation' }),
+        serverId: expect.any(String),
+      }));
+      expect(harness.channelBridgeStop).toHaveBeenCalledTimes(1);
       expect(exitSpy).toHaveBeenCalledWith(0);
     } finally {
       exitSpy.mockRestore();

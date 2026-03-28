@@ -55,6 +55,11 @@ const harness = vi.hoisted(() => {
 
     return {
         directPeerRegistry,
+        requestDirectPeerTransferToFile: vi.fn(async ({ destinationPath }: { destinationPath: string }) => ({
+            destinationPath,
+            manifestHash: 'sha256:test-manifest',
+            sizeBytes: 0,
+        })),
         startAutomationWorker,
         apiMachine,
         lockHandle,
@@ -331,6 +336,7 @@ vi.mock('@/machines/transfer/directPeerTransport', async () => {
     return {
         ...actual,
         createDirectPeerTransferRegistry: vi.fn(() => harness.directPeerRegistry),
+        requestDirectPeerTransferToFile: harness.requestDirectPeerTransferToFile,
         startDirectPeerTransferServer: vi.fn(async () => ({
             port: 46001,
             stop: vi.fn(async () => {}),
@@ -344,6 +350,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
         harness.apiMachine.setRPCHandlers.mockClear();
         harness.directPeerRegistry.publishTransfer.mockClear();
         harness.directPeerRegistry.clearPublishedTransfer.mockClear();
+        harness.requestDirectPeerTransferToFile.mockClear();
         delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED;
         delete process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED;
     });
@@ -440,6 +447,43 @@ describe('startDaemon session handoff wiring (integration)', () => {
 
             const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0];
             expect(handlers?.directPeerTransfer).toBeUndefined();
+        } finally {
+            exitSpy.mockRestore();
+        }
+    });
+
+    it('forwards timeoutMs through the daemon direct-peer requestPayloadFile bridge', async () => {
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+        try {
+            const { startDaemon } = await import('./startDaemon');
+            await startDaemon();
+
+            const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0];
+            expect(handlers?.directPeerTransfer?.requestPayloadFile).toEqual(expect.any(Function));
+
+            const endpointCandidates = [
+                {
+                    kind: 'http' as const,
+                    url: 'http://127.0.0.1:46001/machine-transfers/direct/handoff_timeout_bridge',
+                    authorizationToken: 'token_timeout_bridge',
+                    expiresAt: 30_000,
+                },
+            ];
+
+            await handlers.directPeerTransfer.requestPayloadFile({
+                transferId: 'handoff_timeout_bridge',
+                endpointCandidates,
+                destinationPath: '/tmp/handoff-timeout-bridge.bin',
+                timeoutMs: 23_456,
+            });
+
+            expect(harness.requestDirectPeerTransferToFile).toHaveBeenCalledWith({
+                transferId: 'handoff_timeout_bridge',
+                endpointCandidates,
+                destinationPath: '/tmp/handoff-timeout-bridge.bin',
+                timeoutMs: 23_456,
+            });
         } finally {
             exitSpy.mockRestore();
         }
