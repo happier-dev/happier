@@ -1,4 +1,6 @@
 import { readCredentials, type Credentials } from '@/persistence';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { hasFlag } from '@/cli/commands/shared/argvFlags';
 
 import { cmdSessionList } from './list';
 import { cmdSessionHistory } from './history';
@@ -75,6 +77,34 @@ function inferSessionKind(argv: readonly string[]): string {
   return `session_${sub}`;
 }
 
+function printSessionSubcommandHelp(subcommand: string): boolean {
+  switch (subcommand) {
+    case 'list':
+      console.log('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]');
+      return true;
+    case 'status':
+      console.log('happier session status <session-id-or-prefix> [--live] [--json]');
+      return true;
+    case 'create':
+      console.log('happier session create [--path <path>] [--backend <backend-target>] [--title <title>] [--tag <tag>] [--prompt <text>|--message <text>] [--json]');
+      return true;
+    case 'send':
+      console.log('happier session send <session-id-or-prefix> <message> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]');
+      return true;
+    case 'set-title':
+      console.log('happier session set-title <session-id-or-prefix> <title> [--json]');
+      return true;
+    case 'set-permission-mode':
+      console.log('happier session set-permission-mode <session-id-or-prefix> <mode> [--json]');
+      return true;
+    case 'set-model':
+      console.log('happier session set-model <session-id-or-prefix> <model-id> [--json]');
+      return true;
+    default:
+      return false;
+  }
+}
+
 export async function handleSessionCommand(
   argv: string[],
   deps?: Readonly<{
@@ -83,17 +113,23 @@ export async function handleSessionCommand(
 ): Promise<void> {
   const json = wantsJson(argv);
   const kind = inferSessionKind(argv);
+  const subcommand = String(argv[0] ?? '').trim();
+  const hasHelpFlag = hasFlag(argv, '--help') || hasFlag(argv, '-h');
 
   try {
-    const subcommand = String(argv[0] ?? '').trim();
     if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
       console.log('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]');
-      console.log('happier session history <session-id> [--limit N] [--format compact|raw] [--include-meta] [--include-structured-payload] [--json]');
-      console.log('happier session set-title <session-id> <title> [--json]');
-      console.log('happier session set-permission-mode <session-id> <mode> [--json]');
-      console.log('happier session set-model <session-id> <model-id> [--json]');
-      console.log('happier session archive <session-id> [--json]');
-      console.log('happier session unarchive <session-id> [--json]');
+      console.log('happier session status <session-id-or-prefix> [--live] [--json]');
+      console.log('happier session create [--path <path>] [--backend <backend-target>] [--tag <tag>] [--title <title>] [--prompt <text>|--message <text>] [--json]');
+      console.log('happier session send <session-id-or-prefix> <message> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]');
+      console.log('happier session wait <session-id-or-prefix> [--timeout <seconds>] [--json]');
+      console.log('happier session stop <session-id-or-prefix> [--json]');
+      console.log('happier session history <session-id-or-prefix> [--limit N] [--format compact|raw] [--include-meta] [--include-structured-payload] [--json]');
+      console.log('happier session set-title <session-id-or-prefix> <title> [--json]');
+      console.log('happier session set-permission-mode <session-id-or-prefix> <mode> [--json]');
+      console.log('happier session set-model <session-id-or-prefix> <model-id> [--json]');
+      console.log('happier session archive <session-id-or-prefix> [--json]');
+      console.log('happier session unarchive <session-id-or-prefix> [--json]');
       console.log('happier session review start <session-id> --engines <id1,id2> --instructions <text> [--json]');
       console.log('happier session plan start <session-id> --backends <id1,id2> --instructions <text> [--json]');
       console.log('happier session delegate start <session-id> --backends <id1,id2> --instructions <text> [--json]');
@@ -114,7 +150,28 @@ export async function handleSessionCommand(
       return;
     }
 
-    const readCredentialsFn = deps?.readCredentialsFn ?? (async () => await readCredentials());
+    if (hasHelpFlag && printSessionSubcommandHelp(subcommand)) {
+      return;
+    }
+
+    const baseReadCredentialsFn = deps?.readCredentialsFn ?? (async () => await readCredentials());
+    const readCredentialsFn = async () => {
+      const credentials = await baseReadCredentialsFn();
+      if (!credentials) return credentials;
+
+      try {
+        await bootstrapAccountSettingsContext({
+          credentials,
+          mode: 'blocking',
+          refresh: 'force',
+        });
+      } catch {
+        // Best-effort: session control commands should still work when
+        // account settings are unavailable (offline / older servers).
+      }
+
+      return credentials;
+    };
 
     switch (subcommand) {
       case 'list':

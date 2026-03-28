@@ -20,6 +20,12 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: false,
   },
   {
+    command: 'bridge',
+    rootHelpLabel: 'happier bridge',
+    rootHelpDescription: 'Configure channel bridge providers and bindings',
+    allowTmux: false,
+  },
+  {
     command: 'codex',
     rootHelpLabel: 'happier codex',
     rootHelpDescription: 'Start Codex mode',

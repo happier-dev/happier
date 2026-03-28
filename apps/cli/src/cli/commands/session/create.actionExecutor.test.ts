@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
@@ -10,12 +10,12 @@ vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
 }));
 
 describe('happier session create (action executor)', () => {
-  it('treats --help as usage and does not execute any action', async () => {
+  it('prints usage and does not execute any action when --help is requested', async () => {
     const { handleSessionCommand } = await import('./handleSessionCommand');
 
-    const output = captureConsoleJsonOutput();
+    const output = captureConsoleText();
     try {
-      await handleSessionCommand(['create', '--help', '--json'], {
+      await handleSessionCommand(['create', '--help'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -23,13 +23,7 @@ describe('happier session create (action executor)', () => {
       });
 
       expect(execute).not.toHaveBeenCalled();
-      expect(output.json()).toEqual(expect.objectContaining({
-        ok: false,
-        kind: 'session_create',
-        error: expect.objectContaining({
-          code: 'invalid_arguments',
-        }),
-      }));
+      expect(output.text()).toContain('happier session create [--path <path>] [--backend <backend-target>] [--title <title>] [--tag <tag>] [--prompt <text>|--message <text>] [--json]');
     } finally {
       output.restore();
     }

@@ -14,15 +14,21 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('happier session set-title (integration)', () => {
-  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR', 'HAPPIER_ACTIONS_SETTINGS_V1'] as const;
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
+  let requireApprovalForCliSurface = false;
+  let allowMetadataUpdate = true;
+  const createdArtifacts: any[] = [];
 
   const sessionId = 'sess_integration_set_title_123';
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-set-title-');
+    requireApprovalForCliSurface = false;
+    allowMetadataUpdate = true;
+    createdArtifacts.length = 0;
 
     const secret = new Uint8Array(32).fill(7);
     const { encodeBase64, encryptLegacy } = await import('@/api/encryption');
@@ -33,6 +39,52 @@ describe('happier session set-title (integration)', () => {
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname === '/v2/account/settings') {
+        const actionsSettings = requireApprovalForCliSurface
+          ? {
+              v: 1,
+              actions: {
+                'session.title.set': {
+                  enabled: true,
+                  disabledSurfaces: [],
+                  disabledPlacements: [],
+                  approvalRequiredSurfaces: ['cli'],
+                },
+              },
+            }
+          : { v: 1, actions: {} };
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          version: 1,
+          content: {
+            t: 'plain',
+            v: {
+              schemaVersion: 2,
+              actionsSettingsV1: actionsSettings,
+            },
+          },
+        }));
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/v1/artifacts') {
+        let body = '';
+        req.setEncoding('utf8');
+        req.on('data', (chunk) => {
+          body += chunk;
+        });
+        req.on('end', () => {
+          try {
+            createdArtifacts.push(JSON.parse(body || '{}'));
+          } catch {
+            createdArtifacts.push({ parseError: true, body });
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ id: createdArtifacts[createdArtifacts.length - 1]?.id ?? null }));
+        });
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -77,6 +129,13 @@ describe('happier session set-title (integration)', () => {
     const socket = createApiSessionSocketStub({
       emit: async (event: string, args: unknown[]) => {
         if (event !== 'update-metadata') return;
+        if (!allowMetadataUpdate) {
+          const [_data, callback] = args as [any, ((value: unknown) => void) | undefined];
+          if (typeof callback === 'function') {
+            callback({ result: 'error' });
+          }
+          return;
+        }
         const [data, callback] = args as [any, ((value: unknown) => void) | undefined];
         const { decodeBase64, decryptLegacy } = await import('@/api/encryption');
         const decrypted = decryptLegacy(decodeBase64(String(data?.metadata ?? ''), 'base64'), secret);
@@ -124,6 +183,34 @@ describe('happier session set-title (integration)', () => {
       expect(parsed.kind).toBe('session_set_title');
       expect(parsed.data?.sessionId).toBe(sessionId);
       expect(parsed.data?.title).toBe('New Title');
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('creates an approval request when account settings require approval for the CLI surface', async () => {
+    requireApprovalForCliSurface = true;
+    allowMetadataUpdate = false;
+
+    const { handleSessionCommand } = await import('./index');
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(['set-title', sessionId, 'New Title', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+        }),
+      });
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_set_title');
+      expect(parsed.data?.kind).toBe('approval_request_created');
+      expect(typeof parsed.data?.artifactId).toBe('string');
+      expect(String(parsed.data?.artifactId)).not.toBe('');
+      expect(createdArtifacts.length).toBe(1);
     } finally {
       output.restore();
     }

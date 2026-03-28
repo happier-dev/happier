@@ -1,13 +1,25 @@
 import { readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { reloadConfiguration } from '@/configuration';
 import { enableMcpStdioConsolePatch } from '@/mcp/server/mcpStdioConsolePatch';
 
 import type { McpCommandDeps } from './deps';
+
+function clearServerSelectionEnvOverrides(): void {
+  delete process.env.HAPPIER_SERVER_URL;
+  delete process.env.HAPPIER_LOCAL_SERVER_URL;
+  delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+  delete process.env.HAPPIER_WEBAPP_URL;
+  delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+}
 
 export async function runMcpServeCommand(
   argv: readonly string[],
   deps: McpCommandDeps,
 ): Promise<void> {
   enableMcpStdioConsolePatch();
+
+  clearServerSelectionEnvOverrides();
+  reloadConfiguration();
 
   const defaultSessionId = readFlagValue(argv, '--session');
   const credentials = await deps.readCredentials();
@@ -20,14 +32,9 @@ export async function runMcpServeCommand(
     credentials,
     mode: 'blocking',
     refresh: 'force',
-    // Security: external MCP clients can spawn this command with arbitrary env vars.
-    // Ignore env-driven account settings disables so action enablement/approvals are always
-    // based on the authenticated account settings snapshot.
     honorAccountSettingsModeEnv: false,
   });
 
-  // Security: never allow external env overrides to bypass action enablement / approvals.
-  // External MCP clients can often set process env when spawning the server command.
   try {
     const actionsSettings = accountSettingsContext.settings.actionsSettingsV1;
     if (actionsSettings && typeof actionsSettings === 'object') {

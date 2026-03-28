@@ -14,6 +14,7 @@ import { resolveLaunchAgentPlistPath, resolveSystemdUserUnitPath } from '@/daemo
 import { configuration } from '@/configuration';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
+import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningWithinBudget';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -95,24 +96,13 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
     const child = await spawnDetachedDaemonStartSync();
     child.unref();
 
-    let started = false;
     const timeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS', 5000);
     const pollMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_POLL_MS', 100);
-    const deadline = Date.now() + timeoutMs;
-    if (await checkIfDaemonRunningAndCleanupStaleState()) {
-      started = true;
-    } else {
-      while (Date.now() < deadline) {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) break;
-        await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, remaining)));
-        if (Date.now() >= deadline) break;
-        if (await checkIfDaemonRunningAndCleanupStaleState()) {
-          started = true;
-          break;
-        }
-      }
-    }
+    const started = await waitForDaemonRunningWithinBudget({
+      isRunning: () => checkIfDaemonRunningAndCleanupStaleState(),
+      timeoutMs,
+      pollMs,
+    });
 
     if (started) {
       console.log('Daemon started successfully');

@@ -1,10 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { McpCommandDeps } from './deps';
 import { runMcpServeCommand } from './serve';
 import { disableMcpStdioConsolePatch } from '@/mcp/server/mcpStdioConsolePatch';
 
-describe('runMcpServeCommand', () => {
+const env = process.env;
+
+describe('happier mcp serve (env hardening)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    process.env = { ...env };
+  });
+
   it('bootstraps account settings before starting the stdio MCP server', async () => {
     const credentials = {
       token: 't',
@@ -122,5 +129,89 @@ describe('runMcpServeCommand', () => {
       disableMcpStdioConsolePatch();
     }
     expect(console.log).toBe(original);
+  });
+
+  it('clears env server-selection overrides before reading credentials', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://attacker.example.test';
+    process.env.HAPPIER_LOCAL_SERVER_URL = 'http://attacker-local.example.test';
+    process.env.HAPPIER_PUBLIC_SERVER_URL = 'http://attacker-public.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'http://attacker-webapp.example.test';
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'attacker';
+
+    const readCredentials = vi.fn(async () => {
+      if (
+        process.env.HAPPIER_SERVER_URL
+        || process.env.HAPPIER_LOCAL_SERVER_URL
+        || process.env.HAPPIER_PUBLIC_SERVER_URL
+        || process.env.HAPPIER_WEBAPP_URL
+        || process.env.HAPPIER_ACTIVE_SERVER_ID
+      ) {
+        throw new Error('server_selection_env_override_not_cleared_before_credentials');
+      }
+
+      return { token: 't' } as any;
+    });
+
+    await expect(
+      runMcpServeCommand(['serve'], {
+        readCredentials,
+        ensureMachineIdForCredentials: async () => ({ machineId: 'machine_1' }),
+        bootstrapAccountSettingsContext: async () => ({
+          settings: {
+            actionsSettingsV1: null,
+          },
+        }) as any,
+        createExternalMcpServer: () => ({ mcp: { connect: async () => {} } as any, toolNames: [] }),
+        connectMcpStdio: async () => {},
+        updateAccountSettingsV2WithRetry: async () => ({} as any),
+        detectProviderMcpServers: async () => ({} as any),
+        probeMcpStdioServerTools: async () => [],
+        randomUUID: () => 'uuid',
+        nowMs: () => 0,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(readCredentials).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears env server-selection overrides before fetching account settings', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://attacker.example.test';
+    process.env.HAPPIER_LOCAL_SERVER_URL = 'http://attacker-local.example.test';
+    process.env.HAPPIER_PUBLIC_SERVER_URL = 'http://attacker-public.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'http://attacker-webapp.example.test';
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'attacker';
+
+    const bootstrapAccountSettingsContext = vi.fn(async () => {
+      if (process.env.HAPPIER_SERVER_URL || process.env.HAPPIER_PUBLIC_SERVER_URL || process.env.HAPPIER_LOCAL_SERVER_URL) {
+        throw new Error('server_selection_env_override_not_cleared');
+      }
+
+      return {
+        settings: {
+          actionsSettingsV1: null,
+        },
+      } as any;
+    });
+
+    await expect(
+      runMcpServeCommand(['serve'], {
+        readCredentials: async () => ({ token: 't' }) as any,
+        ensureMachineIdForCredentials: async () => ({ machineId: 'machine_1' }),
+        bootstrapAccountSettingsContext,
+        createExternalMcpServer: () => ({ mcp: { connect: async () => {} } as any, toolNames: [] }),
+        connectMcpStdio: async () => {},
+        updateAccountSettingsV2WithRetry: async () => ({} as any),
+        detectProviderMcpServers: async () => ({} as any),
+        probeMcpStdioServerTools: async () => [],
+        randomUUID: () => 'uuid',
+        nowMs: () => 0,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(process.env.HAPPIER_SERVER_URL).toBeUndefined();
+    expect(process.env.HAPPIER_LOCAL_SERVER_URL).toBeUndefined();
+    expect(process.env.HAPPIER_PUBLIC_SERVER_URL).toBeUndefined();
+    expect(process.env.HAPPIER_WEBAPP_URL).toBeUndefined();
+    expect(process.env.HAPPIER_ACTIVE_SERVER_ID).toBeUndefined();
   });
 });

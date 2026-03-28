@@ -26,6 +26,8 @@ describe('happier session create (integration)', () => {
   let machineKeySeed: Uint8Array;
   let observedInitialMessageRpc = false;
   let observedSpawnBody: Record<string, unknown> | null = null;
+  let sessionGetAttempts = 0;
+  let sessionGetNotFoundUntil = 0;
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-create-');
@@ -48,6 +50,8 @@ describe('happier session create (integration)', () => {
     let metadataVersion = 0;
     observedInitialMessageRpc = false;
     observedSpawnBody = null;
+    sessionGetAttempts = 0;
+    sessionGetNotFoundUntil = 0;
 
     server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
@@ -64,6 +68,13 @@ describe('happier session create (integration)', () => {
       }
 
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
+        sessionGetAttempts += 1;
+        if (sessionGetAttempts <= sessionGetNotFoundUntil) {
+          res.statusCode = 404;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error: 'Not found', path: url.pathname, message: 'Not found' }));
+          return;
+        }
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(
@@ -200,6 +211,34 @@ describe('happier session create (integration)', () => {
         initialPrompt: 'Plan the refactor',
       });
       expect(observedInitialMessageRpc).toBe(false);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('retries fetching the spawned session until it becomes visible on the server', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const output = captureConsoleJsonOutput();
+    sessionGetNotFoundUntil = 1;
+
+    try {
+      await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--prompt', 'Plan the refactor', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_create');
+      expect(parsed.data?.session?.id).toBe('sess_integration_create_123');
+      expect(sessionGetAttempts).toBeGreaterThan(1);
     } finally {
       output.restore();
     }

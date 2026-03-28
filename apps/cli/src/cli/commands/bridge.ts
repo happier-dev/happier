@@ -7,7 +7,6 @@ import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient
 import {
   readScopedTelegramBridgeConfig,
   removeScopedTelegramBridgeConfig,
-  splitScopedTelegramBridgeUpdate,
   upsertScopedTelegramBridgeConfig,
 } from '@/channels/channelBridgeAccountConfig';
 import { resolveChannelBridgeRuntimeConfig } from '@/channels/channelBridgeConfig';
@@ -302,14 +301,13 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
     );
   }
 
-  const split = splitScopedTelegramBridgeUpdate({ update });
   await updateSettings(async (current) =>
     ensureExperimentalSettingsFeatureToggleEnabled({
       settings: upsertScopedTelegramBridgeConfig({
         settings: current,
         serverId,
         accountId,
-        update: split.localUpdate,
+        update,
       }),
       featureId: 'channelBridges',
     }),

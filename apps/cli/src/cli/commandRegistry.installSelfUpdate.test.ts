@@ -32,6 +32,10 @@ describe('commandRegistry install/update aliases', () => {
     expect(commandRegistry.mcp).toBeTypeOf('function');
   });
 
+  it('registers bridge command namespace', () => {
+    expect(commandRegistry.bridge).toBeTypeOf('function');
+  });
+
   it('registers tools command namespace', () => {
     expect(commandRegistry.tools).toBeTypeOf('function');
   });

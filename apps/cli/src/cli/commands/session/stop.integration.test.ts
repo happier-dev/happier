@@ -13,6 +13,11 @@ const { mockIo } = vi.hoisted(() => ({
 const { stopDaemonSessionMock } = vi.hoisted(() => ({
   stopDaemonSessionMock: vi.fn(),
 }));
+const { listSessionMarkersMock, removeSessionMarkerMock, isPidSafeHappySessionProcessMock } = vi.hoisted(() => ({
+  listSessionMarkersMock: vi.fn(),
+  removeSessionMarkerMock: vi.fn(),
+  isPidSafeHappySessionProcessMock: vi.fn(),
+}));
 
 vi.mock('socket.io-client', () => ({
   io: mockIo,
@@ -24,6 +29,17 @@ vi.mock('@/daemon/controlClient', async (importOriginal) => {
     stopDaemonSession: stopDaemonSessionMock,
   };
 });
+vi.mock('@/daemon/sessionRegistry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/daemon/sessionRegistry')>();
+  return {
+    ...actual,
+    listSessionMarkers: listSessionMarkersMock,
+    removeSessionMarker: removeSessionMarkerMock,
+  };
+});
+vi.mock('@/daemon/pidSafety', () => ({
+  isPidSafeHappySessionProcess: isPidSafeHappySessionProcessMock,
+}));
 
 describe('happier session stop (integration)', () => {
   const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
@@ -92,6 +108,12 @@ describe('happier session stop (integration)', () => {
 
     mockIo.mockReset();
     stopDaemonSessionMock.mockReset();
+    listSessionMarkersMock.mockReset();
+    listSessionMarkersMock.mockResolvedValue([]);
+    removeSessionMarkerMock.mockReset();
+    removeSessionMarkerMock.mockResolvedValue(undefined);
+    isPidSafeHappySessionProcessMock.mockReset();
+    isPidSafeHappySessionProcessMock.mockResolvedValue(true);
   });
 
   afterEach(async () => {
@@ -208,6 +230,82 @@ describe('happier session stop (integration)', () => {
     } finally {
       delete process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS;
       delete process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS;
+      output.restore();
+    }
+  });
+
+  it('falls back to marker-backed process stop when the daemon stop path is unavailable', async () => {
+    const sessionId = 'sess_integration_stop_marker_fallback';
+    const markerPid = 12345;
+    const emitSpy = vi.fn((...args: any[]) => {
+      const cb = args[2];
+      if (typeof cb === 'function') cb();
+    });
+    stopDaemonSessionMock.mockResolvedValue(false);
+    listSessionMarkersMock.mockResolvedValue([
+      {
+        pid: markerPid,
+        happySessionId: sessionId,
+        happyHomeDir: happyHomeDir,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        startedBy: 'daemon',
+        processCommandHash: 'a'.repeat(64),
+      },
+    ]);
+
+    const processKillSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
+      if (signal === 'SIGTERM' && Math.abs(pid) === markerPid) {
+        sessionActive = false;
+      }
+      return true;
+    }) as typeof process.kill);
+
+    const socket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => emitSpy(event, ...args),
+    });
+    bindApiSessionSocketMock(mockIo, socket);
+
+    process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS = '50';
+    process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS = '1';
+
+    const { handleSessionCommand } = await import('./index');
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      const machineKeySeed = new Uint8Array(32).fill(8);
+      await handleSessionCommand(['stop', sessionId, '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      expect(stopDaemonSessionMock).toHaveBeenCalledWith(sessionId);
+      expect(listSessionMarkersMock).toHaveBeenCalledTimes(2);
+      expect(isPidSafeHappySessionProcessMock).toHaveBeenCalledWith({
+        pid: markerPid,
+        expectedProcessCommandHash: 'a'.repeat(64),
+      });
+      expect(processKillSpy).toHaveBeenCalledWith(markerPid, 'SIGTERM');
+      expect(removeSessionMarkerMock).toHaveBeenCalledWith(markerPid);
+      expect(emitSpy).not.toHaveBeenCalled();
+      expect(sessionStatusFetchCount).toBeGreaterThanOrEqual(2);
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_stop');
+      expect(parsed.data?.sessionId).toBe(sessionId);
+      expect(parsed.data?.stopped).toBe(true);
+    } finally {
+      delete process.env.HAPPIER_SESSION_STOP_TIMEOUT_MS;
+      delete process.env.HAPPIER_SESSION_STOP_POLL_INTERVAL_MS;
+      processKillSpy.mockRestore();
       output.restore();
     }
   });
