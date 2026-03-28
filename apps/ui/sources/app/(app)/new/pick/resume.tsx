@@ -5,7 +5,6 @@ import { useNavigation } from '@react-navigation/native';
 import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
-import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal';
 import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { useSettings } from '@/sync/domains/state/storage';
@@ -98,7 +97,7 @@ export default function ResumePickerScreen() {
                 agentType={agentType}
                 resumeBrowse={resumeBrowseEnabled ? {
                     enabled: true,
-                    onBrowse: async () => {
+                    onBrowse: () => {
                         if (!effectiveMachineId) return null;
                         const source = resolveDirectBrowseLockedSource({
                             providerId: agentType as any,
@@ -107,15 +106,20 @@ export default function ResumePickerScreen() {
                             settings,
                         });
                         if (!source) return null;
-                        return await openDirectSessionsResumeIdPickerModal({
-                            lockScope: {
+                        // IMPORTANT (native):
+                        // New session can be presented as a contained sheet/drawer. App-root modals can render
+                        // behind that native presentation even with high zIndex. Use an Expo Router screen
+                        // so the browse UI is inside the same presentation boundary.
+                        router.replace({
+                            pathname: '/new/pick/resume-browse',
+                            params: {
+                                agentType,
                                 machineId: effectiveMachineId,
-                                serverId: effectiveServerId,
-                                providerId: agentType as any,
-                                source,
+                                spawnServerId: effectiveServerId ?? undefined,
+                                dataId: typeof params.dataId === 'string' ? params.dataId : undefined,
                             },
-                            title: t('directSessions.browseTitle'),
                         });
+                        return null;
                     },
                 } : null}
                 focusMode="routeFocus"

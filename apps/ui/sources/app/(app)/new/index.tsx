@@ -1,8 +1,6 @@
 import React from 'react';
-import { View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 
-import { PopoverBoundaryProvider, PopoverPortalTargetProvider } from '@/components/ui/popover';
 import { SessionGettingStartedGuidance, useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { NewSessionSimplePanel } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { NewSessionWizard } from '@/components/sessions/new/components/NewSessionWizard';
@@ -26,19 +24,14 @@ function NewSessionScreenInner() {
     const { layout, profiles, agent, machine, footer } = model.wizardProps;
 
     return (
-        <View ref={model.popoverBoundaryRef} style={{ flex: 1, width: '100%' }}>
-            <PopoverPortalTargetProvider>
-                <PopoverBoundaryProvider boundaryRef={model.popoverBoundaryRef}>
-                    <NewSessionWizard
-                        layout={layout}
-                        profiles={profiles}
-                        agent={agent}
-                        machine={machine}
-                        footer={footer}
-                    />
-                </PopoverBoundaryProvider>
-            </PopoverPortalTargetProvider>
-        </View>
+        <NewSessionWizard
+            popoverBoundaryRef={model.popoverBoundaryRef}
+            layout={layout}
+            profiles={profiles}
+            agent={agent}
+            machine={machine}
+            footer={footer}
+        />
     );
 }
 

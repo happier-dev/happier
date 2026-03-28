@@ -35,15 +35,23 @@ import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecu
 import { Text } from '@/components/ui/text/Text';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { executeSessionForkAction } from '@/sync/domains/sessionFork/executeSessionForkAction';
-import { canHandoffConversation } from '@/sync/domains/sessionHandoff/handoffUiSupport';
 import { runSessionHandoffPickerFlow } from '@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow';
 import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHandoff/resolveSessionHandoffSourceMachineId';
+import {
+    resolveSessionHandoffUiAvailability,
+} from '@/sync/domains/sessionHandoff/resolveSessionHandoffUiAvailability';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { getActionSpec } from '@happier-dev/protocol';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
+import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
+import {
+    useSessionHandoffSourceReachability,
+    type SessionHandoffRuntimeAvailability,
+} from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
 
 
 // Animated status dot component
@@ -85,7 +93,12 @@ function StatusDot({ color, isPulsing, size = 8 }: { color: string; isPulsing?: 
     );
 }
 
-function SessionInfoContent({ session }: { session: Session }) {
+function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandoff, runtimeAvailability }: Readonly<{
+    session: Session;
+    sessionServerId: string | null;
+    sourceMachineIdForHandoff: string | null;
+    runtimeAvailability: SessionHandoffRuntimeAvailability;
+}>) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const localDevModeEnabled = useLocalSetting('devModeEnabled');
@@ -95,6 +108,7 @@ function SessionInfoContent({ session }: { session: Session }) {
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(session.id);
+    const serverSnapshot = useServerFeaturesSnapshotForServerId(sessionServerId, { enabled: Boolean(sessionServerId) });
     const useProfiles = useSetting('useProfiles') === true;
     const profilesSetting = useSetting('profiles');
     const profiles = Array.isArray(profilesSetting) ? profilesSetting : [];
@@ -139,9 +153,14 @@ function SessionInfoContent({ session }: { session: Session }) {
             { surface: 'ui_button', placement: 'session_info' } as any,
         );
     }, [actionsSettingsV1]);
-    const handoffSupported = React.useMemo(() => {
-        return sessionHandoffEnabled && canHandoffConversation({ sessionId: session.id, session }) === true;
-    }, [session, sessionHandoffEnabled]);
+    const handoffAvailability = resolveSessionHandoffUiAvailability({
+        sessionId: session.id,
+        session,
+        sessionHandoffFeatureEnabled: sessionHandoffEnabled,
+        serverSnapshot,
+        runtimeAvailability,
+    });
+    const handoffSupported = handoffAvailability.available;
 
     const vendorResumeLabelKey = core.resume.uiVendorResumeIdLabelKey;
     const vendorResumeCopiedKey = core.resume.uiVendorResumeIdCopiedKey;
@@ -175,11 +194,6 @@ function SessionInfoContent({ session }: { session: Session }) {
         return readMachineTargetForSession(session.id);
     }, [session.id, session.updatedAt, session.metadata]);
     const reachableMachineId = reachableMachineTarget?.machineId ?? null;
-    const sourceMachineIdForHandoff = React.useMemo(
-        () => resolveSessionHandoffSourceMachineId({ sessionMetadata: session.metadata as any }),
-        [session.metadata],
-    );
-
     const sessionLogPath = React.useMemo(() => {
         const value = typeof (session.metadata as any)?.sessionLogPath === 'string'
             ? (session.metadata as any).sessionLogPath.trim()
@@ -221,7 +235,7 @@ function SessionInfoContent({ session }: { session: Session }) {
         if (!sessionLogPath) return;
         try {
             await Clipboard.setStringAsync(sessionLogPath);
-            Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: 'Session log path' }));
+            Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('sessionLog.logPathCopyLabel') }));
         } catch {
             Modal.alert(t('common.error'), t('sessionInfo.failedToCopyMetadata'));
         }
@@ -290,16 +304,15 @@ function SessionInfoContent({ session }: { session: Session }) {
     const [forkingSession, performFork] = useHappyAction(handleForkAction);
 
     const handleHandoffAction = useCallback(async () => {
-        const serverId = resolveServerIdForSessionIdFromLocalCache(session.id);
         const res = await runSessionHandoffPickerFlow({
             execute: executor.execute as any,
             sessionId: session.id,
             sourceMachineId: sourceMachineIdForHandoff,
-            serverId,
+            serverId: sessionServerId,
             placement: 'session_info',
         });
         if (!res?.ok) return;
-    }, [executor.execute, sourceMachineIdForHandoff, session.id, session.metadata]);
+    }, [executor.execute, session.id, sessionServerId, sourceMachineIdForHandoff]);
 
     const [handingOffSession, performHandoff] = useHappyAction(handleHandoffAction);
 
@@ -380,38 +393,8 @@ function SessionInfoContent({ session }: { session: Session }) {
         await handleCopyCommand(updateCommand);
     }, [handleCopyCommand]);
 
-    const directSessionMachineId = React.useMemo((): string | null => {
-        const directSessionV1 = session.metadata?.directSessionV1 as unknown;
-        if (!directSessionV1 || typeof directSessionV1 !== 'object') return null;
-        const record = directSessionV1 as Record<string, unknown>;
-        const raw = typeof record.machineId === 'string' ? record.machineId.trim() : '';
-        return raw.length > 0 ? raw : null;
-    }, [session.metadata]);
-
     return (
         <>
-            {/* QA/e2e anchor: expose the raw session machineId without relying on reachability heuristics. */}
-            <View
-                testID="session-info-machine-id"
-                style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
-            >
-                <Text>
-                    {String(session.metadata?.machineId ?? directSessionMachineId ?? '').trim()}
-                </Text>
-            </View>
-            {/* QA/e2e anchor: expose resolved path + homeDir so matrix can validate handoff targetPath (even under E2EE). */}
-            <View
-                testID="session-info-session-path"
-                style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
-            >
-                <Text>{String(session.metadata?.path ?? '').trim()}</Text>
-            </View>
-            <View
-                testID="session-info-home-dir"
-                style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
-            >
-                <Text>{String(session.metadata?.homeDir ?? '').trim()}</Text>
-            </View>
             <ItemList>
                 {/* Session Header */}
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
@@ -557,18 +540,24 @@ function SessionInfoContent({ session }: { session: Session }) {
                                 onPress={() => handleCopyCommand(t('sessionInfo.resumeCommand', { sessionId: session.id }))}
                             />
                         )}
-                    {devModeEnabled && Boolean(sessionLogPath) && (
-                        <Item
-                            title={t('sessionInfo.viewSessionLogTitle')}
-                            subtitle={t('sessionInfo.viewSessionLogSubtitle')}
-                            icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.blue} />}
-                            onPress={() => router.push(`/session/${session.id}/log`)}
-                        />
-                    )}
+                    <Item
+                        title={t('sessionInfo.viewSessionLogTitle')}
+                        subtitle={t('sessionInfo.viewSessionLogSubtitle')}
+                        icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.blue} />}
+                        onPress={() => router.push(`/session/${session.id}/log`)}
+                    />
                     {reachableMachineId && (
                         <Item
                             title={t('sessionInfo.viewMachine')}
                             subtitle={t('sessionInfo.viewMachineSubtitle')}
+                            subtitleAccessory={
+                                <Text
+                                    testID="sessionInfo.viewMachineTargetMachineId"
+                                    style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }}
+                                >
+                                    {reachableMachineId}
+                                </Text>
+                            }
                             icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
                             onPress={() => router.push(`/machine/${reachableMachineId}`)}
                         />
@@ -675,7 +664,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                                 showChevron={false}
                             />
                         )}
-                        {devModeEnabled && sessionLogPath && (
+                        {sessionLogPath && (
                             <Item
                                 title={t('sessionLog.logPathCopyLabel')}
                                 subtitle={formatPathRelativeToHome(sessionLogPath, session.metadata.homeDir)}
@@ -828,13 +817,29 @@ function SessionInfoContent({ session }: { session: Session }) {
     );
 }
 
-export default React.memo(() => {
+export default () => {
     const { theme } = useUnistyles();
     const { id } = useLocalSearchParams<{ id: string }>();
     const sessionId = String(id ?? '').trim();
     const sessionHydrated = useHydrateSessionForRoute(sessionId, 'SessionInfoRoute.ensureSessionVisible');
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
+    const sessionServerId = usePreferredServerIdForSession(sessionId);
+    const reachableMachineIdForHandoff = React.useMemo(
+        () => (session ? readMachineTargetForSession(session.id)?.machineId ?? null : null),
+        [session?.id, session?.updatedAt, session?.metadata],
+    );
+    const sourceMachineIdForHandoff = React.useMemo(
+        () => resolveSessionHandoffSourceMachineId({
+            reachableMachineId: reachableMachineIdForHandoff,
+            sessionMetadata: session?.metadata as any,
+        }),
+        [reachableMachineIdForHandoff, session?.metadata],
+    );
+    const runtimeAvailability = useSessionHandoffSourceReachability({
+        serverId: sessionServerId,
+        sourceMachineId: sourceMachineIdForHandoff,
+    });
 
     // Handle three states: loading, deleted, and exists.
     // If the session record is already present, fail open and render it even if global hydration
@@ -862,7 +867,12 @@ export default React.memo(() => {
 
     return (
         <View testID="session-info-screen" style={{ flex: 1 }}>
-            <SessionInfoContent session={session} />
+            <SessionInfoContent
+                session={session}
+                sessionServerId={sessionServerId}
+                sourceMachineIdForHandoff={sourceMachineIdForHandoff}
+                runtimeAvailability={runtimeAvailability}
+            />
         </View>
     );
-});
+};
