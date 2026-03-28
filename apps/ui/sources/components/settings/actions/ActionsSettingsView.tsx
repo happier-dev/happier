@@ -3,7 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { View, Platform, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { getActionSpec, type ActionId } from '@happier-dev/protocol';
+import { getActionSpec, isActionAlwaysAutoApproved, type ActionId } from '@happier-dev/protocol';
 
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
@@ -246,6 +246,10 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
 
                                                 const definition = getActionSettingsTargetDefinition(entry.actionId, option.id);
                                                 if (definition.kind !== 'surface') {
+                                                    return null;
+                                                }
+
+                                                if (isActionAlwaysAutoApproved(entry.actionId)) {
                                                     return null;
                                                 }
 

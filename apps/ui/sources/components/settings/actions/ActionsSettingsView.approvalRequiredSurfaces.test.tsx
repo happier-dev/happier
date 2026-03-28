@@ -166,38 +166,14 @@ describe('ActionsSettingsView approvals required surfaces', () => {
         });
     });
 
-    it('shows approvalRequiredSurfaces toggle for session.title.set', async () => {
+    it('does not show approvalRequiredSurfaces toggle for session.title.set', async () => {
         capture.reset();
         capture.actionId = 'session.title.set';
         const { ActionsSettingsView } = await import('./ActionsSettingsView');
 
         await renderScreen(<ActionsSettingsView />);
 
-        expect(capture.switchProps).toHaveLength(1);
-        const onValueChange = capture.switchProps[0]?.onValueChange as undefined | ((next: boolean) => void);
-        expect(typeof onValueChange).toBe('function');
-
-        await act(async () => {
-            onValueChange?.(true);
-        });
-
-        expect(capture.setRawSettings).toHaveBeenCalledWith({
-            v: 1,
-            actions: {
-                'review.start': {
-                    enabledPlacements: [],
-                    disabledSurfaces: [],
-                    disabledPlacements: [],
-                    approvalRequiredSurfaces: [],
-                },
-                'session.title.set': {
-                    enabledPlacements: [],
-                    disabledSurfaces: [],
-                    disabledPlacements: [],
-                    approvalRequiredSurfaces: ['mcp'],
-                },
-            },
-        });
+        expect(capture.switchProps).toHaveLength(0);
     });
 
     it('shows approvalRequiredSurfaces toggle for actions without explicit approval metadata', async () => {
