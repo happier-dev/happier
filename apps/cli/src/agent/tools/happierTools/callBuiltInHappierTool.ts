@@ -2,12 +2,11 @@ import type { Credentials } from '@/persistence';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
+import { createChangeTitleToolHandler } from './createChangeTitleToolHandler';
 import { normalizeExecutionRunToolResult } from './normalizeExecutionRunToolResult';
-import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { startExecutionRun } from '@/session/services/executionRuns';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { createSessionTitleMetadataUpdater } from '@/session/services/setSessionTitle';
 
 export async function callBuiltInHappierTool(params: Readonly<{
   credentials: Credentials;
@@ -58,16 +57,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
     sessionId,
     surface: 'cli',
     deps: {
-      changeTitle: async (sessionId, title) => {
-        await updateSessionMetadataWithRetry({
-          token: params.credentials.token,
-          credentials: params.credentials,
-          sessionId,
-          rawSession,
-          updater: createSessionTitleMetadataUpdater({ title }),
-        });
-        return { success: true, title };
-      },
+      changeTitle: createChangeTitleToolHandler({ executor, surface: 'cli' }),
       startExecutionRun: async (sessionId, request) => {
         const result = await startExecutionRun({
           token: params.credentials.token,

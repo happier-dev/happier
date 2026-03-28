@@ -14,6 +14,7 @@ describe('listBuiltInHappierTools', () => {
       v: 1,
       actions: {
         'review.start': { enabled: true, disabledSurfaces: ['cli'], disabledPlacements: [] },
+        'session.title.set': { enabled: true, disabledSurfaces: ['cli'], disabledPlacements: [] },
       },
     });
 
@@ -21,8 +22,8 @@ describe('listBuiltInHappierTools', () => {
     const names = listBuiltInHappierTools({ surface: 'cli' }).map((tool) => tool.name);
 
     expect(names).not.toContain('review_start');
+    expect(names).not.toContain('change_title');
     expect(names).toContain('subagents_plan_start');
-    expect(names).toContain('change_title');
   });
 
   it('does not expose MCP-only discovery tools on the CLI surface', async () => {

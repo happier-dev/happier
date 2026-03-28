@@ -5,7 +5,7 @@ import {
   type ActionId,
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
-import { isActionAvailableOnToolSurface } from './actionToolCatalog';
+import { getEquivalentActionIdForBuiltInTool, isActionAvailableOnToolSurface } from './actionToolCatalog';
 import type { HappierBuiltInToolDispatchResult } from './types';
 import {
   getActionSpecForSurface,
@@ -57,12 +57,6 @@ const ACTION_ID_BY_TOOL_NAME = new Map(
     .map((spec) => [String(spec.bindings?.mcpToolName ?? '').trim(), spec.id] as const)
     .filter(([toolName]) => toolName.length > 0),
 );
-
-const SURFACE_GATED_MANUAL_TOOL_ACTION_IDS = new Map<string, ActionId>([
-  ['action_spec_search', 'action.spec.search'],
-  ['action_spec_get', 'action.spec.get'],
-  ['action_options_resolve', 'action.options.resolve'],
-]);
 
 function getExecutionRunStartEquivalentActionId(args: unknown): ActionId | null {
   const intent = typeof (args as { intent?: unknown } | null)?.intent === 'string'
@@ -122,7 +116,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   const isActionEnabled = params.deps.isActionEnabled ?? (() => true);
   const surface = params.surface ?? 'session_agent';
 
-  const gatedManualActionId = SURFACE_GATED_MANUAL_TOOL_ACTION_IDS.get(params.toolName) ?? null;
+  const gatedManualActionId = getEquivalentActionIdForBuiltInTool(params.toolName);
   if (
     gatedManualActionId
     && !isActionAvailableOnToolSurface({

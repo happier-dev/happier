@@ -122,6 +122,32 @@ describe('callBuiltInHappierTool', () => {
     });
   });
 
+  it('routes change_title through the shared action executor on the CLI surface', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'a1', actionId: 'session.title.set' },
+    });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'sess-1',
+      toolName: 'change_title',
+      args: { title: 'Renamed' },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'a1', actionId: 'session.title.set' },
+    });
+    expect(execute).toHaveBeenCalledWith(
+      'session.title.set',
+      { sessionId: 'sess-1', title: 'Renamed' },
+      { defaultSessionId: 'sess-1', surface: 'cli' },
+    );
+    expect(updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+  });
+
   it('rejects action_execute when the action is disabled on the CLI surface', async () => {
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,

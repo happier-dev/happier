@@ -15,10 +15,22 @@ const ACTION_TOOL_ENTRIES = Object.freeze(
     .filter((entry) => entry.toolName.length > 0),
 );
 
-const ACTION_TOOL_NAMES = new Set(ACTION_TOOL_ENTRIES.map((entry) => entry.toolName));
+const ACTION_TOOL_NAME_TO_ID = new Map(
+  ACTION_TOOL_ENTRIES.map((entry) => [entry.toolName, entry.id] as const),
+);
 const ACTION_SURFACES_BY_ID = new Map(
   listActionSpecs().map((spec) => [spec.id as ActionId, spec.surfaces] as const),
 );
+const MANUAL_TOOL_EQUIVALENT_ACTION_IDS = new Map<string, ActionId>([
+  ['change_title', 'session.title.set'],
+  ['action_spec_search', 'action.spec.search'],
+  ['action_spec_get', 'action.spec.get'],
+  ['action_options_resolve', 'action.options.resolve'],
+]);
+
+export function getEquivalentActionIdForBuiltInTool(toolName: string): ActionId | null {
+  return MANUAL_TOOL_EQUIVALENT_ACTION_IDS.get(toolName) ?? ACTION_TOOL_NAME_TO_ID.get(toolName) ?? null;
+}
 
 export function isActionAvailableOnToolSurface(params: Readonly<{
   actionId: ActionId;
@@ -58,10 +70,13 @@ export function filterBuiltInToolsForSurface(
     isActionEnabled?: ActionEnabledPredicate;
   }>,
 ): readonly HappierBuiltInToolDefinition[] {
-  const enabledActionToolNames = new Set(createActionToolNameToIdMap(params).keys());
-
   return tools.filter((tool) => {
-    if (!ACTION_TOOL_NAMES.has(tool.name)) return true;
-    return enabledActionToolNames.has(tool.name);
+    const actionId = getEquivalentActionIdForBuiltInTool(tool.name);
+    if (!actionId) return true;
+    return isActionAvailableOnToolSurface({
+      actionId,
+      surface: params?.surface,
+      isActionEnabled: params?.isActionEnabled,
+    });
   });
 }

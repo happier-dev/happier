@@ -63,6 +63,30 @@ describe('built-in Happier tools', () => {
     });
   });
 
+  it('rejects change_title when the equivalent session.title.set action is disabled', async () => {
+    const changeTitle = vi.fn(async () => ({ success: true, title: 'New title' }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'change_title',
+      args: { title: 'New title' },
+      sessionId: 'sess-1',
+      surface: 'cli',
+      deps: {
+        changeTitle,
+        startExecutionRun: async () => unsupported(),
+        executeActionByToolName: async () => unsupported(),
+        isActionEnabled: (id) => id !== 'session.title.set',
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(changeTitle).not.toHaveBeenCalled();
+  });
+
   it('returns serialized action spec payloads without needing transport deps', async () => {
     const listResult = await dispatchBuiltInHappierTool({
       toolName: 'action_spec_search',
