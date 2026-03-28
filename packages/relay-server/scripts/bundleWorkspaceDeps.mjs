@@ -7,26 +7,30 @@ import {
   resolveWorkspaceBundlesFromPackageJson,
   vendorBundledPackageRuntimeDependencies,
 } from '../../../packages/cli-common/dist/workspaces/index.js';
+import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export function bundleWorkspaceDeps(opts = {}) {
+export async function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
   const relayDir = opts.relayDir ?? resolve(repoRoot, 'packages', 'relay-server');
+  const lockPath = opts.lockPath ?? resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
 
-  const bundles = resolveWorkspaceBundlesFromPackageJson({
-    repoRoot,
-    hostPackageDir: relayDir,
-  });
-
-  bundleWorkspacePackages({ bundles });
-
-  for (const b of bundles) {
-    vendorBundledPackageRuntimeDependencies({
-      srcPackageJsonPath: resolve(b.srcDir, 'package.json'),
-      destPackageDir: b.destDir,
+  return withWorkspaceBundleLock(async () => {
+    const bundles = resolveWorkspaceBundlesFromPackageJson({
+      repoRoot,
+      hostPackageDir: relayDir,
     });
-  }
+
+    bundleWorkspacePackages({ bundles });
+
+    for (const b of bundles) {
+      vendorBundledPackageRuntimeDependencies({
+        srcPackageJsonPath: resolve(b.srcDir, 'package.json'),
+        destPackageDir: b.destDir,
+      });
+    }
+  }, { lockPath, timeoutMs: 240_000, pollIntervalMs: 250, staleAfterMs: 240_000 });
 }
 
 const invokedAsMain = (() => {
@@ -37,7 +41,7 @@ const invokedAsMain = (() => {
 
 if (invokedAsMain) {
   try {
-    bundleWorkspaceDeps();
+    await bundleWorkspaceDeps();
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error(error instanceof Error ? error.message : String(error));

@@ -130,7 +130,7 @@ function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
   return { repoRoot, stackDir, agentsDir, cliCommonDir, connectionSupervisorDir, protocolDir };
 }
 
-test('bundleWorkspaceDeps copies dist + writes a sanitized package.json without install scripts', () => {
+test('bundleWorkspaceDeps copies dist + writes a sanitized package.json without install scripts', async () => {
   const { repoRoot, stackDir, cliCommonDir } = createBundleFixture();
   try {
     writeJson(resolve(cliCommonDir, 'package.json'), {
@@ -144,7 +144,7 @@ test('bundleWorkspaceDeps copies dist + writes a sanitized package.json without 
     });
     writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 3;\n', 'utf8');
 
-    bundleWorkspaceDeps({ repoRoot, stackDir });
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
 
     const bundledPkgJson = JSON.parse(
       readFileSync(resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'package.json'), 'utf8'),
@@ -160,10 +160,10 @@ test('bundleWorkspaceDeps copies dist + writes a sanitized package.json without 
   }
 });
 
-test('bundleWorkspaceDeps bundles internal deps required by the stack host package closure', () => {
+test('bundleWorkspaceDeps bundles internal deps required by the stack host package closure', async () => {
   const { repoRoot, stackDir } = createBundleFixture('happy-stack-bundle-workspace-deps-internal-closure-');
   try {
-    bundleWorkspaceDeps({ repoRoot, stackDir });
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
 
     assert.ok(existsSync(resolve(stackDir, 'node_modules', '@happier-dev', 'agents', 'dist', 'index.js')));
     assert.ok(existsSync(resolve(stackDir, 'node_modules', '@happier-dev', 'connection-supervisor', 'dist', 'index.js')));
@@ -173,7 +173,7 @@ test('bundleWorkspaceDeps bundles internal deps required by the stack host packa
   }
 });
 
-test('bundleWorkspaceDeps throws when cli-common dist/ is missing', () => {
+test('bundleWorkspaceDeps throws when cli-common dist/ is missing', async () => {
   const { repoRoot, stackDir, cliCommonDir } = createBundleFixture('happy-stack-bundle-workspace-deps-no-dist-');
   try {
     rmSync(resolve(cliCommonDir, 'dist'), { recursive: true, force: true });
@@ -182,23 +182,23 @@ test('bundleWorkspaceDeps throws when cli-common dist/ is missing', () => {
       version: '0.0.0',
       main: './dist/index.js',
     });
-    assert.throws(() => bundleWorkspaceDeps({ repoRoot, stackDir }), /Missing dist\/ for @happier-dev\/cli-common/);
+    await assert.rejects(bundleWorkspaceDeps({ repoRoot, stackDir }), /Missing dist\/ for @happier-dev\/cli-common/);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
 
-test('bundleWorkspaceDeps throws when cli-common package.json is malformed', () => {
+test('bundleWorkspaceDeps throws when cli-common package.json is malformed', async () => {
   const { repoRoot, stackDir, cliCommonDir } = createBundleFixture('happy-stack-bundle-workspace-deps-bad-json-');
   try {
     writeFileSync(resolve(cliCommonDir, 'package.json'), '{"name":"@happier-dev/cli-common"', 'utf8');
-    assert.throws(() => bundleWorkspaceDeps({ repoRoot, stackDir }), SyntaxError);
+    await assert.rejects(bundleWorkspaceDeps({ repoRoot, stackDir }), SyntaxError);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
 
-test('bundleWorkspaceDeps vendors external runtime dependency trees for bundled workspace packages', () => {
+test('bundleWorkspaceDeps vendors external runtime dependency trees for bundled workspace packages', async () => {
   const { repoRoot, stackDir, cliCommonDir } = createBundleFixture('happy-stack-bundle-workspace-deps-vendor-tree-');
   try {
     const depADir = resolve(repoRoot, 'node_modules', 'dep-a');
@@ -232,7 +232,7 @@ test('bundleWorkspaceDeps vendors external runtime dependency trees for bundled 
     writeJson(resolve(depBDir, 'package.json'), { name: 'dep-b', version: '1.0.0', main: 'index.js' });
     writeFileSync(resolve(depBDir, 'index.js'), 'module.exports = { b: true };\n', 'utf8');
 
-    bundleWorkspaceDeps({ repoRoot, stackDir });
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
 
     assert.equal(
       JSON.parse(

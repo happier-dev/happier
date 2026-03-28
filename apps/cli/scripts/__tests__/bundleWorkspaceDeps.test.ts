@@ -11,7 +11,7 @@ import {
 } from './testkit/packageLayoutSandbox';
 
 describe('bundleWorkspaceDeps', () => {
-  it('copies dist + writes a sanitized package.json without install scripts', () => {
+  it('copies dist + writes a sanitized package.json without install scripts', async () => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-workspace-deps-');
 
     try {
@@ -106,7 +106,7 @@ describe('bundleWorkspaceDeps', () => {
       files: { 'dist/index.js': 'export const w = 4;\n' },
     });
 
-      bundleWorkspaceDeps({ repoRoot, happyCliDir });
+      await bundleWorkspaceDeps({ repoRoot, happyCliDir });
 
     // Protocol runtime deps should be vendored under the bundled protocol package.
     expect(
@@ -174,7 +174,7 @@ describe('bundleWorkspaceDeps', () => {
     }
   });
 
-  it('vendors the external runtime dependency tree for bundled workspace packages', () => {
+  it('vendors the external runtime dependency tree for bundled workspace packages', async () => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-workspace-deps-tree-');
 
     try {
@@ -236,7 +236,7 @@ describe('bundleWorkspaceDeps', () => {
       });
     }
 
-      bundleWorkspaceDeps({ repoRoot, happyCliDir });
+      await bundleWorkspaceDeps({ repoRoot, happyCliDir });
 
     // dep-a is vendored because protocol declares it.
     expect(() =>
@@ -268,7 +268,7 @@ describe('bundleWorkspaceDeps', () => {
     }
   });
 
-  it('derives bundled workspaces from the host package bundledDependencies manifest', () => {
+  it('derives bundled workspaces from the host package bundledDependencies manifest', async () => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-manifest-');
 
     try {
@@ -292,7 +292,7 @@ describe('bundleWorkspaceDeps', () => {
         bundledDependencies: ['@happier-dev/cli-common'],
       });
 
-      bundleWorkspaceDeps({ repoRoot, happyCliDir });
+      await bundleWorkspaceDeps({ repoRoot, happyCliDir });
 
       expect(existsSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'cli-common', 'package.json'))).toBe(true);
       expect(existsSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'agents', 'package.json'))).toBe(false);

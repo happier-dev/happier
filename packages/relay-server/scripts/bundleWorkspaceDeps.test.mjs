@@ -23,7 +23,7 @@ test('bundledDependencies are declared in dependencies', () => {
   }
 });
 
-test('bundleWorkspaceDeps vendors external runtime dependency trees for bundled workspace packages', () => {
+test('bundleWorkspaceDeps vendors external runtime dependency trees for bundled workspace packages', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'happy-relay-bundle-workspace-deps-vendor-tree-'));
   try {
     writeJson(resolve(tempRoot, 'package.json'), { name: 'repo', private: true });
@@ -66,7 +66,7 @@ test('bundleWorkspaceDeps vendors external runtime dependency trees for bundled 
     writeJson(resolve(depBDir, 'package.json'), { name: 'dep-b', version: '1.0.0', main: 'index.js' });
     writeFileSync(resolve(depBDir, 'index.js'), 'module.exports = { b: true };\n', 'utf8');
 
-    bundleWorkspaceDeps({ repoRoot: tempRoot, relayDir });
+    await bundleWorkspaceDeps({ repoRoot: tempRoot, relayDir });
 
     const bundledRuntimeDir = resolve(relayDir, 'node_modules', '@happier-dev', 'release-runtime');
     assert.equal(existsSync(resolve(bundledRuntimeDir, 'node_modules', 'dep-a', 'package.json')), true);

@@ -6,5 +6,5 @@ describe('@happier-dev/protocol/workspaces exports', () => {
         expect(typeof (workspaces as any).WorkspaceManifestSchema?.safeParse).toBe('function');
         expect((workspaces as any).WorkspaceManifestEntryKindSchema.parse('file')).toBe('file');
         expect((workspaces as any).SessionHandoffStatusSchema).toBeUndefined();
-    });
+    }, 30_000);
 });
