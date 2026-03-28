@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -15,9 +16,32 @@ function buildDirectPeerChunkUrl(transferId: string, sequence: number): string {
   return `/machine-transfers/direct/${encodeDirectPeerTransferPathKey(transferId)}/chunks/${sequence}`;
 }
 
+async function reserveFreeTcpPort(): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string' || address.port <= 0) {
+        server.close(() => reject(new Error('Failed to reserve a free TCP port')));
+        return;
+      }
+      const { port } = address;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
 describe('direct peer machine transfer', () => {
   afterEach(() => {
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS;
+    delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_TTL_MS;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_CHUNK_BYTES;
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_EXPIRY_SKEW_MS;
@@ -437,6 +461,96 @@ describe('direct peer machine transfer', () => {
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
       await server.stop();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('honors caller-supplied timeoutMs for both open and chunk direct-peer fetches', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-timeout-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+
+    const payload = Buffer.from('payload-from-timeout-override', 'utf8');
+    const timeoutSignals: AbortSignal[] = [];
+    const fetchSignals: Array<AbortSignal | null | undefined> = [];
+    let recipientPublicKeyBase64 = '';
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockImplementation((_timeoutMs) => {
+      const controller = new AbortController();
+      timeoutSignals.push(controller.signal);
+      return controller.signal;
+    });
+    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      fetchSignals.push(init?.signal);
+
+      const headers = init?.headers as Record<string, string> | undefined;
+      expect(headers).toMatchObject({
+        authorization: 'Bearer timeout-token',
+        'x-happier-transfer-recipient-public-key': expect.any(String),
+      });
+
+      if (url.endsWith('/open')) {
+        recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
+        return new Response(JSON.stringify({
+          transferId: 'transfer_timeout_override',
+          manifestHash: createTransferManifestHash(payload),
+          totalChunks: 1,
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+
+      if (url.endsWith('/chunks/0')) {
+        return new Response(JSON.stringify({
+          transferId: 'transfer_timeout_override',
+          kind: 'chunk',
+          sequence: 0,
+          ...createEncryptedTransferChunkEnvelope({
+            transferId: 'transfer_timeout_override',
+            sequence: 0,
+            payload,
+            recipientPublicKeyBase64,
+            randomBytes: (length) => new Uint8Array(length).fill(4),
+          }),
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+
+    const requestParams: Parameters<typeof requestDirectPeerTransferToFile>[0] & { timeoutMs: number } = {
+      transferId: 'transfer_timeout_override',
+      endpointCandidates: [
+        {
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_timeout_override',
+          authorizationToken: 'timeout-token',
+          expiresAt: 10_000,
+        },
+      ],
+      destinationPath,
+      fetchFn,
+      now: () => 5_000,
+      timeoutMs: 12_345,
+    };
+
+    try {
+      await requestDirectPeerTransferToFile(requestParams);
+
+      expect(timeoutSpy).toHaveBeenCalledTimes(2);
+      expect(timeoutSpy.mock.calls).toEqual([[12_345], [12_345]]);
+      expect(fetchSignals).toEqual(timeoutSignals);
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
+    } finally {
+      timeoutSpy.mockRestore();
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
@@ -1483,6 +1597,7 @@ describe('direct peer machine transfer', () => {
     registry = createDirectPeerTransferRegistry({
       advertisedPort: server.port,
       now: () => 3_000,
+      networkInterfacesFn: () => ({}),
     });
 
     const tokenCarrierTransferId = 'scope_carrier';
@@ -2482,6 +2597,36 @@ describe('direct peer machine transfer', () => {
     expect(urls.some((url) => url.includes('%'))).toBe(false);
   });
 
+  it('merges configured advertised hosts with discovered NIC addresses', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+
+    const { createDirectPeerTransferRegistry } = await import('./directPeerTransport');
+
+    const registry = createDirectPeerTransferRegistry({
+      advertisedPort: 46007,
+      now: () => 1_000,
+      networkInterfacesFn: () => ({
+        eth0: [
+          { address: '10.0.0.2', family: 'IPv4', internal: false } as any,
+          { address: '2001:db8::1', family: 'IPv6', internal: false } as any,
+          { address: 'fe80::1%en0', family: 'IPv6', internal: false } as any,
+        ],
+      }),
+    });
+
+    const published = registry.publishTransfer({
+      transferId: 'transfer_configured_and_detected_advertise',
+      payload: Buffer.from('hello', 'utf8'),
+    });
+    const urls = published.endpointCandidates.map((candidate) => candidate.url);
+    const transferKey = Buffer.from('transfer_configured_and_detected_advertise', 'utf8').toString('base64url');
+
+    expect(urls).toContain(`http://127.0.0.1:46007/machine-transfers/direct/${transferKey}`);
+    expect(urls).toContain(`http://10.0.0.2:46007/machine-transfers/direct/${transferKey}`);
+    expect(urls).toContain(`http://[2001:db8::1]:46007/machine-transfers/direct/${transferKey}`);
+    expect(urls.some((url) => url.includes('%'))).toBe(false);
+  });
+
   it('publishes advertised http candidates for loading', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
     // Keep this test stable even if the default TTL changes for long-running transfers.
@@ -2500,6 +2645,7 @@ describe('direct peer machine transfer', () => {
     registry = createDirectPeerTransferRegistry({
       advertisedPort: server.port,
       now: () => 3_000,
+      networkInterfacesFn: () => ({}),
     });
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-advertised-http-'));
@@ -2532,6 +2678,47 @@ describe('direct peer machine transfer', () => {
     } finally {
       await server.stop();
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('honors HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT when starting the direct-peer server', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT = String(await reserveFreeTcpPort());
+
+    const {
+      createDirectPeerTransferRegistry,
+      startDirectPeerTransferServer,
+    } = await import('./directPeerTransport');
+
+    let registry: ReturnType<typeof createDirectPeerTransferRegistry> | null = null;
+    const server = await startDirectPeerTransferServer({
+      readPublishedTransfer: (input) => registry?.readPublishedTransfer(input) ?? null,
+    });
+    registry = createDirectPeerTransferRegistry({
+      advertisedPort: server.port,
+      now: () => 3_000,
+      networkInterfacesFn: () => ({}),
+    });
+
+    try {
+      const expectedPort = Number(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT);
+      expect(server.port).toBe(expectedPort);
+
+      const published = registry.publishTransfer({
+        transferId: 'transfer_bind_port',
+        payload: Buffer.from('payload-from-bind-port', 'utf8'),
+      });
+
+      expect(published.endpointCandidates).toEqual([
+        {
+          kind: 'http',
+          url: `http://127.0.0.1:${expectedPort}/machine-transfers/direct/${Buffer.from('transfer_bind_port', 'utf8').toString('base64url')}`,
+          authorizationToken: published.transferToken,
+          expiresAt: 603_000,
+        },
+      ]);
+    } finally {
+      await server.stop();
     }
   });
 

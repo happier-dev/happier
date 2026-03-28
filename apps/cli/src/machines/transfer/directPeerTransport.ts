@@ -4,6 +4,7 @@ import * as fsPromises from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 
 import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
+import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
 import fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -192,11 +193,8 @@ function readAdvertisedHosts(networkInterfacesFn: typeof networkInterfaces): str
     .split(',')
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
-  if (configuredHosts.length > 0) {
-    return Array.from(new Set(configuredHosts));
-  }
 
-  const hosts = new Set<string>();
+  const hosts = new Set<string>(configuredHosts);
   for (const entries of Object.values(networkInterfacesFn())) {
     for (const entry of entries ?? []) {
       if (!entry || entry.internal) continue;
@@ -222,6 +220,20 @@ function readDirectPeerRequestTimeoutMs(): number {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_REQUEST_TIMEOUT_MS,
     DEFAULT_DIRECT_PEER_REQUEST_TIMEOUT_MS,
   );
+}
+
+function resolveDirectPeerRequestTimeoutOverrideMs(timeoutMs: number | undefined): number {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs)) {
+    return readDirectPeerRequestTimeoutMs();
+  }
+  const normalizedTimeoutMs = Math.trunc(timeoutMs);
+  return normalizedTimeoutMs > 0
+    ? normalizedTimeoutMs
+    : readDirectPeerRequestTimeoutMs();
+}
+
+function readDirectPeerBindPort(): number {
+  return readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT') ?? 0;
 }
 
 function readDirectPeerChunkBytes(): number {
@@ -1298,7 +1310,7 @@ export async function startDirectPeerTransferServer(params: Readonly<{
   const app = createDirectPeerTransferApp(params);
   await app.ready();
   const address = await app.listen({
-    port: 0,
+    port: readDirectPeerBindPort(),
     host: process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_HOST ?? DEFAULT_DIRECT_PEER_BIND_HOST,
   });
   const port = Number.parseInt(String(address).split(':').pop() ?? '', 10);
@@ -1320,6 +1332,7 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
   openBody?: unknown;
   fetchFn?: typeof fetch;
   now?: () => number;
+  timeoutMs?: number;
   maxInMemoryPayloadBytes: number;
   onChunk: (chunk: Buffer) => Promise<void> | void;
   onFinish: (manifestHash: string) => Promise<TPayload>;
@@ -1331,6 +1344,7 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? Date.now;
   const expirySkewMs = readDirectPeerExpirySkewMs();
+  const requestTimeoutMs = resolveDirectPeerRequestTimeoutOverrideMs(params.timeoutMs);
   const recipientKeyPair = createTransferRecipientKeyPair();
   let openBodyTransmission: DirectPeerOpenRequestBodyTransmission | undefined;
   const resolveOpenBodyTransmission = (): DirectPeerOpenRequestBodyTransmission | undefined => {
@@ -1367,7 +1381,7 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
       const openRequestInit: RequestInit & { duplex?: 'half' } = {
         method: 'POST',
         headers,
-        signal: AbortSignal.timeout(readDirectPeerRequestTimeoutMs()),
+        signal: AbortSignal.timeout(requestTimeoutMs),
       };
       if (candidateOpenBodyTransmission?.kind === 'bytes') {
         openRequestInit.body = candidateOpenBodyTransmission.body;
@@ -1408,7 +1422,7 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
             ...headers,
             ...(auth.authorizationHeader ? { authorization: auth.authorizationHeader } : {}),
           },
-          signal: AbortSignal.timeout(readDirectPeerRequestTimeoutMs()),
+          signal: AbortSignal.timeout(requestTimeoutMs),
         });
         if (!chunkResponse.ok) {
           throw new Error(`Direct peer request failed with status ${chunkResponse.status}`);
@@ -1481,6 +1495,7 @@ export async function requestDirectPeerTransferToFile(params: Readonly<{
   openBody?: unknown;
   fetchFn?: typeof fetch;
   now?: () => number;
+  timeoutMs?: number;
 }>): Promise<TransferPayloadFileResult> {
   let sink = await createTransferPayloadFileSink({
     destinationPath: params.destinationPath,
