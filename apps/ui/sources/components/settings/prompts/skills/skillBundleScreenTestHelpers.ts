@@ -127,8 +127,19 @@ export function installSkillBundleCommonModuleMocks(
         return createModalModuleMock().module;
     });
 
-    vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
-});
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        const activeOptions = skillBundleModuleState.options;
+        if (activeOptions.storage) {
+            return await activeOptions.storage(importOriginal);
+        }
+
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useArtifacts: () => [],
+            useAllMachines: () => [],
+            useMachineListByServerId: () => ({}),
+            useMachineListStatusByServerId: () => ({}),
+            useSettingMutable: () => [null, vi.fn()],
+        });
+    });
 }

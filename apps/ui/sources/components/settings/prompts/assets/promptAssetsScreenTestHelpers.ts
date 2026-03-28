@@ -123,15 +123,19 @@ export function installPromptAssetsCommonModuleMocks(
         }).module;
     });
 
-    vi.mock('@/sync/domains/state/storage', async () => {
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         const activeOptions = promptAssetsModuleState.options;
         if (activeOptions.storage) {
-            return await activeOptions.storage(async <T>() => {
-                throw new Error('promptAssetsScreenTestHelpers storage mock does not support importOriginal');
-            });
+            return await activeOptions.storage(importOriginal);
         }
 
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
+        return createStorageModuleStub({
+            useArtifacts: () => [],
+            useAllMachines: () => [],
+            useMachineListByServerId: () => ({}),
+            useMachineListStatusByServerId: () => ({}),
+            useSettingMutable: () => [null, vi.fn()],
+        });
     });
 }
