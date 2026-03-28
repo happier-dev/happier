@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { installActivityBadgeRuntimeCommonModuleMocks } from './activityBadgeRuntimeTestHelpers';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -31,26 +32,25 @@ let changelogUnreadValue = false;
 const applyExpoNativeBadgeState = vi.hoisted(() => vi.fn(async () => {}));
 const applyTauriBadgeState = vi.hoisted(() => vi.fn(async () => {}));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: {
-                        get OS() {
-                            return platformState.os;
-                        },
-                    },
-                }
-    );
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useAllSessions: () => sessionsValue,
-    useFriendRequests: () => friendRequestsValue,
-    useLocalSettings: () => localSettingsValue,
-});
+installActivityBadgeRuntimeCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                get OS() {
+                    return platformState.os;
+                },
+            },
+        });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useAllSessions: () => sessionsValue,
+            useFriendRequests: () => friendRequestsValue,
+            useLocalSettings: () => localSettingsValue,
+        });
+    },
 });
 
 vi.mock('@/hooks/inbox/useUpdates', () => ({

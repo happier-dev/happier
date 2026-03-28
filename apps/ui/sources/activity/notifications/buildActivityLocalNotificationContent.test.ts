@@ -2,26 +2,14 @@ import {
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
     PUSH_NOTIFICATION_CATEGORY_IDS,
 } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import {
+    createActivityNotificationTextModuleMock,
+    installActivityNotificationRuntimeCommonModuleMocks,
+} from './runtime/activityNotificationRuntimeTestHelpers';
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => {
-        switch (key) {
-            case 'notifications.activity.defaultSessionTitle':
-                return 'Session';
-            case 'notifications.activity.readyFallbackBody':
-                return 'Turn finished. Open the session to continue.';
-            case 'notifications.activity.permissionFallbackBody':
-                return 'Approval required.';
-            case 'notifications.activity.userActionFallbackBody':
-                return 'This session needs your input.';
-            default:
-                return key;
-        }
-    },
-    });
+installActivityNotificationRuntimeCommonModuleMocks({
+    text: async () => createActivityNotificationTextModuleMock(),
 });
 
 describe('buildActivityLocalNotificationContent', () => {

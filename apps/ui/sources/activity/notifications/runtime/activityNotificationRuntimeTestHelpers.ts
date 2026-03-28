@@ -1,3 +1,4 @@
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { vi } from 'vitest';
 
 type ActivityNotificationRuntimeModuleFactory = () => unknown | Promise<unknown>;
@@ -13,7 +14,7 @@ type InstallActivityNotificationRuntimeCommonModuleMocksOptions = Readonly<{
 }>;
 
 export function createActivityNotificationTextModuleMock() {
-    return {
+    return createTextModuleMock({
         translate: (key: string) => {
             switch (key) {
                 case 'notifications.activity.defaultSessionTitle':
@@ -28,7 +29,7 @@ export function createActivityNotificationTextModuleMock() {
                     return key;
             }
         },
-    };
+    });
 }
 
 const activityNotificationRuntimeModuleState = vi.hoisted(() => ({

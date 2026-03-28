@@ -2,7 +2,10 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
-import { installActivityNotificationRuntimeCommonModuleMocks } from './activityNotificationRuntimeTestHelpers';
+import {
+    createActivityNotificationTextModuleMock,
+    installActivityNotificationRuntimeCommonModuleMocks,
+} from './activityNotificationRuntimeTestHelpers';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -49,23 +52,7 @@ installActivityNotificationRuntimeCommonModuleMocks({
         });
     },
     text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string) => {
-                switch (key) {
-                    case 'notifications.activity.defaultSessionTitle':
-                        return 'Session';
-                    case 'notifications.activity.readyFallbackBody':
-                        return 'Turn finished. Open the session to continue.';
-                    case 'notifications.activity.permissionFallbackBody':
-                        return 'Approval required.';
-                    case 'notifications.activity.userActionFallbackBody':
-                        return 'This session needs your input.';
-                    default:
-                        return key;
-                }
-            },
-        });
+        return createActivityNotificationTextModuleMock();
     },
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
