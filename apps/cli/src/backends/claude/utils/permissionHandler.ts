@@ -922,31 +922,42 @@ export class PermissionHandler {
         }
         this.pendingRequests.clear();
 
-        // Move all pending requests to completedRequests with canceled status
+        this.clearPendingRequestsToCompleted('Session switched to local mode', 'reset_pending_requests');
+    }
+
+    private clearPendingRequestsToCompleted(reason: string, logReason: string): void {
         updateAgentStateBestEffort(
             this.session.client,
             (currentState) => {
                 const pendingRequests = cloneStringKeyedRecordToNullProto(currentState.requests);
                 const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
 
-                // Move each pending request to completed with canceled status
                 for (const [id, request] of Object.entries(pendingRequests)) {
                     const entry = clonePlainObjectToNullProto(request) ?? Object.create(null);
                     entry['completedAt'] = Date.now();
                     entry['status'] = 'canceled';
-                    entry['reason'] = 'Session switched to local mode';
+                    entry['reason'] = reason;
                     completedRequests[id] = entry;
                 }
 
                 return {
                     ...currentState,
-                    requests: Object.create(null), // Clear all pending requests
+                    requests: Object.create(null),
                     completedRequests,
                 };
             },
             '[Claude]',
-            'reset_pending_requests',
+            logReason,
         );
+    }
+
+    async resetAndFlush(): Promise<void> {
+        this.reset();
+        try {
+            await this.session.client.flush?.();
+        } catch (error) {
+            logger.debug('[Claude] Failed to flush session after permission reset (non-fatal)', error);
+        }
     }
 
     dispose(): void {
@@ -958,29 +969,7 @@ export class PermissionHandler {
             pending.reject(new Error('Session disposed'));
         }
         this.pendingRequests.clear();
-        updateAgentStateBestEffort(
-            this.session.client,
-            (currentState) => {
-                const pendingRequests = cloneStringKeyedRecordToNullProto(currentState.requests);
-                const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
-
-                for (const [id, request] of Object.entries(pendingRequests)) {
-                    const entry = clonePlainObjectToNullProto(request) ?? Object.create(null);
-                    entry.completedAt = Date.now();
-                    entry.status = 'canceled';
-                    entry.reason = 'Session disposed';
-                    completedRequests[id] = entry;
-                }
-
-                return {
-                    ...currentState,
-                    requests: Object.create(null),
-                    completedRequests,
-                };
-            },
-            '[Claude]',
-            'dispose_pending_requests',
-        );
+        this.clearPendingRequestsToCompleted('Session disposed', 'dispose_pending_requests');
     }
 
     /**

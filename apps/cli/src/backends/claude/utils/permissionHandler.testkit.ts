@@ -31,6 +31,7 @@ export class FakePermissionClient {
   rpcHandlerManager: FakeRpcHandlerManager;
   agentState: AgentState;
   metadata: Metadata;
+  flush = vi.fn(async () => {});
   private metadataWaiters: Array<(updated: boolean) => void> = [];
   private metadataVersion: number = 0;
 

@@ -719,7 +719,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             const isNewSession = forceNewSession || session.sessionId !== previousSessionId;
             if (isNewSession) {
                 messageBuffer.addMessage('Starting new Claude session...', 'status');
-                permissionHandler.reset(); // Reset permissions before starting new session
+                await permissionHandler.resetAndFlush(); // Reset permissions before starting new session
                 sdkToLogConverter.resetParentChain(); // Reset parent chain for new conversation
                 subagentFileCollector.cleanup(); // Stop any watchers from prior sessions (subagent JSONL lives under session id).
                 turnChangeTracker.resetTurn();
@@ -981,7 +981,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 abortFuture?.resolve(undefined);
                 abortFuture = null;
                 logger.debug('[remote]: launch done');
-                permissionHandler.reset();
+                await permissionHandler.resetAndFlush();
                 turnChangeTracker.resetTurn();
                 suppressedExplicitDiffCallIds.clear();
                 modeHash = null;
@@ -995,7 +995,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     } finally {
 
         // Clean up permission handler
-        permissionHandler.reset();
+        await permissionHandler.resetAndFlush();
         permissionHandler.dispose();
         subagentFileCollector.cleanup();
         clearInterval(teamInboxIntervalId);
